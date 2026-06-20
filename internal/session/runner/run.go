@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"atenea/internal/session"
@@ -10,6 +11,8 @@ import (
 // MaxSteps corta loops improductivos de modelo/tool/continuacion: 25 pasos por
 // actividad, igual que el loop de referencia (OpenCode).
 const MaxSteps = 25
+
+const interruptedToolMessage = "tool interrumpida antes de completar"
 
 // StepLimitExceededError lo devuelve Run cuando una actividad agota MaxSteps sin
 // dejar la sesion estable (el modelo siguio pidiendo continuacion). Tipo (no
@@ -47,7 +50,9 @@ func (r *Runner) Run(ctx context.Context, sessionID string, force bool) error {
 		return nil // sesion idle, nada que hacer
 	}
 
-	// failInterruptedTools (limpieza de tools colgadas tras crash) entra en M8.
+	if err := r.failInterruptedTools(ctx, sessionID); err != nil {
+		return err
+	}
 
 	promotion := session.DeliveryNone
 	switch {
@@ -89,6 +94,32 @@ func (r *Runner) Run(ctx context.Context, sessionID string, force bool) error {
 		}
 		if openActivity {
 			promotion = session.DeliveryQueue
+		}
+	}
+	return nil
+}
+
+// failInterruptedTools cierra al inicio de Run las tools que quedaron llamadas
+// sin resultado en una corrida anterior. Usa PendingToolCalls y agrega
+// Tool.Failed + Message{Role: tool} para que la reanudacion no deje calls
+// colgadas.
+func (r *Runner) failInterruptedTools(ctx context.Context, sessionID string) error {
+	pending, err := r.store.PendingToolCalls(ctx, sessionID)
+	if errors.Is(err, session.ErrSessionNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, p := range pending {
+		if _, err := r.store.AppendEvent(ctx, sessionID, session.SessionEvent{
+			Kind:     session.KindToolFailed,
+			CallID:   p.CallID,
+			ToolName: p.ToolName,
+			Error:    interruptedToolMessage,
+			Message:  &session.Message{ID: p.CallID, Role: session.RoleTool, Text: interruptedToolMessage},
+		}); err != nil {
+			return err
 		}
 	}
 	return nil
