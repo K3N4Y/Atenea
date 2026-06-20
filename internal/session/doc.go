@@ -5,5 +5,9 @@
 // SessionEvent (EventKind con las constantes Step.* / Text.* / Reasoning.* /
 // Tool.* y el tipo Usage). M5 suma, de forma aditiva sobre SessionEvent, el campo
 // Error (el mensaje de fallo de una tool, Tool.Failed; M8 lo reutiliza para
-// Step.Failed). Inbox, historial proyectado y epoch llegan en hitos posteriores.
+// Step.Failed). M6 suma, de forma aditiva, el Inbox: el input durable de la
+// sesion (queue/steer) detras de una interface, con la implementacion en memoria
+// MemoryInbox (dos colas FIFO por sesion); el runner lo drena y promueve a
+// mensajes del historial. El historial proyectado avanzado y el epoch llegan en
+// hitos posteriores (M7).
 package session
