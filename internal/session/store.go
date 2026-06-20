@@ -8,6 +8,13 @@ import (
 // ErrSessionNotFound se devuelve al leer una sesion que nunca recibio un evento.
 var ErrSessionNotFound = errors.New("session not found")
 
+// PendingTool representa una tool call durable que sigue abierta en la
+// proyeccion PendingToolCalls.
+type PendingTool struct {
+	CallID   string
+	ToolName string
+}
+
 // Store es la persistencia durable de la sesion. El log de eventos es la fuente
 // de verdad; los mensajes son una proyeccion derivada. M1 implementa una version
 // en memoria; M10 agrega SQLite detras de esta misma interface.
@@ -32,4 +39,9 @@ type Store interface {
 	// cambio, descarta el request y reconstruye. ErrSessionNotFound si la sesion no
 	// existe.
 	Epoch(ctx context.Context, sessionID string) (ContextEpoch, error)
+
+	// PendingToolCalls reconstruye la proyeccion durable de Tool.Called sin
+	// Tool.Success/Tool.Failed posterior, en orden de llamada. ErrSessionNotFound
+	// si la sesion no existe.
+	PendingToolCalls(ctx context.Context, sessionID string) ([]PendingTool, error)
 }

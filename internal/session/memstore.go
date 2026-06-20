@@ -86,3 +86,37 @@ func (s *MemoryStore) Epoch(ctx context.Context, sessionID string) (ContextEpoch
 	}
 	return ContextEpoch{}, nil
 }
+
+// PendingToolCalls reconstruye la proyeccion durable de Tool.Called que aun no
+// tienen Tool.Success ni Tool.Failed posterior, manteniendo el orden de llamada.
+func (s *MemoryStore) PendingToolCalls(ctx context.Context, sessionID string) ([]PendingTool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	log, ok := s.sessions[sessionID]
+	if !ok {
+		return nil, ErrSessionNotFound
+	}
+
+	pending := make(map[string]PendingTool)
+	order := make([]string, 0)
+	for _, ev := range log {
+		switch ev.Kind {
+		case KindToolCalled:
+			if _, ok := pending[ev.CallID]; !ok {
+				order = append(order, ev.CallID)
+			}
+			pending[ev.CallID] = PendingTool{CallID: ev.CallID, ToolName: ev.ToolName}
+		case KindToolSuccess, KindToolFailed:
+			delete(pending, ev.CallID)
+		}
+	}
+
+	out := make([]PendingTool, 0, len(pending))
+	for _, callID := range order {
+		if tool, ok := pending[callID]; ok {
+			out = append(out, tool)
+		}
+	}
+	return out, nil
+}

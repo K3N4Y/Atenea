@@ -154,6 +154,47 @@ func TestMemoryStore_EpochIsStableAndNotFound(t *testing.T) {
 	}
 }
 
+func TestMemoryStore_PendingToolCallsFindsUnresolved(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore()
+
+	if _, err := store.AppendEvent(ctx, "s1", SessionEvent{Kind: KindToolCalled, CallID: "c1", ToolName: "echo"}); err != nil {
+		t.Fatalf("AppendEvent (c1 called): unexpected error: %v", err)
+	}
+	if _, err := store.AppendEvent(ctx, "s1", SessionEvent{Kind: KindToolCalled, CallID: "c2", ToolName: "read"}); err != nil {
+		t.Fatalf("AppendEvent (c2 called): unexpected error: %v", err)
+	}
+	if _, err := store.AppendEvent(ctx, "s1", SessionEvent{Kind: KindToolSuccess, CallID: "c2", ToolName: "read"}); err != nil {
+		t.Fatalf("AppendEvent (c2 success): unexpected error: %v", err)
+	}
+
+	pending, err := store.PendingToolCalls(ctx, "s1")
+	if err != nil {
+		t.Fatalf("PendingToolCalls(s1): unexpected error: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("PendingToolCalls(s1) = %+v, want only c1", pending)
+	}
+	if pending[0] != (PendingTool{CallID: "c1", ToolName: "echo"}) {
+		t.Fatalf("PendingToolCalls(s1)[0] = %+v, want c1 echo", pending[0])
+	}
+
+	if _, err := store.PendingToolCalls(ctx, "ghost"); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("PendingToolCalls(ghost): got %v, want ErrSessionNotFound", err)
+	}
+
+	if _, err := store.AppendEvent(ctx, "empty", SessionEvent{Message: &Message{ID: "u1", Role: RoleUser, Text: "hola"}}); err != nil {
+		t.Fatalf("AppendEvent (empty session): unexpected error: %v", err)
+	}
+	empty, err := store.PendingToolCalls(ctx, "empty")
+	if err != nil {
+		t.Fatalf("PendingToolCalls(empty): unexpected error: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("PendingToolCalls(empty) = %+v, want empty", empty)
+	}
+}
+
 // TestMemoryStore_ConcurrentAppendsAssignUniqueSeqs verifica que bajo appends
 // concurrentes sobre la misma sesion los Seq devueltos forman exactamente
 // {1..N} sin huecos ni duplicados. Se corre con -race.

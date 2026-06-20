@@ -12,5 +12,8 @@
 // turno (Agent, Model, BaselineSeq, Revision) que el runner compara para detectar
 // cambios concurrentes entre preparar un turno y llamar al proveedor, expuesta por
 // Store.Epoch (MemoryStore devuelve un epoch estable en cero, asi el camino feliz
-// no reconstruye; el driver real del epoch llega en M10).
+// no reconstruye; el driver real del epoch llega en M10). M8 suma
+// PendingToolCalls como proyeccion durable de Tool.Called sin Tool.Success ni
+// Tool.Failed posterior; el runner la usa al reanudar tras crash para cerrar
+// tools colgadas antes de abrir el siguiente turno.
 package session
