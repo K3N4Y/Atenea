@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 
 	"golang.org/x/sync/errgroup"
 
@@ -10,19 +11,84 @@ import (
 	"atenea/internal/tool"
 )
 
-// runTurn ejecuta UN turno feliz: arma el Request desde el historial proyectado y
-// las tools materializadas, llama Provider.Stream una sola vez, crea el Publisher
-// del turno y consume el stream. Devuelve needsContinuation: true si el turno hizo
-// al menos una tool call local (el loop de M6 hara otro turno), false si fue solo
-// texto. M7 envuelve esto con el retry de senales de control; M5 es el intento.
+// errRebuildTurn y errContinueAfterCompaction son senales de control internas del
+// turno: nunca escapan de runTurn (el retry loop las traga). En vez de excepciones,
+// Go usa sentinels envueltos y errors.Is.
+//
+//   - errRebuildTurn: el contexto cambio mientras se preparaba el turno (cambio de
+//     agente/modelo o mismatch de la revision del epoch). El request quedo viejo: se
+//     descarta y se reconstruye desde el store, SIN haber llamado al proveedor.
+//   - errContinueAfterCompaction: hubo overflow de contexto antes de empezar el
+//     mensaje del asistente. Se compacto el historial y se reintenta una vez por la
+//     ruta post-compaction.
+var (
+	errRebuildTurn             = errors.New("rebuild prepared turn")
+	errContinueAfterCompaction = errors.New("continue after overflow compaction")
+)
+
+// runTurn ejecuta un turno reintentando ante las senales de control internas. El
+// cuerpo del turno vive en runTurnAttempt; runTurn solo decide que hacer con su
+// resultado: ante errRebuildTurn o errContinueAfterCompaction reintenta (el attempt
+// se reconstruye desde el store, ya con el epoch reconciliado o el historial
+// compactado); cualquier otro error, o el exito, se devuelve. La terminacion la
+// garantiza el contrato de cada senal: el rebuild solo se dispara mientras el epoch
+// siga cambiando (se estabiliza) y la compaction debe hacer progreso (el request
+// deja de exceder el contexto).
 func (r *Runner) runTurn(ctx context.Context, sessionID string) (bool, error) {
-	msgs, err := r.store.Messages(ctx, sessionID, 0)
+	for {
+		cont, err := r.runTurnAttempt(ctx, sessionID)
+		switch {
+		case errors.Is(err, errRebuildTurn):
+			continue // algo cambio mientras se preparaba: reconstruir desde el store
+		case errors.Is(err, errContinueAfterCompaction):
+			continue // hubo overflow: se compacto, reintentar por la ruta post-compaction
+		default:
+			return cont, err
+		}
+	}
+}
+
+// runTurnAttempt es UN intento del turno. Snapshotea el epoch al empezar a preparar,
+// arma el Request desde el historial proyectado (a partir del BaselineSeq del epoch)
+// y las tools materializadas, resolviendo el modelo del epoch. Si el request excede
+// el contexto, compacta y devuelve errContinueAfterCompaction. Re-lee el epoch antes
+// de llamar al proveedor: si cambio (agente/modelo/revision), devuelve errRebuildTurn
+// SIN llamar a Stream. Si el epoch sigue vigente, llama Stream UNA vez y consume el
+// stream igual que M5. Devuelve needsContinuation.
+func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string) (bool, error) {
+	// Snapshot del contexto al empezar la preparacion.
+	before, err := r.store.Epoch(ctx, sessionID)
+	if err != nil {
+		return false, err
+	}
+
+	// Historial proyectado desde el baseline del epoch y tools materializadas.
+	msgs, err := r.store.Messages(ctx, sessionID, before.BaselineSeq)
 	if err != nil {
 		return false, err
 	}
 	mat := r.registry.Materialize(r.perms)
-	req := llm.Request{Messages: toLLMMessages(msgs), Tools: mat.Definitions}
+	req := llm.Request{Model: before.Model, Messages: toLLMMessages(msgs), Tools: mat.Definitions}
 
+	// Overflow antes del mensaje del asistente: compactar y reintentar una vez.
+	if r.compactor != nil && r.compactor.NeedsCompaction(req) {
+		if err := r.compactor.Compact(ctx, sessionID); err != nil {
+			return false, err
+		}
+		return false, errContinueAfterCompaction
+	}
+
+	// Re-leer el epoch antes de llamar al proveedor: si cambio, el request quedo
+	// viejo. Se descarta y se reconstruye SIN haber llamado a Stream.
+	after, err := r.store.Epoch(ctx, sessionID)
+	if err != nil {
+		return false, err
+	}
+	if after != before {
+		return false, errRebuildTurn
+	}
+
+	// Epoch vigente: una sola llamada al proveedor y consumo del stream (M5).
 	in, err := r.provider.Stream(ctx, req)
 	if err != nil {
 		return false, err

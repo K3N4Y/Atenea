@@ -12,5 +12,11 @@
 // call local (needsContinuation) o por un steer admitido durante la corrida,
 // nunca por texto del asistente; agotar los pasos devuelve StepLimitExceededError.
 // Las senales de control internas (errRebuildTurn, errContinueAfterCompaction)
-// llegan en M7.
+// aterrizaron en M7: runTurn pasa a ser un retry loop sobre runTurnAttempt, que
+// snapshotea el ContextEpoch al preparar el request y lo re-chequea antes de
+// Stream; si el epoch cambio (agente, modelo o revision) devuelve errRebuildTurn
+// y reconstruye desde el store SIN haber streameado el request viejo, y ante
+// overflow del contexto compacta el historial (Compactor opcional) y reintenta
+// una vez por errContinueAfterCompaction. La interrupcion por ctx cancelado y el
+// manejo de fallos (Step.Failed, failInterruptedTools) llegan en M8.
 package runner
