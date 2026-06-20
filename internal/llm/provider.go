@@ -15,12 +15,23 @@ type Provider interface {
 	Stream(ctx context.Context, req Request) (<-chan Event, error)
 }
 
+// Message es un mensaje del historial proyectado en el formato del proveedor.
+// M5 lo construye desde session.Message (Role/Text) al armar el Request; el
+// adaptador real (M10) lo traduce a los bloques de su SDK.
+type Message struct {
+	Role string
+	Text string
+}
+
 // Request es la entrada de un turno. En M2 lleva solo el modelo; el fake lo
-// ignora (el guion es la fuente de verdad del turno). El runner (M5) le agrega
-// System, Messages, Tools y ProviderOpts cuando construye el request desde el
-// historial proyectado. Crece sin cambiar la interface Provider.
+// ignora (el guion es la fuente de verdad del turno). El runner (M5) lo puebla
+// con el historial proyectado (Messages) y las tools materializadas (Tools) al
+// construir el turno. System (system context/baseline) y ProviderOpts (prompt
+// cache key) llegan en M7. Crece sin cambiar la interface Provider.
 type Request struct {
-	Model string
+	Model    string
+	Messages []Message // historial proyectado convertido al formato del proveedor
+	Tools    []ToolDef // schemas materializados por el registry (M4)
 }
 
 // EventKind clasifica cada evento del stream del proveedor. El conjunto refleja
@@ -61,6 +72,9 @@ type Event struct {
 	Input    json.RawMessage // ToolCall / ToolInputDelta: input JSON (crudo)
 	Text     string          // TextDelta / ReasoningDelta
 	Usage    *Usage          // solo StepEnded
+	// ProviderExecuted marca una ToolCall que el proveedor ejecuto el mismo: el
+	// runner NO la asienta localmente, solo la persiste.
+	ProviderExecuted bool
 }
 
 // Usage son los tokens reportados al cerrar el turno (StepEnded). El proveedor
