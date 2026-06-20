@@ -15,5 +15,7 @@
 // no reconstruye; el driver real del epoch llega en M10). M8 suma
 // PendingToolCalls como proyeccion durable de Tool.Called sin Tool.Success ni
 // Tool.Failed posterior; el runner la usa al reanudar tras crash para cerrar
-// tools colgadas antes de abrir el siguiente turno.
+// tools colgadas antes de abrir el siguiente turno. M10 suma SQLiteStore: la
+// implementacion durable del Store (log de eventos en SQLite) detras de la misma
+// interface, intercambiable con MemoryStore y validada por el mismo contrato.
 package session
