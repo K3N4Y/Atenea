@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"log"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -15,7 +18,14 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-const outputLimit = 32 * 1024
+const (
+	outputLimit = 32 * 1024
+
+	// openRouterBaseURL es el gateway OpenAI-compatible que se usa para pruebas.
+	openRouterBaseURL = "https://openrouter.ai/api/v1"
+	// defaultModel es el modelo por defecto en OpenRouter; override por OPENROUTER_MODEL.
+	defaultModel = "openrouter/free"
+)
 
 // App cablea el loop del agente (M1..M8) a la app Wails: arranca/corta Run desde
 // el frontend y reenvia el log durable por el Bus. La logica del loop no cambia.
@@ -34,31 +44,85 @@ type App struct {
 // context.CancelFunc no es comparable.
 type runHandle struct{ cancel context.CancelFunc }
 
-// newApp arma la app con la frontera (emit) y el provider inyectados, para que
-// los tests usen un emit fake y un provider guionado. El store real-pero-fake es
-// MemoryStore decorado por EmittingStore (puente Store -> UI); el registry trae
-// el builtin echo. M10 cambia provider/store por los reales sin tocar esto.
-func newApp(provider llm.Provider, emit event.EmitFunc) *App {
+// newAppWithStore arma la app sobre un store, un provider y la frontera (emit)
+// inyectados. El store se decora con EmittingStore (puente Store -> UI) y se le
+// pasa al Runner; el registry trae el builtin echo. Es el punto unico de ensamblado:
+// los tests lo llaman via newApp (MemoryStore + provider fake) y produccion via
+// NewApp (SQLiteStore + provider real).
+func newAppWithStore(store session.Store, provider llm.Provider, emit event.EmitFunc) *App {
 	a := &App{runs: map[string]*runHandle{}}
 	a.bus = event.NewBus(emit)
-	store := event.NewEmittingStore(session.NewMemoryStore(), a.bus)
+	emitting := event.NewEmittingStore(store, a.bus)
 	a.inbox = session.NewMemoryInbox()
 	registry := tool.NewRegistry(tool.NewOutputStore(outputLimit), tool.Echo{})
-	a.runner = runner.NewRunner(store, a.inbox, provider, registry,
+	a.runner = runner.NewRunner(emitting, a.inbox, provider, registry,
 		tool.Permissions{"echo": true}, newIDGen())
 	return a
 }
 
-// NewApp arma la app de produccion. La EmitFunc cierra sobre a para leer a.ctx
-// (que startup fija despues): emitir antes de startup pasa un ctx nil, pero la UI
-// no llama SendPrompt antes de cargar.
+// newApp arma la app con un MemoryStore (no durable) y el provider/emit inyectados.
+// Lo usan los tests: store en memoria y provider guionado, sin tocar disco ni red.
+func newApp(provider llm.Provider, emit event.EmitFunc) *App {
+	return newAppWithStore(session.NewMemoryStore(), provider, emit)
+}
+
+// NewApp arma la app de produccion: store SQLite durable y provider real (OpenRouter
+// si hay API key; si no, el demo sin red). La EmitFunc cierra sobre a para leer a.ctx
+// (que startup fija despues): emitir antes de startup pasa un ctx nil, pero la UI no
+// llama SendPrompt antes de cargar.
 func NewApp() *App {
 	var a *App
 	emit := func(name string, data ...interface{}) {
 		runtime.EventsEmit(a.ctx, name, data...)
 	}
-	a = newApp(demoProvider(), emit)
+	a = newAppWithStore(openStore(), chooseProvider(), emit)
 	return a
+}
+
+// openStore abre el SQLiteStore durable en el directorio de datos de la app. Si
+// falla (disco/permiso), cae a un MemoryStore para que la app igual abra (sin
+// persistencia). El cierre del store se delega al ciclo de vida del proceso.
+func openStore() session.Store {
+	store, err := session.NewSQLiteStore(dbPath())
+	if err != nil {
+		log.Printf("atenea: no se pudo abrir SQLite (%v); usando store en memoria", err)
+		return session.NewMemoryStore()
+	}
+	return store
+}
+
+// dbPath resuelve la ruta de la DB: ATENEA_DB si esta seteada (util en dev), si no
+// <UserConfigDir>/atenea/atenea.db (creando el directorio). Cae a "atenea.db" en el
+// cwd si no hay directorio de config.
+func dbPath() string {
+	if p := os.Getenv("ATENEA_DB"); p != "" {
+		return p
+	}
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "atenea.db"
+	}
+	appDir := filepath.Join(dir, "atenea")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		return "atenea.db"
+	}
+	return filepath.Join(appDir, "atenea.db")
+}
+
+// chooseProvider elige el provider real: si hay OPENROUTER_API_KEY usa el adaptador
+// OpenAI-compatible contra OpenRouter (modelo de OPENROUTER_MODEL o defaultModel);
+// si no, el demoProvider (fake) para que `wails dev` muestre streaming sin red.
+func chooseProvider() llm.Provider {
+	key := os.Getenv("OPENROUTER_API_KEY")
+	if key == "" {
+		log.Print("atenea: sin OPENROUTER_API_KEY; usando provider de demo (sin red)")
+		return demoProvider()
+	}
+	model := os.Getenv("OPENROUTER_MODEL")
+	if model == "" {
+		model = defaultModel
+	}
+	return llm.NewOpenAIProvider(key, openRouterBaseURL, model)
 }
 
 // startup guarda el ctx de Wails (lo usa la EmitFunc real).
