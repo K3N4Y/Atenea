@@ -3,6 +3,7 @@
 // append-only como unica fuente de verdad, con los mensajes derivados por
 // proyeccion. M3 suma la taxonomia de streaming de forma aditiva sobre
 // SessionEvent (EventKind con las constantes Step.* / Text.* / Reasoning.* /
-// Tool.* y el tipo Usage). Inbox, historial proyectado y epoch llegan en hitos
-// posteriores.
+// Tool.* y el tipo Usage). M5 suma, de forma aditiva sobre SessionEvent, el campo
+// Error (el mensaje de fallo de una tool, Tool.Failed; M8 lo reutiliza para
+// Step.Failed). Inbox, historial proyectado y epoch llegan en hitos posteriores.
 package session

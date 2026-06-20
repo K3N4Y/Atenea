@@ -53,6 +53,7 @@ type SessionEvent struct {
 	ToolName string          // Tool.Called (y Tool.Success/Tool.Failed en M5)
 	Input    json.RawMessage // Tool.Called / Tool.Input.* (input JSON crudo o coalescido)
 	Usage    *Usage          // solo Step.Ended
+	Error    string          // mensaje de fallo de una tool (Tool.Failed); M8 lo reutiliza para Step.Failed
 }
 
 // Session es el agregado durable de una conversacion. En M1 es minimo: solo el
