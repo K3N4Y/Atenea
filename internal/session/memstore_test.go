@@ -121,6 +121,39 @@ func TestMemoryStore_UnknownSessionReturnsNotFound(t *testing.T) {
 	}
 }
 
+// TestMemoryStore_EpochIsStableAndNotFound fija el contrato del epoch que el runner
+// asume: Epoch de una sesion inexistente devuelve ErrSessionNotFound (igual que
+// LoadSession/Messages), y tras un AppendEvent dos lecturas consecutivas devuelven el
+// MISMO valor (estable). La estabilidad es lo que evita un rebuild espurio en el
+// camino feliz: el snapshot y el recheck del attempt leen el mismo epoch y no
+// reconstruyen.
+func TestMemoryStore_EpochIsStableAndNotFound(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore()
+
+	// Sesion inexistente: mismo contrato de no-encontrado que LoadSession/Messages.
+	if _, err := store.Epoch(ctx, "ghost"); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("Epoch(ghost): got %v, want ErrSessionNotFound", err)
+	}
+
+	if _, err := store.AppendEvent(ctx, "s1", SessionEvent{}); err != nil {
+		t.Fatalf("AppendEvent: unexpected error: %v", err)
+	}
+
+	// Dos lecturas consecutivas devuelven el mismo epoch: estable, sin rebuild espurio.
+	first, err := store.Epoch(ctx, "s1")
+	if err != nil {
+		t.Fatalf("Epoch (primera): unexpected error: %v", err)
+	}
+	second, err := store.Epoch(ctx, "s1")
+	if err != nil {
+		t.Fatalf("Epoch (segunda): unexpected error: %v", err)
+	}
+	if first != second {
+		t.Fatalf("Epoch no es estable: primera %+v, segunda %+v (rebuild espurio)", first, second)
+	}
+}
+
 // TestMemoryStore_ConcurrentAppendsAssignUniqueSeqs verifica que bajo appends
 // concurrentes sobre la misma sesion los Seq devueltos forman exactamente
 // {1..N} sin huecos ni duplicados. Se corre con -race.

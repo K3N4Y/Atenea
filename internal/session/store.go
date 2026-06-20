@@ -26,4 +26,10 @@ type Store interface {
 	// reconstruye el historial completo desde cero. ErrSessionNotFound si la
 	// sesion no existe.
 	Messages(ctx context.Context, sessionID string, sinceSeq Seq) ([]Message, error)
+
+	// Epoch devuelve la foto del contexto vigente de la sesion. El runner la
+	// snapshotea al preparar un turno y la re-lee antes de llamar al proveedor: si
+	// cambio, descarta el request y reconstruye. ErrSessionNotFound si la sesion no
+	// existe.
+	Epoch(ctx context.Context, sessionID string) (ContextEpoch, error)
 }

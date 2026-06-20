@@ -71,3 +71,18 @@ func (s *MemoryStore) Messages(ctx context.Context, sessionID string, sinceSeq S
 	}
 	return out, nil
 }
+
+// Epoch devuelve la foto del contexto de la sesion. M7 no tiene aun una fuente real
+// de contexto (agente/modelo de config, reconciliacion de archivos), asi que
+// MemoryStore devuelve el epoch cero estable: snapshot y recheck coinciden y el
+// runner no reconstruye. ErrSessionNotFound si la sesion no existe. El driver real
+// del epoch llega en M10.
+func (s *MemoryStore) Epoch(ctx context.Context, sessionID string) (ContextEpoch, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.sessions[sessionID]; !ok {
+		return ContextEpoch{}, ErrSessionNotFound
+	}
+	return ContextEpoch{}, nil
+}

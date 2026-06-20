@@ -8,6 +8,9 @@
 // Step.Failed). M6 suma, de forma aditiva, el Inbox: el input durable de la
 // sesion (queue/steer) detras de una interface, con la implementacion en memoria
 // MemoryInbox (dos colas FIFO por sesion); el runner lo drena y promueve a
-// mensajes del historial. El historial proyectado avanzado y el epoch llegan en
-// hitos posteriores (M7).
+// mensajes del historial. M7 suma el ContextEpoch: la foto del contexto del
+// turno (Agent, Model, BaselineSeq, Revision) que el runner compara para detectar
+// cambios concurrentes entre preparar un turno y llamar al proveedor, expuesta por
+// Store.Epoch (MemoryStore devuelve un epoch estable en cero, asi el camino feliz
+// no reconstruye; el driver real del epoch llega en M10).
 package session
