@@ -26,6 +26,19 @@ var (
 	errContinueAfterCompaction = errors.New("continue after overflow compaction")
 )
 
+// ProviderError envuelve un StepFailed del proveedor para devolverlo con
+// errors.As y persistir la misma causa como Step.Failed.
+type ProviderError struct {
+	Message string
+}
+
+func (e *ProviderError) Error() string {
+	if e.Message == "" {
+		return "provider stream failed"
+	}
+	return "provider stream failed: " + e.Message
+}
+
 // runTurn ejecuta un turno reintentando ante las senales de control internas. El
 // cuerpo del turno vive en runTurnAttempt; runTurn solo decide que hacer con su
 // resultado: ante errRebuildTurn o errContinueAfterCompaction reintenta (el attempt
@@ -108,8 +121,14 @@ func (r *Runner) consume(ctx context.Context, in <-chan llm.Event,
 	pub *Publisher, settle tool.SettleFunc) (bool, error) {
 
 	g, gctx := errgroup.WithContext(ctx)
+	cleanupCtx := context.WithoutCancel(ctx)
 	needsContinuation := false
+	var streamErr *ProviderError
 	for ev := range in {
+		if ev.Kind == llm.StepFailed {
+			streamErr = &ProviderError{Message: ev.Text}
+			continue
+		}
 		if err := pub.Publish(ctx, ev); err != nil {
 			return false, err
 		}
@@ -119,14 +138,29 @@ func (r *Runner) consume(ctx context.Context, in <-chan llm.Event,
 			g.Go(func() error {
 				res, err := settle(gctx, tool.Call{ID: ev.CallID, Name: ev.ToolName, Input: ev.Input})
 				if err != nil {
-					return pub.ToolFailed(ctx, ev.CallID, err)
+					return pub.ToolFailed(cleanupCtx, ev.CallID, err)
 				}
-				return pub.ToolSuccess(ctx, ev.CallID, res.Output)
+				return pub.ToolSuccess(cleanupCtx, ev.CallID, res.Output)
 			})
 		}
 	}
 	if err := g.Wait(); err != nil {
 		return false, err
+	}
+	var cause error
+	if streamErr != nil {
+		cause = streamErr
+	} else {
+		cause = ctx.Err()
+	}
+	if cause != nil {
+		if err := pub.FailUnresolvedTools(cleanupCtx, cause); err != nil {
+			return false, err
+		}
+		if err := pub.StepFailed(cleanupCtx, cause); err != nil {
+			return false, err
+		}
+		return false, cause
 	}
 	return needsContinuation, nil
 }
