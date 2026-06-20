@@ -30,11 +30,13 @@ type Publisher struct {
 	sessionID string
 	asstMsgID string // assistantMessageID del turno
 
-	mu     sync.Mutex
-	text   strings.Builder   // buffer del bloque de texto en curso
-	reason strings.Builder   // buffer del bloque de razonamiento en curso
-	input  map[string][]byte // input JSON acumulado por callID
-	tools  map[string]string // callID -> toolName (mapa de tool calls del turno)
+	mu      sync.Mutex
+	text    strings.Builder   // buffer del bloque de texto en curso
+	reason  strings.Builder   // buffer del bloque de razonamiento en curso
+	input   map[string][]byte // input JSON acumulado por callID
+	tools   map[string]string // callID -> toolName (mapa de tool calls del turno)
+	order   []string          // orden de Tool.Called del turno
+	settled map[string]bool   // callID -> ya tiene Tool.Success/Tool.Failed
 }
 
 // NewPublisher crea el publisher de un turno. assistantMessageID es el ID con el
@@ -47,6 +49,7 @@ func NewPublisher(store eventAppender, sessionID, assistantMessageID string) *Pu
 		asstMsgID: assistantMessageID,
 		input:     make(map[string][]byte),
 		tools:     make(map[string]string),
+		settled:   make(map[string]bool),
 	}
 }
 
@@ -90,6 +93,9 @@ func (p *Publisher) Publish(ctx context.Context, ev llm.Event) error {
 		return p.emit(ctx, session.SessionEvent{Kind: session.KindReasoningEnded, Text: full})
 
 	case llm.ToolCall:
+		if _, ok := p.tools[ev.CallID]; !ok {
+			p.order = append(p.order, ev.CallID)
+		}
 		p.tools[ev.CallID] = ev.ToolName
 		p.input[ev.CallID] = append([]byte(nil), ev.Input...)
 		return p.emit(ctx, session.SessionEvent{
@@ -116,13 +122,20 @@ func (p *Publisher) Publish(ctx context.Context, ev llm.Event) error {
 func (p *Publisher) ToolSuccess(ctx context.Context, callID, output string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.emit(ctx, session.SessionEvent{
+	if p.settled[callID] {
+		return nil
+	}
+	if err := p.emit(ctx, session.SessionEvent{
 		Kind:     session.KindToolSuccess,
 		CallID:   callID,
 		ToolName: p.tools[callID],
 		Text:     output,
 		Message:  &session.Message{ID: callID, Role: session.RoleTool, Text: output},
-	})
+	}); err != nil {
+		return err
+	}
+	p.settled[callID] = true
+	return nil
 }
 
 // ToolFailed publica el fallo de una tool: persiste un Tool.Failed con el mensaje
@@ -132,14 +145,54 @@ func (p *Publisher) ToolSuccess(ctx context.Context, callID, output string) erro
 func (p *Publisher) ToolFailed(ctx context.Context, callID string, cause error) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.failTool(ctx, callID, cause)
+}
+
+// StepFailed publica Step.Failed para cerrar el step actual con la causa
+// observable.
+func (p *Publisher) StepFailed(ctx context.Context, cause error) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	msg := cause.Error()
 	return p.emit(ctx, session.SessionEvent{
+		Kind:  session.KindStepFailed,
+		Error: msg,
+	})
+}
+
+// FailUnresolvedTools cierra con Tool.Failed las Tool.Called del turno actual
+// que aun no tienen Tool.Success/Tool.Failed persistido.
+func (p *Publisher) FailUnresolvedTools(ctx context.Context, cause error) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, callID := range p.order {
+		if p.settled[callID] {
+			continue
+		}
+		if err := p.failTool(ctx, callID, cause); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// failTool persiste Tool.Failed. El llamador debe tener p.mu tomado.
+func (p *Publisher) failTool(ctx context.Context, callID string, cause error) error {
+	if p.settled[callID] {
+		return nil
+	}
+	msg := cause.Error()
+	if err := p.emit(ctx, session.SessionEvent{
 		Kind:     session.KindToolFailed,
 		CallID:   callID,
 		ToolName: p.tools[callID],
 		Error:    msg,
 		Message:  &session.Message{ID: callID, Role: session.RoleTool, Text: msg},
-	})
+	}); err != nil {
+		return err
+	}
+	p.settled[callID] = true
+	return nil
 }
 
 // emit fija el SessionID del turno y persiste el evento. Aisla el unico punto que
