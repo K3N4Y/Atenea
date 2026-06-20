@@ -31,3 +31,27 @@ func (s *MemoryStore) AppendEvent(ctx context.Context, sessionID string, ev Sess
 	s.sessions[sessionID] = append(log, ev)
 	return seq, nil
 }
+
+// Messages reproyecta los mensajes de la sesion en orden de Seq y devuelve solo
+// los materializados por eventos con Seq > sinceSeq. ErrSessionNotFound si la
+// sesion no existe.
+func (s *MemoryStore) Messages(ctx context.Context, sessionID string, sinceSeq Seq) ([]Message, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	log, ok := s.sessions[sessionID]
+	if !ok {
+		return nil, ErrSessionNotFound
+	}
+
+	var out []Message
+	for _, ev := range log {
+		if ev.Message == nil || ev.Seq <= sinceSeq {
+			continue
+		}
+		m := *ev.Message
+		m.Seq = ev.Seq
+		out = append(out, m)
+	}
+	return out, nil
+}
