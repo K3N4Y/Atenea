@@ -17,6 +17,10 @@ func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{sessions: make(map[string][]SessionEvent)}
 }
 
+// var _ Store = (*MemoryStore)(nil) asegura en tiempo de compilacion que
+// MemoryStore cumple la interface.
+var _ Store = (*MemoryStore)(nil)
+
 // AppendEvent agrega ev al log durable de sessionID, le asigna el siguiente Seq
 // monotonico y lo devuelve. Crea la sesion si es su primer evento. El SessionID
 // y Seq que traiga ev se ignoran: los fija el Store.
@@ -30,6 +34,18 @@ func (s *MemoryStore) AppendEvent(ctx context.Context, sessionID string, ev Sess
 	ev.Seq = seq
 	s.sessions[sessionID] = append(log, ev)
 	return seq, nil
+}
+
+// LoadSession devuelve el agregado de la sesion. ErrSessionNotFound si la sesion
+// nunca recibio un evento.
+func (s *MemoryStore) LoadSession(ctx context.Context, sessionID string) (Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.sessions[sessionID]; !ok {
+		return Session{}, ErrSessionNotFound
+	}
+	return Session{ID: sessionID}, nil
 }
 
 // Messages reproyecta los mensajes de la sesion en orden de Seq y devuelve solo
