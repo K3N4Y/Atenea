@@ -17,6 +17,8 @@
 // Stream; si el epoch cambio (agente, modelo o revision) devuelve errRebuildTurn
 // y reconstruye desde el store SIN haber streameado el request viejo, y ante
 // overflow del contexto compacta el historial (Compactor opcional) y reintenta
-// una vez por errContinueAfterCompaction. La interrupcion por ctx cancelado y el
-// manejo de fallos (Step.Failed, failInterruptedTools) llegan en M8.
+// una vez por errContinueAfterCompaction. M8 aterrizo la interrupcion por ctx
+// cancelado, ProviderError/Step.Failed, el cierre de tools no resueltas del turno
+// y failInterruptedTools para reanudar limpiando tools colgadas. M9/M10 siguen
+// siendo Wails/provider/store real.
 package runner
