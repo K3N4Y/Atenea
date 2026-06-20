@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"strings"
+	"sync"
 
 	"atenea/internal/llm"
 	"atenea/internal/session"
@@ -20,13 +21,16 @@ type eventAppender interface {
 // sesion (SessionEvent) con la taxonomia del contrato, y bufferiza los deltas
 // para emitir tambien el bloque cerrado con el contenido completo. Es de un solo
 // turno: el runner (M5) crea uno por turno con el assistantMessageID de ese
-// turno. En M3 Publish se llama en serie; el acceso concurrente (Tool.Success
-// desde settle) llega en M5 con su candado y su test -race.
+// turno. En M5 el loop de consumo publica desde la goroutine principal (Publish)
+// mientras las goroutines de settle publican el resultado (ToolSuccess/
+// ToolFailed); el candado serializa los appends en un orden total y protege los
+// buffers y mapas. M3 anticipo "el candado llega en M5 con su test -race".
 type Publisher struct {
 	store     eventAppender
 	sessionID string
 	asstMsgID string // assistantMessageID del turno
 
+	mu     sync.Mutex
 	text   strings.Builder   // buffer del bloque de texto en curso
 	reason strings.Builder   // buffer del bloque de razonamiento en curso
 	input  map[string][]byte // input JSON acumulado por callID
@@ -51,6 +55,8 @@ func NewPublisher(store eventAppender, sessionID, assistantMessageID string) *Pu
 // en Text.Ended ademas materializa el Message del asistente para la proyeccion.
 // Devuelve el error del store si AppendEvent falla.
 func (p *Publisher) Publish(ctx context.Context, ev llm.Event) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	switch ev.Kind {
 	case llm.StepStarted:
 		return p.emit(ctx, session.SessionEvent{Kind: session.KindStepStarted})
@@ -101,6 +107,39 @@ func (p *Publisher) Publish(ctx context.Context, ev llm.Event) error {
 		})
 	}
 	return nil // StepFailed (M8) y kinds sin semantica de sesion en M3 se ignoran
+}
+
+// ToolSuccess publica el resultado de una tool local asentada: persiste un
+// Tool.Success con el output acotado (lo que vera el modelo) y materializa un
+// Message{Role: tool, ID: callID} para que el resultado entre en la proyeccion y
+// el modelo lo vea en el siguiente turno. ToolName sale del mapa del turno.
+func (p *Publisher) ToolSuccess(ctx context.Context, callID, output string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.emit(ctx, session.SessionEvent{
+		Kind:     session.KindToolSuccess,
+		CallID:   callID,
+		ToolName: p.tools[callID],
+		Text:     output,
+		Message:  &session.Message{ID: callID, Role: session.RoleTool, Text: output},
+	})
+}
+
+// ToolFailed publica el fallo de una tool: persiste un Tool.Failed con el mensaje
+// del error en Error y materializa un Message{Role: tool} con ese texto, para que
+// el modelo vea que la tool fallo y pueda reaccionar. Cubre el fallo de Execute y
+// la tool denegada/desconocida (UnknownToolError de M4).
+func (p *Publisher) ToolFailed(ctx context.Context, callID string, cause error) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	msg := cause.Error()
+	return p.emit(ctx, session.SessionEvent{
+		Kind:     session.KindToolFailed,
+		CallID:   callID,
+		ToolName: p.tools[callID],
+		Error:    msg,
+		Message:  &session.Message{ID: callID, Role: session.RoleTool, Text: msg},
+	})
 }
 
 // emit fija el SessionID del turno y persiste el evento. Aisla el unico punto que
