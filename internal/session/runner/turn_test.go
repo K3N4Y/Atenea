@@ -40,7 +40,7 @@ func TestRunner_TextOnlyTurnPersistsEventsAndStops(t *testing.T) {
 	)
 
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
+	r := NewRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
 
 	cont, err := r.runTurn(ctx, "s1")
 	if err != nil {
@@ -152,7 +152,7 @@ func TestRunner_LocalToolCallRegistersCalledThenSettlesSuccess(t *testing.T) {
 		llm.Event{Kind: llm.StepEnded},
 	)
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
+	r := NewRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
 
 	cont, err := r.runTurn(ctx, "s1")
 	if err != nil {
@@ -243,7 +243,7 @@ func TestRunner_TwoToolCallsSettleConcurrentlyAndTurnWaits(t *testing.T) {
 		llm.Event{Kind: llm.StepEnded},
 	)
 	reg := tool.NewRegistry(tool.NewOutputStore(0), barrierTool{wg: &wg})
-	r := NewRunner(store, fake, reg, tool.Permissions{"barrier": true}, func() string { return "a1" })
+	r := NewRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"barrier": true}, func() string { return "a1" })
 
 	cont, err := r.runTurn(ctx, "s1")
 	if err != nil {
@@ -278,7 +278,7 @@ func TestRunner_LocalToolFailureRecordsToolFailed(t *testing.T) {
 		llm.Event{Kind: llm.StepEnded},
 	)
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
+	r := NewRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
 
 	cont, err := r.runTurn(ctx, "s1")
 	if err != nil {
@@ -359,7 +359,7 @@ func TestRunner_BuildsRequestFromHistoryAndMaterializedTools(t *testing.T) {
 		llm.Event{Kind: llm.StepEnded},
 	)}
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, prov, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
+	r := NewRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
 
 	if _, err := r.runTurn(ctx, "s1"); err != nil {
 		t.Fatalf("runTurn error inesperado: %v", err)
@@ -419,7 +419,7 @@ func TestRunner_ProviderExecutedToolIsOnlyPersisted(t *testing.T) {
 		llm.Event{Kind: llm.StepEnded},
 	)
 	reg := tool.NewRegistry(tool.NewOutputStore(0), countingTool{calls: &calls})
-	r := NewRunner(store, fake, reg, tool.Permissions{"counter": true}, func() string { return "a1" })
+	r := NewRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"counter": true}, func() string { return "a1" })
 
 	cont, err := r.runTurn(ctx, "s1")
 	if err != nil {
