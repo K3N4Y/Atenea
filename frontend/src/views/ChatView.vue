@@ -1,104 +1,41 @@
 <script lang="ts" setup>
-import { ref, onMounted } from 'vue'
-import { SendPrompt, Stop } from '../../wailsjs/go/main/App'
-import { EventsOn } from '../../wailsjs/runtime/runtime'
+import { onMounted, onUnmounted } from 'vue'
+import { PhSidebarSimple } from '@phosphor-icons/vue'
+import AppSidebar from '../components/AppSidebar.vue'
+import MessageList from '../components/MessageList.vue'
+import ChatComposer from '../components/ChatComposer.vue'
+import { useChatStore } from '../stores/chat'
+import { useUiStore } from '../stores/ui'
 
-// M9 cablea una sola sesion. Steering y multiples sesiones llegan despues; el
-// canal session:<id> ya lo soporta.
-const sessionID = 'main'
+// Vista raiz del chat: arma el layout (sidebar persistente + chat central) y
+// conecta el store de chat al canal de la sesion. El mapeo evento->estado vive
+// en el store (front.md §74); aqui solo gestionamos el ciclo de vida de la
+// suscripcion, que la Fase 1 dejaba sin limpiar.
+const chat = useChatStore()
+const ui = useUiStore()
 
-type Line = { kind: string; text: string }
-
-const prompt = ref('')
-const lines = ref<Line[]>([])
-const running = ref(false)
-let assistant: Line | null = null
-
-function push(kind: string, text: string) {
-  lines.value.push({ kind, text })
-}
-
-onMounted(() => {
-  // Cada evento durable del log llega por el canal de la sesion, en orden de Seq.
-  EventsOn(`session:${sessionID}`, (ev: any) => {
-    switch (ev.Kind) {
-      case 'Text.Started':
-        assistant = { kind: 'assistant', text: '' }
-        lines.value.push(assistant)
-        break
-      case 'Text.Delta':
-        if (!assistant) {
-          assistant = { kind: 'assistant', text: '' }
-          lines.value.push(assistant)
-        }
-        assistant.text += ev.Text
-        break
-      case 'Text.Ended':
-        assistant = null
-        break
-      case 'Tool.Called':
-        push('tool', `→ ${ev.ToolName}(${ev.CallID})`)
-        break
-      case 'Tool.Success':
-        push('tool', `✓ ${ev.ToolName}: ${ev.Text}`)
-        break
-      case 'Tool.Failed':
-        push('tool-error', `✗ ${ev.ToolName || ev.CallID}: ${ev.Error}`)
-        break
-      case 'Step.Failed':
-        push('error', `interrumpido: ${ev.Error}`)
-        running.value = false
-        break
-      case 'Step.Ended':
-        running.value = false
-        break
-    }
-    // El prompt del usuario se promueve como Message{Role:user} (Kind vacio).
-    if (ev.Message && ev.Message.Role === 'user') {
-      push('user', ev.Message.Text)
-    }
-  })
-
-  // Cierre por error duro de Run (fallo de proveedor, limite de pasos, stop).
-  EventsOn(`session:${sessionID}:error`, (msg: string) => {
-    push('error', msg)
-    running.value = false
-  })
-})
-
-async function send() {
-  const text = prompt.value.trim()
-  if (!text) return
-  prompt.value = ''
-  running.value = true
-  await SendPrompt(sessionID, text)
-}
-
-function stop() {
-  Stop(sessionID)
-}
+onMounted(() => chat.subscribe())
+onUnmounted(() => chat.teardown())
 </script>
 
 <template>
-  <main class="chat">
-    <ul class="log">
-      <li v-for="(l, i) in lines" :key="i" :class="l.kind">{{ l.text }}</li>
-    </ul>
-    <form class="bar" @submit.prevent="send">
-      <input v-model="prompt" placeholder="Escribe un prompt..." autofocus />
-      <button type="submit">Enviar</button>
-      <button type="button" :disabled="!running" @click="stop">Stop</button>
-    </form>
-  </main>
-</template>
+  <div class="flex h-screen w-screen overflow-hidden">
+    <AppSidebar @new-chat="chat.reset()" />
 
-<style>
-.chat { display: flex; flex-direction: column; height: 100vh; }
-.log { flex: 1; overflow-y: auto; list-style: none; margin: 0; padding: 1rem; text-align: left; }
-.log .user { color: #9cdcfe; }
-.log .assistant { white-space: pre-wrap; }
-.log .tool { color: #c586c0; }
-.log .tool-error, .log .error { color: #f48771; }
-.bar { display: flex; gap: .5rem; padding: .75rem; }
-.bar input { flex: 1; }
-</style>
+    <main class="flex min-w-0 flex-1 flex-col">
+      <header class="flex items-center px-3 py-3">
+        <button
+          type="button"
+          aria-label="Toggle sidebar"
+          class="flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-black/[0.05]"
+          @click="ui.toggleSidebar()"
+        >
+          <PhSidebarSimple :size="20" weight="regular" />
+        </button>
+      </header>
+
+      <MessageList :messages="chat.messages" />
+      <ChatComposer :running="chat.running" @send="chat.send" @stop="chat.stop" />
+    </main>
+  </div>
+</template>
