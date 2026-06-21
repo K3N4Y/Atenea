@@ -34,7 +34,7 @@ onUnmounted(() => chat.teardown())
         </button>
       </header>
 
-      <MessageList :messages="chat.messages" />
+      <MessageList :items="chat.items" />
       <ChatComposer :running="chat.running" @send="chat.send" @stop="chat.stop" />
     </main>
   </div>

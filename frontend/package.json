@@ -13,6 +13,10 @@
   "dependencies": {
     "@fontsource/red-hat-mono": "^5.2.8",
     "@phosphor-icons/vue": "^2.2.1",
+    "dompurify": "^3.4.11",
+    "highlight.js": "^11.11.1",
+    "marked": "^18.0.5",
+    "marked-highlight": "^2.2.4",
     "pinia": "^3.0.4",
     "vue": "^3.5.38",
     "vue-router": "^4.6.4"
@@ -20,6 +24,7 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.1",
     "@vitejs/plugin-vue": "^5.2.4",
+    "jsdom": "^29.1.1",
     "tailwindcss": "^4.3.1",
     "typescript": "^5.9.3",
     "vite": "^5.4.21",
