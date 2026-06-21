@@ -30,6 +30,7 @@ const doneLabel = computed(() => `Thought ${formatThinkingDuration(props.item.du
       <button
         type="button"
         class="flex items-center gap-2 text-left transition hover:opacity-100"
+        :aria-expanded="expanded"
         @click="expanded = !expanded"
       >
         <component :is="expanded ? PhCaretDown : PhCaretRight" :size="14" weight="bold" />

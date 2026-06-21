@@ -149,6 +149,19 @@ describe('chat store: herramientas (Tool.*)', () => {
   })
 })
 
+describe('chat store: extensibilidad (forward-compat)', () => {
+  it('ignora eventos con Kind desconocido sin romper ni ensuciar el log', () => {
+    const store = useChatStore()
+
+    // Una capacidad futura del agente puede emitir un Kind que la UI aun no
+    // entiende; debe degradar con elegancia hasta que se le de soporte.
+    store.applyEvent({ Kind: 'Plan.Updated', Text: 'algo nuevo' })
+    store.applyEvent({ Kind: 'Future.Whatever' })
+
+    expect(store.items).toHaveLength(0)
+  })
+})
+
 describe('chat store: flujo continuo y ordenado entre tipos', () => {
   it('mantiene usuario, pensamiento, IA y tool en orden de evento', () => {
     const store = useChatStore()

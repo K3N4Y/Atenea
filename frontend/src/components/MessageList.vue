@@ -3,6 +3,7 @@ import { ref, computed, watch, nextTick } from 'vue'
 import type { Component } from 'vue'
 import gsap from 'gsap'
 import type { TurnItem } from '../stores/chat'
+import { prefersReducedMotion } from '../lib/motion'
 import UserMessage from './UserMessage.vue'
 import AssistantMessage from './AssistantMessage.vue'
 import ThinkingBlock from './ThinkingBlock.vue'
@@ -44,8 +45,13 @@ watch(
 )
 
 // Entrada suave de cada item nuevo (GSAP): aparece con un leve ascenso. La
-// clave por id evita reanimar el item en streaming, que solo crece.
+// clave por id evita reanimar el item en streaming, que solo crece. Respeta
+// prefers-reduced-motion saltando la animacion.
 function onEnter(el: Element, done: () => void) {
+  if (prefersReducedMotion()) {
+    done()
+    return
+  }
   gsap.fromTo(
     el,
     { opacity: 0, y: 8 },
@@ -55,7 +61,13 @@ function onEnter(el: Element, done: () => void) {
 </script>
 
 <template>
-  <div ref="scroller" class="flex-1 overflow-y-auto">
+  <div
+    ref="scroller"
+    role="log"
+    aria-live="polite"
+    aria-label="Conversation"
+    class="flex-1 overflow-y-auto"
+  >
     <div class="mx-auto w-full max-w-3xl px-6 py-10">
       <TransitionGroup
         v-if="props.items.length"

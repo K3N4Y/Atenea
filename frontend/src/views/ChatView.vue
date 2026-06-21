@@ -22,11 +22,21 @@ onUnmounted(() => chat.teardown())
   <div class="flex h-screen w-screen overflow-hidden">
     <AppSidebar @new-chat="chat.reset()" />
 
+    <!-- Fondo para cerrar la sidebar superpuesta en pantallas estrechas. -->
+    <div
+      v-if="!ui.sidebarCollapsed"
+      aria-hidden="true"
+      class="fixed inset-0 z-20 bg-black/20 md:hidden"
+      @click="ui.toggleSidebar()"
+    ></div>
+
     <main class="flex min-w-0 flex-1 flex-col">
       <header class="flex items-center px-3 py-3">
         <button
           type="button"
           aria-label="Toggle sidebar"
+          aria-controls="app-sidebar"
+          :aria-expanded="!ui.sidebarCollapsed"
           class="flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-black/[0.05]"
           @click="ui.toggleSidebar()"
         >

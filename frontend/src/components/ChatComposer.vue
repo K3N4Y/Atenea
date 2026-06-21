@@ -2,6 +2,7 @@
 import { ref, computed, nextTick } from 'vue'
 import gsap from 'gsap'
 import { PhArrowUp, PhStop } from '@phosphor-icons/vue'
+import { prefersReducedMotion } from '../lib/motion'
 
 // Composer del MVP: textarea que crece con el contenido + boton pildora. El
 // naranja de acento se reserva para enviar (identidad §3). Es presentacional:
@@ -27,7 +28,7 @@ function autoGrow() {
 function submit() {
   if (!canSend.value) return
   // Microinteraccion de envio (GSAP): un leve rebote en el boton.
-  if (sendButton.value) {
+  if (sendButton.value && !prefersReducedMotion()) {
     gsap.fromTo(sendButton.value, { scale: 0.85 }, { scale: 1, duration: 0.3, ease: 'back.out(3)' })
   }
   emit('send', text.value)
@@ -49,6 +50,7 @@ function onKeydown(e: KeyboardEvent) {
     <div class="mx-auto w-full max-w-3xl">
       <p
         v-if="props.running"
+        role="status"
         class="mb-2 flex items-center gap-2 pl-2 text-xs opacity-60"
       >
         <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-accent"></span>
@@ -62,6 +64,7 @@ function onKeydown(e: KeyboardEvent) {
           ref="textarea"
           v-model="text"
           rows="1"
+          aria-label="Message atenea"
           placeholder="Message atenea"
           class="max-h-[200px] flex-1 resize-none bg-transparent py-2 leading-relaxed placeholder:opacity-40 focus:outline-none"
           @input="autoGrow"

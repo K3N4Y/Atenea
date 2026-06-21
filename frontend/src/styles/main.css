@@ -27,6 +27,17 @@ body {
   height: 100vh;
 }
 
+/* Accesibilidad: respeta la preferencia de reducir movimiento del sistema. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
 /* Seleccion con un tinte de acento muy sutil (identidad §3: naranja moderado). */
 ::selection {
   background: color-mix(in srgb, var(--color-accent) 22%, transparent);

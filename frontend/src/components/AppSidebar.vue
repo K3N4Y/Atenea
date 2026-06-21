@@ -2,17 +2,26 @@
 import { PhPlus } from '@phosphor-icons/vue'
 import { useUiStore } from '../stores/ui'
 
-// Sidebar persistente (identidad §4). El estado colapsado vive en el store de
-// UI; su persistencia entre sesiones llega en la Fase 4. El historial de chats
-// es propiedad del backend y se rehidratara tambien en la Fase 4.
+// Sidebar persistente (identidad §4): el estado colapsado vive en el store de
+// UI y se conserva entre sesiones (pinia-plugin-persistedstate). En pantallas
+// anchas colapsa por ancho (queda en el flujo); en pantallas estrechas se
+// comporta como panel superpuesto que entra/sale por la izquierda. El historial
+// de chats es propiedad del backend y se rehidratara mas adelante.
 const emit = defineEmits<{ 'new-chat': [] }>()
 const ui = useUiStore()
 </script>
 
 <template>
   <aside
-    class="flex h-full shrink-0 flex-col overflow-hidden border-r border-black/5 bg-black/[0.015] transition-[width] duration-300 ease-out"
-    :class="ui.sidebarCollapsed ? 'w-0 border-r-0' : 'w-64'"
+    id="app-sidebar"
+    aria-label="Chat history"
+    :data-collapsed="ui.sidebarCollapsed ? 'true' : 'false'"
+    class="fixed inset-y-0 left-0 z-30 flex h-full w-64 flex-col overflow-hidden border-black/5 bg-paper transition-all duration-300 ease-out md:static md:bg-black/[0.015]"
+    :class="
+      ui.sidebarCollapsed
+        ? '-translate-x-full border-r-0 md:w-0 md:translate-x-0'
+        : 'translate-x-0 border-r'
+    "
   >
     <div class="flex w-64 flex-col gap-1 p-3">
       <p class="px-2 py-3 text-lg tracking-tight">atenea</p>
