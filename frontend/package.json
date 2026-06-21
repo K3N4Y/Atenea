@@ -14,10 +14,12 @@
     "@fontsource/red-hat-mono": "^5.2.8",
     "@phosphor-icons/vue": "^2.2.1",
     "dompurify": "^3.4.11",
+    "gsap": "^3.15.0",
     "highlight.js": "^11.11.1",
     "marked": "^18.0.5",
     "marked-highlight": "^2.2.4",
     "pinia": "^3.0.4",
+    "pinia-plugin-persistedstate": "^4.7.1",
     "vue": "^3.5.38",
     "vue-router": "^4.6.4"
   },

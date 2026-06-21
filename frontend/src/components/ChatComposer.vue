@@ -1,5 +1,6 @@
 <script lang="ts" setup>
 import { ref, computed, nextTick } from 'vue'
+import gsap from 'gsap'
 import { PhArrowUp, PhStop } from '@phosphor-icons/vue'
 
 // Composer del MVP: textarea que crece con el contenido + boton pildora. El
@@ -10,6 +11,7 @@ const emit = defineEmits<{ send: [text: string]; stop: [] }>()
 
 const text = ref('')
 const textarea = ref<HTMLTextAreaElement | null>(null)
+const sendButton = ref<HTMLElement | null>(null)
 
 const canSend = computed(() => text.value.trim().length > 0)
 
@@ -24,6 +26,10 @@ function autoGrow() {
 
 function submit() {
   if (!canSend.value) return
+  // Microinteraccion de envio (GSAP): un leve rebote en el boton.
+  if (sendButton.value) {
+    gsap.fromTo(sendButton.value, { scale: 0.85 }, { scale: 1, duration: 0.3, ease: 'back.out(3)' })
+  }
   emit('send', text.value)
   text.value = ''
   nextTick(autoGrow)
@@ -49,7 +55,9 @@ function onKeydown(e: KeyboardEvent) {
         Working · you can stop anytime
       </p>
 
-      <div class="flex items-end gap-2 rounded-soft bg-black/[0.04] p-2 pl-4">
+      <div
+        class="flex items-end gap-2 rounded-soft bg-black/[0.04] p-2 pl-4 transition focus-within:ring-2 focus-within:ring-accent/20"
+      >
         <textarea
           ref="textarea"
           v-model="text"
@@ -71,6 +79,7 @@ function onKeydown(e: KeyboardEvent) {
         </button>
         <button
           v-else
+          ref="sendButton"
           type="button"
           aria-label="Send"
           :disabled="!canSend"

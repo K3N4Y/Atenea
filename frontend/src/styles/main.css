@@ -19,11 +19,37 @@ body {
   background-color: var(--color-paper);
   color: #1c1c1a;
   font-family: var(--font-mono);
+  letter-spacing: -0.01em;
   -webkit-font-smoothing: antialiased;
 }
 
 #app {
   height: 100vh;
+}
+
+/* Seleccion con un tinte de acento muy sutil (identidad §3: naranja moderado). */
+::selection {
+  background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+}
+
+/* Scrollbar discreta, acorde al minimalismo de escritorio. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.18) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border: 3px solid transparent;
+  border-radius: 9999px;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.28);
+  background-clip: padding-box;
 }
 
 /* Render de Markdown para las respuestas de la IA (identidad §8: el contenido

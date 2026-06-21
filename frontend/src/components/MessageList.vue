@@ -1,5 +1,7 @@
 <script lang="ts" setup>
 import { ref, computed, watch, nextTick } from 'vue'
+import type { Component } from 'vue'
+import gsap from 'gsap'
 import type { TurnItem } from '../stores/chat'
 import UserMessage from './UserMessage.vue'
 import AssistantMessage from './AssistantMessage.vue'
@@ -10,6 +12,13 @@ import ToolCall from './ToolCall.vue'
 // del log a su componente segun el tipo. Recibe los items del store via prop
 // para mantenerse presentacional.
 const props = defineProps<{ items: TurnItem[] }>()
+
+const registry: Record<TurnItem['kind'], Component> = {
+  user: UserMessage,
+  assistant: AssistantMessage,
+  reasoning: ThinkingBlock,
+  tool: ToolCall,
+}
 
 const scroller = ref<HTMLElement | null>(null)
 
@@ -33,19 +42,35 @@ watch(
   () => nextTick(scrollToBottom),
   { flush: 'post' },
 )
+
+// Entrada suave de cada item nuevo (GSAP): aparece con un leve ascenso. La
+// clave por id evita reanimar el item en streaming, que solo crece.
+function onEnter(el: Element, done: () => void) {
+  gsap.fromTo(
+    el,
+    { opacity: 0, y: 8 },
+    { opacity: 1, y: 0, duration: 0.35, ease: 'power2.out', onComplete: done },
+  )
+}
 </script>
 
 <template>
   <div ref="scroller" class="flex-1 overflow-y-auto">
-    <div class="mx-auto flex w-full max-w-3xl flex-col gap-5 px-6 py-10">
-      <template v-if="props.items.length">
-        <template v-for="item in props.items" :key="item.id">
-          <UserMessage v-if="item.kind === 'user'" :item="item" />
-          <AssistantMessage v-else-if="item.kind === 'assistant'" :item="item" />
-          <ThinkingBlock v-else-if="item.kind === 'reasoning'" :item="item" />
-          <ToolCall v-else-if="item.kind === 'tool'" :item="item" />
-        </template>
-      </template>
+    <div class="mx-auto w-full max-w-3xl px-6 py-10">
+      <TransitionGroup
+        v-if="props.items.length"
+        tag="div"
+        class="flex flex-col gap-5"
+        :css="false"
+        @enter="onEnter"
+      >
+        <component
+          :is="registry[item.kind]"
+          v-for="item in props.items"
+          :key="item.id"
+          :item="item"
+        />
+      </TransitionGroup>
 
       <div
         v-else
