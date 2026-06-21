@@ -12,6 +12,10 @@ import (
 var assets embed.FS
 
 func main() {
+	// Cargar .env del cwd (si existe) antes de armar la app: deja OPENROUTER_API_KEY
+	// y demas a mano en dev sin exportarlas. Las env vars reales tienen prioridad.
+	loadDotEnv(".env")
+
 	// Create an instance of the app structure
 	app := NewApp()
 
