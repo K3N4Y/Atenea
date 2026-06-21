@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { defineStore } from 'pinia'
+import { defineStore, acceptHMRUpdate } from 'pinia'
 import { SendPrompt, Stop } from '../../wailsjs/go/main/App'
 import { EventsOn } from '../../wailsjs/runtime/runtime'
 
@@ -78,11 +78,18 @@ export const useChatStore = defineStore('chat', () => {
     return `i${seq}`
   }
 
+  // pushItem agrega el item al log y devuelve el proxy reactivo que vive dentro
+  // de `items` (no la referencia cruda recien pusheada). Mutar ESE proxy durante
+  // el streaming agenda los re-renders; mutar la referencia cruda no, porque la
+  // reactividad anidada de Vue rastrea los objetos a traves del proxy del array.
+  function pushItem<T extends TurnItem>(item: T): T {
+    items.value.push(item)
+    return items.value[items.value.length - 1] as T
+  }
+
   function startAssistant(): AssistantItem {
     const item: AssistantItem = { kind: 'assistant', id: nextId(), text: '', streaming: true }
-    items.value.push(item)
-    streamingText = item
-    return item
+    return (streamingText = pushItem(item))
   }
 
   function startReasoning(): ReasoningItem {
@@ -93,10 +100,8 @@ export const useChatStore = defineStore('chat', () => {
       streaming: true,
       durationMs: null,
     }
-    items.value.push(item)
-    streamingReasoning = item
     reasoningStartedAt = Date.now()
-    return item
+    return (streamingReasoning = pushItem(item))
   }
 
   function applyEvent(ev: SessionEvent): void {
@@ -139,8 +144,8 @@ export const useChatStore = defineStore('chat', () => {
           output: '',
           error: null,
         }
-        items.value.push(item)
-        if (item.callID) toolsByCall.set(item.callID, item)
+        const stored = pushItem(item)
+        if (stored.callID) toolsByCall.set(stored.callID, stored)
         break
       }
       case 'Tool.Success': {
@@ -225,3 +230,10 @@ export const useChatStore = defineStore('chat', () => {
     teardown,
   }
 })
+
+// HMR: al editar este store, Vite recarga su definicion en caliente en vez de
+// dejar viva la instancia vieja (que mantenia las referencias crudas y no
+// reaccionaba al streaming). Sin esto un fix al store no se ve hasta reiniciar.
+if (import.meta.hot) {
+  import.meta.hot.accept(acceptHMRUpdate(useChatStore, import.meta.hot))
+}
