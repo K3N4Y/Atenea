@@ -9,7 +9,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "vue": "^3.5.38"
+    "@fontsource/red-hat-mono": "^5.2.8",
+    "pinia": "^3.0.4",
+    "vue": "^3.5.38",
+    "vue-router": "^4.6.4"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.1",

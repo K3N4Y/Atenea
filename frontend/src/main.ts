@@ -1,5 +1,13 @@
-import {createApp} from 'vue'
+import { createApp } from 'vue'
+import { createPinia } from 'pinia'
 import App from './App.vue'
-import './style.css';
+import router from './router'
+import './styles/main.css'
+import '@fontsource/red-hat-mono/400.css'
+import '@fontsource/red-hat-mono/500.css'
+import '@fontsource/red-hat-mono/700.css'
 
-createApp(App).mount('#app')
+createApp(App)
+  .use(createPinia())
+  .use(router)
+  .mount('#app')
