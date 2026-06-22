@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 )
 
@@ -280,6 +281,315 @@ func TestOpenAIProvider_StreamEmitsStepFailedOnError(t *testing.T) {
 	}
 }
 
+// TestOpenAIProvider_StreamEmitsToolCall exige que Stream parsee los tool_calls
+// del stream OpenAI/OpenRouter y emita un llm.Event de Kind ToolCall con el CallID,
+// el ToolName y el Input JSON completo. La forma del stream es la del SDK: el primer
+// delta de un index trae id y function.name con arguments vacio; los siguientes solo
+// fragmentos de function.arguments; el turno cierra con finish_reason "tool_calls".
+// El provider debe acumular los fragmentos de arguments hasta tener el JSON entero.
+// Las lineas SSE usan raw string literals (backticks) para que las comillas escapadas
+// del JSON de arguments queden literales sin pelear con el doble escaping de Go. Esto
+// tumba la impl actual, que ignora delta.tool_calls (TODO(tool-calls)) y nunca emite
+// un ToolCall. Aqui solo se asserta el ToolCall central; el bracketing ToolInput
+// Started/Delta/Ended queda para TRIANGULATE.
+func TestOpenAIProvider_StreamEmitsToolCall(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, `data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read","arguments":""}}]},"finish_reason":null}]}`+"\n\n")
+		io.WriteString(w, `data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\":"}}]},"finish_reason":null}]}`+"\n\n")
+		io.WriteString(w, `data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"foo.go\"}"}}]},"finish_reason":null}]}`+"\n\n")
+		io.WriteString(w, `data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`+"\n\n")
+		io.WriteString(w, `data: {"id":"1","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`+"\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	p := NewOpenAIProvider("test-key", server.URL, "test-model")
+
+	out, err := p.Stream(context.Background(), Request{})
+	if err != nil {
+		t.Fatalf("Stream devolvio error: %v", err)
+	}
+
+	got := drain(out)
+
+	var toolCall *Event
+	for i := range got {
+		if got[i].Kind == ToolCall {
+			toolCall = &got[i]
+			break
+		}
+	}
+	if toolCall == nil {
+		t.Fatalf("no se encontro un evento ToolCall; eventos recibidos: %#v", got)
+	}
+	if toolCall.CallID != "call_1" {
+		t.Fatalf("ToolCall.CallID: got %q, want %q", toolCall.CallID, "call_1")
+	}
+	if toolCall.ToolName != "read" {
+		t.Fatalf("ToolCall.ToolName: got %q, want %q", toolCall.ToolName, "read")
+	}
+	if string(toolCall.Input) != `{"path":"foo.go"}` {
+		t.Fatalf("ToolCall.Input: got %q, want %q", string(toolCall.Input), `{"path":"foo.go"}`)
+	}
+}
+
+// TestOpenAIProvider_StreamEmitsToolInputDeltas exige que el provider streamee el
+// input incremental de una tool call ademas del ToolCall final: al primer fragmento
+// de un index emite ToolInputStarted con el CallID; por cada fragmento crudo de
+// function.arguments emite un ToolInputDelta con el CallID y ese fragmento literal en
+// Input; al cerrar el turno emite ToolInputEnded con el CallID; y conserva el ToolCall
+// final con el Input JSON completo. La subsecuencia filtrada de los eventos de la tool
+// debe ser ToolInputStarted -> ToolInputDelta(s) -> ToolInputEnded -> ToolCall, con los
+// Delta trayendo los fragmentos crudos tal como llegaron en el stream. Esto tumba la
+// impl actual, que solo emite el ToolCall completo al final sin ToolInput*. Las lineas
+// SSE usan raw string literals para dejar literales las comillas escapadas del JSON.
+func TestOpenAIProvider_StreamEmitsToolInputDeltas(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, `data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read","arguments":""}}]},"finish_reason":null}]}`+"\n\n")
+		io.WriteString(w, `data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\":"}}]},"finish_reason":null}]}`+"\n\n")
+		io.WriteString(w, `data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"foo.go\"}"}}]},"finish_reason":null}]}`+"\n\n")
+		io.WriteString(w, `data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`+"\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	p := NewOpenAIProvider("test-key", server.URL, "test-model")
+
+	out, err := p.Stream(context.Background(), Request{})
+	if err != nil {
+		t.Fatalf("Stream devolvio error: %v", err)
+	}
+
+	got := drain(out)
+
+	// Filtra solo los eventos relacionados a la tool, conservando su orden.
+	var toolEvents []Event
+	for _, ev := range got {
+		switch ev.Kind {
+		case ToolInputStarted, ToolInputDelta, ToolInputEnded, ToolCall:
+			toolEvents = append(toolEvents, ev)
+		}
+	}
+
+	wantKinds := []EventKind{ToolInputStarted, ToolInputDelta, ToolInputDelta, ToolInputEnded, ToolCall}
+	if len(toolEvents) != len(wantKinds) {
+		t.Fatalf("cantidad de eventos de tool: got %d, want %d; eventos: %#v", len(toolEvents), len(wantKinds), got)
+	}
+	for i, want := range wantKinds {
+		if toolEvents[i].Kind != want {
+			t.Fatalf("evento de tool[%d].Kind: got %v, want %v; subsecuencia: %#v", i, toolEvents[i].Kind, want, toolEvents)
+		}
+	}
+
+	if toolEvents[0].CallID != "call_1" {
+		t.Fatalf("ToolInputStarted.CallID: got %q, want %q", toolEvents[0].CallID, "call_1")
+	}
+
+	d1 := toolEvents[1]
+	if d1.CallID != "call_1" {
+		t.Fatalf("primer ToolInputDelta.CallID: got %q, want %q", d1.CallID, "call_1")
+	}
+	if string(d1.Input) != `{"path":` {
+		t.Fatalf("primer ToolInputDelta.Input: got %q, want %q", string(d1.Input), `{"path":`)
+	}
+
+	d2 := toolEvents[2]
+	if d2.CallID != "call_1" {
+		t.Fatalf("segundo ToolInputDelta.CallID: got %q, want %q", d2.CallID, "call_1")
+	}
+	if string(d2.Input) != `"foo.go"}` {
+		t.Fatalf("segundo ToolInputDelta.Input: got %q, want %q", string(d2.Input), `"foo.go"}`)
+	}
+
+	if toolEvents[3].CallID != "call_1" {
+		t.Fatalf("ToolInputEnded.CallID: got %q, want %q", toolEvents[3].CallID, "call_1")
+	}
+
+	tc := toolEvents[4]
+	if tc.CallID != "call_1" {
+		t.Fatalf("ToolCall.CallID: got %q, want %q", tc.CallID, "call_1")
+	}
+	if tc.ToolName != "read" {
+		t.Fatalf("ToolCall.ToolName: got %q, want %q", tc.ToolName, "read")
+	}
+	if string(tc.Input) != `{"path":"foo.go"}` {
+		t.Fatalf("ToolCall.Input: got %q, want %q", string(tc.Input), `{"path":"foo.go"}`)
+	}
+}
+
+// TestOpenAIProvider_StreamBracketsToolCallTurn exige el bracketing COMPLETO de un
+// turno de SOLO tool call (sin texto): StepStarted abre el turno; el input incremental
+// se streamea con ToolInputStarted -> ToolInputDelta(s) -> ToolInputEnded; el ToolCall
+// se emite tras cerrar el stream y antes de StepEnded; y StepEnded carga el Usage del
+// chunk final. Aqui los args llegan completos en un solo delta, asi que hay un solo
+// ToolInputDelta. La secuencia exacta de Kinds tumba una impl que abra TextStarted/Ended
+// sin contenido, que emita el ToolCall en el lugar equivocado, que no streamee el input
+// o que se trague el Usage. Las lineas SSE usan raw string literals para dejar literales
+// las comillas escapadas del JSON de arguments.
+func TestOpenAIProvider_StreamBracketsToolCallTurn(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, `data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read","arguments":"{\"path\":\"foo.go\"}"}}]},"finish_reason":null}]}`+"\n\n")
+		io.WriteString(w, `data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`+"\n\n")
+		io.WriteString(w, `data: {"id":"1","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`+"\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	p := NewOpenAIProvider("test-key", server.URL, "test-model")
+
+	out, err := p.Stream(context.Background(), Request{})
+	if err != nil {
+		t.Fatalf("Stream devolvio error: %v", err)
+	}
+
+	got := drain(out)
+
+	wantKinds := []EventKind{StepStarted, ToolInputStarted, ToolInputDelta, ToolInputEnded, ToolCall, StepEnded}
+	if len(got) != len(wantKinds) {
+		t.Fatalf("cantidad de eventos: got %d, want %d; eventos: %#v", len(got), len(wantKinds), got)
+	}
+	for i, want := range wantKinds {
+		if got[i].Kind != want {
+			t.Fatalf("evento[%d].Kind: got %v, want %v; secuencia: %#v", i, got[i].Kind, want, got)
+		}
+	}
+
+	tc := got[4]
+	if tc.CallID != "call_1" {
+		t.Fatalf("ToolCall.CallID: got %q, want %q", tc.CallID, "call_1")
+	}
+	if tc.ToolName != "read" {
+		t.Fatalf("ToolCall.ToolName: got %q, want %q", tc.ToolName, "read")
+	}
+	if string(tc.Input) != `{"path":"foo.go"}` {
+		t.Fatalf("ToolCall.Input: got %q, want %q", string(tc.Input), `{"path":"foo.go"}`)
+	}
+
+	stepEnded := got[len(got)-1]
+	if stepEnded.Usage == nil {
+		t.Fatalf("StepEnded.Usage es nil; se esperaba el usage del chunk final")
+	}
+	if stepEnded.Usage.InputTokens != 10 {
+		t.Fatalf("StepEnded.Usage.InputTokens: got %d, want %d", stepEnded.Usage.InputTokens, 10)
+	}
+	if stepEnded.Usage.OutputTokens != 5 {
+		t.Fatalf("StepEnded.Usage.OutputTokens: got %d, want %d", stepEnded.Usage.OutputTokens, 5)
+	}
+}
+
+// TestOpenAIProvider_StreamEmitsMultipleToolCalls exige que dos tool calls paralelas
+// del mismo turno (index 0 e index 1, cada una en su propio chunk) se emitan como
+// EXACTAMENTE dos eventos ToolCall, en el orden en que aparecieron sus index. Esto
+// tumba una impl que solo maneje un index, que pierda una de las llamadas o que no
+// respete el orden de aparicion. Las lineas SSE usan raw string literals para dejar
+// literales las comillas escapadas del JSON de arguments.
+func TestOpenAIProvider_StreamEmitsMultipleToolCalls(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, `data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"read","arguments":"{\"path\":\"a.go\"}"}}]},"finish_reason":null}]}`+"\n\n")
+		io.WriteString(w, `data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_b","type":"function","function":{"name":"echo","arguments":"{\"text\":\"hi\"}"}}]},"finish_reason":null}]}`+"\n\n")
+		io.WriteString(w, `data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`+"\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	p := NewOpenAIProvider("test-key", server.URL, "test-model")
+
+	out, err := p.Stream(context.Background(), Request{})
+	if err != nil {
+		t.Fatalf("Stream devolvio error: %v", err)
+	}
+
+	got := drain(out)
+
+	var calls []Event
+	for _, ev := range got {
+		if ev.Kind == ToolCall {
+			calls = append(calls, ev)
+		}
+	}
+	if len(calls) != 2 {
+		t.Fatalf("cantidad de ToolCall: got %d, want 2; eventos: %#v", len(calls), got)
+	}
+
+	if calls[0].CallID != "call_a" {
+		t.Fatalf("primer ToolCall.CallID: got %q, want %q", calls[0].CallID, "call_a")
+	}
+	if calls[0].ToolName != "read" {
+		t.Fatalf("primer ToolCall.ToolName: got %q, want %q", calls[0].ToolName, "read")
+	}
+	if string(calls[0].Input) != `{"path":"a.go"}` {
+		t.Fatalf("primer ToolCall.Input: got %q, want %q", string(calls[0].Input), `{"path":"a.go"}`)
+	}
+
+	if calls[1].CallID != "call_b" {
+		t.Fatalf("segundo ToolCall.CallID: got %q, want %q", calls[1].CallID, "call_b")
+	}
+	if calls[1].ToolName != "echo" {
+		t.Fatalf("segundo ToolCall.ToolName: got %q, want %q", calls[1].ToolName, "echo")
+	}
+	if string(calls[1].Input) != `{"text":"hi"}` {
+		t.Fatalf("segundo ToolCall.Input: got %q, want %q", string(calls[1].Input), `{"text":"hi"}`)
+	}
+}
+
+// TestOpenAIProvider_StreamToolCallAfterText exige que un turno donde el modelo narra
+// y LUEGO llama a una tool cierre el texto antes de streamear el input de la tool: la
+// secuencia exacta de Kinds [StepStarted, TextStarted, TextDelta, TextEnded,
+// ToolInputStarted, ToolInputDelta, ToolInputEnded, ToolCall, StepEnded] prueba que el
+// bloque de texto se CIERRA con TextEnded cuando llegan los tool_calls, y que el input
+// incremental y el ToolCall van DESPUES de TextEnded y ANTES de StepEnded. Esto tumba
+// una impl que emita el ToolCall dentro del bloque de texto, que no cierre el texto, que
+// no streamee el input o que invierta el orden ToolCall/StepEnded. Las lineas SSE usan
+// raw string literals para dejar literales las comillas escapadas del JSON de arguments.
+func TestOpenAIProvider_StreamToolCallAfterText(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, `data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"Voy a leer"},"finish_reason":null}]}`+"\n\n")
+		io.WriteString(w, `data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read","arguments":"{\"path\":\"x\"}"}}]},"finish_reason":null}]}`+"\n\n")
+		io.WriteString(w, `data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`+"\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	p := NewOpenAIProvider("test-key", server.URL, "test-model")
+
+	out, err := p.Stream(context.Background(), Request{})
+	if err != nil {
+		t.Fatalf("Stream devolvio error: %v", err)
+	}
+
+	got := drain(out)
+
+	wantKinds := []EventKind{StepStarted, TextStarted, TextDelta, TextEnded, ToolInputStarted, ToolInputDelta, ToolInputEnded, ToolCall, StepEnded}
+	if len(got) != len(wantKinds) {
+		t.Fatalf("cantidad de eventos: got %d, want %d; eventos: %#v", len(got), len(wantKinds), got)
+	}
+	for i, want := range wantKinds {
+		if got[i].Kind != want {
+			t.Fatalf("evento[%d].Kind: got %v, want %v; secuencia: %#v", i, got[i].Kind, want, got)
+		}
+	}
+
+	if got[2].Text != "Voy a leer" {
+		t.Fatalf("TextDelta.Text: got %q, want %q", got[2].Text, "Voy a leer")
+	}
+
+	tc := got[7]
+	if tc.CallID != "call_1" {
+		t.Fatalf("ToolCall.CallID: got %q, want %q", tc.CallID, "call_1")
+	}
+	if tc.ToolName != "read" {
+		t.Fatalf("ToolCall.ToolName: got %q, want %q", tc.ToolName, "read")
+	}
+	if string(tc.Input) != `{"path":"x"}` {
+		t.Fatalf("ToolCall.Input: got %q, want %q", string(tc.Input), `{"path":"x"}`)
+	}
+}
+
 // TestOpenAIProvider_StreamSendsMappedRequest exige que Stream construya el
 // request real OpenAI a partir del Request: resuelve el modelo por defecto cuando
 // req.Model esta vacio, mapea los Messages por Role/Text y materializa los Tools
@@ -350,5 +660,173 @@ func TestOpenAIProvider_StreamSendsMappedRequest(t *testing.T) {
 	}
 	if fn["name"] != "echo" {
 		t.Fatalf("tools[0].function.name: got %v, want %q", fn["name"], "echo")
+	}
+}
+
+// TestOpenAIProvider_StreamInterleavesToolInputByCall exige que dos tool calls
+// paralelas cuyos fragmentos de function.arguments llegan INTERCALADOS por index
+// se atribuyan correctamente por CallID, sin mezclar el input de una con la otra.
+// El stream abre ambos index (call_a en 0, call_b en 1) y luego va alternando
+// fragmentos: 0,1,0,1. Esto tumba una impl que acumule en un solo buffer global,
+// que pierda la asociacion index->CallID, o que concatene los fragmentos en el
+// orden de llegada en vez de por tool call. Se afirma: exactamente un
+// ToolInputStarted por CallID; que concatenar los ToolInputDelta.Input de cada
+// CallID reconstruye su JSON propio; y que el volcado final, en orden de index, es
+// ToolInputEnded(call_a), ToolCall(call_a), ToolInputEnded(call_b), ToolCall(call_b).
+// Las lineas SSE usan raw string literals para dejar literales las comillas
+// escapadas del JSON de arguments.
+func TestOpenAIProvider_StreamInterleavesToolInputByCall(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, `data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"read","arguments":""}}]},"finish_reason":null}]}`+"\n\n")
+		io.WriteString(w, `data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_b","type":"function","function":{"name":"echo","arguments":""}}]},"finish_reason":null}]}`+"\n\n")
+		io.WriteString(w, `data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\":"}}]},"finish_reason":null}]}`+"\n\n")
+		io.WriteString(w, `data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"{\"text\":"}}]},"finish_reason":null}]}`+"\n\n")
+		io.WriteString(w, `data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"a.go\"}"}}]},"finish_reason":null}]}`+"\n\n")
+		io.WriteString(w, `data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"\"hi\"}"}}]},"finish_reason":null}]}`+"\n\n")
+		io.WriteString(w, `data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`+"\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	p := NewOpenAIProvider("test-key", server.URL, "test-model")
+
+	out, err := p.Stream(context.Background(), Request{})
+	if err != nil {
+		t.Fatalf("Stream devolvio error: %v", err)
+	}
+
+	got := drain(out)
+
+	// Exactamente un ToolInputStarted por CallID, sin duplicados ni mezclas.
+	startedByCall := map[string]int{}
+	for _, ev := range got {
+		if ev.Kind == ToolInputStarted {
+			startedByCall[ev.CallID]++
+		}
+	}
+	if startedByCall["call_a"] != 1 {
+		t.Fatalf("ToolInputStarted de call_a: got %d, want 1; eventos: %#v", startedByCall["call_a"], got)
+	}
+	if startedByCall["call_b"] != 1 {
+		t.Fatalf("ToolInputStarted de call_b: got %d, want 1; eventos: %#v", startedByCall["call_b"], got)
+	}
+	if len(startedByCall) != 2 {
+		t.Fatalf("CallIDs con ToolInputStarted: got %v, want solo call_a y call_b", startedByCall)
+	}
+
+	// Concatenar los ToolInputDelta de cada CallID reconstruye su JSON propio:
+	// la atribucion por CallID no debe entremezclar los fragmentos.
+	inputByCall := map[string]string{}
+	for _, ev := range got {
+		if ev.Kind == ToolInputDelta {
+			inputByCall[ev.CallID] += string(ev.Input)
+		}
+	}
+	if inputByCall["call_a"] != `{"path":"a.go"}` {
+		t.Fatalf("input concatenado de call_a: got %q, want %q", inputByCall["call_a"], `{"path":"a.go"}`)
+	}
+	if inputByCall["call_b"] != `{"text":"hi"}` {
+		t.Fatalf("input concatenado de call_b: got %q, want %q", inputByCall["call_b"], `{"text":"hi"}`)
+	}
+
+	// El volcado final, en orden de index, es Ended(call_a), ToolCall(call_a),
+	// Ended(call_b), ToolCall(call_b). Se filtra solo Ended/ToolCall y se verifica
+	// el orden relativo con CallID y ToolName/Input.
+	type tail struct {
+		kind   EventKind
+		callID string
+	}
+	var got_tail []tail
+	for _, ev := range got {
+		if ev.Kind == ToolInputEnded || ev.Kind == ToolCall {
+			got_tail = append(got_tail, tail{ev.Kind, ev.CallID})
+		}
+	}
+	wantTail := []tail{
+		{ToolInputEnded, "call_a"},
+		{ToolCall, "call_a"},
+		{ToolInputEnded, "call_b"},
+		{ToolCall, "call_b"},
+	}
+	if !reflect.DeepEqual(got_tail, wantTail) {
+		t.Fatalf("orden del volcado final: got %#v, want %#v; eventos: %#v", got_tail, wantTail, got)
+	}
+
+	// Las ToolCall finales llevan ToolName e Input completos y correctos.
+	var calls []Event
+	for _, ev := range got {
+		if ev.Kind == ToolCall {
+			calls = append(calls, ev)
+		}
+	}
+	if calls[0].ToolName != "read" || string(calls[0].Input) != `{"path":"a.go"}` {
+		t.Fatalf("ToolCall call_a: got name=%q input=%q, want read/%q", calls[0].ToolName, string(calls[0].Input), `{"path":"a.go"}`)
+	}
+	if calls[1].ToolName != "echo" || string(calls[1].Input) != `{"text":"hi"}` {
+		t.Fatalf("ToolCall call_b: got name=%q input=%q, want echo/%q", calls[1].ToolName, string(calls[1].Input), `{"text":"hi"}`)
+	}
+}
+
+// TestOpenAIProvider_StreamToolCallWithoutArgsEmitsNoDelta exige que una tool call
+// cuyos arguments vienen vacios (el modelo no manda ningun fragmento de args, p.ej.
+// una tool sin parametros) NO emita ningun ToolInputDelta: no se emiten deltas
+// vacios. La subsecuencia de eventos de tool debe ser EXACTAMENTE ToolInputStarted,
+// ToolInputEnded, ToolCall, con el ToolCall final llevando Input vacio. Esto tumba
+// una impl que emita un ToolInputDelta por cada fragmento incluido el vacio, o que
+// no maneje el caso de args ausentes. Las lineas SSE usan raw string literals.
+func TestOpenAIProvider_StreamToolCallWithoutArgsEmitsNoDelta(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, `data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read","arguments":""}}]},"finish_reason":null}]}`+"\n\n")
+		io.WriteString(w, `data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`+"\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	p := NewOpenAIProvider("test-key", server.URL, "test-model")
+
+	out, err := p.Stream(context.Background(), Request{})
+	if err != nil {
+		t.Fatalf("Stream devolvio error: %v", err)
+	}
+
+	got := drain(out)
+
+	// Filtra solo los eventos relacionados a la tool, conservando su orden.
+	var toolEvents []Event
+	for _, ev := range got {
+		switch ev.Kind {
+		case ToolInputStarted, ToolInputDelta, ToolInputEnded, ToolCall:
+			toolEvents = append(toolEvents, ev)
+		}
+	}
+
+	wantKinds := []EventKind{ToolInputStarted, ToolInputEnded, ToolCall}
+	if len(toolEvents) != len(wantKinds) {
+		t.Fatalf("cantidad de eventos de tool: got %d, want %d (no debe emitirse ToolInputDelta vacio); eventos: %#v", len(toolEvents), len(wantKinds), got)
+	}
+	for i, want := range wantKinds {
+		if toolEvents[i].Kind != want {
+			t.Fatalf("evento de tool[%d].Kind: got %v, want %v; subsecuencia: %#v", i, toolEvents[i].Kind, want, toolEvents)
+		}
+	}
+
+	if toolEvents[0].CallID != "call_1" {
+		t.Fatalf("ToolInputStarted.CallID: got %q, want %q", toolEvents[0].CallID, "call_1")
+	}
+	if toolEvents[1].CallID != "call_1" {
+		t.Fatalf("ToolInputEnded.CallID: got %q, want %q", toolEvents[1].CallID, "call_1")
+	}
+
+	toolCall := toolEvents[2]
+	if toolCall.CallID != "call_1" {
+		t.Fatalf("ToolCall.CallID: got %q, want %q", toolCall.CallID, "call_1")
+	}
+	if toolCall.ToolName != "read" {
+		t.Fatalf("ToolCall.ToolName: got %q, want %q", toolCall.ToolName, "read")
+	}
+	if string(toolCall.Input) != "" {
+		t.Fatalf("ToolCall.Input: got %q, want vacio", string(toolCall.Input))
 	}
 }

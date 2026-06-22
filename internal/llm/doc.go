@@ -11,7 +11,9 @@
 // ejecuto el mismo. M10 suma el primer adaptador real detras de esta interface:
 // OpenAIProvider, que habla con un endpoint OpenAI-compatible via streaming SSE
 // (se usa con OpenRouter para pruebas apuntando el base URL) y traduce el turno a
-// llm.Event (StepStarted, TextStarted/Delta/Ended, StepEnded con Usage, StepFailed
-// ante error del stream). El adaptador de Claude/Anthropic entra despues detras de
-// la misma interface.
+// llm.Event (StepStarted, ReasoningStarted/Delta/Ended, TextStarted/Delta/Ended,
+// ToolInputStarted/Delta/Ended por los fragmentos de arguments mas un ToolCall por
+// cada delta.tool_calls acumulado, StepEnded con Usage, StepFailed ante error del
+// stream). El adaptador de Claude/Anthropic entra despues detras de la misma
+// interface.
 package llm

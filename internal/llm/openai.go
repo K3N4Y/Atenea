@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/openai/openai-go/v2"
 	"github.com/openai/openai-go/v2/option"
@@ -13,14 +14,28 @@ import (
 // envuelve el razonamiento incremental (delta.reasoning) entre
 // ReasoningStarted/ReasoningEnded y el texto incremental (delta.content) entre
 // TextStarted/TextEnded, emitiendo un Delta por fragmento, y cierra con StepEnded
-// cargando el Usage. El razonamiento se cierra antes de abrir el texto.
-// Un fallo del stream se reporta como StepFailed (sin StepEnded).
+// cargando el Usage. El razonamiento se cierra antes de abrir el texto. Las
+// delta.tool_calls se acumulan por index y tambien se streamean en vivo: al primer
+// delta de un index emite ToolInputStarted{CallID} y por cada fragmento de
+// arguments un ToolInputDelta{CallID, Input}, cerrando el bloque de texto/razonamiento
+// abierto cuando empiezan los tool_calls. Al cerrar el turno, tras texto/razonamiento
+// y antes de StepEnded, vuelca en orden de aparicion un ToolInputEnded{CallID} seguido
+// de un Event{Kind: ToolCall} por tool call (con CallID, ToolName e Input). Un fallo
+// del stream se reporta como StepFailed (sin StepEnded).
 type OpenAIProvider struct {
 	client openai.Client
 	model  string
 }
 
 var _ Provider = (*OpenAIProvider)(nil)
+
+// toolAccum acumula los fragmentos de una tool call del stream: el id y el nombre
+// llegan una vez y los argumentos se concatenan fragmento a fragmento.
+type toolAccum struct {
+	id, name string
+	args     strings.Builder
+	started  bool
+}
 
 // NewOpenAIProvider construye el provider apuntando al base URL dado, lo que
 // permite inyectar un httptest.Server en los tests y OpenRouter en produccion.
@@ -73,6 +88,9 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request) (<-chan Event,
 		textOpen := false
 		reasoningOpen := false
 
+		order := []int64{}
+		accs := map[int64]*toolAccum{}
+
 		for stream.Next() {
 			chunk := stream.Current()
 
@@ -86,8 +104,51 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request) (<-chan Event,
 			}
 
 			if len(chunk.Choices) > 0 {
-				// TODO(tool-calls): mapear chunk.Choices[0].Delta.ToolCalls ->
-				// Event{Kind: ToolCall, ...} en el ciclo siguiente.
+				// Cuando el modelo pasa a llamar tools, cierra primero el bloque de
+				// texto o razonamiento que estuviera abierto.
+				if len(chunk.Choices[0].Delta.ToolCalls) > 0 {
+					if reasoningOpen {
+						if !emit(ctx, out, Event{Kind: ReasoningEnded}) {
+							return
+						}
+						reasoningOpen = false
+					}
+					if textOpen {
+						if !emit(ctx, out, Event{Kind: TextEnded}) {
+							return
+						}
+						textOpen = false
+					}
+				}
+				for _, tc := range chunk.Choices[0].Delta.ToolCalls {
+					a := accs[tc.Index]
+					if a == nil {
+						a = &toolAccum{}
+						accs[tc.Index] = a
+						order = append(order, tc.Index)
+					}
+					if !a.started && tc.ID != "" {
+						a.id = tc.ID
+						if !emit(ctx, out, Event{Kind: ToolInputStarted, CallID: a.id}) {
+							return
+						}
+						a.started = true
+					}
+					if tc.ID != "" {
+						a.id = tc.ID
+					}
+					if tc.Function.Name != "" {
+						a.name = tc.Function.Name
+					}
+					if frag := tc.Function.Arguments; frag != "" {
+						a.args.WriteString(frag)
+						if a.started {
+							if !emit(ctx, out, Event{Kind: ToolInputDelta, CallID: a.id, Input: json.RawMessage(frag)}) {
+								return
+							}
+						}
+					}
+				}
 				if r := reasoningText(chunk.Choices[0].Delta); r != "" {
 					if !reasoningOpen {
 						if !emit(ctx, out, Event{Kind: ReasoningStarted}) {
@@ -149,6 +210,16 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request) (<-chan Event,
 		if err := stream.Err(); err != nil {
 			emit(ctx, out, Event{Kind: StepFailed, Text: err.Error()})
 			return
+		}
+
+		for _, idx := range order {
+			a := accs[idx]
+			if !emit(ctx, out, Event{Kind: ToolInputEnded, CallID: a.id}) {
+				return
+			}
+			if !emit(ctx, out, Event{Kind: ToolCall, CallID: a.id, ToolName: a.name, Input: json.RawMessage(a.args.String())}) {
+				return
+			}
 		}
 
 		emit(ctx, out, Event{Kind: StepEnded, Usage: usage})
