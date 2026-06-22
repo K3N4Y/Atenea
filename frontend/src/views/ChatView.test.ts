@@ -28,8 +28,9 @@ describe('ChatView', () => {
     vi.clearAllMocks()
     mountView()
 
-    expect(EventsOn).toHaveBeenCalledWith('session:main', expect.any(Function))
-    expect(EventsOn).toHaveBeenCalledWith('session:main:error', expect.any(Function))
+    const sessionChannel = vi.mocked(EventsOn).mock.calls[0][0]
+    expect(sessionChannel).toMatch(/^session:chat-/)
+    expect(EventsOn).toHaveBeenCalledWith(`${sessionChannel}:error`, expect.any(Function))
   })
 
   it('limpia los listeners al desmontar', () => {

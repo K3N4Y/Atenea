@@ -219,11 +219,12 @@ describe('chat store: estado de ejecucion', () => {
 describe('chat store: acciones sobre los bindings', () => {
   it('send enciende running y llama SendPrompt con (sessionID, texto)', async () => {
     const store = useChatStore()
+    const sessionID = store.sessionID
 
     await store.send('  hola  ')
 
     expect(store.running).toBe(true)
-    expect(App.SendPrompt).toHaveBeenCalledWith('main', 'hola')
+    expect(App.SendPrompt).toHaveBeenCalledWith(sessionID, 'hola')
   })
 
   it('send ignora texto vacio o en blanco', async () => {
@@ -237,19 +238,21 @@ describe('chat store: acciones sobre los bindings', () => {
 
   it('stop llama Stop con el sessionID', () => {
     const store = useChatStore()
+    const sessionID = store.sessionID
 
     store.stop()
 
-    expect(App.Stop).toHaveBeenCalledWith('main')
+    expect(App.Stop).toHaveBeenCalledWith(sessionID)
   })
 
   it('subscribe registra los canales session:<id> y session:<id>:error', () => {
     const store = useChatStore()
+    const sessionID = store.sessionID
 
     store.subscribe()
 
-    expect(EventsOn).toHaveBeenCalledWith('session:main', expect.any(Function))
-    expect(EventsOn).toHaveBeenCalledWith('session:main:error', expect.any(Function))
+    expect(EventsOn).toHaveBeenCalledWith(`session:${sessionID}`, expect.any(Function))
+    expect(EventsOn).toHaveBeenCalledWith(`session:${sessionID}:error`, expect.any(Function))
   })
 
   it('reset limpia el log, las herramientas y el error para un lienzo nuevo', () => {
@@ -257,12 +260,41 @@ describe('chat store: acciones sobre los bindings', () => {
     store.applyEvent({ Message: { Role: 'user', Text: 'hola' } })
     store.applyEvent({ Kind: 'Tool.Called', CallID: 'c1', ToolName: 'echo' })
     store.applyError('algo fallo')
+    store.running = true
 
     store.reset()
     // Tras el reset, un resultado de la tool previa no debe reaparecer.
     store.applyEvent({ Kind: 'Tool.Success', CallID: 'c1', Text: 'hi' })
 
     expect(store.items).toHaveLength(0)
+    expect(store.running).toBe(false)
     expect(store.errorText).toBeNull()
+  })
+
+  it('reset abre una sesion nueva para que el siguiente prompt no reutilice contexto', async () => {
+    const store = useChatStore()
+
+    await store.send('primero')
+    const firstSessionID = vi.mocked(App.SendPrompt).mock.calls[0][0]
+
+    store.reset()
+    await store.send('segundo')
+
+    const secondSessionID = vi.mocked(App.SendPrompt).mock.calls[1][0]
+    expect(secondSessionID).not.toBe(firstSessionID)
+    expect(App.SendPrompt).toHaveBeenLastCalledWith(secondSessionID, 'segundo')
+  })
+
+  it('reset mueve los listeners al canal de la nueva sesion', () => {
+    const store = useChatStore()
+
+    store.subscribe()
+    const firstSessionID = store.sessionID
+    store.reset()
+    const secondSessionID = store.sessionID
+
+    expect(secondSessionID).not.toBe(firstSessionID)
+    expect(EventsOn).toHaveBeenNthCalledWith(3, `session:${secondSessionID}`, expect.any(Function))
+    expect(EventsOn).toHaveBeenNthCalledWith(4, `session:${secondSessionID}:error`, expect.any(Function))
   })
 })

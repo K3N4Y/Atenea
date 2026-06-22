@@ -6,8 +6,13 @@ import { EventsOn } from '../../wailsjs/runtime/runtime'
 // Mapeo evento->estado de la sesion (front.md §74). El store formaliza la
 // traduccion de los eventos durables del canal `session:<id>` a items del log
 // y estado de UI, manteniendo la frontera Wails (bindings + runtime) en un solo
-// lugar. Hoy hay una unica sesion ('main'); el multi-sesion llega despues.
-const SESSION_ID = 'main'
+// lugar.
+function newSessionID(): string {
+  const id =
+    globalThis.crypto?.randomUUID?.() ??
+    `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  return `chat-${id}`
+}
 
 export type ToolStatus = 'running' | 'success' | 'failed'
 
@@ -60,6 +65,7 @@ export interface SessionEvent {
 }
 
 export const useChatStore = defineStore('chat', () => {
+  const sessionID = ref(newSessionID())
   const items = ref<TurnItem[]>([])
   const running = ref(false)
   const errorText = ref<string | null>(null)
@@ -187,11 +193,16 @@ export const useChatStore = defineStore('chat', () => {
   // Lienzo nuevo: limpia la vista local. La fuente de verdad sigue siendo el
   // backend; la rehidratacion del historial llega en la Fase 4.
   function reset(): void {
+    const wasSubscribed = unsubscribe.length > 0
+    teardown()
+    sessionID.value = newSessionID()
     items.value = []
     streamingText = null
     streamingReasoning = null
     toolsByCall = new Map()
+    running.value = false
     errorText.value = null
+    if (wasSubscribed) subscribe()
   }
 
   async function send(text: string): Promise<void> {
@@ -199,17 +210,18 @@ export const useChatStore = defineStore('chat', () => {
     if (!trimmed) return
     errorText.value = null
     running.value = true
-    await SendPrompt(SESSION_ID, trimmed)
+    await SendPrompt(sessionID.value, trimmed)
   }
 
   function stop(): void {
-    Stop(SESSION_ID)
+    Stop(sessionID.value)
   }
 
   function subscribe(): void {
+    teardown()
     unsubscribe.push(
-      EventsOn(`session:${SESSION_ID}`, (ev: SessionEvent) => applyEvent(ev)),
-      EventsOn(`session:${SESSION_ID}:error`, (msg: string) => applyError(msg)),
+      EventsOn(`session:${sessionID.value}`, (ev: SessionEvent) => applyEvent(ev)),
+      EventsOn(`session:${sessionID.value}:error`, (msg: string) => applyError(msg)),
     )
   }
 
@@ -218,6 +230,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   return {
+    sessionID,
     items,
     running,
     errorText,
