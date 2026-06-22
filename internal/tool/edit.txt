@@ -1,16 +1,25 @@
-Aplica un patch hashline a un archivo EXISTENTE del workspace.
+Aplica un patch hashline a un archivo EXISTENTE del workspace. Para CREAR un archivo nuevo usa write; edit no crea archivos.
 
-Uso:
-- El patch empieza con el header [path#HASH] que te dio el ultimo read o write de ese archivo. NUNCA inventes el HASH: ancla la frescura del archivo. Si el archivo cambio desde que lo leiste, el edit falla y debes re-leer y copiar el header nuevo.
-- Tras el header van uno o mas hunks que describen los cambios. El contenido nuevo va en lineas que empiezan con "+". Los numeros de linea son los del header que estas anclando (1-indexed, inclusive):
-    - SWAP a.=b:    reemplaza las lineas a..b por el contenido que sigue (SWAP n: reemplaza solo la linea n).
-    - DEL n         borra la linea n (DEL a.=b borra el rango a..b).
-    - INS.PRE n:    inserta el contenido ANTES de la linea n.
-    - INS.POST n:   inserta el contenido DESPUES de la linea n.
-    - INS.HEAD:     inserta el contenido al principio del archivo.
-    - INS.TAIL:     inserta el contenido al final del archivo.
-- Para CREAR un archivo nuevo usa write; el edit no crea archivos.
-- Tras aplicar los cambios devuelve el nuevo header [path#HASH], para encadenar otro edit sin re-leer.
+Estructura del patch:
+- Primera linea: el header [path#HASH] que te dio el ultimo read, write o grep de ese archivo. NUNCA inventes el HASH: ancla la frescura. Si el archivo cambio desde que lo leiste, el edit falla; re-lee y copia el header nuevo.
+- Debajo, uno o mas hunks. Cada hunk es una linea de operacion y, si la operacion agrega contenido, las lineas de payload que siguen (cada una con el prefijo "+").
+- Los numeros de linea son los del header que estas anclando (1-indexed, inclusive).
+
+Operaciones (escribe la linea de operacion EXACTAMENTE con esta forma):
+- SWAP a.=b:   reemplaza las lineas a..b por el payload. Una sola linea: "SWAP n:".
+- DEL a.=b     borra las lineas a..b. Una sola linea: "DEL n". DEL no lleva ":" ni payload.
+- INS.PRE n:   inserta el payload ANTES de la linea n.
+- INS.POST n:  inserta el payload DESPUES de la linea n.
+- INS.HEAD:    inserta el payload al principio del archivo.
+- INS.TAIL:    inserta el payload al final del archivo.
+
+Reglas que el patch DEBE cumplir (si no, falla con "operacion malformada"):
+- Un rango se escribe con ".=" entre los dos numeros: "12.=14". No "12=14" ni "12-14".
+- INS.PRE e INS.POST anclan en UNA sola linea (un numero), nunca en un rango.
+- SWAP, INS.PRE, INS.POST, INS.HEAD e INS.TAIL terminan SIEMPRE en ":". Solo DEL no lo lleva.
+- Cada linea de contenido nuevo empieza con "+"; una linea nueva en blanco es un "+" solo.
+
+Tras aplicar los cambios devuelve el nuevo header [path#HASH] para encadenar otro edit sin re-leer.
 
 Ejemplo (reemplaza las lineas 12 a 14 y agrega una linea al final):
     [internal/foo.go#a1b2]
