@@ -10,8 +10,10 @@ import (
 
 // OpenAIProvider habla con un endpoint OpenAI-compatible (OpenAI/OpenRouter) via
 // streaming SSE. Traduce el turno del proveedor a llm.Event: abre con StepStarted,
-// envuelve el texto incremental (delta.content) entre TextStarted/TextEnded
-// emitiendo un TextDelta por fragmento, y cierra con StepEnded cargando el Usage.
+// envuelve el razonamiento incremental (delta.reasoning) entre
+// ReasoningStarted/ReasoningEnded y el texto incremental (delta.content) entre
+// TextStarted/TextEnded, emitiendo un Delta por fragmento, y cierra con StepEnded
+// cargando el Usage. El razonamiento se cierra antes de abrir el texto.
 // Un fallo del stream se reporta como StepFailed (sin StepEnded).
 type OpenAIProvider struct {
 	client openai.Client
@@ -52,6 +54,11 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request) (<-chan Event,
 	if tools := toOpenAITools(req.Tools); tools != nil {
 		params.Tools = tools
 	}
+	// Pide razonamiento a OpenRouter: campo top-level `reasoning` (no tipado por el
+	// SDK) que habilita el delta.reasoning del modelo.
+	params.SetExtraFields(map[string]any{
+		"reasoning": map[string]any{"enabled": true},
+	})
 
 	stream := p.client.Chat.Completions.NewStreaming(ctx, params)
 
@@ -64,6 +71,7 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request) (<-chan Event,
 
 		var usage *Usage
 		textOpen := false
+		reasoningOpen := false
 
 		for stream.Next() {
 			chunk := stream.Current()
@@ -80,7 +88,26 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request) (<-chan Event,
 			if len(chunk.Choices) > 0 {
 				// TODO(tool-calls): mapear chunk.Choices[0].Delta.ToolCalls ->
 				// Event{Kind: ToolCall, ...} en el ciclo siguiente.
+				if r := reasoningText(chunk.Choices[0].Delta); r != "" {
+					if !reasoningOpen {
+						if !emit(ctx, out, Event{Kind: ReasoningStarted}) {
+							return
+						}
+						reasoningOpen = true
+					}
+					if !emit(ctx, out, Event{Kind: ReasoningDelta, Text: r}) {
+						return
+					}
+				}
 				if c := chunk.Choices[0].Delta.Content; c != "" {
+					// El razonamiento se cierra ANTES de abrir el texto: el bloque de
+					// thinking termina cuando empieza el contenido visible.
+					if reasoningOpen {
+						if !emit(ctx, out, Event{Kind: ReasoningEnded}) {
+							return
+						}
+						reasoningOpen = false
+					}
 					if !textOpen {
 						if !emit(ctx, out, Event{Kind: TextStarted}) {
 							return
@@ -91,15 +118,28 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request) (<-chan Event,
 						return
 					}
 				}
-				if chunk.Choices[0].FinishReason != "" && textOpen {
-					if !emit(ctx, out, Event{Kind: TextEnded}) {
-						return
+				if chunk.Choices[0].FinishReason != "" {
+					if reasoningOpen {
+						if !emit(ctx, out, Event{Kind: ReasoningEnded}) {
+							return
+						}
+						reasoningOpen = false
 					}
-					textOpen = false
+					if textOpen {
+						if !emit(ctx, out, Event{Kind: TextEnded}) {
+							return
+						}
+						textOpen = false
+					}
 				}
 			}
 		}
 
+		if reasoningOpen {
+			if !emit(ctx, out, Event{Kind: ReasoningEnded}) {
+				return
+			}
+		}
 		if textOpen {
 			if !emit(ctx, out, Event{Kind: TextEnded}) {
 				return
@@ -126,6 +166,21 @@ func emit(ctx context.Context, out chan<- Event, ev Event) bool {
 	case out <- ev:
 		return true
 	}
+}
+
+// reasoningText extrae el fragmento de razonamiento del campo extendido de
+// OpenRouter delta.reasoning, que el SDK no tipa y deja en ExtraFields como JSON
+// crudo. Devuelve "" si el campo no vino, es null o no es un string.
+func reasoningText(delta openai.ChatCompletionChunkChoiceDelta) string {
+	f, ok := delta.JSON.ExtraFields["reasoning"]
+	if !ok || f.Raw() == "" {
+		return ""
+	}
+	var r string
+	if err := json.Unmarshal([]byte(f.Raw()), &r); err != nil {
+		return ""
+	}
+	return r
 }
 
 // toOpenAIMessages proyecta el historial al formato del SDK segun el Role. Un Role

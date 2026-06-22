@@ -48,6 +48,149 @@ func TestOpenAIProvider_StreamEmitsTextDelta(t *testing.T) {
 	}
 }
 
+// TestOpenAIProvider_StreamEmitsReasoningDelta cubre el comportamiento central del
+// razonamiento: cuando el SSE trae un chunk con el campo extendido de OpenRouter
+// delta.reasoning (un string), el provider debe traducirlo a un llm.Event de Kind
+// ReasoningDelta con Text igual a ese string. Hoy el provider solo lee
+// delta.content e ignora delta.reasoning, asi que el ThinkingBlock del frontend
+// nunca se ve. El servidor de prueba (httptest) devuelve un stream SSE con un chunk
+// que trae delta.reasoning == "Pensando en la respuesta", luego un chunk con
+// delta.content para realismo, y un chunk final con finish_reason "stop". Aqui solo
+// se asserta el ReasoningDelta; el bracketing Started/Ended y el orden relativo al
+// texto quedan para TRIANGULATE, igual que TextDelta solo cubre el delta central.
+func TestOpenAIProvider_StreamEmitsReasoningDelta(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning\":\"Pensando en la respuesta\"},\"finish_reason\":null}]}\n\n")
+		io.WriteString(w, "data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hola\"},\"finish_reason\":null}]}\n\n")
+		io.WriteString(w, "data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	p := NewOpenAIProvider("test-key", server.URL, "test-model")
+
+	out, err := p.Stream(context.Background(), Request{})
+	if err != nil {
+		t.Fatalf("Stream devolvio error: %v", err)
+	}
+
+	got := drain(out)
+
+	found := false
+	for _, ev := range got {
+		if ev.Kind == ReasoningDelta && ev.Text == "Pensando en la respuesta" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("no se encontro un evento ReasoningDelta con Text==%q; eventos recibidos: %#v", "Pensando en la respuesta", got)
+	}
+}
+
+// TestOpenAIProvider_StreamBracketsReasoningThenText exige el bracketing COMPLETO
+// del razonamiento, espejando el del texto y respetando el orden: el razonamiento
+// va ANTES del texto. StepStarted abre el turno; el primer delta.reasoning abre el
+// bloque con ReasoningStarted (una sola vez); cada delta.reasoning no vacio emite un
+// ReasoningDelta con su fragmento; cuando empieza el delta.content se CIERRA el
+// razonamiento con ReasoningEnded ANTES de abrir el texto con TextStarted; cada
+// delta.content emite un TextDelta; el finish_reason cierra el texto con TextEnded;
+// y StepEnded cierra el turno. La secuencia exacta de Kinds tumba la impl actual,
+// que emitia ReasoningDelta sueltos sin Started/Ended ni orden definido.
+func TestOpenAIProvider_StreamBracketsReasoningThenText(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning\":\"Pensando\"},\"finish_reason\":null}]}\n\n")
+		io.WriteString(w, "data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning\":\" mas\"},\"finish_reason\":null}]}\n\n")
+		io.WriteString(w, "data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hola\"},\"finish_reason\":null}]}\n\n")
+		io.WriteString(w, "data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" mundo\"},\"finish_reason\":null}]}\n\n")
+		io.WriteString(w, "data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		io.WriteString(w, "data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	p := NewOpenAIProvider("test-key", server.URL, "test-model")
+
+	out, err := p.Stream(context.Background(), Request{})
+	if err != nil {
+		t.Fatalf("Stream devolvio error: %v", err)
+	}
+
+	got := drain(out)
+
+	wantKinds := []EventKind{
+		StepStarted,
+		ReasoningStarted, ReasoningDelta, ReasoningDelta, ReasoningEnded,
+		TextStarted, TextDelta, TextDelta, TextEnded,
+		StepEnded,
+	}
+	if len(got) != len(wantKinds) {
+		t.Fatalf("cantidad de eventos: got %d, want %d; eventos: %#v", len(got), len(wantKinds), got)
+	}
+	for i, want := range wantKinds {
+		if got[i].Kind != want {
+			t.Fatalf("evento[%d].Kind: got %v, want %v; secuencia: %#v", i, got[i].Kind, want, got)
+		}
+	}
+
+	if got[2].Text != "Pensando" {
+		t.Fatalf("primer ReasoningDelta.Text: got %q, want %q", got[2].Text, "Pensando")
+	}
+	if got[3].Text != " mas" {
+		t.Fatalf("segundo ReasoningDelta.Text: got %q, want %q", got[3].Text, " mas")
+	}
+	if got[6].Text != "Hola" {
+		t.Fatalf("primer TextDelta.Text: got %q, want %q", got[6].Text, "Hola")
+	}
+	if got[7].Text != " mundo" {
+		t.Fatalf("segundo TextDelta.Text: got %q, want %q", got[7].Text, " mundo")
+	}
+}
+
+// TestOpenAIProvider_StreamRequestsReasoning exige que Stream pida el razonamiento a
+// OpenRouter: el body del POST debe llevar un campo top-level `reasoning` que sea un
+// objeto con `enabled == true`. Sin esto OpenRouter no emite delta.reasoning y el
+// ThinkingBlock nunca tiene contenido. El handler captura el body del POST y el test
+// navega el JSON crudo, igual que TestOpenAIProvider_StreamSendsMappedRequest. Esto
+// tumba la impl actual, que no manda reasoning en el request.
+func TestOpenAIProvider_StreamRequestsReasoning(t *testing.T) {
+	var body []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	p := NewOpenAIProvider("test-key", server.URL, "test-model")
+
+	out, err := p.Stream(context.Background(), Request{})
+	if err != nil {
+		t.Fatalf("Stream devolvio error: %v", err)
+	}
+	drain(out)
+
+	if body == nil {
+		t.Fatalf("el handler no capturo el body del POST")
+	}
+
+	var sent map[string]any
+	if err := json.Unmarshal(body, &sent); err != nil {
+		t.Fatalf("no se pudo parsear el body enviado: %v; body: %s", err, body)
+	}
+
+	reasoning, ok := sent["reasoning"].(map[string]any)
+	if !ok {
+		t.Fatalf("reasoning: got %#v, want un objeto", sent["reasoning"])
+	}
+	if reasoning["enabled"] != true {
+		t.Fatalf("reasoning.enabled: got %v, want true", reasoning["enabled"])
+	}
+}
+
 // TestOpenAIProvider_StreamBracketsTextTurn exige el bracketing COMPLETO de un
 // turno de texto: StepStarted abre el turno antes de cualquier delta; el primer
 // delta.content abre el bloque con TextStarted; cada delta no vacio emite un
