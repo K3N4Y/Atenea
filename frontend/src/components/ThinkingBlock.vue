@@ -3,22 +3,28 @@ import { ref, computed } from 'vue'
 import { PhBrain, PhCaretRight, PhCaretDown } from '@phosphor-icons/vue'
 import type { ReasoningItem } from '../stores/chat'
 import { formatThinkingDuration } from '../lib/duration'
+import { useSmoothText } from '../lib/useSmoothText'
 
-// Streaming de pensamiento (identidad §9): durante la generacion solo se ven
-// las ultimas 4 lineas; al terminar colapsa a una linea "Thought <tiempo>" que
-// el usuario puede expandir para ver el contenido completo.
+// Streaming de pensamiento (identidad §9): durante la generacion se revela suave
+// caracter a caracter (useSmoothText) y solo se ven las ultimas 4 lineas; al
+// terminar la escritura colapsa a una linea "Thought <tiempo>" que el usuario
+// puede expandir para ver el contenido completo.
 const props = defineProps<{ item: ReasoningItem }>()
 const expanded = ref(false)
+const { visible, done } = useSmoothText(
+  () => props.item.text,
+  () => props.item.streaming,
+)
 
 const preview = computed(() =>
-  props.item.text.split('\n').filter((l) => l.trim().length > 0).slice(-4).join('\n'),
+  visible.value.split('\n').filter((l) => l.trim().length > 0).slice(-4).join('\n'),
 )
 const doneLabel = computed(() => `Thought ${formatThinkingDuration(props.item.durationMs ?? 0)}`)
 </script>
 
 <template>
   <div class="text-sm opacity-70">
-    <template v-if="item.streaming">
+    <template v-if="!done">
       <div class="mb-1 flex items-center gap-2">
         <PhBrain :size="16" weight="regular" class="animate-pulse text-accent" />
         <span>Thinking</span>
