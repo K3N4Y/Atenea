@@ -9,6 +9,8 @@
 // el SnapshotStore que el read grabo; el write crea un archivo nuevo con su
 // contenido completo (la via para archivos nuevos, que el edit no puede crear) y
 // graba su snapshot para que un edit posterior ancle sin re-leer (los tres
-// comparten root y snaps por sesion). Los builtins restantes (bash, grep, glob)
-// siguen pendientes con sus tests.
+// comparten root y snaps por sesion). glob busca archivos por patron ripgrep y
+// devuelve rutas relativas al workspace; grep busca contenido y devuelve lineas en
+// formato hashline para encadenar edit. El builtin restante (bash) sigue pendiente
+// con sus tests.
 package tool

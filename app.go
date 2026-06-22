@@ -66,9 +66,10 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 	}
 	registry := tool.NewRegistry(tool.NewOutputStore(outputLimit), tool.Echo{},
 		tool.NewReadToolWithSnapshotProvider(root, snaps), tool.NewWriteToolWithSnapshotProvider(root, snaps),
-		tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, snaps))
+		tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, snaps),
+		tool.NewGlobTool(root), tool.NewGrepToolWithSnapshotProvider(root, snaps))
 	a.runner = runner.NewRunner(emitting, a.inbox, provider, registry,
-		tool.Permissions{"echo": true, "read": true, "write": true, "edit": true}, newIDGen())
+		tool.Permissions{"echo": true, "read": true, "write": true, "edit": true, "glob": true, "grep": true}, newIDGen())
 	return a
 }
 

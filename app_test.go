@@ -60,6 +60,25 @@ func (r *recordingEmit) errorsOn(channel string) []string {
 	return out
 }
 
+type requestRecordingProvider struct {
+	*llm.FakeProvider
+	mu  sync.Mutex
+	req llm.Request
+}
+
+func (p *requestRecordingProvider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Event, error) {
+	p.mu.Lock()
+	p.req = req
+	p.mu.Unlock()
+	return p.FakeProvider.Stream(ctx, req)
+}
+
+func (p *requestRecordingProvider) captured() llm.Request {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.req
+}
+
 // TestApp_SendPromptStreamsTurnToBus: SendPrompt admite el prompt y arranca Run; el
 // turno completo viaja por el bus al canal de la sesion. El prompt se promueve como
 // Message{Role:user} y el texto del asistente cierra en Text.Ended con su Message.
@@ -114,6 +133,59 @@ func TestApp_SendPromptStreamsTurnToBus(t *testing.T) {
 	if !hasStepEnded {
 		t.Error("falta Step.Ended")
 	}
+}
+
+// TestApp_RequestAdvertisesGrepTool afirma el wiring de app.go: el registry de la
+// app anuncia grep cuando arma el Request del proveedor, junto con las file tools
+// existentes.
+func TestApp_RequestAdvertisesGrepTool(t *testing.T) {
+	rec := &recordingEmit{}
+	prov := &requestRecordingProvider{FakeProvider: llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.StepEnded},
+	)}
+	app := newApp(prov, rec.emit)
+
+	if err := app.SendPrompt("s1", "busca Execute"); err != nil {
+		t.Fatalf("SendPrompt: %v", err)
+	}
+	app.wait()
+
+	req := prov.captured()
+	if !requestHasTool(req, "grep") {
+		t.Fatalf("Request.Tools no contiene grep; tools = %+v", req.Tools)
+	}
+}
+
+// TestApp_RequestAdvertisesGlobTool afirma el wiring de app.go para glob: el
+// registry de la app anuncia la tool de busqueda de archivos cuando arma el
+// Request del proveedor.
+func TestApp_RequestAdvertisesGlobTool(t *testing.T) {
+	rec := &recordingEmit{}
+	prov := &requestRecordingProvider{FakeProvider: llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.StepEnded},
+	)}
+	app := newApp(prov, rec.emit)
+
+	if err := app.SendPrompt("s1", "busca archivos go"); err != nil {
+		t.Fatalf("SendPrompt: %v", err)
+	}
+	app.wait()
+
+	req := prov.captured()
+	if !requestHasTool(req, "glob") {
+		t.Fatalf("Request.Tools no contiene glob; tools = %+v", req.Tools)
+	}
+}
+
+func requestHasTool(req llm.Request, name string) bool {
+	for _, def := range req.Tools {
+		if def.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // blockingProvider entrega un StepStarted (cuando el runner lo consume), avisa por
