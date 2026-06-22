@@ -1,0 +1,10 @@
+Encuentra archivos por patron de nombre en el workspace, usando ripgrep. Funciona en repos de cualquier tamano.
+
+Uso:
+- pattern es un glob con semantica de ripgrep (eg. "*.go", "**/*.go", "internal/**/*.ts").
+- path acota el directorio donde buscar, relativo al workspace (default: ".").
+- limit acota cuantos resultados devolver (default 200, maximo 5000).
+- Devuelve rutas relativas al workspace, una por linea; si llega al limite lo indica para que afines el patron o subas el limit.
+- Ignora el contenido de .git.
+- Usalo para localizar archivos por NOMBRE. Para buscar por CONTENIDO usa grep; para leer un archivo usa read.
+- Puedes lanzar varias busquedas (glob/grep) en paralelo en una sola respuesta cuando son utiles a la vez.
