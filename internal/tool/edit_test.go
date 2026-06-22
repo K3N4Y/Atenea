@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -140,6 +141,80 @@ func TestEditTool_RejectsPathOutsideRoot(t *testing.T) {
 	}
 	if len(fs.writes) != 0 {
 		t.Fatalf("Execute: no debio escribir fuera del root, writes=%v", fs.writes)
+	}
+}
+
+// TestEditTool_RejectsSymlinkOutsideRoot afirma que edit no escribe a traves de un
+// symlink dentro del workspace que apunta fuera.
+func TestEditTool_RejectsSymlinkOutsideRoot(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	target := filepath.Join(outside, "secret.go")
+	original := "a\nb\n"
+	if err := os.WriteFile(target, []byte(original), 0o644); err != nil {
+		t.Fatalf("WriteFile target: %v", err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, "link.go")); err != nil {
+		t.Skipf("Symlink no disponible: %v", err)
+	}
+
+	h := hashline.ComputeFileHash(original)
+	input, err := json.Marshal(struct {
+		Patch string `json:"patch"`
+	}{Patch: "[link.go#" + h + "]\nSWAP 2.=2:\n+X"})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	et := NewEditTool(root, hashline.OSFilesystem{}, hashline.NewMemSnapshotStore())
+	if _, err := et.Execute(context.Background(), input); err == nil {
+		t.Fatal("Execute: se esperaba error por symlink fuera del workspace")
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("ReadFile target: %v", err)
+	}
+	if string(got) != original {
+		t.Fatalf("target fuera del workspace cambio: %q", string(got))
+	}
+}
+
+// TestEditTool_SnapshotsAreIsolatedBySession afirma que un header visto en una
+// sesion no habilita editar desde otra sesion.
+func TestEditTool_SnapshotsAreIsolatedBySession(t *testing.T) {
+	const abs = "/work/foo.go"
+	original := "a\nb\n"
+
+	sessions := NewSessionSnapshots()
+	rt := &ReadTool{
+		Root:             "/work",
+		FS:               fakeFS{abs: []byte(original)},
+		SnapshotProvider: sessions,
+		MaxLines:         2000,
+	}
+	fs := &fakeEditFS{
+		files:  map[string][]byte{abs: []byte(original)},
+		writes: map[string][]byte{},
+	}
+	et := NewEditToolWithSnapshotProvider("/work", fs, sessions)
+
+	res, err := rt.Execute(WithSessionID(context.Background(), "s1"), json.RawMessage(`{"path":"foo.go"}`))
+	if err != nil {
+		t.Fatalf("read s1: %v", err)
+	}
+	header := strings.Split(res.Output, "\n")[0]
+	input, err := json.Marshal(struct {
+		Patch string `json:"patch"`
+	}{Patch: header + "\nSWAP 2.=2:\n+X"})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	if _, err := et.Execute(WithSessionID(context.Background(), "s2"), input); err == nil {
+		t.Fatal("edit s2: se esperaba error por snapshot de otra sesion")
+	}
+	if len(fs.writes) != 0 {
+		t.Fatalf("edit s2 no debio escribir: %v", fs.writes)
 	}
 }
 

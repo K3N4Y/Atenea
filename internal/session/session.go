@@ -48,12 +48,15 @@ type SessionEvent struct {
 	Message *Message // proyeccion: set solo al cerrar un bloque de texto del asistente
 
 	// Payload de streaming, relevante segun Kind:
-	Text     string          // Text.Delta/Ended, Reasoning.Delta/Ended (fragmento o texto completo)
-	CallID   string          // Tool.*
-	ToolName string          // Tool.Called (y Tool.Success/Tool.Failed en M5)
-	Input    json.RawMessage // Tool.Called / Tool.Input.* (input JSON crudo o coalescido)
-	Usage    *Usage          // solo Step.Ended
-	Error    string          // mensaje de fallo de una tool (Tool.Failed); M8 lo reutiliza para Step.Failed
+	Text     string // Text/Reasoning.Delta/Ended y Tool.Input.Delta (fragmento o texto completo)
+	CallID   string // Tool.*
+	ToolName string // Tool.Called (y Tool.Success/Tool.Failed en M5)
+	// Input lleva el JSON completo y valido de Tool.Called / Tool.Input.Ended. El
+	// fragmento crudo de Tool.Input.Delta NO va aqui: json.RawMessage exige JSON
+	// valido y la frontera Wails marshalea el evento, asi que ese fragmento viaja en Text.
+	Input json.RawMessage
+	Usage *Usage // solo Step.Ended
+	Error string // mensaje de fallo de una tool (Tool.Failed); M8 lo reutiliza para Step.Failed
 }
 
 // Session es el agregado durable de una conversacion. En M1 es minimo: solo el

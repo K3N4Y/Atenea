@@ -61,6 +61,15 @@ func (p *Patcher) Apply(patch Patch) (PatchResult, error) {
 	// Hash del archivo vivo: si difiere del esperado por la seccion, hubo drift
 	// (el archivo cambio desde el read).
 	liveHash := ComputeFileHash(norm)
+	snap := p.Snapshots.ByHash(s.Path, s.Hash)
+	if snap == nil {
+		return PatchResult{}, &MismatchError{
+			Path:       s.Path,
+			Expected:   s.Hash,
+			Live:       liveHash,
+			Recognized: false,
+		}
+	}
 
 	var warnings []string
 	if liveHash != s.Hash {
@@ -74,16 +83,14 @@ func (p *Patcher) Apply(patch Patch) (PatchResult, error) {
 				Path:       s.Path,
 				Expected:   s.Hash,
 				Live:       liveHash,
-				Recognized: p.Snapshots.ByHash(s.Path, s.Hash) != nil,
+				Recognized: true,
 			}
 		}
 	} else {
-		// Sin drift: si conocemos el snapshot de ese hash, exigimos que las lineas
-		// que el edit ancla hayan sido vistas por el read (estan en Seen).
-		if snap := p.Snapshots.ByHash(s.Path, s.Hash); snap != nil {
-			if line, ok := firstUnseenAnchoredLine(s.Edits, snap.Seen); !ok {
-				return PatchResult{}, fmt.Errorf("edit: no edites lineas que no leiste (linea %d no fue mostrada por read en %s)", line, s.Path)
-			}
+		// Sin drift: exigimos que las lineas que el edit ancla hayan sido vistas por
+		// el read/write/edit previo (estan en Seen).
+		if line, ok := firstUnseenAnchoredLine(s.Edits, snap.Seen); !ok {
+			return PatchResult{}, fmt.Errorf("edit: no edites lineas que no leiste (linea %d no fue mostrada por read en %s)", line, s.Path)
 		}
 	}
 
@@ -103,6 +110,9 @@ func (p *Patcher) Apply(patch Patch) (PatchResult, error) {
 	}
 
 	newHash := p.Snapshots.Record(s.Path, newText)
+	if ar.FirstChangedLine > 0 {
+		p.Snapshots.RecordSeenLines(s.Path, newHash, []int{ar.FirstChangedLine})
+	}
 
 	return PatchResult{
 		Header:           FormatHeader(s.Path, newHash),

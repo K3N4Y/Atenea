@@ -2,6 +2,7 @@ package hashline
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -109,5 +110,25 @@ INS.TAIL:
 		if got[i] != want[i] {
 			t.Fatalf("Edit[%d]: se esperaba %+v, se obtuvo %+v", i, want[i], got[i])
 		}
+	}
+}
+
+// TestParsePatch_MalformedOperationsError afirma que las ops conocidas pero
+// malformadas fallan en parseo, en vez de degradar a rangos/anchors cero que
+// podrian saltarse el chequeo de lineas vistas del patcher.
+func TestParsePatch_MalformedOperationsError(t *testing.T) {
+	cases := []string{
+		"SWAP 4.=3:\n+x",
+		"DEL abc",
+		"INS.PRE 0:\n+x",
+		"INS.POST nope:\n+x",
+	}
+	for _, body := range cases {
+		t.Run(strings.Split(body, "\n")[0], func(t *testing.T) {
+			_, err := ParsePatch("[foo.go#ABCD]\n" + body)
+			if err == nil {
+				t.Fatalf("ParsePatch: se esperaba error para %q", body)
+			}
+		})
 	}
 }

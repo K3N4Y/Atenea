@@ -1,6 +1,7 @@
 package hashline
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -41,8 +42,14 @@ func ParsePatch(text string) (Patch, error) {
 		line := lines[i]
 		switch {
 		case strings.HasPrefix(line, "SWAP "):
+			if !strings.HasSuffix(line, ":") {
+				return Patch{}, malformedOperation(line)
+			}
 			body := strings.TrimSuffix(strings.TrimPrefix(line, "SWAP "), ":")
-			start, end := parseRange(body)
+			start, end, err := parseRange(body)
+			if err != nil {
+				return Patch{}, malformedOperation(line)
+			}
 			i++
 			payload := readPayload(lines, &i)
 			edits = append(edits, Edit{
@@ -52,15 +59,24 @@ func ParsePatch(text string) (Patch, error) {
 			})
 		case strings.HasPrefix(line, "DEL "):
 			body := strings.TrimSpace(strings.TrimPrefix(line, "DEL "))
-			start, end := parseRange(body)
+			start, end, err := parseRange(body)
+			if err != nil {
+				return Patch{}, malformedOperation(line)
+			}
 			i++
 			edits = append(edits, Edit{
 				Kind:  Delete,
 				Range: Range{Start: start, End: end},
 			})
 		case strings.HasPrefix(line, "INS.PRE "):
+			if !strings.HasSuffix(line, ":") {
+				return Patch{}, malformedOperation(line)
+			}
 			body := strings.TrimSuffix(strings.TrimPrefix(line, "INS.PRE "), ":")
-			anchor, _ := strconv.Atoi(strings.TrimSpace(body))
+			anchor, err := parseAnchor(body)
+			if err != nil {
+				return Patch{}, malformedOperation(line)
+			}
 			i++
 			payload := readPayload(lines, &i)
 			edits = append(edits, Edit{
@@ -70,8 +86,14 @@ func ParsePatch(text string) (Patch, error) {
 				Text:   strings.Join(payload, "\n"),
 			})
 		case strings.HasPrefix(line, "INS.POST "):
+			if !strings.HasSuffix(line, ":") {
+				return Patch{}, malformedOperation(line)
+			}
 			body := strings.TrimSuffix(strings.TrimPrefix(line, "INS.POST "), ":")
-			anchor, _ := strconv.Atoi(strings.TrimSpace(body))
+			anchor, err := parseAnchor(body)
+			if err != nil {
+				return Patch{}, malformedOperation(line)
+			}
 			i++
 			payload := readPayload(lines, &i)
 			edits = append(edits, Edit{
@@ -106,15 +128,33 @@ func ParsePatch(text string) (Patch, error) {
 
 // parseRange interpreta el cuerpo de un rango: "n" -> [n,n]; "start.=end" ->
 // [start,end].
-func parseRange(body string) (int, int) {
+func parseRange(body string) (int, int, error) {
 	body = strings.TrimSpace(body)
 	if parts := strings.SplitN(body, ".=", 2); len(parts) == 2 {
-		start, _ := strconv.Atoi(strings.TrimSpace(parts[0]))
-		end, _ := strconv.Atoi(strings.TrimSpace(parts[1]))
-		return start, end
+		start, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
+		end, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if err1 != nil || err2 != nil || start < 1 || end < start {
+			return 0, 0, fmt.Errorf("rango invalido")
+		}
+		return start, end, nil
 	}
-	n, _ := strconv.Atoi(body)
-	return n, n
+	n, err := strconv.Atoi(body)
+	if err != nil || n < 1 {
+		return 0, 0, fmt.Errorf("rango invalido")
+	}
+	return n, n, nil
+}
+
+func parseAnchor(body string) (int, error) {
+	n, err := strconv.Atoi(strings.TrimSpace(body))
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("ancla invalida")
+	}
+	return n, nil
+}
+
+func malformedOperation(line string) error {
+	return fmt.Errorf("patch: operacion malformada: %s", strconv.Quote(line))
 }
 
 // readPayload consume las lineas "+..." consecutivas a partir de *i (que avanza),

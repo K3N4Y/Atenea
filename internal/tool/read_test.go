@@ -3,6 +3,8 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -203,6 +205,42 @@ func TestReadTool_TruncatesAtLineLimitWithContinuationNotice(t *testing.T) {
 	}
 }
 
+// TestReadTool_ByteLimitMarksOnlyEmittedLines afirma que el limite propio del
+// read corta en limites de linea y solo marca Seen para lo que el modelo recibe,
+// evitando depender del truncado generico del OutputStore.
+func TestReadTool_ByteLimitMarksOnlyEmittedLines(t *testing.T) {
+	snaps := hashline.NewMemSnapshotStore()
+	rt := &ReadTool{
+		Root:      "/work",
+		FS:        fakeFS{"/work/foo.go": []byte("11111111111111111111\n22222222222222222222\n33333333333333333333\n")},
+		Snapshots: snaps,
+		MaxLines:  2000,
+		MaxBytes:  55,
+	}
+
+	res, err := rt.Execute(context.Background(), json.RawMessage(`{"path":"foo.go"}`))
+	if err != nil {
+		t.Fatalf("Execute: error inesperado: %v", err)
+	}
+	if !strings.Contains(res.Output, "1:11111111111111111111") {
+		t.Fatalf("Execute: output no contiene la linea 1: %q", res.Output)
+	}
+	if strings.Contains(res.Output, "2:22222222222222222222") {
+		t.Fatalf("Execute: output no deberia contener la linea 2 por limite de bytes: %q", res.Output)
+	}
+
+	snap := snaps.Head("/work/foo.go")
+	if snap == nil {
+		t.Fatal("Head: se esperaba snapshot grabado")
+	}
+	if _, ok := snap.Seen[1]; !ok {
+		t.Fatalf("Head: Seen no contiene linea emitida 1: %v", snap.Seen)
+	}
+	if _, ok := snap.Seen[2]; ok {
+		t.Fatalf("Head: Seen no deberia contener linea no emitida 2: %v", snap.Seen)
+	}
+}
+
 // TestReadTool_OutOfRangeSelectorReportsBeyondEOF afirma que un rango cuyo start
 // excede el total devuelve el notice beyond-EOF, con el snapshot YA grabado y sin
 // ninguna linea marcada como vista.
@@ -317,6 +355,25 @@ func TestReadTool_RejectsPathOutsideRoot(t *testing.T) {
 	}
 	if fs.reads != 0 {
 		t.Fatalf("ReadFile: se esperaban 0 lecturas (rechazo antes de leer), se obtuvieron %d", fs.reads)
+	}
+}
+
+// TestReadTool_RejectsSymlinkOutsideRoot afirma que el sandbox no solo limpia "..":
+// tambien rechaza un symlink dentro del workspace que resuelve fuera.
+func TestReadTool_RejectsSymlinkOutsideRoot(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	target := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(target, []byte("secret\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile target: %v", err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, "link.txt")); err != nil {
+		t.Skipf("Symlink no disponible: %v", err)
+	}
+
+	rt := NewReadTool(root, hashline.NewMemSnapshotStore())
+	if _, err := rt.Execute(context.Background(), json.RawMessage(`{"path":"link.txt"}`)); err == nil {
+		t.Fatal("Execute: se esperaba error por symlink fuera del workspace")
 	}
 }
 

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -28,16 +27,24 @@ func (osFS) ReadFile(name string) ([]byte, error) { return os.ReadFile(name) }
 // el limite de lineas por lectura: al superarlo se trunca la salida y se anexa un
 // notice de continuacion con el selector :N para leer el resto.
 type ReadTool struct {
-	Root      string
-	FS        FileReader
-	Snapshots hashline.SnapshotStore
-	MaxLines  int
+	Root             string
+	FS               FileReader
+	Snapshots        hashline.SnapshotStore
+	SnapshotProvider SnapshotProvider
+	MaxLines         int
+	MaxBytes         int
 }
+
+const defaultReadMaxBytes = 30 * 1024
 
 // NewReadTool arma un ReadTool con el FS de disco por defecto y el limite estandar
 // de lineas.
 func NewReadTool(root string, snaps hashline.SnapshotStore) *ReadTool {
-	return &ReadTool{Root: root, FS: osFS{}, Snapshots: snaps, MaxLines: 2000}
+	return &ReadTool{Root: root, FS: osFS{}, Snapshots: snaps, MaxLines: 2000, MaxBytes: defaultReadMaxBytes}
+}
+
+func NewReadToolWithSnapshotProvider(root string, provider SnapshotProvider) *ReadTool {
+	return &ReadTool{Root: root, FS: osFS{}, SnapshotProvider: provider, MaxLines: 2000, MaxBytes: defaultReadMaxBytes}
 }
 
 func (*ReadTool) Name() string { return "read" }
@@ -78,9 +85,14 @@ func (rt *ReadTool) Execute(ctx context.Context, input json.RawMessage) (Result,
 		fromSel, toSel = from, to
 	}
 
-	abs := filepath.Join(rt.Root, displayPath)
-	if abs != rt.Root && !strings.HasPrefix(abs, rt.Root+string(filepath.Separator)) {
-		return Result{}, fmt.Errorf("read: ruta fuera del workspace: %s", displayPath)
+	abs, err := sandboxJoin(rt.Root, displayPath, "read")
+	if err != nil {
+		return Result{}, err
+	}
+	if _, ok := rt.FS.(osFS); ok {
+		if err := rejectRealPathOutside(rt.Root, abs, displayPath, "read"); err != nil {
+			return Result{}, err
+		}
 	}
 
 	b, err := rt.FS.ReadFile(abs)
@@ -102,7 +114,8 @@ func (rt *ReadTool) Execute(ctx context.Context, input json.RawMessage) (Result,
 	norm = strings.ReplaceAll(norm, "\r", "\n")
 
 	// El snapshot guarda SIEMPRE el archivo completo, aun en un read por rango.
-	tag := rt.Snapshots.Record(abs, norm)
+	snaps := rt.snapshots(ctx)
+	tag := snaps.Record(abs, norm)
 
 	lines := hashline.SplitLines(norm)
 	total := len(lines)
@@ -130,16 +143,49 @@ func (rt *ReadTool) Execute(ctx context.Context, input json.RawMessage) (Result,
 		}
 	}
 
-	cuerpo := hashline.NumberLines(lines, from, to)
-	output := hashline.FormatHeader(displayPath, tag) + "\n" + cuerpo + truncNotice
+	header := hashline.FormatHeader(displayPath, tag)
+	to, truncNotice = rt.capWindow(lines, from, to, total, header, truncNotice)
 
-	seen := make([]int, 0, to-from+1)
+	cuerpo := ""
+	if to >= from {
+		cuerpo = hashline.NumberLines(lines, from, to)
+	}
+	output := header + "\n" + cuerpo + truncNotice
+
+	seen := make([]int, 0, max(0, to-from+1))
 	for i := from; i <= to; i++ {
 		seen = append(seen, i)
 	}
-	rt.Snapshots.RecordSeenLines(abs, tag, seen)
+	snaps.RecordSeenLines(abs, tag, seen)
 
 	return Result{Output: output}, nil
+}
+
+func (rt *ReadTool) snapshots(ctx context.Context) hashline.SnapshotStore {
+	if rt.SnapshotProvider != nil {
+		return rt.SnapshotProvider.Snapshots(ctx)
+	}
+	return rt.Snapshots
+}
+
+func (rt *ReadTool) capWindow(lines []string, from, to, total int, header, notice string) (int, string) {
+	if rt.MaxBytes <= 0 || to < from {
+		return to, notice
+	}
+	for cappedTo := to; cappedTo >= from; cappedTo-- {
+		body := hashline.NumberLines(lines, from, cappedTo)
+		if len(header+"\n"+body) <= rt.MaxBytes {
+			if cappedTo < to {
+				return cappedTo, continuationNotice(total-cappedTo, cappedTo+1)
+			}
+			return to, notice
+		}
+	}
+	return from - 1, continuationNotice(total-from+1, from)
+}
+
+func continuationNotice(remaining, next int) string {
+	return "\n\n[" + strconv.Itoa(remaining) + " more lines in file. Use :" + strconv.Itoa(next) + " to continue]"
 }
 
 // parseSelector interpreta el sufijo del path: "N" (una linea) o "N-M" (rango),

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"atenea/internal/tool/hashline"
@@ -16,20 +15,26 @@ import (
 // resuelve la lectura, el chequeo de drift, la escritura y el regrabado del
 // snapshot por ruta absoluta.
 type EditTool struct {
-	Root    string
-	Patcher *hashline.Patcher
+	Root             string
+	FS               hashline.Filesystem
+	Patcher          *hashline.Patcher
+	SnapshotProvider SnapshotProvider
 }
 
 // NewEditTool arma un EditTool con un Patcher sobre el FS y el store de
 // snapshots dados; Root acota el sandbox de rutas igual que el read.
 func NewEditTool(root string, fs hashline.Filesystem, snaps hashline.SnapshotStore) *EditTool {
-	return &EditTool{Root: root, Patcher: hashline.NewPatcher(fs, snaps)}
+	return &EditTool{Root: root, FS: fs, Patcher: hashline.NewPatcher(fs, snaps)}
+}
+
+func NewEditToolWithSnapshotProvider(root string, fs hashline.Filesystem, provider SnapshotProvider) *EditTool {
+	return &EditTool{Root: root, FS: fs, SnapshotProvider: provider}
 }
 
 func (*EditTool) Name() string { return "edit" }
 
 func (*EditTool) Description() string {
-	return "Aplica un patch hashline a un archivo: ancla en el header [ruta#HASH] del read y describe los cambios con hunks SWAP/DEL/INS.* cuyo payload nuevo va en lineas '+...'."
+	return "Aplica un patch hashline a un archivo EXISTENTE: ancla en el header [ruta#HASH] que devolvio read o write y describe los cambios con hunks SWAP/DEL/INS.* cuyo payload nuevo va en lineas '+...'. Para crear un archivo nuevo usa write, no inventes el header."
 }
 
 func (*EditTool) Schema() json.RawMessage {
@@ -57,15 +62,20 @@ func (et *EditTool) Execute(ctx context.Context, input json.RawMessage) (Result,
 	s := &patch.Sections[0]
 	relPath := s.Path
 
-	abs := filepath.Join(et.Root, relPath)
-	if abs != et.Root && !strings.HasPrefix(abs, et.Root+string(filepath.Separator)) {
-		return Result{}, fmt.Errorf("edit: ruta fuera del workspace: %s", relPath)
+	abs, err := sandboxJoin(et.Root, relPath, "edit")
+	if err != nil {
+		return Result{}, err
+	}
+	if _, ok := et.FS.(hashline.OSFilesystem); ok {
+		if err := rejectRealPathOutside(et.Root, abs, relPath, "edit"); err != nil {
+			return Result{}, err
+		}
 	}
 
 	// El Patcher lee/escribe/snapshotea por ruta absoluta.
 	s.Path = abs
 
-	res, err := et.Patcher.Apply(patch)
+	res, err := et.patcher(ctx).Apply(patch)
 	if err != nil {
 		return Result{}, err
 	}
@@ -73,4 +83,11 @@ func (et *EditTool) Execute(ctx context.Context, input json.RawMessage) (Result,
 	// res.Header trae la ruta ABS; el modelo encadena por la ruta RELATIVA.
 	header := strings.Replace(res.Header, abs, relPath, 1)
 	return Result{Output: header}, nil
+}
+
+func (et *EditTool) patcher(ctx context.Context) *hashline.Patcher {
+	if et.SnapshotProvider != nil {
+		return hashline.NewPatcher(et.FS, et.SnapshotProvider.Snapshots(ctx))
+	}
+	return et.Patcher
 }

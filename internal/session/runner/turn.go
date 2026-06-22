@@ -107,7 +107,7 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string) (bool, er
 		return false, err
 	}
 	pub := NewPublisher(r.store, sessionID, r.nextID())
-	return r.consume(ctx, in, pub, mat.Settle)
+	return r.consume(ctx, sessionID, in, pub, mat.Settle)
 }
 
 // consume drena el stream del turno. Publica cada evento como SessionEvent durable
@@ -117,7 +117,7 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string) (bool, er
 // (Publish), no se asienta. El error de una tool se registra como Tool.Failed y NO
 // corta el turno; solo un fallo del store (de Publish/ToolSuccess/ToolFailed) lo
 // hace.
-func (r *Runner) consume(ctx context.Context, in <-chan llm.Event,
+func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Event,
 	pub *Publisher, settle tool.SettleFunc) (bool, error) {
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -136,7 +136,7 @@ func (r *Runner) consume(ctx context.Context, in <-chan llm.Event,
 			ev := ev // captura para la goroutine
 			needsContinuation = true
 			g.Go(func() error {
-				res, err := settle(gctx, tool.Call{ID: ev.CallID, Name: ev.ToolName, Input: ev.Input})
+				res, err := settle(tool.WithSessionID(gctx, sessionID), tool.Call{ID: ev.CallID, Name: ev.ToolName, Input: ev.Input})
 				if err != nil {
 					return pub.ToolFailed(cleanupCtx, ev.CallID, err)
 				}

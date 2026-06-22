@@ -124,15 +124,51 @@ func TestPatcher_DriftWithAnchorReturnsMismatch(t *testing.T) {
 	}
 }
 
+// TestPatcher_UnknownHashRejectedEvenWhenLiveMatches afirma que un header con un
+// hash correcto pero no visto por la sesion no habilita editar: el hash tiene que
+// venir de un read/write/edit previo registrado en SnapshotStore.
+func TestPatcher_UnknownHashRejectedEvenWhenLiveMatches(t *testing.T) {
+	const path = "/work/foo.go"
+	original := "a\nb\n"
+	h := ComputeFileHash(original)
+
+	snaps := NewMemSnapshotStore()
+	fs := &fakePatchFS{
+		files:  map[string][]byte{path: []byte(original)},
+		writes: map[string][]byte{},
+	}
+	patch := Patch{Sections: []Section{{
+		Path:  path,
+		Hash:  h,
+		Edits: []Edit{{Kind: Replace, Range: Range{Start: 2, End: 2}, Text: "X"}},
+	}}}
+
+	_, err := NewPatcher(fs, snaps).Apply(patch)
+	if err == nil {
+		t.Fatal("Apply: se esperaba error por hash no reconocido")
+	}
+	var me *MismatchError
+	if !errors.As(err, &me) {
+		t.Fatalf("Apply: se esperaba *MismatchError, se obtuvo %T: %v", err, err)
+	}
+	if me.Recognized {
+		t.Fatal("MismatchError.Recognized = true, quiero false")
+	}
+	if len(fs.writes) != 0 {
+		t.Fatalf("Apply: no debio escribir con hash desconocido, writes=%v", fs.writes)
+	}
+}
+
 // TestPatcher_HeadTailOnStaleTagAppliesWithWarning afirma que un INS.TAIL (posicion
 // estable, fin de archivo) se aplica igual aunque el hash sea stale, porque no
 // depende de los numeros de linea del read: agrega un warning y SI escribe.
 func TestPatcher_HeadTailOnStaleTagAppliesWithWarning(t *testing.T) {
 	const path = "/work/foo.go"
+	original := "a\n"
 	live := "a\nb\n"
-	staleHash := ComputeFileHash("OTRA COSA\n")
 
 	snaps := NewMemSnapshotStore()
+	staleHash := snaps.Record(path, original)
 
 	fs := &fakePatchFS{
 		files:  map[string][]byte{path: []byte(live)},
@@ -160,6 +196,34 @@ func TestPatcher_HeadTailOnStaleTagAppliesWithWarning(t *testing.T) {
 	got := SplitLines(string(written))
 	if len(got) == 0 || got[len(got)-1] != "appended" {
 		t.Fatalf("Apply: se esperaba que el contenido terminara en \"appended\", se obtuvo %v", got)
+	}
+}
+
+// TestPatcher_HeadTailWithUnknownStaleTagRejected afirma el borde complementario:
+// la excepcion de INS.HEAD/TAIL solo vale para tags stale reconocidos por la
+// sesion, no para tags inventados.
+func TestPatcher_HeadTailWithUnknownStaleTagRejected(t *testing.T) {
+	const path = "/work/foo.go"
+	live := "a\nb\n"
+	staleHash := ComputeFileHash("OTRA COSA\n")
+
+	snaps := NewMemSnapshotStore()
+	fs := &fakePatchFS{
+		files:  map[string][]byte{path: []byte(live)},
+		writes: map[string][]byte{},
+	}
+	patch := Patch{Sections: []Section{{
+		Path:  path,
+		Hash:  staleHash,
+		Edits: []Edit{{Kind: Insert, Cursor: EOF, Text: "appended"}},
+	}}}
+
+	_, err := NewPatcher(fs, snaps).Apply(patch)
+	if err == nil {
+		t.Fatal("Apply: se esperaba error por INS.TAIL con tag no reconocido")
+	}
+	if len(fs.writes) != 0 {
+		t.Fatalf("Apply: no debio escribir con tag no reconocido, writes=%v", fs.writes)
 	}
 }
 
@@ -192,5 +256,47 @@ func TestPatcher_EditUnseenLineRejected(t *testing.T) {
 	}
 	if len(fs.writes) != 0 {
 		t.Fatalf("Apply: no debio escribir nada al rechazar una linea no vista, writes=%v", fs.writes)
+	}
+}
+
+// TestPatcher_RecordsChangedLineSeenForChainedEdit afirma que el header devuelto
+// por un edit exitoso sirve para encadenar otro edit sobre la linea que el modelo
+// acaba de cambiar, sin forzar un read intermedio.
+func TestPatcher_RecordsChangedLineSeenForChainedEdit(t *testing.T) {
+	const path = "/work/foo.go"
+	original := "a\nb\nc\n"
+
+	snaps := NewMemSnapshotStore()
+	h := snaps.Record(path, original)
+	snaps.RecordSeenLines(path, h, []int{2})
+
+	fs := &fakePatchFS{
+		files:  map[string][]byte{path: []byte(original)},
+		writes: map[string][]byte{},
+	}
+	p := NewPatcher(fs, snaps)
+
+	first, err := p.Apply(Patch{Sections: []Section{{
+		Path:  path,
+		Hash:  h,
+		Edits: []Edit{{Kind: Replace, Range: Range{Start: 2, End: 2}, Text: "X"}},
+	}}})
+	if err != nil {
+		t.Fatalf("primer Apply: %v", err)
+	}
+
+	fs.files[path] = fs.writes[path]
+	fs.writes = map[string][]byte{}
+	newHash := snaps.Head(path).Hash
+	if first.Header != FormatHeader(path, newHash) {
+		t.Fatalf("primer header = %q, quiero %q", first.Header, FormatHeader(path, newHash))
+	}
+
+	if _, err := p.Apply(Patch{Sections: []Section{{
+		Path:  path,
+		Hash:  newHash,
+		Edits: []Edit{{Kind: Replace, Range: Range{Start: 2, End: 2}, Text: "Y"}},
+	}}}); err != nil {
+		t.Fatalf("segundo Apply con header encadenado: %v", err)
 	}
 }

@@ -261,6 +261,111 @@ func TestPublisher_ToolCallAndInputDeltasCoalesce(t *testing.T) {
 	}
 }
 
+// TestPublisher_ToolInputDeltaEventsAreJSONMarshalable fija la invariante de la
+// frontera Wails: runtime.EventsEmit serializa cada SessionEvent con json.Marshal,
+// asi que TODO evento emitido debe ser marshalable. Los fragmentos de input de una
+// tool call llegan crudos y partidos (p. ej. `{"path":"` y `new.go"}`), cada uno
+// JSON invalido por si mismo; si viajan en el campo json.RawMessage Input, Marshal
+// revienta con "error calling MarshalJSON for type json.RawMessage". El test
+// alimenta esos fragmentos y exige que cada SessionEvent emitido se marshalee sin
+// error, y que el fragmento siga coalesciendo en Tool.Input.Ended.Input.
+func TestPublisher_ToolInputDeltaEventsAreJSONMarshalable(t *testing.T) {
+	spy := &recordingAppender{}
+	p := NewPublisher(spy, "s1", "a1")
+
+	publishAll(t, p,
+		llm.Event{Kind: llm.ToolInputStarted, CallID: "c1"},
+		llm.Event{Kind: llm.ToolInputDelta, CallID: "c1", Input: json.RawMessage(`{"path":"`)},
+		llm.Event{Kind: llm.ToolInputDelta, CallID: "c1", Input: json.RawMessage(`new.go"}`)},
+		llm.Event{Kind: llm.ToolInputEnded, CallID: "c1"},
+	)
+
+	for i, ev := range spy.events {
+		if _, err := json.Marshal(ev); err != nil {
+			t.Errorf("json.Marshal(events[%d] kind=%q): %v", i, ev.Kind, err)
+		}
+	}
+
+	// El fragmento crudo viaja en Text (string seguro de marshalear), no en Input.
+	delta := spy.events[1]
+	if delta.Kind != session.KindToolInputDelta {
+		t.Fatalf("events[1].Kind = %q, quiero %q", delta.Kind, session.KindToolInputDelta)
+	}
+	if delta.Text != `{"path":"` {
+		t.Errorf("Tool.Input.Delta.Text = %q, quiero %q", delta.Text, `{"path":"`)
+	}
+	if len(delta.Input) != 0 {
+		t.Errorf("Tool.Input.Delta.Input = %q, quiero vacio", string(delta.Input))
+	}
+
+	// Pese a viajar en Text, los fragmentos siguen coalesciendo en Tool.Input.Ended.
+	ended := spy.events[3]
+	wantInput := []byte(`{"path":"new.go"}`)
+	if !bytes.Equal(ended.Input, wantInput) {
+		t.Errorf("Tool.Input.Ended.Input = %q, quiero %q", string(ended.Input), string(wantInput))
+	}
+}
+
+// TestPublisher_ToolInputDeltaFragmentWithSpecialCharsMarshalsLossless triangula
+// con un fragmento que contiene caracteres que JSON debe re-escapar (comillas,
+// backslash, salto de linea): al viajar en Text y marshalearse, json.Marshal los
+// escapa y el round-trip recupera el fragmento crudo exacto; y el coalescido en
+// Tool.Input.Ended conserva los bytes originales sin escapar.
+func TestPublisher_ToolInputDeltaFragmentWithSpecialCharsMarshalsLossless(t *testing.T) {
+	spy := &recordingAppender{}
+	p := NewPublisher(spy, "s1", "a1")
+
+	frag := `{"content":"a\"b\n` // comilla escapada + salto: invalido suelto, con chars especiales
+	publishAll(t, p,
+		llm.Event{Kind: llm.ToolInputStarted, CallID: "c1"},
+		llm.Event{Kind: llm.ToolInputDelta, CallID: "c1", Input: json.RawMessage(frag)},
+		llm.Event{Kind: llm.ToolInputDelta, CallID: "c1", Input: json.RawMessage(`c"}`)},
+		llm.Event{Kind: llm.ToolInputEnded, CallID: "c1"},
+	)
+
+	delta := spy.events[1]
+	raw, err := json.Marshal(delta)
+	if err != nil {
+		t.Fatalf("json.Marshal(Tool.Input.Delta): %v", err)
+	}
+	var back session.SessionEvent
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatalf("Unmarshal round-trip: %v", err)
+	}
+	if back.Text != frag {
+		t.Errorf("round-trip Text = %q, quiero %q", back.Text, frag)
+	}
+
+	ended := spy.events[3]
+	wantInput := []byte(frag + `c"}`)
+	if !bytes.Equal(ended.Input, wantInput) {
+		t.Errorf("Tool.Input.Ended.Input = %q, quiero %q", string(ended.Input), string(wantInput))
+	}
+}
+
+// TestPublisher_ToolCalledKeepsCompleteInputAndMarshals fija el otro lado: el JSON
+// completo de una tool call SI viaja en Input (json.RawMessage) y, por ser valido,
+// el evento Tool.Called se marshalea sin error y conserva el JSON crudo. Guarda
+// que el fix solo saco de Input el fragmento del delta, no el input completo.
+func TestPublisher_ToolCalledKeepsCompleteInputAndMarshals(t *testing.T) {
+	spy := &recordingAppender{}
+	p := NewPublisher(spy, "s1", "a1")
+
+	full := json.RawMessage(`{"path":"new.go","content":"hi"}`)
+	publishAll(t, p, llm.Event{Kind: llm.ToolCall, CallID: "c1", ToolName: "write", Input: full})
+
+	called := spy.events[0]
+	if called.Kind != session.KindToolCalled {
+		t.Fatalf("Kind = %q, quiero %q", called.Kind, session.KindToolCalled)
+	}
+	if !bytes.Equal(called.Input, full) {
+		t.Errorf("Tool.Called.Input = %q, quiero %q", string(called.Input), string(full))
+	}
+	if _, err := json.Marshal(called); err != nil {
+		t.Errorf("json.Marshal(Tool.Called): %v", err)
+	}
+}
+
 // TestPublisher_ProjectsCoalescedAssistantMessage es la atadura M3 <-> M1: con el
 // MemoryStore real como appender, publica un turno (StepStarted, un bloque de
 // texto en deltas, StepEnded) y afirma que la proyeccion Messages devuelve

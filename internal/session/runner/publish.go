@@ -105,8 +105,13 @@ func (p *Publisher) Publish(ctx context.Context, ev llm.Event) error {
 		p.input[ev.CallID] = nil
 		return p.emit(ctx, session.SessionEvent{Kind: session.KindToolInputStarted, CallID: ev.CallID})
 	case llm.ToolInputDelta:
+		// El fragmento de input llega crudo y partido: JSON invalido por si solo. Va
+		// en Text (string), no en Input (json.RawMessage), porque la frontera Wails
+		// marshalea el evento y json.RawMessage exige JSON valido. Input se reserva
+		// para el JSON completo (Tool.Called / Tool.Input.Ended). El coalescido sigue
+		// acumulando los bytes crudos.
 		p.input[ev.CallID] = append(p.input[ev.CallID], ev.Input...)
-		return p.emit(ctx, session.SessionEvent{Kind: session.KindToolInputDelta, CallID: ev.CallID, Input: ev.Input})
+		return p.emit(ctx, session.SessionEvent{Kind: session.KindToolInputDelta, CallID: ev.CallID, Text: string(ev.Input)})
 	case llm.ToolInputEnded:
 		return p.emit(ctx, session.SessionEvent{
 			Kind: session.KindToolInputEnded, CallID: ev.CallID, Input: p.input[ev.CallID],

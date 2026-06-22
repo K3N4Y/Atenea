@@ -6,6 +6,9 @@
 // del subpaquete internal/tool/hashline (hash de frescura + snapshot del archivo
 // + lineas vistas): el read numera lineas tras un header [path#HASH] y graba el
 // snapshot; el edit aplica un patch hashline anclado contra ese header y consume
-// el SnapshotStore que el read grabo (comparten root y snaps a nivel app). Los
-// builtins restantes (bash, write, grep, glob) siguen pendientes con sus tests.
+// el SnapshotStore que el read grabo; el write crea un archivo nuevo con su
+// contenido completo (la via para archivos nuevos, que el edit no puede crear) y
+// graba su snapshot para que un edit posterior ancle sin re-leer (los tres
+// comparten root y snaps por sesion). Los builtins restantes (bash, grep, glob)
+// siguen pendientes con sus tests.
 package tool

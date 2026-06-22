@@ -56,19 +56,19 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 	emitting := event.NewEmittingStore(store, a.bus)
 	a.inbox = session.NewMemoryInbox()
 	// El read ancla su sandbox en la raiz del workspace; en v1 es el cwd del
-	// proceso (no hay aun seleccion de proyecto en la UI). El read y el edit
-	// comparten el MISMO root y el MISMO SnapshotStore por-app: el read graba el
-	// snapshot (hash + lineas vistas) y el edit lo lee para anclar ediciones; si
-	// no compartieran snaps/root, el edit nunca veria el Seen y todo seria mismatch.
-	snaps := hashline.NewMemSnapshotStore()
+	// proceso (no hay aun seleccion de proyecto en la UI). read, write y edit
+	// comparten root y snapshots por sesion: read graba hash + lineas vistas, edit
+	// lo lee para anclar ediciones, y write crea archivos nuevos con su snapshot.
+	snaps := tool.NewSessionSnapshots()
 	root, err := os.Getwd()
 	if err != nil {
 		root = "."
 	}
 	registry := tool.NewRegistry(tool.NewOutputStore(outputLimit), tool.Echo{},
-		tool.NewReadTool(root, snaps), tool.NewEditTool(root, hashline.OSFilesystem{}, snaps))
+		tool.NewReadToolWithSnapshotProvider(root, snaps), tool.NewWriteToolWithSnapshotProvider(root, snaps),
+		tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, snaps))
 	a.runner = runner.NewRunner(emitting, a.inbox, provider, registry,
-		tool.Permissions{"echo": true, "read": true, "edit": true}, newIDGen())
+		tool.Permissions{"echo": true, "read": true, "write": true, "edit": true}, newIDGen())
 	return a
 }
 
