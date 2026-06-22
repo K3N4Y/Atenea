@@ -116,7 +116,8 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string) (bool, er
 // antes de decidir la continuacion. Una tool provider-executed solo se persiste
 // (Publish), no se asienta. El error de una tool se registra como Tool.Failed y NO
 // corta el turno; solo un fallo del store (de Publish/ToolSuccess/ToolFailed) lo
-// hace.
+// hace. Ademas del Tool.Failed durable, el error se escribe por r.logf (stderr en
+// `wails dev`): ni el log durable ni el mensaje al modelo son visibles para el dev.
 func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Event,
 	pub *Publisher, settle tool.SettleFunc) (bool, error) {
 
@@ -138,6 +139,7 @@ func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Ev
 			g.Go(func() error {
 				res, err := settle(tool.WithSessionID(gctx, sessionID), tool.Call{ID: ev.CallID, Name: ev.ToolName, Input: ev.Input})
 				if err != nil {
+					r.logf("atenea: tool %q (call %s) fallo: %v", ev.ToolName, ev.CallID, err)
 					return pub.ToolFailed(cleanupCtx, ev.CallID, err)
 				}
 				return pub.ToolSuccess(cleanupCtx, ev.CallID, res.Output)

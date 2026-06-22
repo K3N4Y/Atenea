@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"log"
 
 	"atenea/internal/llm"
 	"atenea/internal/session"
@@ -22,6 +23,12 @@ type Runner struct {
 	perms     tool.Permissions
 	nextID    func() string
 	compactor Compactor // opcional; nil = nunca compacta (camino feliz de M5/M6)
+
+	// logf registra a stderr los fallos de tool para visibilidad en desarrollo:
+	// hoy un fallo solo vive en el log durable y en el mensaje al modelo, asi que
+	// corriendo `wails dev` no hay como enterarse de que las tools fallan. Default
+	// log.Printf; los tests lo inyectan para capturar la salida sin tocar stderr.
+	logf func(format string, args ...any)
 }
 
 // Compactor decide si un Request excede el contexto del modelo y, si pasa, compacta
@@ -46,5 +53,6 @@ func NewRunner(store session.Store, inbox session.Inbox, provider llm.Provider,
 	return &Runner{
 		store: store, inbox: inbox, provider: provider,
 		registry: registry, perms: perms, nextID: nextID,
+		logf: log.Printf,
 	}
 }
