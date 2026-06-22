@@ -1,0 +1,11 @@
+Busca contenido en los archivos del workspace con expresiones regulares, usando ripgrep. Funciona en repos de cualquier tamano.
+
+Uso:
+- pattern es una regex (sintaxis ripgrep: "func\s+\w+", "TODO|FIXME", etc.).
+- path acota la busqueda a un archivo o directorio relativo al workspace (default: ".").
+- include filtra por glob de nombre de archivo (eg. "*.go", "*.{ts,tsx}").
+- Por cada archivo con coincidencias devuelve un header [path#HASH] y debajo las lineas que matchean en formato NUM:TEXTO.
+- Ese header y esos numeros de linea sirven para anclar un edit posterior sobre las lineas mostradas sin re-leer el archivo (grep -> edit).
+- Devuelve hasta las primeras coincidencias (por defecto 100); si hay mas lo indica al final. Para acotar usa un path mas especifico o un include.
+- Usalo para encontrar DONDE esta algo en el codigo. Para encontrar archivos por NOMBRE usa glob; para leer un archivo entero usa read.
+- Puedes lanzar varias busquedas (glob/grep) en paralelo en una sola respuesta cuando son utiles a la vez.
