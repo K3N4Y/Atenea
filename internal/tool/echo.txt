@@ -1,0 +1,5 @@
+Devuelve tal cual el texto recibido en el campo text, sin tocar el filesystem.
+
+Uso:
+- text es la cadena a devolver; la salida es exactamente ese texto.
+- No tiene efectos laterales: sirve como builtin determinista para probar el flujo de tools de punta a punta.

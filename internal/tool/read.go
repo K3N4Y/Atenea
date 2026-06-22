@@ -2,6 +2,7 @@ package tool
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -49,9 +50,10 @@ func NewReadToolWithSnapshotProvider(root string, provider SnapshotProvider) *Re
 
 func (*ReadTool) Name() string { return "read" }
 
-func (*ReadTool) Description() string {
-	return "Lee un archivo y devuelve sus lineas numeradas tras un header [path#HASH]; admite el selector path:N-M para un rango."
-}
+//go:embed read.txt
+var readDescription string
+
+func (*ReadTool) Description() string { return readDescription }
 
 func (*ReadTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}`)

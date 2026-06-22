@@ -2,6 +2,7 @@ package tool
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 )
@@ -13,8 +14,11 @@ import (
 // docs/atenea-read-edit-tools.md), que llega despues con su propio plan.
 type Echo struct{}
 
+//go:embed echo.txt
+var echoDescription string
+
 func (Echo) Name() string        { return "echo" }
-func (Echo) Description() string { return "Devuelve tal cual el texto recibido en el campo text." }
+func (Echo) Description() string { return echoDescription }
 
 func (Echo) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}`)

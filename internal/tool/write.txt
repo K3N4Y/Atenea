@@ -1,0 +1,8 @@
+Creates a new file in the workspace with the exact content you provide.
+
+Usage:
+- path is the file path relative to the workspace, and content is the full file content. Any missing parent directories are created automatically.
+- Use this tool to create new files. To update an existing file, use read + edit instead; edit cannot create files.
+- After writing, it returns the header [path#HASH] for the new content. You can chain an edit to that header without reading the file again (write -> edit).
+- Prefer updating existing files rather than creating new ones; create a file only when it is genuinely necessary.
+- Files are written with LF line endings.

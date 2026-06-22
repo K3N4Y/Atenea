@@ -1,0 +1,11 @@
+Lee un archivo del workspace y devuelve sus lineas numeradas.
+
+Uso:
+- path es la ruta del archivo relativa al workspace.
+- La salida empieza con un header [path#HASH] y sigue con las lineas en formato NUM:TEXTO. El HASH identifica el contenido que leiste; el tool edit lo necesita para anclar sus cambios, asi que cada read deja el archivo listo para editar.
+- Por defecto devuelve hasta 2000 lineas (y ~30KB) desde el inicio del archivo. Si se trunca, anexa un aviso del tipo [N more lines in file. Use :M to continue].
+- Para leer un tramo concreto, añade un selector al final del path: "path:N" lee la linea N y "path:N-M" lee el rango N..M (1-indexed, inclusive). Para continuar tras un truncado, vuelve a leer con el selector que indica el aviso.
+- Prefiere leer una ventana amplia antes que muchos trozos chicos. Si el archivo es grande, usa grep para ubicar lo que buscas y luego lee alrededor.
+- Para encontrar archivos por nombre usa glob; para buscar por contenido usa grep.
+- Puedes leer varios archivos en paralelo en una sola respuesta.
+- Los archivos binarios (con bytes NUL) no se pueden leer ni editar por este camino.

@@ -2,6 +2,7 @@ package tool
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -63,9 +64,10 @@ func NewWriteToolWithSnapshotProvider(root string, provider SnapshotProvider) *W
 
 func (*WriteTool) Name() string { return "write" }
 
-func (*WriteTool) Description() string {
-	return "Crea un archivo nuevo con el contenido completo dado. Para modificar archivos existentes usa read+edit. Devuelve el header [path#HASH] para encadenar un edit sin re-leer."
-}
+//go:embed write.txt
+var writeDescription string
+
+func (*WriteTool) Description() string { return writeDescription }
 
 func (*WriteTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}`)

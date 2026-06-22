@@ -1,0 +1,22 @@
+Aplica un patch hashline a un archivo EXISTENTE del workspace.
+
+Uso:
+- El patch empieza con el header [path#HASH] que te dio el ultimo read o write de ese archivo. NUNCA inventes el HASH: ancla la frescura del archivo. Si el archivo cambio desde que lo leiste, el edit falla y debes re-leer y copiar el header nuevo.
+- Tras el header van uno o mas hunks que describen los cambios. El contenido nuevo va en lineas que empiezan con "+". Los numeros de linea son los del header que estas anclando (1-indexed, inclusive):
+    - SWAP a.=b:    reemplaza las lineas a..b por el contenido que sigue (SWAP n: reemplaza solo la linea n).
+    - DEL n         borra la linea n (DEL a.=b borra el rango a..b).
+    - INS.PRE n:    inserta el contenido ANTES de la linea n.
+    - INS.POST n:   inserta el contenido DESPUES de la linea n.
+    - INS.HEAD:     inserta el contenido al principio del archivo.
+    - INS.TAIL:     inserta el contenido al final del archivo.
+- Para CREAR un archivo nuevo usa write; el edit no crea archivos.
+- Tras aplicar los cambios devuelve el nuevo header [path#HASH], para encadenar otro edit sin re-leer.
+
+Ejemplo (reemplaza las lineas 12 a 14 y agrega una linea al final):
+    [internal/foo.go#a1b2]
+    SWAP 12.=14:
+    +func Foo() error {
+    +	return nil
+    +}
+    INS.TAIL:
+    +// fin

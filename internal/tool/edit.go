@@ -2,6 +2,7 @@ package tool
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -33,9 +34,10 @@ func NewEditToolWithSnapshotProvider(root string, fs hashline.Filesystem, provid
 
 func (*EditTool) Name() string { return "edit" }
 
-func (*EditTool) Description() string {
-	return "Aplica un patch hashline a un archivo EXISTENTE: ancla en el header [ruta#HASH] que devolvio read o write y describe los cambios con hunks SWAP/DEL/INS.* cuyo payload nuevo va en lineas '+...'. Para crear un archivo nuevo usa write, no inventes el header."
-}
+//go:embed edit.txt
+var editDescription string
+
+func (*EditTool) Description() string { return editDescription }
 
 func (*EditTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"patch":{"type":"string"}},"required":["patch"]}`)
