@@ -47,4 +47,18 @@ describe('ChatComposer', () => {
 
     expect(wrapper.emitted('stop')).toBeTruthy()
   })
+
+  it('el toggle de modo emite toggle-mode al click', async () => {
+    const wrapper = mount(ChatComposer, { props: { running: false } })
+
+    await wrapper.get('[data-action="toggle-mode"]').trigger('click')
+
+    expect(wrapper.emitted('toggle-mode')).toBeTruthy()
+  })
+
+  it('mode=plan: el toggle refleja aria-pressed=true', () => {
+    const wrapper = mount(ChatComposer, { props: { running: false, mode: 'plan' } })
+
+    expect(wrapper.get('[data-action="toggle-mode"]').attributes('aria-pressed')).toBe('true')
+  })
 })

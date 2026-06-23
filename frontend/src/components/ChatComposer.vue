@@ -7,8 +7,10 @@ import { prefersReducedMotion } from '../lib/motion'
 // Composer del MVP: textarea que crece con el contenido + boton pildora. El
 // naranja de acento se reserva para enviar (identidad §3). Es presentacional:
 // emite send/stop y recibe `running` por prop.
-const props = defineProps<{ running: boolean }>()
-const emit = defineEmits<{ send: [text: string]; stop: [] }>()
+const props = withDefaults(defineProps<{ running: boolean; mode?: 'normal' | 'plan' }>(), {
+  mode: 'normal',
+})
+const emit = defineEmits<{ send: [text: string]; stop: []; 'toggle-mode': [] }>()
 
 const text = ref('')
 const textarea = ref<HTMLTextAreaElement | null>(null)
@@ -56,6 +58,25 @@ function onKeydown(e: KeyboardEvent) {
         <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-accent"></span>
         Working · you can stop anytime
       </p>
+
+      <!-- Toggle de modo: alterna entre envio normal y modo plan (el agente
+           planifica antes de ejecutar). El acento marca el modo plan activo. -->
+      <div class="mb-2 pl-2">
+        <button
+          type="button"
+          data-action="toggle-mode"
+          :aria-pressed="props.mode === 'plan'"
+          class="rounded-full px-3 py-1 text-xs transition"
+          :class="
+            props.mode === 'plan'
+              ? 'bg-accent text-paper'
+              : 'bg-black/[0.06] hover:bg-black/[0.09]'
+          "
+          @click="emit('toggle-mode')"
+        >
+          Plan
+        </button>
+      </div>
 
       <div
         class="flex items-end gap-2 rounded-soft bg-black/[0.04] p-2 pl-4 transition focus-within:ring-2 focus-within:ring-accent/20"
