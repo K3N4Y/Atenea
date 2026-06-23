@@ -7,6 +7,8 @@ vi.mock('../../wailsjs/go/main/App', () => ({
   SendPrompt: vi.fn(() => Promise.resolve()),
   Stop: vi.fn(),
   ResolveToolPermission: vi.fn(),
+  ListSessions: vi.fn(() => Promise.resolve([])),
+  SessionHistory: vi.fn(() => Promise.resolve([])),
 }))
 vi.mock('../../wailsjs/runtime/runtime', () => ({
   EventsOn: vi.fn(() => () => {}),
@@ -209,6 +211,87 @@ describe('chat store: tool permission (ask-before-run)', () => {
       expect(item.status).toBe('success')
       expect(item.output).toBe('file.txt')
     }
+  })
+})
+
+describe('chat store: historial de sesiones (sidebar)', () => {
+  it('loadSessions trae la lista del backend y la expone en sessions', async () => {
+    vi.mocked(App.ListSessions).mockResolvedValueOnce([
+      { ID: 's2', Title: 'segunda' },
+      { ID: 's1', Title: 'primera' },
+    ] as never)
+    const store = useChatStore()
+
+    await store.loadSessions()
+
+    expect(App.ListSessions).toHaveBeenCalled()
+    expect(store.sessions).toEqual([
+      { ID: 's2', Title: 'segunda' },
+      { ID: 's1', Title: 'primera' },
+    ])
+  })
+
+  it('loadSession fija el sessionID activo y reproduce el historial via applyEvent', async () => {
+    vi.mocked(App.SessionHistory).mockResolvedValueOnce([
+      { Message: { Role: 'user', Text: 'hola' } },
+      { Kind: 'Text.Started' },
+      { Kind: 'Text.Delta', Text: 'mundo' },
+      { Kind: 'Text.Ended', Text: 'mundo' },
+      { Kind: 'Step.Ended' },
+    ] as never)
+    const store = useChatStore()
+
+    await store.loadSession('s1')
+
+    expect(App.SessionHistory).toHaveBeenCalledWith('s1')
+    expect(store.sessionID).toBe('s1')
+    // El historial reproducido reconstruye la conversacion: usuario + asistente.
+    expect(store.items.map((i) => i.kind)).toEqual(['user', 'assistant'])
+    const assistant = store.items[1]
+    if (assistant.kind === 'assistant') {
+      // Converge a estado terminal: el Text.Ended dejo el item no-streaming.
+      expect(assistant.streaming).toBe(false)
+      expect(assistant.text).toBe('mundo')
+    }
+    // El log durable incluye Step.Ended, asi que running queda apagado.
+    expect(store.running).toBe(false)
+  })
+
+  it('loadSession limpia el log previo antes de reproducir la sesion elegida', async () => {
+    const store = useChatStore()
+    // Estado de una sesion previa que NO debe sobrevivir al cambio.
+    store.applyEvent({ Message: { Role: 'user', Text: 'viejo' } })
+    expect(store.items).toHaveLength(1)
+
+    vi.mocked(App.SessionHistory).mockResolvedValueOnce([
+      { Message: { Role: 'user', Text: 'nuevo' } },
+    ] as never)
+
+    await store.loadSession('s9')
+
+    expect(store.items).toHaveLength(1)
+    expect(store.items[0]).toMatchObject({ kind: 'user', text: 'nuevo' })
+  })
+
+  it('loadSession mueve los listeners al canal de la sesion abierta', async () => {
+    const store = useChatStore()
+    store.subscribe()
+
+    vi.mocked(App.SessionHistory).mockResolvedValueOnce([] as never)
+    await store.loadSession('s7')
+
+    // El ultimo par de suscripciones apunta al canal de s7.
+    expect(EventsOn).toHaveBeenCalledWith('session:s7', expect.any(Function))
+    expect(EventsOn).toHaveBeenCalledWith('session:s7:error', expect.any(Function))
+  })
+
+  it('send refresca la lista de sesiones para que la conversacion nueva aparezca', async () => {
+    vi.mocked(App.ListSessions).mockResolvedValue([{ ID: 'x', Title: 'hola' }] as never)
+    const store = useChatStore()
+
+    await store.send('hola')
+
+    expect(App.ListSessions).toHaveBeenCalled()
   })
 })
 

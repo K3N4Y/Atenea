@@ -1,6 +1,12 @@
 import { ref } from 'vue'
 import { defineStore, acceptHMRUpdate } from 'pinia'
-import { SendPrompt, Stop, ResolveToolPermission } from '../../wailsjs/go/main/App'
+import {
+  SendPrompt,
+  Stop,
+  ResolveToolPermission,
+  ListSessions,
+  SessionHistory,
+} from '../../wailsjs/go/main/App'
 import { EventsOn } from '../../wailsjs/runtime/runtime'
 
 // Mapeo evento->estado de la sesion (front.md §74). El store formaliza la
@@ -66,11 +72,22 @@ export interface SessionEvent {
   Message?: { Role?: string; Text?: string }
 }
 
+// Resumen de una sesion para el historial de la sidebar (espejo de
+// session.SessionSummary del backend). El Title puede venir vacio (sesion sin
+// prompt aun); la UI cae a un placeholder.
+export interface SessionSummary {
+  ID: string
+  Title: string
+}
+
 export const useChatStore = defineStore('chat', () => {
   const sessionID = ref(newSessionID())
   const items = ref<TurnItem[]>([])
   const running = ref(false)
   const errorText = ref<string | null>(null)
+  // Historial de chats para la sidebar. La fuente de verdad es el backend; se
+  // refresca con loadSessions (al montar la vista) y tras enviar un prompt.
+  const sessions = ref<SessionSummary[]>([])
 
   // Punteros al texto / pensamiento en curso (referencias dentro de `items`).
   let streamingText: AssistantItem | null = null
@@ -205,19 +222,47 @@ export const useChatStore = defineStore('chat', () => {
     errorText.value = null
   }
 
-  // Lienzo nuevo: limpia la vista local. La fuente de verdad sigue siendo el
-  // backend; la rehidratacion del historial llega en la Fase 4.
-  function reset(): void {
-    const wasSubscribed = unsubscribe.length > 0
-    teardown()
-    sessionID.value = newSessionID()
+  // clearLog vacia el lienzo local y los punteros de streaming/correlacion. No
+  // toca la suscripcion ni el sessionID: lo comparten reset (lienzo nuevo) y
+  // loadSession (antes de reproducir el historial elegido).
+  function clearLog(): void {
     items.value = []
     streamingText = null
     streamingReasoning = null
     toolsByCall = new Map()
     running.value = false
     errorText.value = null
+  }
+
+  // Lienzo nuevo: abre una sesion vacia y limpia la vista local. La fuente de
+  // verdad sigue siendo el backend; el historial se rehidrata via loadSession.
+  function reset(): void {
+    const wasSubscribed = unsubscribe.length > 0
+    teardown()
+    sessionID.value = newSessionID()
+    clearLog()
     if (wasSubscribed) subscribe()
+  }
+
+  // loadSessions trae el historial del backend para poblar la sidebar. Idempotente:
+  // la vista la llama al montar y el store tras cada send.
+  async function loadSessions(): Promise<void> {
+    sessions.value = await ListSessions()
+  }
+
+  // loadSession abre una sesion del historial: cambia el sessionID activo, mueve
+  // la suscripcion al canal de esa sesion, limpia el lienzo y reproduce el log
+  // durable via applyEvent (reusa todo el render de texto/pensamiento/tools). El
+  // log persistido incluye los *.Ended/Step.Ended, asi que los items convergen a
+  // su estado terminal (no quedan en streaming) y running queda apagado.
+  async function loadSession(id: string): Promise<void> {
+    const wasSubscribed = unsubscribe.length > 0
+    teardown()
+    sessionID.value = id
+    clearLog()
+    if (wasSubscribed) subscribe()
+    const history = await SessionHistory(id)
+    for (const ev of history) applyEvent(ev)
   }
 
   async function send(text: string): Promise<void> {
@@ -226,6 +271,9 @@ export const useChatStore = defineStore('chat', () => {
     errorText.value = null
     running.value = true
     await SendPrompt(sessionID.value, trimmed)
+    // Refresca el historial: una conversacion nueva (o reactivada) debe aparecer
+    // y reordenarse en la sidebar.
+    await loadSessions()
   }
 
   function stop(): void {
@@ -270,10 +318,13 @@ export const useChatStore = defineStore('chat', () => {
     items,
     running,
     errorText,
+    sessions,
     applyEvent,
     applyError,
     clearError,
     reset,
+    loadSessions,
+    loadSession,
     send,
     stop,
     approveTool,
