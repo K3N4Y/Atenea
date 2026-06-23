@@ -30,13 +30,14 @@ type Publisher struct {
 	sessionID string
 	asstMsgID string // assistantMessageID del turno
 
-	mu      sync.Mutex
-	text    strings.Builder   // buffer del bloque de texto en curso
-	reason  strings.Builder   // buffer del bloque de razonamiento en curso
-	input   map[string][]byte // input JSON acumulado por callID
-	tools   map[string]string // callID -> toolName (mapa de tool calls del turno)
-	order   []string          // orden de Tool.Called del turno
-	settled map[string]bool   // callID -> ya tiene Tool.Success/Tool.Failed
+	mu            sync.Mutex
+	text          strings.Builder   // buffer del bloque de texto en curso
+	assistantText strings.Builder   // texto del assistant acumulado del turno (se materializa en Step.Ended)
+	reason        strings.Builder   // buffer del bloque de razonamiento en curso
+	input         map[string][]byte // input JSON acumulado por callID
+	tools         map[string]string // callID -> toolName (mapa de tool calls del turno)
+	order         []string          // orden de Tool.Called del turno
+	settled       map[string]bool   // callID -> ya tiene Tool.Success/Tool.Failed
 }
 
 // NewPublisher crea el publisher de un turno. assistantMessageID es el ID con el
@@ -55,8 +56,9 @@ func NewPublisher(store eventAppender, sessionID, assistantMessageID string) *Pu
 
 // Publish traduce un evento del stream a un SessionEvent durable y lo persiste.
 // Bufferiza los deltas: en cada *.Ended emite el bloque completo concatenado, y
-// en Text.Ended ademas materializa el Message del asistente para la proyeccion.
-// Devuelve el error del store si AppendEvent falla.
+// al cerrar el turno (Step.Ended) materializa el unico Message del asistente,
+// coalesciendo el texto acumulado con sus tool_calls. Devuelve el error del
+// store si AppendEvent falla.
 func (p *Publisher) Publish(ctx context.Context, ev llm.Event) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -64,7 +66,28 @@ func (p *Publisher) Publish(ctx context.Context, ev llm.Event) error {
 	case llm.StepStarted:
 		return p.emit(ctx, session.SessionEvent{Kind: session.KindStepStarted})
 	case llm.StepEnded:
-		return p.emit(ctx, session.SessionEvent{Kind: session.KindStepEnded, Usage: toUsage(ev.Usage)})
+		// Materializa aqui el unico Message del assistant del turno, coalesciendo el
+		// texto acumulado con los tool_calls (en orden de Tool.Called). Si no hubo
+		// texto ni tool calls es un turno vacio y no se materializa Message.
+		var toolCalls []session.ToolCall
+		for _, callID := range p.order {
+			toolCalls = append(toolCalls, session.ToolCall{
+				ID:        callID,
+				Name:      p.tools[callID],
+				Arguments: string(p.input[callID]),
+			})
+		}
+		out := session.SessionEvent{Kind: session.KindStepEnded, Usage: toUsage(ev.Usage)}
+		text := p.assistantText.String()
+		if text != "" || len(toolCalls) > 0 {
+			out.Message = &session.Message{
+				ID:        p.asstMsgID,
+				Role:      session.RoleAssistant,
+				Text:      text,
+				ToolCalls: toolCalls,
+			}
+		}
+		return p.emit(ctx, out)
 
 	case llm.TextStarted:
 		p.text.Reset()
@@ -75,11 +98,11 @@ func (p *Publisher) Publish(ctx context.Context, ev llm.Event) error {
 	case llm.TextEnded:
 		full := p.text.String()
 		p.text.Reset()
-		return p.emit(ctx, session.SessionEvent{
-			Kind:    session.KindTextEnded,
-			Text:    full,
-			Message: &session.Message{ID: p.asstMsgID, Role: session.RoleAssistant, Text: full},
-		})
+		// El Message del assistant ya no se materializa aqui: se acumula el texto y
+		// se coalesce con los tool_calls al cerrar el turno (Step.Ended). Asi un turno
+		// produce un solo Message de assistant con texto + tool calls juntos.
+		p.assistantText.WriteString(full)
+		return p.emit(ctx, session.SessionEvent{Kind: session.KindTextEnded, Text: full})
 
 	case llm.ReasoningStarted:
 		p.reason.Reset()
@@ -135,7 +158,7 @@ func (p *Publisher) ToolSuccess(ctx context.Context, callID, output string) erro
 		CallID:   callID,
 		ToolName: p.tools[callID],
 		Text:     output,
-		Message:  &session.Message{ID: callID, Role: session.RoleTool, Text: output},
+		Message:  &session.Message{ID: callID, Role: session.RoleTool, Text: output, ToolCallID: callID},
 	}); err != nil {
 		return err
 	}
@@ -192,7 +215,7 @@ func (p *Publisher) failTool(ctx context.Context, callID string, cause error) er
 		CallID:   callID,
 		ToolName: p.tools[callID],
 		Error:    msg,
-		Message:  &session.Message{ID: callID, Role: session.RoleTool, Text: msg},
+		Message:  &session.Message{ID: callID, Role: session.RoleTool, Text: msg, ToolCallID: callID},
 	}); err != nil {
 		return err
 	}

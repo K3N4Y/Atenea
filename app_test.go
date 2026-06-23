@@ -81,7 +81,8 @@ func (p *requestRecordingProvider) captured() llm.Request {
 
 // TestApp_SendPromptStreamsTurnToBus: SendPrompt admite el prompt y arranca Run; el
 // turno completo viaja por el bus al canal de la sesion. El prompt se promueve como
-// Message{Role:user} y el texto del asistente cierra en Text.Ended con su Message.
+// Message{Role:user} y el texto del asistente se materializa coalescido en
+// Step.Ended con su Message.
 func TestApp_SendPromptStreamsTurnToBus(t *testing.T) {
 	rec := &recordingEmit{}
 	fake := llm.NewFakeProvider(
@@ -111,27 +112,20 @@ func TestApp_SendPromptStreamsTurnToBus(t *testing.T) {
 	}
 
 	hasUser := false
-	hasTextEnded := false
 	hasStepEnded := false
 	for _, ev := range evs {
 		if ev.Message != nil && ev.Message.Role == session.RoleUser && ev.Message.Text == "hola" {
 			hasUser = true
 		}
-		if ev.Kind == session.KindTextEnded && ev.Message != nil && ev.Message.Text == "ok" {
-			hasTextEnded = true
-		}
-		if ev.Kind == session.KindStepEnded {
+		if ev.Kind == session.KindStepEnded && ev.Message != nil && ev.Message.Text == "ok" {
 			hasStepEnded = true
 		}
 	}
 	if !hasUser {
 		t.Error("falta el evento con Message.Role==user y Text=='hola'")
 	}
-	if !hasTextEnded {
-		t.Error("falta Text.Ended con Message.Text=='ok'")
-	}
 	if !hasStepEnded {
-		t.Error("falta Step.Ended")
+		t.Error("falta Step.Ended con Message.Text=='ok'")
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 
 	"atenea/internal/llm"
@@ -41,10 +42,12 @@ func publishAll(t *testing.T, p *Publisher, evs ...llm.Event) {
 }
 
 // TestPublisher_TextBlockEmitsDeltasAndFinalConcatenatedText alimenta un bloque
-// de texto (Started, Delta, Delta, Ended) y afirma que el publisher persiste los
-// cuatro eventos con su Kind, que los deltas llevan su fragmento en Text sin
-// materializar Message, y que Text.Ended lleva el texto completo concatenado y
-// el Message coalescido del asistente con el assistantMessageID del turno.
+// de texto (Started, Delta, Delta, Ended) seguido de Step.Ended y afirma que el
+// publisher persiste los cinco eventos con su Kind, que los deltas llevan su
+// fragmento en Text sin materializar Message, y que Text.Ended lleva el texto
+// completo concatenado pero SIN Message. El Message coalescido del asistente
+// (con el assistantMessageID del turno) se materializa al cerrar el turno, en
+// Step.Ended, no en Text.Ended: un turno produce un solo Message de assistant.
 func TestPublisher_TextBlockEmitsDeltasAndFinalConcatenatedText(t *testing.T) {
 	spy := &recordingAppender{}
 	p := NewPublisher(spy, "s1", "a1")
@@ -54,6 +57,7 @@ func TestPublisher_TextBlockEmitsDeltasAndFinalConcatenatedText(t *testing.T) {
 		llm.Event{Kind: llm.TextDelta, Text: "Hola, "},
 		llm.Event{Kind: llm.TextDelta, Text: "mundo"},
 		llm.Event{Kind: llm.TextEnded},
+		llm.Event{Kind: llm.StepEnded},
 	)
 
 	wantKinds := []session.EventKind{
@@ -61,6 +65,7 @@ func TestPublisher_TextBlockEmitsDeltasAndFinalConcatenatedText(t *testing.T) {
 		session.KindTextDelta,
 		session.KindTextDelta,
 		session.KindTextEnded,
+		session.KindStepEnded,
 	}
 	if len(spy.events) != len(wantKinds) {
 		t.Fatalf("eventos persistidos = %d, quiero %d", len(spy.events), len(wantKinds))
@@ -89,17 +94,24 @@ func TestPublisher_TextBlockEmitsDeltasAndFinalConcatenatedText(t *testing.T) {
 		}
 	}
 
-	// Text.Ended lleva el texto completo concatenado y el Message coalescido.
+	// Text.Ended lleva el texto completo concatenado pero NO materializa Message:
+	// el Message del assistant se coalesce al cerrar el turno (Step.Ended).
 	ended := spy.events[3]
 	if ended.Text != "Hola, mundo" {
 		t.Errorf("Text.Ended.Text = %q, quiero %q", ended.Text, "Hola, mundo")
 	}
-	wantMsg := &session.Message{ID: "a1", Role: session.RoleAssistant, Text: "Hola, mundo"}
-	if ended.Message == nil {
-		t.Fatalf("Text.Ended.Message = nil, quiero %+v", wantMsg)
+	if ended.Message != nil {
+		t.Errorf("Text.Ended.Message = %+v, quiero nil (se materializa en Step.Ended)", ended.Message)
 	}
-	if *ended.Message != *wantMsg {
-		t.Errorf("Text.Ended.Message = %+v, quiero %+v", *ended.Message, *wantMsg)
+
+	// Step.Ended lleva el Message coalescido del asistente con el texto del turno.
+	step := spy.events[4]
+	wantMsg := &session.Message{ID: "a1", Role: session.RoleAssistant, Text: "Hola, mundo"}
+	if step.Message == nil {
+		t.Fatalf("Step.Ended.Message = nil, quiero %+v", wantMsg)
+	}
+	if !reflect.DeepEqual(*step.Message, *wantMsg) {
+		t.Errorf("Step.Ended.Message = %+v, quiero %+v", *step.Message, *wantMsg)
 	}
 }
 
@@ -402,6 +414,108 @@ func TestPublisher_ProjectsCoalescedAssistantMessage(t *testing.T) {
 	}
 	if got.Text != "ab" {
 		t.Errorf("Message.Text = %q, quiero %q", got.Text, "ab")
+	}
+}
+
+// TestPublisher_ProjectsAssistantToolCallsAndToolResultID fija el round-trip de
+// una tool call en la proyeccion: con el MemoryStore real como appender, publica
+// un turno solo-tools (sin texto) y luego el resultado de la tool, y afirma que
+// Messages proyecta DOS mensajes emparejados: primero el assistant con su tool
+// call, luego el role tool con el tool_call_id que la empareja. Hoy el assistant
+// con tool calls no se proyecta (un turno solo-tools no materializa Message de
+// assistant) y el resultado no guarda su tool_call_id, asi que la proyeccion
+// pierde el emparejamiento que el proveedor necesita.
+func TestPublisher_ProjectsAssistantToolCallsAndToolResultID(t *testing.T) {
+	store := session.NewMemoryStore()
+	p := NewPublisher(store, "s1", "a1")
+
+	publishAll(t, p,
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.ToolCall, CallID: "call_1", ToolName: "read", Input: json.RawMessage(`{"path":"foo.go"}`)},
+		llm.Event{Kind: llm.StepEnded},
+	)
+	if err := p.ToolSuccess(context.Background(), "call_1", "contenido"); err != nil {
+		t.Fatalf("ToolSuccess error inesperado: %v", err)
+	}
+
+	msgs, err := store.Messages(context.Background(), "s1", 0)
+	if err != nil {
+		t.Fatalf("Messages error inesperado: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("mensajes proyectados = %d, quiero 2 (assistant con tool call + tool result), got %+v", len(msgs), msgs)
+	}
+
+	asst := msgs[0]
+	if asst.Role != session.RoleAssistant {
+		t.Fatalf("msgs[0].Role = %q, quiero %q (el assistant con tool calls va primero)", asst.Role, session.RoleAssistant)
+	}
+	if len(asst.ToolCalls) != 1 {
+		t.Fatalf("msgs[0].ToolCalls = %+v, quiero 1 tool call", asst.ToolCalls)
+	}
+	wantCall := session.ToolCall{ID: "call_1", Name: "read", Arguments: `{"path":"foo.go"}`}
+	if !reflect.DeepEqual(asst.ToolCalls[0], wantCall) {
+		t.Fatalf("msgs[0].ToolCalls[0] = %+v, quiero %+v", asst.ToolCalls[0], wantCall)
+	}
+
+	tool := msgs[1]
+	if tool.Role != session.RoleTool {
+		t.Fatalf("msgs[1].Role = %q, quiero %q (el resultado de la tool va segundo)", tool.Role, session.RoleTool)
+	}
+	if tool.ToolCallID != "call_1" {
+		t.Fatalf("msgs[1].ToolCallID = %q, quiero %q", tool.ToolCallID, "call_1")
+	}
+	if tool.Text != "contenido" {
+		t.Fatalf("msgs[1].Text = %q, quiero %q", tool.Text, "contenido")
+	}
+
+	// El pegamento: el tool result se empareja con la tool call del assistant.
+	if tool.ToolCallID != asst.ToolCalls[0].ID {
+		t.Fatalf("emparejamiento roto: msgs[1].ToolCallID = %q, msgs[0].ToolCalls[0].ID = %q", tool.ToolCallID, asst.ToolCalls[0].ID)
+	}
+}
+
+// TestPublisher_CoalescesTextAndToolCallsIntoOneAssistantMessage fija que un turno
+// con texto Y tool calls produce UN SOLO mensaje de assistant que lleva ambos: el
+// texto coalescido y la tool call. Con el MemoryStore real como appender, publica
+// StepStarted, un bloque de texto en deltas y una tool call, y afirma que Messages
+// proyecta exactamente un mensaje del asistente con Text y ToolCalls juntos. Tumba
+// un regreso a "dos mensajes separados" (texto y tools por separado) o a "texto XOR
+// tools" (uno pisa al otro).
+func TestPublisher_CoalescesTextAndToolCallsIntoOneAssistantMessage(t *testing.T) {
+	store := session.NewMemoryStore()
+	p := NewPublisher(store, "s1", "a1")
+
+	publishAll(t, p,
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.TextStarted},
+		llm.Event{Kind: llm.TextDelta, Text: "voy a leer "},
+		llm.Event{Kind: llm.TextEnded},
+		llm.Event{Kind: llm.ToolCall, CallID: "call_1", ToolName: "read", Input: json.RawMessage(`{"path":"foo.go"}`)},
+		llm.Event{Kind: llm.StepEnded},
+	)
+
+	msgs, err := store.Messages(context.Background(), "s1", 0)
+	if err != nil {
+		t.Fatalf("Messages error inesperado: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("mensajes proyectados = %d, quiero 1 (texto y tools en UN solo assistant), got %+v", len(msgs), msgs)
+	}
+
+	got := msgs[0]
+	if got.Role != session.RoleAssistant {
+		t.Errorf("Message.Role = %q, quiero %q", got.Role, session.RoleAssistant)
+	}
+	if got.Text != "voy a leer " {
+		t.Errorf("Message.Text = %q, quiero %q", got.Text, "voy a leer ")
+	}
+	if len(got.ToolCalls) != 1 {
+		t.Fatalf("Message.ToolCalls = %+v, quiero 1 tool call", got.ToolCalls)
+	}
+	wantCall := session.ToolCall{ID: "call_1", Name: "read", Arguments: `{"path":"foo.go"}`}
+	if !reflect.DeepEqual(got.ToolCalls[0], wantCall) {
+		t.Errorf("Message.ToolCalls[0] = %+v, quiero %+v", got.ToolCalls[0], wantCall)
 	}
 }
 
