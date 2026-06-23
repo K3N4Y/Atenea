@@ -5,13 +5,16 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"atenea/internal/event"
 	"atenea/internal/llm"
 	"atenea/internal/session"
+	"atenea/internal/session/prompt"
 	"atenea/internal/session/runner"
 	"atenea/internal/tool"
 	"atenea/internal/tool/hashline"
@@ -70,7 +73,32 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 		tool.NewGlobTool(root), tool.NewGrepToolWithSnapshotProvider(root, snaps))
 	a.runner = runner.NewRunner(emitting, a.inbox, provider, registry,
 		tool.Permissions{"echo": true, "read": true, "write": true, "edit": true, "glob": true, "grep": true}, newIDGen())
+	a.runner.SetSystemPrompt(systemPromptBuilder(root))
 	return a
+}
+
+// systemPromptBuilder builds the system prompt builder anchored at root: it
+// detects whether root is a git repo and loads the repo instructions
+// (AGENTS.md/CLAUDE.md) once, and per turn composes the base prompt (chosen by
+// model family) + the <env> block with today's date. The date is computed per
+// call so it does not go stale in a long session; prompt.Build stays pure (it
+// takes Env by value).
+func systemPromptBuilder(root string) func(model string) string {
+	_, gitErr := os.Stat(filepath.Join(root, ".git"))
+	isGit := gitErr == nil
+	instructions, err := prompt.LoadInstructions(root, root)
+	if err != nil {
+		log.Printf("atenea: no se pudieron cargar las instrucciones del repo: %v", err)
+	}
+	return func(model string) string {
+		return prompt.Build(model, prompt.Env{
+			WorkingDir:   root,
+			WorktreeRoot: root,
+			IsGitRepo:    isGit,
+			Platform:     goruntime.GOOS,
+			Date:         time.Now().Format("2006-01-02"),
+		}, instructions)
+	}
 }
 
 // newApp arma la app con un MemoryStore (no durable) y el provider/emit inyectados.
