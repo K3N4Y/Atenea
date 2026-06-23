@@ -7,6 +7,7 @@ import ErrorNotice from '../components/ErrorNotice.vue'
 import ChatComposer from '../components/ChatComposer.vue'
 import SettingsPanel from '../components/SettingsPanel.vue'
 import PlanView from '../components/PlanView.vue'
+import PlanCard from '../components/PlanCard.vue'
 import { useChatStore } from '../stores/chat'
 import { useUiStore } from '../stores/ui'
 
@@ -48,7 +49,7 @@ onUnmounted(() => chat.teardown())
       @click="ui.toggleSidebar()"
     ></div>
 
-    <main class="flex min-w-0 flex-1 flex-col">
+    <main class="relative flex min-w-0 flex-1 flex-col">
       <header class="flex items-center px-3 py-3">
         <button
           type="button"
@@ -71,7 +72,15 @@ onUnmounted(() => chat.teardown())
         </button>
       </header>
 
-      <MessageList :items="chat.items" @approve="chat.approveTool" @deny="chat.denyTool" />
+      <MessageList :items="chat.items" @approve="chat.approveTool" @deny="chat.denyTool">
+        <!-- Plan minimizado: tarjeta al final de la conversacion (scrollea con
+             ella, como una tool). Expandir reabre el overlay. -->
+        <PlanCard
+          v-if="chat.plan && !chat.planExpanded"
+          :plan="chat.plan"
+          @expand="chat.togglePlanExpanded"
+        />
+      </MessageList>
 
       <!-- Aviso de error de la sesion (fallo del proveedor o stream cortado).
            Vive sobre el composer, dentro de la columna del chat: visible pero
@@ -87,17 +96,19 @@ onUnmounted(() => chat.teardown())
         @stop="chat.stop"
         @toggle-mode="chat.toggleMode"
       />
+
+      <!-- Plan expandido: overlay sobre la columna del chat (no tapa la sidebar).
+           Minimizar lo colapsa a la tarjeta de la conversacion; aceptar lo
+           ejecuta; solicitar cambio lo reescribe. -->
+      <PlanView
+        v-if="chat.plan && chat.planExpanded"
+        :plan="chat.plan"
+        @accept="chat.acceptPlan"
+        @request-change="chat.requestPlanChange"
+        @minimize="chat.togglePlanExpanded"
+      />
     </main>
 
     <SettingsPanel v-if="settingsOpen" @close="settingsOpen = false" />
-
-    <!-- Plan a pantalla completa: aparece cuando el agente presenta un plan
-         (present_plan). Aceptar lo ejecuta; solicitar cambio lo reescribe. -->
-    <PlanView
-      v-if="chat.plan"
-      :plan="chat.plan"
-      @accept="chat.acceptPlan"
-      @request-change="chat.requestPlanChange"
-    />
   </div>
 </template>

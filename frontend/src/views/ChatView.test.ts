@@ -24,8 +24,19 @@ import * as App from '../../wailsjs/go/main/App'
 import ChatView from './ChatView.vue'
 import AppSidebar from '../components/AppSidebar.vue'
 import ChatComposer from '../components/ChatComposer.vue'
+import MessageList from '../components/MessageList.vue'
 import PlanView from '../components/PlanView.vue'
+import PlanCard from '../components/PlanCard.vue'
 import { useChatStore } from '../stores/chat'
+
+function presentPlan(chat: ReturnType<typeof useChatStore>) {
+  chat.applyEvent({
+    Kind: 'Tool.Called',
+    ToolName: 'present_plan',
+    CallID: 'c1',
+    Input: { title: 'T', plan: 'cuerpo' },
+  })
+}
 
 function mountView() {
   const pinia = createPinia()
@@ -159,6 +170,90 @@ describe('ChatView', () => {
     await nextTick()
 
     expect(wrapper.findComponent(PlanView).exists()).toBe(true)
+  })
+
+  it('monta PlanView dentro de <main> (en la columna del chat, no tapando la sidebar)', async () => {
+    vi.clearAllMocks()
+    const wrapper = mountView()
+    const chat = useChatStore()
+
+    chat.applyEvent({
+      Kind: 'Tool.Called',
+      ToolName: 'present_plan',
+      CallID: 'c1',
+      Input: { title: 'T', plan: 'cuerpo' },
+    })
+    await nextTick()
+
+    // El plan vive en la columna del chat: la sidebar (hermana de <main>) queda
+    // libre, asi que cambiar de sesion sigue siendo posible con un plan abierto.
+    expect(wrapper.get('main').findComponent(PlanView).exists()).toBe(true)
+  })
+
+  it('permite cambiar de sesion con un plan abierto (la sidebar sigue operativa)', async () => {
+    vi.clearAllMocks()
+    const wrapper = mountView()
+    const chat = useChatStore()
+    const spy = vi.spyOn(chat, 'loadSession').mockResolvedValue()
+
+    presentPlan(chat)
+    await nextTick()
+
+    wrapper.findComponent(AppSidebar).vm.$emit('select-session', 's2')
+    await nextTick()
+
+    expect(spy).toHaveBeenCalledWith('s2')
+  })
+
+  it('al minimizar, el plan pasa a ser una tarjeta dentro de la conversacion (no overlay)', async () => {
+    vi.clearAllMocks()
+    const wrapper = mountView()
+    const chat = useChatStore()
+
+    presentPlan(chat)
+    await nextTick()
+    // Recien presentado: overlay expandido, sin tarjeta.
+    expect(wrapper.findComponent(PlanView).exists()).toBe(true)
+    expect(wrapper.findComponent(PlanCard).exists()).toBe(false)
+
+    chat.togglePlanExpanded()
+    await nextTick()
+
+    // Minimizado: el overlay desaparece y la tarjeta vive dentro de MessageList.
+    expect(wrapper.findComponent(PlanView).exists()).toBe(false)
+    expect(wrapper.findComponent(MessageList).findComponent(PlanCard).exists()).toBe(true)
+  })
+
+  it('minimizar desde el overlay (PlanView emite minimize) colapsa a la tarjeta', async () => {
+    vi.clearAllMocks()
+    const wrapper = mountView()
+    const chat = useChatStore()
+
+    presentPlan(chat)
+    await nextTick()
+
+    wrapper.findComponent(PlanView).vm.$emit('minimize')
+    await nextTick()
+
+    expect(wrapper.findComponent(PlanView).exists()).toBe(false)
+    expect(wrapper.findComponent(PlanCard).exists()).toBe(true)
+  })
+
+  it('expandir desde la tarjeta vuelve a mostrar el overlay del plan', async () => {
+    vi.clearAllMocks()
+    const wrapper = mountView()
+    const chat = useChatStore()
+
+    presentPlan(chat)
+    chat.togglePlanExpanded() // minimizar
+    await nextTick()
+    expect(wrapper.findComponent(PlanCard).exists()).toBe(true)
+
+    wrapper.findComponent(PlanCard).vm.$emit('expand')
+    await nextTick()
+
+    expect(wrapper.findComponent(PlanView).exists()).toBe(true)
+    expect(wrapper.findComponent(PlanCard).exists()).toBe(false)
   })
 
   it('cablea el modo del composer: emitir toggle-mode alterna chat.mode', async () => {
