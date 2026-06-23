@@ -15,6 +15,29 @@ type PendingTool struct {
 	ToolName string
 }
 
+// SessionSummary es la fila del historial de chats para la sidebar: el ID de la
+// sesion y un Title derivado del primer mensaje del usuario. Title queda "" si la
+// sesion aun no tiene mensaje de usuario (el frontend cae a un placeholder).
+type SessionSummary struct {
+	ID    string
+	Title string
+}
+
+// titleMaxRunes es el largo maximo del Title de una sesion. Un corte por rune
+// (no por byte) mantiene la sidebar legible sin romper caracteres multibyte.
+const titleMaxRunes = 80
+
+// truncateTitle recorta el texto a titleMaxRunes runes. Es un corte simple: no
+// busca limites de palabra, basta para la sidebar. Lo comparten MemoryStore y
+// SQLiteStore para que el Title sea identico en ambos.
+func truncateTitle(text string) string {
+	r := []rune(text)
+	if len(r) <= titleMaxRunes {
+		return text
+	}
+	return string(r[:titleMaxRunes])
+}
+
 // Store es la persistencia durable de la sesion. El log de eventos es la fuente
 // de verdad; los mensajes son una proyeccion derivada. M1 implementa una version
 // en memoria; M10 agrega SQLite detras de esta misma interface.
@@ -33,6 +56,18 @@ type Store interface {
 	// reconstruye el historial completo desde cero. ErrSessionNotFound si la
 	// sesion no existe.
 	Messages(ctx context.Context, sessionID string, sinceSeq Seq) ([]Message, error)
+
+	// Sessions devuelve un resumen por sesion con al menos un evento, ordenado
+	// por actividad mas reciente primero. El Title es el primer mensaje del
+	// usuario de la sesion (truncado); "" si aun no hay uno. Lista vacia si no
+	// hay sesiones. Alimenta el historial de chats de la sidebar.
+	Sessions(ctx context.Context) ([]SessionSummary, error)
+
+	// Events devuelve todos los SessionEvent durables de la sesion en orden de
+	// Seq con Seq > sinceSeq, reconstruidos fielmente (Kind, Message, Usage,
+	// payload de streaming). sinceSeq = 0 trae el log completo. ErrSessionNotFound
+	// si la sesion no existe. Rehidrata la conversacion en el frontend.
+	Events(ctx context.Context, sessionID string, sinceSeq Seq) ([]SessionEvent, error)
 
 	// Epoch devuelve la foto del contexto vigente de la sesion. El runner la
 	// snapshotea al preparar un turno y la re-lee antes de llamar al proveedor: si

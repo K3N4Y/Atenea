@@ -52,6 +52,16 @@ func (s *EmittingStore) Messages(ctx context.Context, sessionID string, sinceSeq
 	return s.inner.Messages(ctx, sessionID, sinceSeq)
 }
 
+// Sessions delega sin candado ni emision.
+func (s *EmittingStore) Sessions(ctx context.Context) ([]session.SessionSummary, error) {
+	return s.inner.Sessions(ctx)
+}
+
+// Events delega sin candado ni emision.
+func (s *EmittingStore) Events(ctx context.Context, sessionID string, sinceSeq session.Seq) ([]session.SessionEvent, error) {
+	return s.inner.Events(ctx, sessionID, sinceSeq)
+}
+
 // Epoch delega sin candado ni emision.
 func (s *EmittingStore) Epoch(ctx context.Context, sessionID string) (session.ContextEpoch, error) {
 	return s.inner.Epoch(ctx, sessionID)

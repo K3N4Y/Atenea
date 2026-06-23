@@ -182,6 +182,12 @@ func (failingStore) LoadSession(ctx context.Context, sessionID string) (session.
 func (failingStore) Messages(ctx context.Context, sessionID string, sinceSeq session.Seq) ([]session.Message, error) {
 	return nil, nil
 }
+func (failingStore) Sessions(ctx context.Context) ([]session.SessionSummary, error) {
+	return nil, nil
+}
+func (failingStore) Events(ctx context.Context, sessionID string, sinceSeq session.Seq) ([]session.SessionEvent, error) {
+	return nil, nil
+}
 func (failingStore) Epoch(ctx context.Context, sessionID string) (session.ContextEpoch, error) {
 	return session.ContextEpoch{}, nil
 }
