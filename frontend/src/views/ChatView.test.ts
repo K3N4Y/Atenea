@@ -12,6 +12,8 @@ vi.mock('../../wailsjs/runtime/runtime', () => ({
 }))
 vi.mock('../../wailsjs/go/main/App', () => ({
   SendPrompt: vi.fn(() => Promise.resolve()),
+  SendPlanPrompt: vi.fn(() => Promise.resolve()),
+  AcceptPlan: vi.fn(() => Promise.resolve()),
   Stop: vi.fn(),
   ListSessions: vi.fn(() => Promise.resolve([])),
   SessionHistory: vi.fn(() => Promise.resolve([])),
@@ -21,6 +23,8 @@ import { EventsOn } from '../../wailsjs/runtime/runtime'
 import * as App from '../../wailsjs/go/main/App'
 import ChatView from './ChatView.vue'
 import AppSidebar from '../components/AppSidebar.vue'
+import ChatComposer from '../components/ChatComposer.vue'
+import PlanView from '../components/PlanView.vue'
 import { useChatStore } from '../stores/chat'
 
 function mountView() {
@@ -132,5 +136,43 @@ describe('ChatView', () => {
 
     expect(chat.errorText).toBeNull()
     expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+  })
+
+  it('no muestra PlanView cuando no hay plan vigente', () => {
+    vi.clearAllMocks()
+    const wrapper = mountView()
+
+    expect(wrapper.findComponent(PlanView).exists()).toBe(false)
+  })
+
+  it('muestra PlanView cuando el agente presenta un plan (present_plan)', async () => {
+    vi.clearAllMocks()
+    const wrapper = mountView()
+    const chat = useChatStore()
+
+    chat.applyEvent({
+      Kind: 'Tool.Called',
+      ToolName: 'present_plan',
+      CallID: 'c1',
+      Input: { title: 'T', plan: 'cuerpo' },
+    })
+    await nextTick()
+
+    expect(wrapper.findComponent(PlanView).exists()).toBe(true)
+  })
+
+  it('cablea el modo del composer: emitir toggle-mode alterna chat.mode', async () => {
+    vi.clearAllMocks()
+    const wrapper = mountView()
+    const chat = useChatStore()
+    const composer = wrapper.findComponent(ChatComposer)
+
+    expect(composer.props('mode')).toBe('normal')
+
+    composer.vm.$emit('toggle-mode')
+    await nextTick()
+
+    expect(chat.mode).toBe('plan')
+    expect(composer.props('mode')).toBe('plan')
   })
 })

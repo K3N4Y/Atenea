@@ -6,6 +6,7 @@ import MessageList from '../components/MessageList.vue'
 import ErrorNotice from '../components/ErrorNotice.vue'
 import ChatComposer from '../components/ChatComposer.vue'
 import SettingsPanel from '../components/SettingsPanel.vue'
+import PlanView from '../components/PlanView.vue'
 import { useChatStore } from '../stores/chat'
 import { useUiStore } from '../stores/ui'
 
@@ -79,9 +80,24 @@ onUnmounted(() => chat.teardown())
         <ErrorNotice :message="chat.errorText" @dismiss="chat.clearError" />
       </div>
 
-      <ChatComposer :running="chat.running" @send="chat.send" @stop="chat.stop" />
+      <ChatComposer
+        :running="chat.running"
+        :mode="chat.mode"
+        @send="chat.send"
+        @stop="chat.stop"
+        @toggle-mode="chat.toggleMode"
+      />
     </main>
 
     <SettingsPanel v-if="settingsOpen" @close="settingsOpen = false" />
+
+    <!-- Plan a pantalla completa: aparece cuando el agente presenta un plan
+         (present_plan). Aceptar lo ejecuta; solicitar cambio lo reescribe. -->
+    <PlanView
+      v-if="chat.plan"
+      :plan="chat.plan"
+      @accept="chat.acceptPlan"
+      @request-change="chat.requestPlanChange"
+    />
   </div>
 </template>
