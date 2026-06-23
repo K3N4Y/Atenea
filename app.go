@@ -41,9 +41,10 @@ type App struct {
 	store  session.Store                 // lectura del historial para la sidebar (ListSessions/SessionHistory)
 	gate   *session.MemoryPermissionGate // ask-before-run: the UI resolves via ResolveToolPermission
 
-	mu   sync.Mutex
-	runs map[string]*runHandle // sessionID -> corrida en vuelo (identidad por puntero)
-	wg   sync.WaitGroup        // los tests esperan a las corridas; la UI es fire-and-forget
+	mu    sync.Mutex
+	runs  map[string]*runHandle   // sessionID -> corrida en vuelo (identidad por puntero)
+	modes map[string]session.Mode // sessionID -> modo (normal/plan); guardado con mu como runs
+	wg    sync.WaitGroup          // los tests esperan a las corridas; la UI es fire-and-forget
 }
 
 // runHandle identifica una corrida en vuelo. Se compara por puntero porque
@@ -56,7 +57,7 @@ type runHandle struct{ cancel context.CancelFunc }
 // los tests lo llaman via newApp (MemoryStore + provider fake) y produccion via
 // NewApp (SQLiteStore + provider real).
 func newAppWithStore(store session.Store, provider llm.Provider, emit event.EmitFunc) *App {
-	a := &App{runs: map[string]*runHandle{}}
+	a := &App{runs: map[string]*runHandle{}, modes: map[string]session.Mode{}}
 	a.bus = event.NewBus(emit)
 	emitting := event.NewEmittingStore(store, a.bus)
 	a.store = emitting // las lecturas del historial delegan en inner sin emitir
@@ -70,11 +71,13 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 	if err != nil {
 		root = "."
 	}
+	// present_plan se registra para que el runner pueda ejecutarla, pero NO entra
+	// en los Permissions normales: solo se anuncia en plan-mode (SetPlanMode).
 	registry := tool.NewRegistry(tool.NewOutputStore(outputLimit), tool.Echo{},
 		tool.NewReadToolWithSnapshotProvider(root, snaps), tool.NewWriteToolWithSnapshotProvider(root, snaps),
 		tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, snaps),
 		tool.NewGlobTool(root), tool.NewGrepToolWithSnapshotProvider(root, snaps),
-		tool.NewBashTool(root))
+		tool.NewBashTool(root), tool.NewPresentPlanTool(root))
 	a.runner = runner.NewRunner(emitting, a.inbox, provider, registry,
 		tool.Permissions{"echo": true, "read": true, "write": true, "edit": true, "glob": true, "grep": true, "bash": true},
 		newIDGen())
@@ -83,30 +86,57 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 	// each command via ResolveToolPermission before it runs on the real machine.
 	a.gate = session.NewMemoryPermissionGate()
 	a.runner.SetPermissionGate(a.gate, func(c tool.Call) bool { return c.Name == "bash" })
+	// Plan-mode: investigacion de solo lectura mas present_plan (sin write/edit/bash/
+	// echo). El hook de modo decide por sesion; SetMode/SetPlanMode toman efecto
+	// solo cuando modeFor reporta ModePlan.
+	a.runner.SetMode(a.modeFor)
+	a.runner.SetPlanMode(planSystemPromptBuilder(root),
+		tool.Permissions{"read": true, "glob": true, "grep": true, "present_plan": true})
 	return a
 }
 
-// systemPromptBuilder builds the system prompt builder anchored at root: it
-// detects whether root is a git repo and loads the repo instructions
-// (AGENTS.md/CLAUDE.md) once, and per turn composes the base prompt (chosen by
-// model family) + the <env> block with today's date. The date is computed per
-// call so it does not go stale in a long session; prompt.Build stays pure (it
-// takes Env by value).
-func systemPromptBuilder(root string) func(model string) string {
+// promptSetup anchors the shared system-prompt setup at root: it detects whether
+// root is a git repo and loads the repo instructions (AGENTS.md/CLAUDE.md) once,
+// then returns a per-call Env factory (date computed per call so it does not go
+// stale in a long session) plus the loaded instructions. Both the normal and the
+// plan-mode builders reuse it; they differ only in which pure prompt function
+// (prompt.Build vs prompt.BuildPlan) they call.
+func promptSetup(root string) (env func() prompt.Env, instructions string) {
 	_, gitErr := os.Stat(filepath.Join(root, ".git"))
 	isGit := gitErr == nil
 	instructions, err := prompt.LoadInstructions(root, root)
 	if err != nil {
 		log.Printf("atenea: no se pudieron cargar las instrucciones del repo: %v", err)
 	}
-	return func(model string) string {
-		return prompt.Build(model, prompt.Env{
+	env = func() prompt.Env {
+		return prompt.Env{
 			WorkingDir:   root,
 			WorktreeRoot: root,
 			IsGitRepo:    isGit,
 			Platform:     goruntime.GOOS,
 			Date:         time.Now().Format("2006-01-02"),
-		}, instructions)
+		}
+	}
+	return env, instructions
+}
+
+// systemPromptBuilder builds the normal-mode system prompt builder anchored at
+// root: per turn composes the base prompt (chosen by model family) + the <env>
+// block with today's date, over the shared promptSetup.
+func systemPromptBuilder(root string) func(model string) string {
+	env, instructions := promptSetup(root)
+	return func(model string) string {
+		return prompt.Build(model, env(), instructions)
+	}
+}
+
+// planSystemPromptBuilder builds the plan-mode system prompt builder: same shape
+// as systemPromptBuilder but uses prompt.BuildPlan, which appends the plan-mode
+// contract (present_plan) on top of the base prompt.
+func planSystemPromptBuilder(root string) func(model string) string {
+	env, instructions := promptSetup(root)
+	return func(model string) string {
+		return prompt.BuildPlan(model, env(), instructions)
 	}
 }
 
@@ -178,11 +208,59 @@ func chooseProvider() llm.Provider {
 // startup guarda el ctx de Wails (lo usa la EmitFunc real).
 func (a *App) startup(ctx context.Context) { a.ctx = ctx }
 
+// acceptPlanPrompt es el prompt fijo que AcceptPlan promueve para ejecutar el
+// plan aprobado: vuelve a modo normal e instruye al agente a implementarlo.
+const acceptPlanPrompt = "El plan fue aprobado. Implementalo ahora paso a paso siguiendo el plan."
+
+// modeFor devuelve el modo de la sesion (normal/plan). Lo consulta el runner cada
+// turno via el hook SetMode. Guarda a.modes con mu, igual que runs.
+func (a *App) modeFor(sessionID string) session.Mode {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.modes[sessionID]
+}
+
+// setMode fija el modo de la sesion. Se llama SIEMPRE antes de start (adquisiciones
+// de lock separadas, nunca anidadas) porque start tambien toma a.mu.
+func (a *App) setMode(sessionID string, m session.Mode) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.modes[sessionID] = m
+}
+
 // SendPrompt admite el texto como prompt en cola y arranca Run en una goroutine.
-// Es el binding que el frontend llama al enviar.
+// Es el binding que el frontend llama al enviar. Fija modo normal primero: una
+// sesion que estaba en plan-mode vuelve a las tools normales al enviar.
 func (a *App) SendPrompt(sessionID, text string) error {
+	a.setMode(sessionID, session.ModeNormal)
 	if err := a.inbox.Admit(context.Background(), sessionID,
 		session.Prompt{Text: text}, session.DeliveryQueue); err != nil {
+		return err
+	}
+	a.start(sessionID)
+	return nil
+}
+
+// SendPlanPrompt admite el texto en plan-mode: investigacion de solo lectura mas
+// present_plan, con el contrato de plan-mode en el system prompt. Fija ModePlan
+// antes de arrancar. Es el binding que el frontend llama al planear una feature.
+func (a *App) SendPlanPrompt(sessionID, text string) error {
+	a.setMode(sessionID, session.ModePlan)
+	if err := a.inbox.Admit(context.Background(), sessionID,
+		session.Prompt{Text: text}, session.DeliveryQueue); err != nil {
+		return err
+	}
+	a.start(sessionID)
+	return nil
+}
+
+// AcceptPlan acepta y ejecuta el plan: vuelve a modo normal y promueve el prompt
+// fijo de implementacion como prompt del usuario. Es el binding que el frontend
+// llama al aprobar un plan presentado.
+func (a *App) AcceptPlan(sessionID string) error {
+	a.setMode(sessionID, session.ModeNormal)
+	if err := a.inbox.Admit(context.Background(), sessionID,
+		session.Prompt{Text: acceptPlanPrompt}, session.DeliveryQueue); err != nil {
 		return err
 	}
 	a.start(sessionID)

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -292,6 +293,106 @@ func TestApp_RequestAdvertisesBashTool(t *testing.T) {
 	req := prov.captured()
 	if !requestHasTool(req, "bash") {
 		t.Fatalf("Request.Tools does not contain bash; tools = %+v", req.Tools)
+	}
+}
+
+// TestApp_SendPlanPromptUsesPlanModeToolsAndPrompt: SendPlanPrompt arranca la
+// sesion en plan-mode: el Request del proveedor anuncia present_plan (y las tools
+// de investigacion read/glob/grep), NO anuncia las de escritura (bash/write), y el
+// System lleva el contrato de plan-mode (contiene "present_plan").
+func TestApp_SendPlanPromptUsesPlanModeToolsAndPrompt(t *testing.T) {
+	rec := &recordingEmit{}
+	prov := &requestRecordingProvider{FakeProvider: llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.StepEnded},
+	)}
+	app := newApp(prov, rec.emit)
+
+	if err := app.SendPlanPrompt("s1", "planea la feature X"); err != nil {
+		t.Fatalf("SendPlanPrompt: %v", err)
+	}
+	app.wait()
+
+	req := prov.captured()
+	if !requestHasTool(req, "present_plan") {
+		t.Errorf("Request.Tools no contiene present_plan; tools = %+v", req.Tools)
+	}
+	if requestHasTool(req, "bash") {
+		t.Errorf("Request.Tools contiene bash en plan-mode; tools = %+v", req.Tools)
+	}
+	if requestHasTool(req, "write") {
+		t.Errorf("Request.Tools contiene write en plan-mode; tools = %+v", req.Tools)
+	}
+	if !strings.Contains(req.System, "present_plan") {
+		t.Errorf("Request.System no lleva el contrato de plan-mode; system = %q", req.System)
+	}
+}
+
+// TestApp_SendPromptAfterPlanResetsToNormalTools: tras un SendPlanPrompt, un
+// SendPrompt en la misma sesion vuelve a modo normal: el ultimo Request anuncia
+// bash y NO anuncia present_plan.
+func TestApp_SendPromptAfterPlanResetsToNormalTools(t *testing.T) {
+	rec := &recordingEmit{}
+	prov := &requestRecordingProvider{FakeProvider: llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.StepEnded},
+	)}
+	app := newApp(prov, rec.emit)
+
+	if err := app.SendPlanPrompt("s1", "plan"); err != nil {
+		t.Fatalf("SendPlanPrompt: %v", err)
+	}
+	app.wait()
+	if err := app.SendPrompt("s1", "ahora hazlo"); err != nil {
+		t.Fatalf("SendPrompt: %v", err)
+	}
+	app.wait()
+
+	req := prov.captured()
+	if !requestHasTool(req, "bash") {
+		t.Errorf("Request.Tools no contiene bash tras volver a normal; tools = %+v", req.Tools)
+	}
+	if requestHasTool(req, "present_plan") {
+		t.Errorf("Request.Tools sigue con present_plan tras volver a normal; tools = %+v", req.Tools)
+	}
+}
+
+// TestApp_AcceptPlanRunsNormalModeAndAdmitsImplementPrompt: AcceptPlan corre en
+// modo normal (Request anuncia bash, no present_plan) y promueve el prompt fijo de
+// implementacion como Message del usuario (acceptPlanPrompt) al log de la sesion.
+func TestApp_AcceptPlanRunsNormalModeAndAdmitsImplementPrompt(t *testing.T) {
+	rec := &recordingEmit{}
+	prov := &requestRecordingProvider{FakeProvider: llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.StepEnded},
+	)}
+	app := newApp(prov, rec.emit)
+
+	if err := app.AcceptPlan("s1"); err != nil {
+		t.Fatalf("AcceptPlan: %v", err)
+	}
+	app.wait()
+
+	req := prov.captured()
+	if !requestHasTool(req, "bash") {
+		t.Errorf("Request.Tools no contiene bash en AcceptPlan; tools = %+v", req.Tools)
+	}
+	if requestHasTool(req, "present_plan") {
+		t.Errorf("Request.Tools contiene present_plan en AcceptPlan; tools = %+v", req.Tools)
+	}
+
+	got, err := app.SessionHistory("s1")
+	if err != nil {
+		t.Fatalf("SessionHistory: %v", err)
+	}
+	var sawImplementPrompt bool
+	for _, ev := range got {
+		if ev.Message != nil && ev.Message.Role == session.RoleUser && ev.Message.Text == acceptPlanPrompt {
+			sawImplementPrompt = true
+		}
+	}
+	if !sawImplementPrompt {
+		t.Errorf("SessionHistory no contiene el prompt de implementacion (%q)", acceptPlanPrompt)
 	}
 }
 
