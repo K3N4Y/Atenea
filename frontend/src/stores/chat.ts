@@ -199,6 +199,12 @@ export const useChatStore = defineStore('chat', () => {
     errorText.value = msg
   }
 
+  // clearError descarta el aviso de error visible (el usuario lo cierra). No
+  // toca el log: la conversacion sigue ahi, solo desaparece el aviso.
+  function clearError(): void {
+    errorText.value = null
+  }
+
   // Lienzo nuevo: limpia la vista local. La fuente de verdad sigue siendo el
   // backend; la rehidratacion del historial llega en la Fase 4.
   function reset(): void {
@@ -266,6 +272,7 @@ export const useChatStore = defineStore('chat', () => {
     errorText,
     applyEvent,
     applyError,
+    clearError,
     reset,
     send,
     stop,

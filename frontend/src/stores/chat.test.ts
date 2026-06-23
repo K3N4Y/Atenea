@@ -277,6 +277,18 @@ describe('chat store: estado de ejecucion', () => {
     expect(store.running).toBe(false)
     expect(store.errorText).toBe('fallo del proveedor')
   })
+
+  it('clearError descarta el error visible sin tocar el resto del estado', () => {
+    const store = useChatStore()
+    store.applyEvent({ Message: { Role: 'user', Text: 'ping' } })
+    store.applyError('fallo del proveedor')
+
+    store.clearError()
+
+    expect(store.errorText).toBeNull()
+    // El log permanece: descartar el aviso no borra la conversacion.
+    expect(store.items).toHaveLength(1)
+  })
 })
 
 describe('chat store: acciones sobre los bindings', () => {
