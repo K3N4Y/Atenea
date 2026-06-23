@@ -30,6 +30,18 @@ type Runner struct {
 	// so internal/session/prompt picks the base prompt by family.
 	system func(model string) string
 
+	// mode looks up the session's Mode per turn. nil (default) => always
+	// ModeNormal: behavior is identical to today. In ModePlan the runner builds the
+	// Request with planSystem/planPerms instead of system/perms.
+	mode func(sessionID string) session.Mode
+
+	// planSystem and planPerms are the plan-mode counterparts of system/perms,
+	// used when mode reports ModePlan. planSystem nil => fall back to system;
+	// planPerms nil => fall back to perms. SetPlanMode wires them from app.go;
+	// tests inject them via the setter.
+	planSystem func(model string) string
+	planPerms  tool.Permissions
+
 	// gate and needsApproval implement ask-before-run: before settling a tool
 	// call for which needsApproval returns true, the runner asks the gate for
 	// approval (which blocks until the user's decision). Both nil (default) =
@@ -86,4 +98,24 @@ func (r *Runner) SetSystemPrompt(build func(model string) string) {
 func (r *Runner) SetPermissionGate(gate session.PermissionGate, needsApproval func(call tool.Call) bool) {
 	r.gate = gate
 	r.needsApproval = needsApproval
+}
+
+// SetMode injects the per-session Mode lookup. It receives the session id and
+// returns its Mode; the runner consults it each turn to pick the normal or
+// plan-mode system prompt and permissions. nil (default) = always ModeNormal,
+// so behavior is identical to today. Exported entry point for app.go (package
+// main); tests inject the field via this setter.
+func (r *Runner) SetMode(mode func(sessionID string) session.Mode) {
+	r.mode = mode
+}
+
+// SetPlanMode wires the plan-mode turn baseline: system builds the plan-mode
+// system prompt and perms is the plan-mode permission set (read-only +
+// present_plan). They take effect only when SetMode reports ModePlan. A nil
+// system falls back to the normal SetSystemPrompt builder; nil perms fall back
+// to the normal permissions. Exported entry point for app.go (package main);
+// tests inject the fields via this setter.
+func (r *Runner) SetPlanMode(system func(model string) string, perms tool.Permissions) {
+	r.planSystem = system
+	r.planPerms = perms
 }

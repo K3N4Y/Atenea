@@ -86,10 +86,22 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string) (bool, er
 	if err != nil {
 		return false, err
 	}
-	mat := r.registry.Materialize(r.perms)
+	// Modo del turno: en plan-mode se arma el Request con el system y los permisos
+	// de plan; si no hay hook de modo (nil) el modo es normal e identico a hoy.
+	sys := r.system
+	perms := r.perms
+	if r.mode != nil && r.mode(sessionID) == session.ModePlan {
+		if r.planSystem != nil {
+			sys = r.planSystem
+		}
+		if r.planPerms != nil {
+			perms = r.planPerms
+		}
+	}
+	mat := r.registry.Materialize(perms)
 	req := llm.Request{Model: before.Model, Messages: toLLMMessages(msgs), Tools: mat.Definitions}
-	if r.system != nil {
-		req.System = r.system(before.Model)
+	if sys != nil {
+		req.System = sys(before.Model)
 	}
 
 	// Overflow antes del mensaje del asistente: compactar y reintentar una vez.
