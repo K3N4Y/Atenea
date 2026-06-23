@@ -46,4 +46,19 @@ describe('McpCard', () => {
     expect(img.classes()).toContain('w-20')
     expect(img.classes()).toContain('object-cover')
   })
+
+  it('emits select with the entry id when clicked', async () => {
+    const wrapper = mount(McpCard, { props: { entry } })
+    await wrapper.trigger('click')
+    expect(wrapper.emitted('select')?.[0]).toEqual([entry.id])
+  })
+
+  it('is not a <button> (which would clip the image during the reverse Flip)', () => {
+    // A <button> clips/traps the oversized image while collapsing back from the
+    // detail; the card must be a non-clipping element. Keep it accessible via
+    // role/tabindex instead.
+    const wrapper = mount(McpCard, { props: { entry } })
+    expect(wrapper.element.tagName).not.toBe('BUTTON')
+    expect(wrapper.find('[role="button"]').exists()).toBe(true)
+  })
 })
