@@ -1,0 +1,5 @@
+Carga una skill especializada cuando la tarea coincide con una de las skills listadas en el system prompt.
+
+Usa esta herramienta para inyectar en la conversacion las instrucciones y recursos de la skill. La salida puede traer guias de flujo de trabajo detalladas y referencias a scripts o archivos en el mismo directorio de la skill.
+
+El nombre debe coincidir con una de las skills listadas en tu system prompt.
