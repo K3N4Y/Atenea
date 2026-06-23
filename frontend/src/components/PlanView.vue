@@ -1,16 +1,17 @@
 <script lang="ts" setup>
 import { ref, computed } from 'vue'
-import { PhCheck, PhPencilSimple } from '@phosphor-icons/vue'
+import { PhCheck, PhPencilSimple, PhArrowsInSimple } from '@phosphor-icons/vue'
 import MarkdownContent from './MarkdownContent.vue'
 import type { PlanState } from '../stores/chat'
 
-// Vista del plan a pantalla completa (estilo Cursor): el agente presenta el
-// plan via la tool present_plan y aqui se muestra el markdown completo con dos
-// acciones arriba: aceptar (ejecuta) o solicitar cambio (el usuario describe que
-// cambiar y el agente reescribe el plan). Es presentacional: emite accept /
-// request-change y recibe el plan por prop.
+// Vista expandida del plan (estilo Cursor): el agente lo presenta via la tool
+// present_plan y aqui se muestra el markdown completo con las acciones: aceptar
+// (ejecuta), solicitar cambio (el usuario describe que cambiar) y minimizar (lo
+// colapsa a una tarjeta en la conversacion, ver PlanCard). Es un overlay sobre la
+// columna del chat (no tapa la sidebar). Presentacional: emite accept /
+// request-change / minimize y recibe el plan por prop.
 const props = defineProps<{ plan: PlanState }>()
-const emit = defineEmits<{ accept: []; 'request-change': [string] }>()
+const emit = defineEmits<{ accept: []; 'request-change': [string]; minimize: [] }>()
 
 const title = computed(() => props.plan.title || 'Plan')
 
@@ -35,14 +36,23 @@ function cancelChange() {
 <template>
   <div
     role="dialog"
-    aria-modal="true"
     aria-label="Plan"
-    class="fixed inset-0 z-40 flex flex-col bg-paper"
+    class="absolute inset-0 z-30 flex flex-col bg-paper"
   >
     <!-- Barra superior: titulo a la izquierda, acciones a la derecha. -->
     <header class="flex items-center gap-3 border-b border-black/5 px-8 py-4">
       <h2 class="min-w-0 flex-1 truncate text-lg tracking-tight">{{ title }}</h2>
 
+      <button
+        type="button"
+        data-action="minimize"
+        aria-label="Minimizar plan"
+        class="flex items-center gap-1.5 rounded-full bg-black/[0.06] px-4 py-2 text-sm transition hover:bg-black/[0.09]"
+        @click="emit('minimize')"
+      >
+        <PhArrowsInSimple :size="16" weight="regular" />
+        Minimizar
+      </button>
       <button
         type="button"
         data-action="request-change"
