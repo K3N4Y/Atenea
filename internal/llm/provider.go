@@ -15,12 +15,23 @@ type Provider interface {
 	Stream(ctx context.Context, req Request) (<-chan Event, error)
 }
 
+// ToolCallPart es una tool call del assistant proyectada en el historial: el id
+// que empareja con el tool_call_id del resultado, el nombre de la tool y los
+// arguments JSON crudos tal como los emitio el modelo (no se re-serializan).
+type ToolCallPart struct {
+	ID        string
+	Name      string
+	Arguments json.RawMessage
+}
+
 // Message es un mensaje del historial proyectado en el formato del proveedor.
 // M5 lo construye desde session.Message (Role/Text) al armar el Request; el
 // adaptador real (M10) lo traduce a los bloques de su SDK.
 type Message struct {
-	Role string
-	Text string
+	Role       string
+	Text       string
+	ToolCalls  []ToolCallPart // role=assistant: tool calls del modelo
+	ToolCallID string         // role=tool: empareja con la tool call del assistant
 }
 
 // Request es la entrada de un turno. En M2 lleva solo el modelo; el fake lo

@@ -7,6 +7,7 @@ import (
 
 	"github.com/openai/openai-go/v2"
 	"github.com/openai/openai-go/v2/option"
+	"github.com/openai/openai-go/v2/packages/param"
 )
 
 // OpenAIProvider habla con un endpoint OpenAI-compatible (OpenAI/OpenRouter) via
@@ -254,14 +255,22 @@ func reasoningText(delta openai.ChatCompletionChunkChoiceDelta) string {
 	return r
 }
 
-// toOpenAIMessages proyecta el historial al formato del SDK segun el Role. Un Role
-// desconocido se trata como user (defensivo: el modelo siempre recibe algo valido).
+// toOpenAIMessages proyecta el historial al formato del SDK segun el Role. El
+// assistant lleva su texto opcional mas los tool_calls (id, function.name y
+// function.arguments como string JSON crudo) que la API requiere para el
+// round-trip multi-paso; el rol "tool" se mapea a un tool result con su
+// tool_call_id, que debe emparejar con el id de la tool call del assistant. Un
+// Role desconocido se trata como user (defensivo: el modelo siempre recibe algo
+// valido).
 func toOpenAIMessages(msgs []Message) []openai.ChatCompletionMessageParamUnion {
 	out := make([]openai.ChatCompletionMessageParamUnion, 0, len(msgs))
 	for _, m := range msgs {
 		switch m.Role {
 		case "assistant":
-			out = append(out, openai.AssistantMessage(m.Text))
+			asst := toAssistantMessage(m)
+			out = append(out, openai.ChatCompletionMessageParamUnion{OfAssistant: &asst})
+		case "tool":
+			out = append(out, openai.ToolMessage(m.Text, m.ToolCallID))
 		case "system":
 			out = append(out, openai.SystemMessage(m.Text))
 		default:
@@ -269,6 +278,28 @@ func toOpenAIMessages(msgs []Message) []openai.ChatCompletionMessageParamUnion {
 		}
 	}
 	return out
+}
+
+// toAssistantMessage proyecta un Message del assistant al param del SDK: el texto
+// opcional mas los tool_calls (id, function.name y function.arguments JSON crudo)
+// que la API requiere para el round-trip multi-paso.
+func toAssistantMessage(m Message) openai.ChatCompletionAssistantMessageParam {
+	asst := openai.ChatCompletionAssistantMessageParam{}
+	if m.Text != "" {
+		asst.Content.OfString = param.NewOpt(m.Text)
+	}
+	for _, tc := range m.ToolCalls {
+		asst.ToolCalls = append(asst.ToolCalls, openai.ChatCompletionMessageToolCallUnionParam{
+			OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
+				ID: tc.ID,
+				Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
+					Name:      tc.Name,
+					Arguments: string(tc.Arguments),
+				},
+			},
+		})
+	}
+	return asst
 }
 
 // toOpenAITools materializa cada ToolDef como un function tool. El Schema crudo se

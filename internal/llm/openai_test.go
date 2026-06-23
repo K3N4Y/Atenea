@@ -663,6 +663,100 @@ func TestOpenAIProvider_StreamSendsMappedRequest(t *testing.T) {
 	}
 }
 
+// TestOpenAIProvider_StreamSerializesToolRoundTrip exige que toOpenAIMessages
+// serialice el round-trip de tool calls que la API OpenAI-compatible
+// (OpenAI/OpenRouter) requiere para un historial multi-paso: un mensaje
+// assistant con tool_calls (cada uno con id, function.name y function.arguments
+// como string JSON crudo) seguido de un mensaje role:"tool" con tool_call_id que
+// empareje. Hoy el provider mapea el rol "tool" a UserMessage y nunca emite los
+// tool_calls del assistant, asi que contra un modelo real el historial queda mal
+// formado y la API devuelve 400. El handler captura el body del POST y el test
+// navega el JSON crudo, igual que TestOpenAIProvider_StreamSendsMappedRequest.
+func TestOpenAIProvider_StreamSerializesToolRoundTrip(t *testing.T) {
+	var body []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	p := NewOpenAIProvider("test-key", server.URL, "test-model")
+
+	out, err := p.Stream(context.Background(), Request{
+		Messages: []Message{
+			{Role: "user", Text: "lee el archivo"},
+			{Role: "assistant", Text: "", ToolCalls: []ToolCallPart{
+				{ID: "call_1", Name: "read", Arguments: json.RawMessage(`{"path":"foo.go"}`)},
+			}},
+			{Role: "tool", ToolCallID: "call_1", Text: "contenido del archivo"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Stream devolvio error: %v", err)
+	}
+	drain(out)
+
+	if body == nil {
+		t.Fatalf("el handler no capturo el body del POST")
+	}
+
+	var sent map[string]any
+	if err := json.Unmarshal(body, &sent); err != nil {
+		t.Fatalf("no se pudo parsear el body enviado: %v; body: %s", err, body)
+	}
+
+	messages, ok := sent["messages"].([]any)
+	if !ok || len(messages) != 3 {
+		t.Fatalf("messages: got %#v, want 3 entradas", sent["messages"])
+	}
+
+	// messages[1]: assistant con tool_calls[0] que lleva id, function.name y
+	// function.arguments como string JSON crudo.
+	mAssistant := messages[1].(map[string]any)
+	if mAssistant["role"] != "assistant" {
+		t.Fatalf("messages[1].role: got %v, want %q", mAssistant["role"], "assistant")
+	}
+	toolCalls, ok := mAssistant["tool_calls"].([]any)
+	if !ok || len(toolCalls) != 1 {
+		t.Fatalf("messages[1].tool_calls: got %#v, want 1 entrada", mAssistant["tool_calls"])
+	}
+	tc0 := toolCalls[0].(map[string]any)
+	if tc0["id"] != "call_1" {
+		t.Fatalf("messages[1].tool_calls[0].id: got %v, want %q", tc0["id"], "call_1")
+	}
+	fn, ok := tc0["function"].(map[string]any)
+	if !ok {
+		t.Fatalf("messages[1].tool_calls[0].function: got %#v, want objeto", tc0["function"])
+	}
+	if fn["name"] != "read" {
+		t.Fatalf("messages[1].tool_calls[0].function.name: got %v, want %q", fn["name"], "read")
+	}
+	if fn["arguments"] != `{"path":"foo.go"}` {
+		t.Fatalf("messages[1].tool_calls[0].function.arguments: got %v, want %q (string JSON crudo)", fn["arguments"], `{"path":"foo.go"}`)
+	}
+
+	// messages[2]: role:"tool" con tool_call_id que empareja y el contenido del
+	// resultado.
+	mTool := messages[2].(map[string]any)
+	if mTool["role"] != "tool" {
+		t.Fatalf("messages[2].role: got %v, want %q", mTool["role"], "tool")
+	}
+	if mTool["tool_call_id"] != "call_1" {
+		t.Fatalf("messages[2].tool_call_id: got %v, want %q", mTool["tool_call_id"], "call_1")
+	}
+	if mTool["content"] != "contenido del archivo" {
+		t.Fatalf("messages[2].content: got %v, want %q", mTool["content"], "contenido del archivo")
+	}
+
+	// El pegamento: el tool_call_id del resultado debe emparejar con el id de la
+	// tool call del assistant, o la API lo rechaza.
+	if mTool["tool_call_id"] != tc0["id"] {
+		t.Fatalf("emparejamiento: messages[2].tool_call_id (%v) != messages[1].tool_calls[0].id (%v)", mTool["tool_call_id"], tc0["id"])
+	}
+}
+
 // TestOpenAIProvider_StreamInterleavesToolInputByCall exige que dos tool calls
 // paralelas cuyos fragmentos de function.arguments llegan INTERCALADOS por index
 // se atribuyan correctamente por CallID, sin mezclar el input de una con la otra.
@@ -828,5 +922,202 @@ func TestOpenAIProvider_StreamToolCallWithoutArgsEmitsNoDelta(t *testing.T) {
 	}
 	if string(toolCall.Input) != "" {
 		t.Fatalf("ToolCall.Input: got %q, want vacio", string(toolCall.Input))
+	}
+}
+
+// TestOpenAIProvider_StreamSerializesMultipleToolCallsRoundTrip exige que
+// toOpenAIMessages serialice el round-trip de MULTIPLES tool calls paralelas en un
+// solo turno del assistant: dos tool_calls (call_a/read y call_b/echo) seguidos de
+// dos mensajes role:"tool", cada uno con el tool_call_id que empareja. Esto tumba
+// una impl que solo serialice una tool call, que pierda el orden o que cruce la
+// atribucion entre llamadas. El handler captura el body del POST y el test navega
+// el JSON crudo, igual que TestOpenAIProvider_StreamSerializesToolRoundTrip.
+func TestOpenAIProvider_StreamSerializesMultipleToolCallsRoundTrip(t *testing.T) {
+	var body []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	p := NewOpenAIProvider("test-key", server.URL, "test-model")
+
+	out, err := p.Stream(context.Background(), Request{
+		Messages: []Message{
+			{Role: "user", Text: "lee dos archivos"},
+			{Role: "assistant", Text: "", ToolCalls: []ToolCallPart{
+				{ID: "call_a", Name: "read", Arguments: json.RawMessage(`{"path":"a.go"}`)},
+				{ID: "call_b", Name: "echo", Arguments: json.RawMessage(`{"text":"hi"}`)},
+			}},
+			{Role: "tool", ToolCallID: "call_a", Text: "contenido a"},
+			{Role: "tool", ToolCallID: "call_b", Text: "hi"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Stream devolvio error: %v", err)
+	}
+	drain(out)
+
+	if body == nil {
+		t.Fatalf("el handler no capturo el body del POST")
+	}
+
+	var sent map[string]any
+	if err := json.Unmarshal(body, &sent); err != nil {
+		t.Fatalf("no se pudo parsear el body enviado: %v; body: %s", err, body)
+	}
+
+	messages, ok := sent["messages"].([]any)
+	if !ok || len(messages) != 4 {
+		t.Fatalf("messages: got %#v, want 4 entradas", sent["messages"])
+	}
+
+	// messages[1]: assistant con dos tool_calls en orden, cada uno con id,
+	// function.name y function.arguments como string JSON crudo.
+	mAssistant := messages[1].(map[string]any)
+	if mAssistant["role"] != "assistant" {
+		t.Fatalf("messages[1].role: got %v, want %q", mAssistant["role"], "assistant")
+	}
+	toolCalls, ok := mAssistant["tool_calls"].([]any)
+	if !ok || len(toolCalls) != 2 {
+		t.Fatalf("messages[1].tool_calls: got %#v, want 2 entradas", mAssistant["tool_calls"])
+	}
+
+	tc0 := toolCalls[0].(map[string]any)
+	if tc0["id"] != "call_a" {
+		t.Fatalf("messages[1].tool_calls[0].id: got %v, want %q", tc0["id"], "call_a")
+	}
+	fn0, ok := tc0["function"].(map[string]any)
+	if !ok {
+		t.Fatalf("messages[1].tool_calls[0].function: got %#v, want objeto", tc0["function"])
+	}
+	if fn0["name"] != "read" {
+		t.Fatalf("messages[1].tool_calls[0].function.name: got %v, want %q", fn0["name"], "read")
+	}
+	if fn0["arguments"] != `{"path":"a.go"}` {
+		t.Fatalf("messages[1].tool_calls[0].function.arguments: got %v, want %q", fn0["arguments"], `{"path":"a.go"}`)
+	}
+
+	tc1 := toolCalls[1].(map[string]any)
+	if tc1["id"] != "call_b" {
+		t.Fatalf("messages[1].tool_calls[1].id: got %v, want %q", tc1["id"], "call_b")
+	}
+	fn1, ok := tc1["function"].(map[string]any)
+	if !ok {
+		t.Fatalf("messages[1].tool_calls[1].function: got %#v, want objeto", tc1["function"])
+	}
+	if fn1["name"] != "echo" {
+		t.Fatalf("messages[1].tool_calls[1].function.name: got %v, want %q", fn1["name"], "echo")
+	}
+	if fn1["arguments"] != `{"text":"hi"}` {
+		t.Fatalf("messages[1].tool_calls[1].function.arguments: got %v, want %q", fn1["arguments"], `{"text":"hi"}`)
+	}
+
+	// messages[2] y messages[3]: cada tool result empareja con su tool call por
+	// tool_call_id, en orden.
+	mToolA := messages[2].(map[string]any)
+	if mToolA["role"] != "tool" {
+		t.Fatalf("messages[2].role: got %v, want %q", mToolA["role"], "tool")
+	}
+	if mToolA["tool_call_id"] != "call_a" {
+		t.Fatalf("messages[2].tool_call_id: got %v, want %q", mToolA["tool_call_id"], "call_a")
+	}
+	if mToolA["content"] != "contenido a" {
+		t.Fatalf("messages[2].content: got %v, want %q", mToolA["content"], "contenido a")
+	}
+
+	mToolB := messages[3].(map[string]any)
+	if mToolB["role"] != "tool" {
+		t.Fatalf("messages[3].role: got %v, want %q", mToolB["role"], "tool")
+	}
+	if mToolB["tool_call_id"] != "call_b" {
+		t.Fatalf("messages[3].tool_call_id: got %v, want %q", mToolB["tool_call_id"], "call_b")
+	}
+	if mToolB["content"] != "hi" {
+		t.Fatalf("messages[3].content: got %v, want %q", mToolB["content"], "hi")
+	}
+}
+
+// TestOpenAIProvider_StreamSerializesAssistantTextAndToolCall exige que un mensaje
+// assistant que narra Y llama a una tool serialice AMBAS cosas: el content con el
+// texto ("voy a leer foo") y los tool_calls con la llamada. Esto tumba una impl que
+// trate texto y tool_calls como excluyentes (que pierda el content cuando hay tool
+// calls, o que ignore los tool calls cuando hay texto). El handler captura el body
+// del POST y el test navega el JSON crudo, igual que
+// TestOpenAIProvider_StreamSerializesToolRoundTrip.
+func TestOpenAIProvider_StreamSerializesAssistantTextAndToolCall(t *testing.T) {
+	var body []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	p := NewOpenAIProvider("test-key", server.URL, "test-model")
+
+	out, err := p.Stream(context.Background(), Request{
+		Messages: []Message{
+			{Role: "user", Text: "lee foo"},
+			{Role: "assistant", Text: "voy a leer foo", ToolCalls: []ToolCallPart{
+				{ID: "call_1", Name: "read", Arguments: json.RawMessage(`{"path":"foo"}`)},
+			}},
+			{Role: "tool", ToolCallID: "call_1", Text: "contenido"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Stream devolvio error: %v", err)
+	}
+	drain(out)
+
+	if body == nil {
+		t.Fatalf("el handler no capturo el body del POST")
+	}
+
+	var sent map[string]any
+	if err := json.Unmarshal(body, &sent); err != nil {
+		t.Fatalf("no se pudo parsear el body enviado: %v; body: %s", err, body)
+	}
+
+	messages, ok := sent["messages"].([]any)
+	if !ok || len(messages) != 3 {
+		t.Fatalf("messages: got %#v, want 3 entradas", sent["messages"])
+	}
+
+	// messages[1]: assistant que lleva content (el texto SI se serializa) Y
+	// tool_calls (la tool call no se pierde por haber texto).
+	mAssistant := messages[1].(map[string]any)
+	if mAssistant["role"] != "assistant" {
+		t.Fatalf("messages[1].role: got %v, want %q", mAssistant["role"], "assistant")
+	}
+	if mAssistant["content"] != "voy a leer foo" {
+		t.Fatalf("messages[1].content: got %v, want %q (el texto SI se serializa)", mAssistant["content"], "voy a leer foo")
+	}
+	toolCalls, ok := mAssistant["tool_calls"].([]any)
+	if !ok || len(toolCalls) != 1 {
+		t.Fatalf("messages[1].tool_calls: got %#v, want 1 entrada", mAssistant["tool_calls"])
+	}
+	tc0 := toolCalls[0].(map[string]any)
+	if tc0["id"] != "call_1" {
+		t.Fatalf("messages[1].tool_calls[0].id: got %v, want %q", tc0["id"], "call_1")
+	}
+	fn, ok := tc0["function"].(map[string]any)
+	if !ok {
+		t.Fatalf("messages[1].tool_calls[0].function: got %#v, want objeto", tc0["function"])
+	}
+	if fn["name"] != "read" {
+		t.Fatalf("messages[1].tool_calls[0].function.name: got %v, want %q", fn["name"], "read")
+	}
+
+	// messages[2]: el tool result empareja con la tool call del assistant.
+	mTool := messages[2].(map[string]any)
+	if mTool["role"] != "tool" {
+		t.Fatalf("messages[2].role: got %v, want %q", mTool["role"], "tool")
+	}
+	if mTool["tool_call_id"] != "call_1" {
+		t.Fatalf("messages[2].tool_call_id: got %v, want %q", mTool["tool_call_id"], "call_1")
 	}
 }
