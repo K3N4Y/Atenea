@@ -124,6 +124,10 @@ export const useChatStore = defineStore('chat', () => {
   // present_plan abre a pantalla completa (null = sin overlay de plan).
   const mode = ref<'normal' | 'plan'>('normal')
   const plan = ref<PlanState | null>(null)
+  // planExpanded controla como se ve el plan vigente: expandido (overlay sobre la
+  // columna del chat) o minimizado (tarjeta en el flujo de la conversacion, como
+  // una tool). Cada present_plan reabre expandido; el usuario lo colapsa/expande.
+  const planExpanded = ref(true)
 
   // Punteros al texto / pensamiento en curso (referencias dentro de `items`).
   let streamingText: AssistantItem | null = null
@@ -199,6 +203,8 @@ export const useChatStore = defineStore('chat', () => {
         // present_plan abre/actualiza `plan` y no agrega item al log.
         if (ev.ToolName === 'present_plan') {
           plan.value = planFromInput(ev.CallID ?? '', ev.Input)
+          // Un plan recien presentado (o reescrito) se abre expandido.
+          planExpanded.value = true
           break
         }
         const item: ToolItem = {
@@ -283,6 +289,7 @@ export const useChatStore = defineStore('chat', () => {
     // Reproducir un historial que termina en present_plan reabre `plan` via
     // applyEvent durante la rehidratacion.
     plan.value = null
+    planExpanded.value = true
     mode.value = 'normal'
   }
 
@@ -338,6 +345,12 @@ export const useChatStore = defineStore('chat', () => {
   // toggleMode alterna entre envio normal y modo plan.
   function toggleMode(): void {
     mode.value = mode.value === 'plan' ? 'normal' : 'plan'
+  }
+
+  // togglePlanExpanded alterna el plan vigente entre expandido (overlay) y
+  // minimizado (tarjeta en la conversacion).
+  function togglePlanExpanded(): void {
+    planExpanded.value = !planExpanded.value
   }
 
   // acceptPlan acepta el plan vigente y lo ejecuta: vuelve a modo normal, cierra
@@ -411,6 +424,7 @@ export const useChatStore = defineStore('chat', () => {
     sessions,
     mode,
     plan,
+    planExpanded,
     applyEvent,
     applyError,
     clearError,
@@ -419,6 +433,7 @@ export const useChatStore = defineStore('chat', () => {
     loadSession,
     send,
     toggleMode,
+    togglePlanExpanded,
     acceptPlan,
     requestPlanChange,
     stop,

@@ -629,3 +629,233 @@ describe('chat store: modo plan', () => {
     expect(store.mode).toBe('normal')
   })
 })
+
+// Edge cases del modo plan que un usuario real provoca: el agente devuelve un
+// Input malformado, el usuario hace doble click en Aceptar, abre una sesion vieja
+// que quedo esperando decision, el agente re-planifica, o el turno de planeo
+// falla. No son pasos logicos del flujo feliz: son los tropiezos que ocurren.
+describe('chat store: modo plan (edge cases de usuario)', () => {
+  it('present_plan con Input string JSON roto: abre el plan con campos vacios, no rompe ni crea items', () => {
+    const store = useChatStore()
+
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      ToolName: 'present_plan',
+      CallID: 'c1',
+      Input: '{"title":"x","plan":', // JSON truncado
+    })
+
+    expect(store.plan).toEqual({ callID: 'c1', title: '', markdown: '' })
+    expect(store.items).toHaveLength(0)
+  })
+
+  it('present_plan con Input null: degrada a campos vacios sin romper', () => {
+    const store = useChatStore()
+
+    store.applyEvent({ Kind: 'Tool.Called', ToolName: 'present_plan', CallID: 'c1', Input: null })
+
+    expect(store.plan).toEqual({ callID: 'c1', title: '', markdown: '' })
+  })
+
+  it('present_plan con plan no-string (numero): markdown vacio, conserva el title valido', () => {
+    const store = useChatStore()
+
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      ToolName: 'present_plan',
+      CallID: 'c1',
+      Input: { title: 'T', plan: 123 },
+    })
+
+    expect(store.plan).toEqual({ callID: 'c1', title: 'T', markdown: '' })
+  })
+
+  it('un segundo present_plan sobrescribe el plan vigente y sigue sin crear items', () => {
+    const store = useChatStore()
+
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      ToolName: 'present_plan',
+      CallID: 'c1',
+      Input: { title: 'A', plan: 'uno' },
+    })
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      ToolName: 'present_plan',
+      CallID: 'c2',
+      Input: { title: 'B', plan: 'dos' },
+    })
+
+    expect(store.plan).toEqual({ callID: 'c2', title: 'B', markdown: 'dos' })
+    expect(store.items).toHaveLength(0)
+  })
+
+  it('doble acceptPlan (doble click): no lanza, cierra el plan y llama AcceptPlan cada vez (sin guarda)', async () => {
+    const store = useChatStore()
+    const sessionID = store.sessionID
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      ToolName: 'present_plan',
+      CallID: 'c1',
+      Input: { title: 'T', plan: '# Plan' },
+    })
+
+    await store.acceptPlan()
+    await store.acceptPlan()
+
+    expect(App.AcceptPlan).toHaveBeenCalledTimes(2)
+    expect(App.AcceptPlan).toHaveBeenCalledWith(sessionID)
+    expect(store.plan).toBeNull()
+  })
+
+  it('enviar un prompt nuevo con un plan abierto lo cierra (no se queda el overlay viejo)', async () => {
+    const store = useChatStore()
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      ToolName: 'present_plan',
+      CallID: 'c1',
+      Input: { title: 'T', plan: '# Plan' },
+    })
+    expect(store.plan).not.toBeNull()
+
+    await store.send('mejor hablemos de otra cosa')
+
+    expect(store.plan).toBeNull()
+    expect(App.SendPrompt).toHaveBeenCalledWith(store.sessionID, 'mejor hablemos de otra cosa')
+  })
+
+  it('requestPlanChange desde modo normal fuerza el modo plan (un plan que aparecio sin el toggle)', async () => {
+    const store = useChatStore()
+    expect(store.mode).toBe('normal')
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      ToolName: 'present_plan',
+      CallID: 'c1',
+      Input: { title: 'T', plan: '# Plan' },
+    })
+
+    await store.requestPlanChange('reescribe el paso 1')
+
+    expect(store.mode).toBe('plan')
+    expect(App.SendPlanPrompt).toHaveBeenCalledWith(store.sessionID, 'reescribe el paso 1')
+    expect(store.plan).toBeNull()
+  })
+
+  it('acceptPlan descarta un error visible previo al ejecutar', async () => {
+    const store = useChatStore()
+    store.applyError('el proveedor fallo antes')
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      ToolName: 'present_plan',
+      CallID: 'c1',
+      Input: { title: 'T', plan: '# Plan' },
+    })
+
+    await store.acceptPlan()
+
+    expect(store.errorText).toBeNull()
+  })
+
+  it('Step.Failed durante el planeo NO cierra el plan: el overlay sigue con el error de fondo', () => {
+    const store = useChatStore()
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      ToolName: 'present_plan',
+      CallID: 'c1',
+      Input: { title: 'T', plan: '# Plan' },
+    })
+    store.running = true
+
+    store.applyEvent({ Kind: 'Step.Failed', Error: 'se corto el stream' })
+
+    expect(store.plan).not.toBeNull()
+    expect(store.running).toBe(false)
+    expect(store.errorText).toBe('se corto el stream')
+  })
+
+  it('reset con un plan abierto en modo plan limpia ambos para el lienzo nuevo', () => {
+    const store = useChatStore()
+    store.toggleMode()
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      ToolName: 'present_plan',
+      CallID: 'c1',
+      Input: { title: 'T', plan: '# Plan' },
+    })
+    expect(store.plan).not.toBeNull()
+    expect(store.mode).toBe('plan')
+
+    store.reset()
+
+    expect(store.plan).toBeNull()
+    expect(store.mode).toBe('normal')
+  })
+
+  it('present_plan abre el plan expandido por defecto', () => {
+    const store = useChatStore()
+
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      ToolName: 'present_plan',
+      CallID: 'c1',
+      Input: { title: 'T', plan: '# Plan' },
+    })
+
+    expect(store.planExpanded).toBe(true)
+  })
+
+  it('togglePlanExpanded alterna entre expandido y minimizado', () => {
+    const store = useChatStore()
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      ToolName: 'present_plan',
+      CallID: 'c1',
+      Input: { title: 'T', plan: '# Plan' },
+    })
+
+    store.togglePlanExpanded()
+    expect(store.planExpanded).toBe(false)
+    store.togglePlanExpanded()
+    expect(store.planExpanded).toBe(true)
+  })
+
+  it('un present_plan posterior reabre el plan expandido aunque estuviera minimizado', () => {
+    const store = useChatStore()
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      ToolName: 'present_plan',
+      CallID: 'c1',
+      Input: { title: 'T', plan: 'v1' },
+    })
+    store.togglePlanExpanded()
+    expect(store.planExpanded).toBe(false)
+
+    // El agente reescribe el plan: la nueva version se abre expandida.
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      ToolName: 'present_plan',
+      CallID: 'c2',
+      Input: { title: 'T', plan: 'v2' },
+    })
+
+    expect(store.planExpanded).toBe(true)
+  })
+
+  it('loadSession reabre un plan pendiente pero deja el modo en normal (el toggle no refleja el plan pendiente)', async () => {
+    const store = useChatStore()
+    store.toggleMode()
+    expect(store.mode).toBe('plan')
+    vi.mocked(App.SessionHistory).mockResolvedValueOnce([
+      { Message: { Role: 'user', Text: 'planea X' } },
+      { Kind: 'Tool.Called', ToolName: 'present_plan', CallID: 'c1', Input: { title: 'T', plan: 'v1' } },
+    ] as never)
+
+    await store.loadSession('s1')
+
+    // El plan vuelve a abrirse via rehidratacion...
+    expect(store.plan).toMatchObject({ markdown: 'v1' })
+    // ...pero clearLog reseteo el modo: el composer mostraria "normal" aun con un
+    // plan esperando decision. Pedir un cambio re-sincroniza (requestPlanChange).
+    expect(store.mode).toBe('normal')
+  })
+})
