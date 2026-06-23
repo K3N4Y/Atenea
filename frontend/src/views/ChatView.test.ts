@@ -13,10 +13,14 @@ vi.mock('../../wailsjs/runtime/runtime', () => ({
 vi.mock('../../wailsjs/go/main/App', () => ({
   SendPrompt: vi.fn(() => Promise.resolve()),
   Stop: vi.fn(),
+  ListSessions: vi.fn(() => Promise.resolve([])),
+  SessionHistory: vi.fn(() => Promise.resolve([])),
 }))
 
 import { EventsOn } from '../../wailsjs/runtime/runtime'
+import * as App from '../../wailsjs/go/main/App'
 import ChatView from './ChatView.vue'
+import AppSidebar from '../components/AppSidebar.vue'
 import { useChatStore } from '../stores/chat'
 
 function mountView() {
@@ -33,6 +37,25 @@ describe('ChatView', () => {
     const sessionChannel = vi.mocked(EventsOn).mock.calls[0][0]
     expect(sessionChannel).toMatch(/^session:chat-/)
     expect(EventsOn).toHaveBeenCalledWith(`${sessionChannel}:error`, expect.any(Function))
+  })
+
+  it('carga el historial de sesiones al montar para poblar la sidebar', () => {
+    vi.clearAllMocks()
+    mountView()
+
+    expect(App.ListSessions).toHaveBeenCalled()
+  })
+
+  it('rutea select-session de la sidebar a loadSession del store', async () => {
+    vi.clearAllMocks()
+    const wrapper = mountView()
+    const chat = useChatStore()
+    const spy = vi.spyOn(chat, 'loadSession').mockResolvedValue()
+
+    wrapper.findComponent(AppSidebar).vm.$emit('select-session', 's1')
+    await nextTick()
+
+    expect(spy).toHaveBeenCalledWith('s1')
   })
 
   it('limpia los listeners al desmontar', () => {

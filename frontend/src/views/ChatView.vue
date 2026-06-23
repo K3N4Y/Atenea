@@ -20,13 +20,24 @@ const ui = useUiStore()
 // it does not reappear on app relaunch).
 const settingsOpen = ref(false)
 
-onMounted(() => chat.subscribe())
+onMounted(() => {
+  chat.subscribe()
+  // Puebla la sidebar con el historial de chats del backend. La app abre en un
+  // chat nuevo vacio (identidad §2, Chat First): NO se auto-carga la ultima
+  // sesion; la sidebar es como el usuario vuelve a una conversacion pasada.
+  chat.loadSessions()
+})
 onUnmounted(() => chat.teardown())
 </script>
 
 <template>
   <div class="flex h-screen w-screen overflow-hidden">
-    <AppSidebar @new-chat="chat.reset()" />
+    <AppSidebar
+      :sessions="chat.sessions"
+      :active-session-id="chat.sessionID"
+      @new-chat="chat.reset()"
+      @select-session="(id: string) => chat.loadSession(id)"
+    />
 
     <!-- Fondo para cerrar la sidebar superpuesta en pantallas estrechas. -->
     <div
