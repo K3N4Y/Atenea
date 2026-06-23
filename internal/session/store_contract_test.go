@@ -2,9 +2,11 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -197,6 +199,202 @@ func testStoreContract(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 		if len(empty) != 0 {
 			t.Fatalf("PendingToolCalls(empty) = %+v, want empty", empty)
+		}
+	})
+
+	t.Run("SessionsEmptyWhenNoSessions", func(t *testing.T) {
+		ctx := context.Background()
+		store := newStore(t)
+
+		got, err := store.Sessions(ctx)
+		if err != nil {
+			t.Fatalf("Sessions: unexpected error: %v", err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("Sessions on empty store: got %+v, want empty", got)
+		}
+	})
+
+	t.Run("SessionsOrdersByRecencyWithFirstUserMessageTitle", func(t *testing.T) {
+		ctx := context.Background()
+		store := newStore(t)
+
+		// s1 recibe su primer mensaje primero; su titulo es ese primer prompt
+		// aunque luego lleguen mas mensajes del usuario.
+		appendContractMessage(t, store, "s1", Message{ID: "m1", Role: RoleUser, Text: "primera pregunta"})
+		appendContractMessage(t, store, "s1", Message{ID: "m2", Role: RoleAssistant, Text: "respuesta"})
+		// s2 llega despues: debe quedar antes que s1 (mas reciente).
+		appendContractMessage(t, store, "s2", Message{ID: "m3", Role: RoleUser, Text: "otra cosa"})
+		// s1 vuelve a tener actividad: pasa a ser la mas reciente.
+		appendContractMessage(t, store, "s1", Message{ID: "m4", Role: RoleUser, Text: "segunda pregunta"})
+
+		got, err := store.Sessions(ctx)
+		if err != nil {
+			t.Fatalf("Sessions: unexpected error: %v", err)
+		}
+		want := []SessionSummary{
+			{ID: "s1", Title: "primera pregunta"},
+			{ID: "s2", Title: "otra cosa"},
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("Sessions: got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("SessionsTitleEmptyWhenNoUserMessage", func(t *testing.T) {
+		ctx := context.Background()
+		store := newStore(t)
+
+		// Sesion con eventos pero sin mensaje de usuario: Title vacio.
+		if _, err := store.AppendEvent(ctx, "s1", SessionEvent{Kind: KindStepStarted}); err != nil {
+			t.Fatalf("AppendEvent: unexpected error: %v", err)
+		}
+
+		got, err := store.Sessions(ctx)
+		if err != nil {
+			t.Fatalf("Sessions: unexpected error: %v", err)
+		}
+		want := []SessionSummary{{ID: "s1", Title: ""}}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("Sessions: got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("SessionsTruncatesLongTitleTo80Runes", func(t *testing.T) {
+		ctx := context.Background()
+		store := newStore(t)
+
+		// Titulo con runes multibyte para verificar corte por rune, no por byte.
+		long := strings.Repeat("ñ", 200)
+		appendContractMessage(t, store, "s1", Message{ID: "m1", Role: RoleUser, Text: long})
+
+		got, err := store.Sessions(ctx)
+		if err != nil {
+			t.Fatalf("Sessions: unexpected error: %v", err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("Sessions: got %+v, want one session", got)
+		}
+		if want := strings.Repeat("ñ", 80); got[0].Title != want {
+			t.Fatalf("Sessions title not truncated to 80 runes: got %d runes", len([]rune(got[0].Title)))
+		}
+	})
+
+	t.Run("EventsRoundTripsLogInSeqOrder", func(t *testing.T) {
+		ctx := context.Background()
+		store := newStore(t)
+
+		// Una secuencia representativa: prompt de usuario, assistant con tool call
+		// (coalescido en Step.Ended con Usage), tool result, y eventos de streaming
+		// sin mensaje. Events debe devolverla identica (salvo SessionID/Seq que fija
+		// el store).
+		in := []SessionEvent{
+			{Kind: KindStepStarted},
+			{Message: &Message{ID: "u1", Role: RoleUser, Text: "hola"}},
+			{Kind: KindToolCalled, CallID: "c1", ToolName: "read", Input: json.RawMessage(`{"path":"foo.go"}`)},
+			{Kind: KindToolSuccess, CallID: "c1", ToolName: "read", Message: &Message{ID: "c1", Role: RoleTool, Text: "contenido", ToolCallID: "c1"}},
+			{Kind: KindToolFailed, CallID: "c2", ToolName: "bash", Error: "boom"},
+			{Kind: KindStepEnded, Message: &Message{
+				ID: "a1", Role: RoleAssistant, Text: "listo",
+				ToolCalls: []ToolCall{{ID: "c1", Name: "read", Arguments: `{"path":"foo.go"}`}},
+			}, Usage: &Usage{InputTokens: 10, OutputTokens: 5, ReasoningTokens: 2, CacheReadTokens: 1, CacheWriteTokens: 3}},
+		}
+		for i, ev := range in {
+			if _, err := store.AppendEvent(ctx, "s1", ev); err != nil {
+				t.Fatalf("AppendEvent #%d: unexpected error: %v", i, err)
+			}
+		}
+
+		got, err := store.Events(ctx, "s1", 0)
+		if err != nil {
+			t.Fatalf("Events: unexpected error: %v", err)
+		}
+		if len(got) != len(in) {
+			t.Fatalf("Events: got %d events, want %d (%+v)", len(got), len(in), got)
+		}
+		for i := range in {
+			want := in[i]
+			want.SessionID = "s1"
+			want.Seq = Seq(i + 1)
+			if !reflect.DeepEqual(got[i], want) {
+				t.Fatalf("Events[%d]: got %+v, want %+v", i, got[i], want)
+			}
+		}
+	})
+
+	t.Run("EventsRoundTripsTopLevelText", func(t *testing.T) {
+		ctx := context.Background()
+		store := newStore(t)
+
+		// El contenido del asistente y del razonamiento viaja en el Text top-level
+		// del SessionEvent (no en un Message): Reasoning.Ended y Text.Ended lo
+		// cargan completo. Events debe devolverlo intacto, o la rehidratacion pierde
+		// "lo que penso" y "la respuesta" del agente. Un tool result que ademas trae
+		// Text top-level (como el publisher real) debe round-trippear ev.Text Y
+		// Message.Text a la vez.
+		in := []SessionEvent{
+			{Kind: KindReasoningStarted},
+			{Kind: KindReasoningDelta, Text: "pien"},
+			{Kind: KindReasoningEnded, Text: "pienso, luego existo"},
+			{Kind: KindTextStarted},
+			{Kind: KindTextDelta, Text: "ho"},
+			{Kind: KindTextEnded, Text: "hola mundo"},
+			{Kind: KindToolSuccess, CallID: "c1", ToolName: "read", Text: "contenido",
+				Message: &Message{ID: "c1", Role: RoleTool, Text: "contenido", ToolCallID: "c1"}},
+		}
+		for i, ev := range in {
+			if _, err := store.AppendEvent(ctx, "s1", ev); err != nil {
+				t.Fatalf("AppendEvent #%d: unexpected error: %v", i, err)
+			}
+		}
+
+		got, err := store.Events(ctx, "s1", 0)
+		if err != nil {
+			t.Fatalf("Events: unexpected error: %v", err)
+		}
+		if len(got) != len(in) {
+			t.Fatalf("Events: got %d events, want %d (%+v)", len(got), len(in), got)
+		}
+		for i := range in {
+			want := in[i]
+			want.SessionID = "s1"
+			want.Seq = Seq(i + 1)
+			if !reflect.DeepEqual(got[i], want) {
+				t.Fatalf("Events[%d]: got %+v, want %+v", i, got[i], want)
+			}
+		}
+	})
+
+	t.Run("EventsSinceSeqFiltersOlder", func(t *testing.T) {
+		ctx := context.Background()
+		store := newStore(t)
+
+		if _, err := store.AppendEvent(ctx, "s1", SessionEvent{Kind: KindStepStarted}); err != nil {
+			t.Fatalf("AppendEvent: unexpected error: %v", err)
+		}
+		seq2, err := store.AppendEvent(ctx, "s1", SessionEvent{Message: &Message{ID: "u1", Role: RoleUser, Text: "hola"}})
+		if err != nil {
+			t.Fatalf("AppendEvent: unexpected error: %v", err)
+		}
+		if _, err := store.AppendEvent(ctx, "s1", SessionEvent{Kind: KindStepEnded}); err != nil {
+			t.Fatalf("AppendEvent: unexpected error: %v", err)
+		}
+
+		got, err := store.Events(ctx, "s1", seq2)
+		if err != nil {
+			t.Fatalf("Events: unexpected error: %v", err)
+		}
+		if len(got) != 1 || got[0].Kind != KindStepEnded || got[0].Seq != 3 {
+			t.Fatalf("Events(sinceSeq=%d): got %+v, want only the Step.Ended with Seq 3", seq2, got)
+		}
+	})
+
+	t.Run("EventsUnknownSessionReturnsNotFound", func(t *testing.T) {
+		ctx := context.Background()
+		store := newStore(t)
+
+		if _, err := store.Events(ctx, "ghost", 0); !errors.Is(err, ErrSessionNotFound) {
+			t.Fatalf("Events(ghost): got %v, want ErrSessionNotFound", err)
 		}
 	})
 
