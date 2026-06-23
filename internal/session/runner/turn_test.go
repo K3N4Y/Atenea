@@ -390,6 +390,75 @@ func TestRunner_BuildsRequestFromHistoryAndMaterializedTools(t *testing.T) {
 	}
 }
 
+// TestRunner_InjectsSystemPromptFromBuilder asserts that, with a system prompt
+// builder injected via SetSystemPrompt, runTurn populates Request.System with its
+// output and passes the epoch's model (so internal/session/prompt can pick the
+// base prompt by family). Without it the system prompt never reaches the provider.
+func TestRunner_InjectsSystemPromptFromBuilder(t *testing.T) {
+	ctx := context.Background()
+	store := session.NewMemoryStore()
+	if _, err := store.AppendEvent(ctx, "s1", session.SessionEvent{
+		Message: &session.Message{ID: "u1", Role: session.RoleUser, Text: "hello"},
+	}); err != nil {
+		t.Fatalf("AppendEvent (user seed) unexpected error: %v", err)
+	}
+
+	prov := &recordingProvider{FakeProvider: llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.StepEnded},
+	)}
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	r := NewRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
+
+	var gotModel string
+	r.SetSystemPrompt(func(model string) string {
+		gotModel = model
+		return "SYS[" + model + "]"
+	})
+
+	if _, err := r.runTurn(ctx, "s1"); err != nil {
+		t.Fatalf("runTurn unexpected error: %v", err)
+	}
+
+	ep, err := store.Epoch(ctx, "s1")
+	if err != nil {
+		t.Fatalf("Epoch unexpected error: %v", err)
+	}
+	if gotModel != ep.Model {
+		t.Errorf("builder received model %q; want the epoch model %q", gotModel, ep.Model)
+	}
+	if got, want := prov.captured().System, "SYS["+ep.Model+"]"; got != want {
+		t.Errorf("Request.System: got %q, want %q", got, want)
+	}
+}
+
+// TestRunner_NoSystemBuilderLeavesSystemEmpty is the edge case: without a builder
+// the Request leaves System empty (the default does not invent a baseline prompt).
+func TestRunner_NoSystemBuilderLeavesSystemEmpty(t *testing.T) {
+	ctx := context.Background()
+	store := session.NewMemoryStore()
+	if _, err := store.AppendEvent(ctx, "s1", session.SessionEvent{
+		Message: &session.Message{ID: "u1", Role: session.RoleUser, Text: "hello"},
+	}); err != nil {
+		t.Fatalf("AppendEvent (user seed) unexpected error: %v", err)
+	}
+
+	prov := &recordingProvider{FakeProvider: llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.StepEnded},
+	)}
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	r := NewRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
+
+	if _, err := r.runTurn(ctx, "s1"); err != nil {
+		t.Fatalf("runTurn unexpected error: %v", err)
+	}
+
+	if got := prov.captured().System; got != "" {
+		t.Errorf("without a builder Request.System must be empty; got %q", got)
+	}
+}
+
 // countingTool incrementa un contador en cada Execute: prueba que una tool
 // provider-executed NO se asienta localmente (su Execute no corre).
 type countingTool struct {

@@ -83,6 +83,9 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string) (bool, er
 	}
 	mat := r.registry.Materialize(r.perms)
 	req := llm.Request{Model: before.Model, Messages: toLLMMessages(msgs), Tools: mat.Definitions}
+	if r.system != nil {
+		req.System = r.system(before.Model)
+	}
 
 	// Overflow antes del mensaje del asistente: compactar y reintentar una vez.
 	if r.compactor != nil && r.compactor.NeedsCompaction(req) {

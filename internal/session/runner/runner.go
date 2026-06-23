@@ -24,6 +24,12 @@ type Runner struct {
 	nextID    func() string
 	compactor Compactor // opcional; nil = nunca compacta (camino feliz de M5/M6)
 
+	// system builds the turn baseline prompt from the epoch's model. nil (default)
+	// = no system prompt. SetSystemPrompt wires it from the real assembly
+	// (app.go); tests inject it directly or via the setter. It receives the model
+	// so internal/session/prompt picks the base prompt by family.
+	system func(model string) string
+
 	// logf registra a stderr los fallos de tool para visibilidad en desarrollo:
 	// hoy un fallo solo vive en el log durable y en el mensaje al modelo, asi que
 	// corriendo `wails dev` no hay como enterarse de que las tools fallan. Default
@@ -55,4 +61,12 @@ func NewRunner(store session.Store, inbox session.Inbox, provider llm.Provider,
 		registry: registry, perms: perms, nextID: nextID,
 		logf: log.Printf,
 	}
+}
+
+// SetSystemPrompt injects the turn system prompt builder. It receives the epoch's
+// model and returns the baseline prompt that travels in Request.System. nil
+// (default) = no system prompt. This is the exported entry point for the real
+// assembly (app.go, in package main, cannot touch the unexported field).
+func (r *Runner) SetSystemPrompt(build func(model string) string) {
+	r.system = build
 }
