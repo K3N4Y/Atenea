@@ -49,4 +49,34 @@ describe('ToolCall', () => {
 
     expect(wrapper.text()).toContain('boom')
   })
+
+  it('pending: shows the command and Approve/Deny buttons', () => {
+    const wrapper = mount(ToolCall, {
+      props: tool({ name: 'bash', status: 'pending', input: { command: 'ls -la' } }),
+    })
+
+    expect(wrapper.text()).toContain('ls -la')
+    expect(wrapper.get('[data-action="approve"]').text()).toContain('Aprobar')
+    expect(wrapper.get('[data-action="deny"]').text()).toContain('Denegar')
+  })
+
+  it('pending: approving emits approve with the callID', async () => {
+    const wrapper = mount(ToolCall, {
+      props: tool({ name: 'bash', status: 'pending', callID: 'c1' }),
+    })
+
+    await wrapper.get('[data-action="approve"]').trigger('click')
+
+    expect(wrapper.emitted('approve')?.[0]).toEqual(['c1'])
+  })
+
+  it('pending: denying emits deny with the callID', async () => {
+    const wrapper = mount(ToolCall, {
+      props: tool({ name: 'bash', status: 'pending', callID: 'c1' }),
+    })
+
+    await wrapper.get('[data-action="deny"]').trigger('click')
+
+    expect(wrapper.emitted('deny')?.[0]).toEqual(['c1'])
+  })
 })

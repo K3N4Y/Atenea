@@ -14,6 +14,10 @@ import ToolCall from './ToolCall.vue'
 // para mantenerse presentacional.
 const props = defineProps<{ items: TurnItem[] }>()
 
+// Forwards the permission decisions emitted by ToolCall up to the store (via
+// ChatView); the other components of the registry do not emit these events.
+const emit = defineEmits<{ approve: [string]; deny: [string] }>()
+
 const registry: Record<TurnItem['kind'], Component> = {
   user: UserMessage,
   assistant: AssistantMessage,
@@ -81,6 +85,8 @@ function onEnter(el: Element, done: () => void) {
           v-for="item in props.items"
           :key="item.id"
           :item="item"
+          @approve="emit('approve', $event)"
+          @deny="emit('deny', $event)"
         />
       </TransitionGroup>
 

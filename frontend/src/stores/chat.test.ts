@@ -6,6 +6,7 @@ import { setActivePinia, createPinia } from 'pinia'
 vi.mock('../../wailsjs/go/main/App', () => ({
   SendPrompt: vi.fn(() => Promise.resolve()),
   Stop: vi.fn(),
+  ResolveToolPermission: vi.fn(),
 }))
 vi.mock('../../wailsjs/runtime/runtime', () => ({
   EventsOn: vi.fn(() => () => {}),
@@ -146,6 +147,68 @@ describe('chat store: herramientas (Tool.*)', () => {
     store.applyEvent({ Kind: 'Tool.Success', CallID: 'fantasma', Text: 'x' })
 
     expect(store.items).toHaveLength(0)
+  })
+})
+
+describe('chat store: tool permission (ask-before-run)', () => {
+  it('Tool.Permission.Requested leaves the tool item pending approval', () => {
+    const store = useChatStore()
+
+    store.applyEvent({ Kind: 'Tool.Called', CallID: 'c1', ToolName: 'bash', Input: { command: 'ls' } })
+    store.applyEvent({ Kind: 'Tool.Permission.Requested', CallID: 'c1', ToolName: 'bash' })
+
+    const item = store.items[0]
+    expect(item.kind).toBe('tool')
+    if (item.kind === 'tool') {
+      expect(item.status).toBe('pending')
+    }
+  })
+
+  it('approveTool resolves the permission with true and leaves the item running', () => {
+    const store = useChatStore()
+    const sessionID = store.sessionID
+
+    store.applyEvent({ Kind: 'Tool.Called', CallID: 'c1', ToolName: 'bash', Input: { command: 'ls' } })
+    store.applyEvent({ Kind: 'Tool.Permission.Requested', CallID: 'c1', ToolName: 'bash' })
+    store.approveTool('c1')
+
+    expect(App.ResolveToolPermission).toHaveBeenCalledWith(sessionID, 'c1', true)
+    const item = store.items[0]
+    if (item.kind === 'tool') {
+      expect(item.status).toBe('running')
+    }
+  })
+
+  it('denyTool resolves the permission with false', () => {
+    const store = useChatStore()
+    const sessionID = store.sessionID
+
+    store.applyEvent({ Kind: 'Tool.Called', CallID: 'c1', ToolName: 'bash', Input: { command: 'rm -rf /' } })
+    store.applyEvent({ Kind: 'Tool.Permission.Requested', CallID: 'c1', ToolName: 'bash' })
+    store.denyTool('c1')
+
+    expect(App.ResolveToolPermission).toHaveBeenCalledWith(sessionID, 'c1', false)
+    // The item leaves 'pending' (stops offering the buttons); the backend's
+    // Tool.Failed confirms the final state.
+    const item = store.items[0]
+    if (item.kind === 'tool') {
+      expect(item.status).not.toBe('pending')
+    }
+  })
+
+  it('a Tool.Success after approval completes the item', () => {
+    const store = useChatStore()
+
+    store.applyEvent({ Kind: 'Tool.Called', CallID: 'c1', ToolName: 'bash', Input: { command: 'ls' } })
+    store.applyEvent({ Kind: 'Tool.Permission.Requested', CallID: 'c1', ToolName: 'bash' })
+    store.approveTool('c1')
+    store.applyEvent({ Kind: 'Tool.Success', CallID: 'c1', Text: 'file.txt' })
+
+    const item = store.items[0]
+    if (item.kind === 'tool') {
+      expect(item.status).toBe('success')
+      expect(item.output).toBe('file.txt')
+    }
   })
 })
 

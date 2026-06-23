@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import { defineStore, acceptHMRUpdate } from 'pinia'
-import { SendPrompt, Stop } from '../../wailsjs/go/main/App'
+import { SendPrompt, Stop, ResolveToolPermission } from '../../wailsjs/go/main/App'
 import { EventsOn } from '../../wailsjs/runtime/runtime'
 
 // Mapeo evento->estado de la sesion (front.md §74). El store formaliza la
@@ -14,7 +14,9 @@ function newSessionID(): string {
   return `chat-${id}`
 }
 
-export type ToolStatus = 'running' | 'success' | 'failed'
+// 'pending' = awaiting user approval (ask-before-run): the UI offers
+// Approve/Deny before the tool runs.
+export type ToolStatus = 'pending' | 'running' | 'success' | 'failed'
 
 export interface UserItem {
   kind: 'user'
@@ -154,6 +156,13 @@ export const useChatStore = defineStore('chat', () => {
         if (stored.callID) toolsByCall.set(stored.callID, stored)
         break
       }
+      case 'Tool.Permission.Requested': {
+        // Tool.Called already created the item; here it moves to 'pending' so the
+        // UI can offer Approve/Deny before execution (ask-before-run).
+        const item = ev.CallID ? toolsByCall.get(ev.CallID) : undefined
+        if (item) item.status = 'pending'
+        break
+      }
       case 'Tool.Success': {
         const item = ev.CallID ? toolsByCall.get(ev.CallID) : undefined
         if (item) {
@@ -217,6 +226,27 @@ export const useChatStore = defineStore('chat', () => {
     Stop(sessionID.value)
   }
 
+  // approveTool / denyTool deliver the decision on a gated tool call
+  // (ask-before-run) to the backend. They take the item out of 'pending'
+  // immediately (removes the buttons and prevents double clicks): approve
+  // moves it to 'running' awaiting Tool.Success/Failed; deny leaves it in
+  // 'failed' (the backend's Tool.Failed confirms with its cause).
+  function resolveTool(callID: string, approved: boolean): void {
+    ResolveToolPermission(sessionID.value, callID, approved)
+    const item = toolsByCall.get(callID)
+    if (item && item.status === 'pending') {
+      item.status = approved ? 'running' : 'failed'
+    }
+  }
+
+  function approveTool(callID: string): void {
+    resolveTool(callID, true)
+  }
+
+  function denyTool(callID: string): void {
+    resolveTool(callID, false)
+  }
+
   function subscribe(): void {
     teardown()
     unsubscribe.push(
@@ -239,6 +269,8 @@ export const useChatStore = defineStore('chat', () => {
     reset,
     send,
     stop,
+    approveTool,
+    denyTool,
     subscribe,
     teardown,
   }

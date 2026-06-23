@@ -35,4 +35,18 @@ describe('MessageList', () => {
     expect(log.exists()).toBe(true)
     expect(log.attributes('aria-live')).toBe('polite')
   })
+
+  it('forwards approve/deny of a pending tool with its callID', async () => {
+    const items: TurnItem[] = [
+      { kind: 'tool', id: 't1', callID: 'c1', name: 'bash', input: { command: 'ls' }, status: 'pending', output: '', error: null },
+    ]
+
+    const wrapper = mount(MessageList, { props: { items } })
+
+    await wrapper.get('[data-action="approve"]').trigger('click')
+    expect(wrapper.emitted('approve')?.[0]).toEqual(['c1'])
+
+    await wrapper.get('[data-action="deny"]').trigger('click')
+    expect(wrapper.emitted('deny')?.[0]).toEqual(['c1'])
+  })
 })
