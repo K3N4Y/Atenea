@@ -130,6 +130,105 @@ func TestApp_SendPromptStreamsTurnToBus(t *testing.T) {
 	}
 }
 
+// TestApp_ListSessionsReturnsSentPrompts: tras enviar prompts en dos sesiones, el
+// binding ListSessions las devuelve con su Title (el primer prompt del usuario),
+// mas reciente primero. Es el wiring del historial de la sidebar.
+func TestApp_ListSessionsReturnsSentPrompts(t *testing.T) {
+	rec := &recordingEmit{}
+	fake := llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.TextStarted},
+		llm.Event{Kind: llm.TextDelta, Text: "ok"},
+		llm.Event{Kind: llm.TextEnded},
+		llm.Event{Kind: llm.StepEnded},
+	)
+	app := newApp(fake, rec.emit)
+
+	if err := app.SendPrompt("s1", "primera"); err != nil {
+		t.Fatalf("SendPrompt(s1): %v", err)
+	}
+	app.wait()
+	if err := app.SendPrompt("s2", "segunda"); err != nil {
+		t.Fatalf("SendPrompt(s2): %v", err)
+	}
+	app.wait()
+
+	got, err := app.ListSessions()
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("ListSessions: got %d sessions, want 2 (%+v)", len(got), got)
+	}
+	// s2 fue la ultima con actividad: debe ir primero.
+	if got[0].ID != "s2" || got[0].Title != "segunda" {
+		t.Errorf("ListSessions[0] = %+v, want {s2 segunda}", got[0])
+	}
+	if got[1].ID != "s1" || got[1].Title != "primera" {
+		t.Errorf("ListSessions[1] = %+v, want {s1 primera}", got[1])
+	}
+}
+
+// TestApp_SessionHistoryReplaysStoredLog: SessionHistory devuelve el log durable
+// completo de la sesion (el mismo SessionEvent que viaja por el bus), para que el
+// frontend lo reproduzca por applyEvent. Incluye el prompt del usuario y el
+// Step.Ended con el texto coalescido del asistente.
+func TestApp_SessionHistoryReplaysStoredLog(t *testing.T) {
+	rec := &recordingEmit{}
+	fake := llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.TextStarted},
+		llm.Event{Kind: llm.TextDelta, Text: "ok"},
+		llm.Event{Kind: llm.TextEnded},
+		llm.Event{Kind: llm.StepEnded},
+	)
+	app := newApp(fake, rec.emit)
+
+	if err := app.SendPrompt("s1", "hola"); err != nil {
+		t.Fatalf("SendPrompt: %v", err)
+	}
+	app.wait()
+
+	got, err := app.SessionHistory("s1")
+	if err != nil {
+		t.Fatalf("SessionHistory: %v", err)
+	}
+	if len(got) == 0 {
+		t.Fatal("SessionHistory devolvio un log vacio")
+	}
+	// Seq estrictamente creciente: el log llega en orden.
+	for i := 1; i < len(got); i++ {
+		if got[i].Seq <= got[i-1].Seq {
+			t.Fatalf("SessionHistory Seq no creciente: %d tras %d", got[i].Seq, got[i-1].Seq)
+		}
+	}
+	var hasUser, hasStepEnded bool
+	for _, ev := range got {
+		if ev.Message != nil && ev.Message.Role == session.RoleUser && ev.Message.Text == "hola" {
+			hasUser = true
+		}
+		if ev.Kind == session.KindStepEnded && ev.Message != nil && ev.Message.Text == "ok" {
+			hasStepEnded = true
+		}
+	}
+	if !hasUser {
+		t.Error("SessionHistory no contiene el prompt del usuario")
+	}
+	if !hasStepEnded {
+		t.Error("SessionHistory no contiene el Step.Ended con el texto del asistente")
+	}
+}
+
+// TestApp_SessionHistoryUnknownSessionReturnsError: pedir el historial de una
+// sesion inexistente propaga ErrSessionNotFound, no un log vacio silencioso.
+func TestApp_SessionHistoryUnknownSessionReturnsError(t *testing.T) {
+	app := newApp(demoProvider(), func(string, ...interface{}) {})
+
+	if _, err := app.SessionHistory("ghost"); err == nil {
+		t.Fatal("SessionHistory(ghost): got nil error, want ErrSessionNotFound")
+	}
+}
+
 // TestApp_RequestAdvertisesGrepTool afirma el wiring de app.go: el registry de la
 // app anuncia grep cuando arma el Request del proveedor, junto con las file tools
 // existentes.

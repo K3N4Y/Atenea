@@ -38,6 +38,7 @@ type App struct {
 	inbox  session.Inbox
 	runner *runner.Runner
 	bus    *event.Bus
+	store  session.Store                 // lectura del historial para la sidebar (ListSessions/SessionHistory)
 	gate   *session.MemoryPermissionGate // ask-before-run: the UI resolves via ResolveToolPermission
 
 	mu   sync.Mutex
@@ -58,6 +59,7 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 	a := &App{runs: map[string]*runHandle{}}
 	a.bus = event.NewBus(emit)
 	emitting := event.NewEmittingStore(store, a.bus)
+	a.store = emitting // las lecturas del historial delegan en inner sin emitir
 	a.inbox = session.NewMemoryInbox()
 	// El read ancla su sandbox en la raiz del workspace; en v1 es el cwd del
 	// proceso (no hay aun seleccion de proyecto en la UI). read, write y edit
@@ -185,6 +187,21 @@ func (a *App) SendPrompt(sessionID, text string) error {
 	}
 	a.start(sessionID)
 	return nil
+}
+
+// ListSessions devuelve el historial de chats para la sidebar: un resumen por
+// sesion (ID + Title del primer prompt), mas reciente primero. Es el binding que
+// el frontend llama al montar la vista. Lee del store durable sin emitir.
+func (a *App) ListSessions() ([]session.SessionSummary, error) {
+	return a.store.Sessions(context.Background())
+}
+
+// SessionHistory devuelve el log durable completo de una sesion (los mismos
+// SessionEvent que viajan por el bus en vivo) para que el frontend lo reproduzca
+// y rehidrate la conversacion. Es el binding que el frontend llama al abrir una
+// sesion del historial.
+func (a *App) SessionHistory(sessionID string) ([]session.SessionEvent, error) {
+	return a.store.Events(context.Background(), sessionID, 0)
 }
 
 // ResolveToolPermission delivers the user's decision on a gated tool call
