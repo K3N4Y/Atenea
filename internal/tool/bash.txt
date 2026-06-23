@@ -5,5 +5,6 @@ Uso:
 - IMPORTANTE: es para operaciones de terminal (git, go, npm, builds, tests). NO lo uses para leer, buscar o editar archivos: usa las tools dedicadas (read, edit, write, glob, grep).
 - Evita find, grep, cat, sed, head, tail y echo para tareas de archivos; prefiere las tools dedicadas.
 - No uses comandos interactivos (editores, pagers, prompts de password): se cuelgan esperando input.
+- Cada comando requiere aprobacion del usuario antes de correr y puede ser denegado. Si lo deniegan, no reintentes el mismo comando: explica que ibas a hacer o propone otra via.
 - Marca slow_ok=true para comandos potencialmente lentos (builds, descargas, instalaciones, tests): usan un timeout extendido.
 - Un exit code distinto de cero no es un fallo de la tool: la salida llega con un marcador [exit N].
