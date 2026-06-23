@@ -61,4 +61,20 @@ describe('ChatComposer', () => {
 
     expect(wrapper.get('[data-action="toggle-mode"]').attributes('aria-pressed')).toBe('true')
   })
+
+  it('sin prop mode (default normal): el toggle expone aria-pressed=false', () => {
+    const wrapper = mount(ChatComposer, { props: { running: false } })
+
+    expect(wrapper.get('[data-action="toggle-mode"]').attributes('aria-pressed')).toBe('false')
+  })
+
+  it('el toggle de modo sigue activo durante una ejecucion (running=true): el usuario puede cambiar a plan mientras corre', async () => {
+    const wrapper = mount(ChatComposer, { props: { running: true, mode: 'normal' } })
+
+    const toggle = wrapper.get('[data-action="toggle-mode"]')
+    expect(toggle.attributes('disabled')).toBeUndefined()
+    await toggle.trigger('click')
+
+    expect(wrapper.emitted('toggle-mode')).toBeTruthy()
+  })
 })
