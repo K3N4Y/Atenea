@@ -2,6 +2,8 @@ import { ref } from 'vue'
 import { defineStore, acceptHMRUpdate } from 'pinia'
 import {
   SendPrompt,
+  SendPlanPrompt,
+  AcceptPlan,
   Stop,
   ResolveToolPermission,
   ListSessions,
@@ -60,6 +62,35 @@ export interface ToolItem {
 // renderizan como un lienzo continuo (identidad §8).
 export type TurnItem = UserItem | AssistantItem | ReasoningItem | ToolItem
 
+// Estado del plan vigente en modo plan. El agente lo presenta via la tool
+// `present_plan` (Tool.Called con Input {plan, title?}); la UI lo muestra a
+// pantalla completa (no como tool card inline) para aceptarlo o pedir cambios.
+export interface PlanState {
+  callID: string
+  title: string
+  markdown: string
+}
+
+// planFromInput normaliza el Input de la tool present_plan a PlanState.
+// json.RawMessage llega como objeto JS, pero toleramos un string JSON por si
+// el backend lo serializa distinto; un input invalido degrada a campos vacios.
+function planFromInput(callID: string, input: unknown): PlanState {
+  let obj = input
+  if (typeof obj === 'string') {
+    try {
+      obj = JSON.parse(obj)
+    } catch {
+      obj = {}
+    }
+  }
+  const o = obj && typeof obj === 'object' ? (obj as Record<string, unknown>) : {}
+  return {
+    callID,
+    title: typeof o.title === 'string' ? o.title : '',
+    markdown: typeof o.plan === 'string' ? o.plan : '',
+  }
+}
+
 // Forma del evento durable serializado por Wails (campos PascalCase, sin json
 // tags en Go). Solo declaramos lo que el frontend consume.
 export interface SessionEvent {
@@ -88,6 +119,11 @@ export const useChatStore = defineStore('chat', () => {
   // Historial de chats para la sidebar. La fuente de verdad es el backend; se
   // refresca con loadSessions (al montar la vista) y tras enviar un prompt.
   const sessions = ref<SessionSummary[]>([])
+  // Modo de envio: 'normal' manda prompts directos; 'plan' pide al agente que
+  // planifique antes de ejecutar. `plan` guarda el plan vigente que la tool
+  // present_plan abre a pantalla completa (null = sin overlay de plan).
+  const mode = ref<'normal' | 'plan'>('normal')
+  const plan = ref<PlanState | null>(null)
 
   // Punteros al texto / pensamiento en curso (referencias dentro de `items`).
   let streamingText: AssistantItem | null = null
@@ -159,6 +195,12 @@ export const useChatStore = defineStore('chat', () => {
         break
       }
       case 'Tool.Called': {
+        // El plan no es una tool card inline: se muestra a pantalla completa.
+        // present_plan abre/actualiza `plan` y no agrega item al log.
+        if (ev.ToolName === 'present_plan') {
+          plan.value = planFromInput(ev.CallID ?? '', ev.Input)
+          break
+        }
         const item: ToolItem = {
           kind: 'tool',
           id: nextId(),
@@ -208,6 +250,11 @@ export const useChatStore = defineStore('chat', () => {
     // El prompt del usuario se promueve como Message{Role:user} (Kind vacio).
     if (ev.Message && ev.Message.Role === 'user') {
       items.value.push({ kind: 'user', id: nextId(), text: ev.Message.Text ?? '' })
+      // Un mensaje de usuario despues de present_plan significa que el plan ya fue
+      // accionado (AcceptPlan promueve "implementa..."; solicitar cambio promueve el
+      // feedback). Cerrar el plan aqui evita que la rehidratacion (loadSession) reabra
+      // un plan ya ejecutado; el siguiente present_plan en el historial lo reabre.
+      plan.value = null
     }
   }
 
@@ -232,6 +279,11 @@ export const useChatStore = defineStore('chat', () => {
     toolsByCall = new Map()
     running.value = false
     errorText.value = null
+    // Un lienzo nuevo/cargado arranca en modo normal sin overlay de plan.
+    // Reproducir un historial que termina en present_plan reabre `plan` via
+    // applyEvent durante la rehidratacion.
+    plan.value = null
+    mode.value = 'normal'
   }
 
   // Lienzo nuevo: abre una sesion vacia y limpia la vista local. La fuente de
@@ -270,9 +322,47 @@ export const useChatStore = defineStore('chat', () => {
     if (!trimmed) return
     errorText.value = null
     running.value = true
-    await SendPrompt(sessionID.value, trimmed)
+    // Un envio nuevo cierra cualquier plan vigente; el agente lo reabrira con
+    // present_plan si vuelve a planificar.
+    plan.value = null
+    if (mode.value === 'plan') {
+      await SendPlanPrompt(sessionID.value, trimmed)
+    } else {
+      await SendPrompt(sessionID.value, trimmed)
+    }
     // Refresca el historial: una conversacion nueva (o reactivada) debe aparecer
     // y reordenarse en la sidebar.
+    await loadSessions()
+  }
+
+  // toggleMode alterna entre envio normal y modo plan.
+  function toggleMode(): void {
+    mode.value = mode.value === 'plan' ? 'normal' : 'plan'
+  }
+
+  // acceptPlan acepta el plan vigente y lo ejecuta: vuelve a modo normal, cierra
+  // el overlay y delega en el backend (que arranca la ejecucion del plan).
+  async function acceptPlan(): Promise<void> {
+    errorText.value = null
+    running.value = true
+    mode.value = 'normal'
+    const id = sessionID.value
+    plan.value = null
+    await AcceptPlan(id)
+    await loadSessions()
+  }
+
+  // requestPlanChange pide al agente reescribir el plan con el feedback del
+  // usuario; sigue en modo plan a la espera del nuevo present_plan.
+  async function requestPlanChange(feedback: string): Promise<void> {
+    const trimmed = feedback.trim()
+    if (!trimmed) return
+    errorText.value = null
+    running.value = true
+    mode.value = 'plan'
+    const id = sessionID.value
+    plan.value = null
+    await SendPlanPrompt(id, trimmed)
     await loadSessions()
   }
 
@@ -319,6 +409,8 @@ export const useChatStore = defineStore('chat', () => {
     running,
     errorText,
     sessions,
+    mode,
+    plan,
     applyEvent,
     applyError,
     clearError,
@@ -326,6 +418,9 @@ export const useChatStore = defineStore('chat', () => {
     loadSessions,
     loadSession,
     send,
+    toggleMode,
+    acceptPlan,
+    requestPlanChange,
     stop,
     approveTool,
     denyTool,

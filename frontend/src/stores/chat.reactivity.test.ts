@@ -8,6 +8,8 @@ import { setActivePinia, createPinia } from 'pinia'
 // chat.test.ts la reemplazamos por fakes para aislar el comportamiento.
 vi.mock('../../wailsjs/go/main/App', () => ({
   SendPrompt: vi.fn(() => Promise.resolve()),
+  SendPlanPrompt: vi.fn(() => Promise.resolve()),
+  AcceptPlan: vi.fn(() => Promise.resolve()),
   Stop: vi.fn(),
 }))
 vi.mock('../../wailsjs/runtime/runtime', () => ({

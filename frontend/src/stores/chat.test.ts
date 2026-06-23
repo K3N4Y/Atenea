@@ -5,6 +5,8 @@ import { setActivePinia, createPinia } from 'pinia'
 // reemplazamos por fakes para verificar el mapeo evento->estado en aislamiento.
 vi.mock('../../wailsjs/go/main/App', () => ({
   SendPrompt: vi.fn(() => Promise.resolve()),
+  SendPlanPrompt: vi.fn(() => Promise.resolve()),
+  AcceptPlan: vi.fn(() => Promise.resolve()),
   Stop: vi.fn(),
   ResolveToolPermission: vi.fn(),
   ListSessions: vi.fn(() => Promise.resolve([])),
@@ -308,6 +310,66 @@ describe('chat store: extensibilidad (forward-compat)', () => {
   })
 })
 
+describe('chat store: rehidratacion del plan', () => {
+  it('un mensaje de usuario posterior a present_plan cierra el plan (ya accionado)', () => {
+    const store = useChatStore()
+
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      ToolName: 'present_plan',
+      CallID: 'c1',
+      Input: { title: 'T', plan: 'cuerpo' },
+    })
+    expect(store.plan).not.toBeNull()
+
+    // AcceptPlan promueve un prompt de usuario ("implementa..."); solicitar cambio
+    // promueve el feedback. En ambos casos, un mensaje de usuario DESPUES del
+    // present_plan significa que el plan ya fue accionado: no debe reabrirse.
+    store.applyEvent({ Message: { Role: 'user', Text: 'El plan fue aprobado. Implementalo ahora.' } })
+
+    expect(store.plan).toBeNull()
+  })
+
+  it('present_plan sin mensaje de usuario posterior mantiene el plan abierto', () => {
+    const store = useChatStore()
+
+    store.applyEvent({ Message: { Role: 'user', Text: 'planea X' } })
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      ToolName: 'present_plan',
+      CallID: 'c1',
+      Input: { title: 'T', plan: 'cuerpo' },
+    })
+
+    expect(store.plan).toMatchObject({ markdown: 'cuerpo' })
+  })
+
+  it('loadSession NO reabre un plan ya ejecutado', async () => {
+    const store = useChatStore()
+    vi.mocked(App.SessionHistory).mockResolvedValueOnce([
+      { Message: { Role: 'user', Text: 'planea X' } },
+      { Kind: 'Tool.Called', ToolName: 'present_plan', CallID: 'c1', Input: { title: 'T', plan: 'v1' } },
+      { Message: { Role: 'user', Text: 'implementa el plan' } },
+    ] as never)
+
+    await store.loadSession('s1')
+
+    expect(store.plan).toBeNull()
+  })
+
+  it('loadSession reabre el plan si la sesion quedo esperando decision', async () => {
+    const store = useChatStore()
+    vi.mocked(App.SessionHistory).mockResolvedValueOnce([
+      { Message: { Role: 'user', Text: 'planea X' } },
+      { Kind: 'Tool.Called', ToolName: 'present_plan', CallID: 'c1', Input: { title: 'T', plan: 'v1' } },
+    ] as never)
+
+    await store.loadSession('s1')
+
+    expect(store.plan).toMatchObject({ markdown: 'v1' })
+  })
+})
+
 describe('chat store: flujo continuo y ordenado entre tipos', () => {
   it('mantiene usuario, pensamiento, IA y tool en orden de evento', () => {
     const store = useChatStore()
@@ -454,5 +516,116 @@ describe('chat store: acciones sobre los bindings', () => {
     expect(secondSessionID).not.toBe(firstSessionID)
     expect(EventsOn).toHaveBeenNthCalledWith(3, `session:${secondSessionID}`, expect.any(Function))
     expect(EventsOn).toHaveBeenNthCalledWith(4, `session:${secondSessionID}:error`, expect.any(Function))
+  })
+})
+
+describe('chat store: modo plan', () => {
+  it('send usa SendPlanPrompt cuando mode==="plan"', async () => {
+    const store = useChatStore()
+    const sessionID = store.sessionID
+    store.toggleMode()
+
+    await store.send('planea X')
+
+    expect(App.SendPlanPrompt).toHaveBeenCalledWith(sessionID, 'planea X')
+    expect(App.SendPrompt).not.toHaveBeenCalled()
+  })
+
+  it('send usa SendPrompt cuando mode==="normal"', async () => {
+    const store = useChatStore()
+    const sessionID = store.sessionID
+
+    await store.send('hola')
+
+    expect(App.SendPrompt).toHaveBeenCalledWith(sessionID, 'hola')
+    expect(App.SendPlanPrompt).not.toHaveBeenCalled()
+  })
+
+  it('Tool.Called present_plan abre el plan y no crea tool item', () => {
+    const store = useChatStore()
+
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      ToolName: 'present_plan',
+      CallID: 'c1',
+      Input: { title: 'T', plan: '# Plan\n- a' },
+    })
+
+    expect(store.plan).toEqual({ callID: 'c1', title: 'T', markdown: '# Plan\n- a' })
+    expect(store.items).toHaveLength(0)
+  })
+
+  it('acceptPlan ejecuta en modo normal y cierra el plan', async () => {
+    const store = useChatStore()
+    const sessionID = store.sessionID
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      ToolName: 'present_plan',
+      CallID: 'c1',
+      Input: { title: 'T', plan: '# Plan' },
+    })
+
+    await store.acceptPlan()
+
+    expect(App.AcceptPlan).toHaveBeenCalledWith(sessionID)
+    expect(store.mode).toBe('normal')
+    expect(store.plan).toBeNull()
+  })
+
+  it('requestPlanChange reescribe el plan via SendPlanPrompt', async () => {
+    const store = useChatStore()
+    const sessionID = store.sessionID
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      ToolName: 'present_plan',
+      CallID: 'c1',
+      Input: { title: 'T', plan: '# Plan' },
+    })
+
+    await store.requestPlanChange('cambia el paso 2')
+
+    expect(App.SendPlanPrompt).toHaveBeenCalledWith(sessionID, 'cambia el paso 2')
+    expect(store.plan).toBeNull()
+    expect(store.mode).toBe('plan')
+  })
+
+  it('Tool.Called present_plan tolera Input como string JSON', () => {
+    const store = useChatStore()
+
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      ToolName: 'present_plan',
+      CallID: 'c1',
+      Input: '{"title":"T2","plan":"texto"}',
+    })
+
+    expect(store.plan?.markdown).toBe('texto')
+    expect(store.plan?.title).toBe('T2')
+  })
+
+  it('requestPlanChange ignora feedback vacio', async () => {
+    const store = useChatStore()
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      ToolName: 'present_plan',
+      CallID: 'c1',
+      Input: { title: 'T', plan: '# Plan' },
+    })
+    const planBefore = store.plan
+
+    await store.requestPlanChange('   ')
+
+    expect(App.SendPlanPrompt).not.toHaveBeenCalled()
+    expect(store.plan).toEqual(planBefore)
+  })
+
+  it('toggleMode alterna normal<->plan', () => {
+    const store = useChatStore()
+
+    expect(store.mode).toBe('normal')
+    store.toggleMode()
+    expect(store.mode).toBe('plan')
+    store.toggleMode()
+    expect(store.mode).toBe('normal')
   })
 })
