@@ -396,6 +396,85 @@ func TestApp_AcceptPlanRunsNormalModeAndAdmitsImplementPrompt(t *testing.T) {
 	}
 }
 
+// TestApp_RequestPlanChangeStaysInPlanMode: "Solicitar cambio" en el frontend es
+// un segundo SendPlanPrompt con el feedback. La sesion debe SEGUIR en plan-mode:
+// el ultimo Request anuncia present_plan y NO bash, y ambos prompts (el original y
+// el feedback) quedan en el historial para que el agente reescriba el plan.
+func TestApp_RequestPlanChangeStaysInPlanMode(t *testing.T) {
+	rec := &recordingEmit{}
+	prov := &requestRecordingProvider{FakeProvider: llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.StepEnded},
+	)}
+	app := newApp(prov, rec.emit)
+
+	if err := app.SendPlanPrompt("s1", "planea la feature X"); err != nil {
+		t.Fatalf("SendPlanPrompt: %v", err)
+	}
+	app.wait()
+	if err := app.SendPlanPrompt("s1", "cambia el paso 2"); err != nil {
+		t.Fatalf("SendPlanPrompt (cambio): %v", err)
+	}
+	app.wait()
+
+	req := prov.captured()
+	if !requestHasTool(req, "present_plan") {
+		t.Errorf("Request.Tools no contiene present_plan tras solicitar cambio; tools = %+v", req.Tools)
+	}
+	if requestHasTool(req, "bash") {
+		t.Errorf("Request.Tools contiene bash tras solicitar cambio (deberia seguir en plan); tools = %+v", req.Tools)
+	}
+
+	got, err := app.SessionHistory("s1")
+	if err != nil {
+		t.Fatalf("SessionHistory: %v", err)
+	}
+	var sawPlan, sawChange bool
+	for _, ev := range got {
+		if ev.Message == nil || ev.Message.Role != session.RoleUser {
+			continue
+		}
+		switch ev.Message.Text {
+		case "planea la feature X":
+			sawPlan = true
+		case "cambia el paso 2":
+			sawChange = true
+		}
+	}
+	if !sawPlan || !sawChange {
+		t.Errorf("el historial debe tener el plan original y el feedback; plan=%v cambio=%v", sawPlan, sawChange)
+	}
+}
+
+// TestApp_AcceptPlanFromPlanModeResetsToNormal: aceptar un plan presentado vuelve
+// a modo normal aunque la sesion venia de plan-mode (el plan-mode no se "pega").
+// El ultimo Request anuncia bash y NO present_plan.
+func TestApp_AcceptPlanFromPlanModeResetsToNormal(t *testing.T) {
+	rec := &recordingEmit{}
+	prov := &requestRecordingProvider{FakeProvider: llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.StepEnded},
+	)}
+	app := newApp(prov, rec.emit)
+
+	if err := app.SendPlanPrompt("s1", "planea la feature X"); err != nil {
+		t.Fatalf("SendPlanPrompt: %v", err)
+	}
+	app.wait()
+	if err := app.AcceptPlan("s1"); err != nil {
+		t.Fatalf("AcceptPlan: %v", err)
+	}
+	app.wait()
+
+	req := prov.captured()
+	if !requestHasTool(req, "bash") {
+		t.Errorf("Request.Tools no contiene bash tras aceptar desde plan-mode; tools = %+v", req.Tools)
+	}
+	if requestHasTool(req, "present_plan") {
+		t.Errorf("Request.Tools sigue con present_plan tras aceptar; tools = %+v", req.Tools)
+	}
+}
+
 func requestHasTool(req llm.Request, name string) bool {
 	for _, def := range req.Tools {
 		if def.Name == name {
