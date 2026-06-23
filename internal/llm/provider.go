@@ -41,6 +41,7 @@ type Message struct {
 // cache key) llegan en M7. Crece sin cambiar la interface Provider.
 type Request struct {
 	Model    string
+	System   string    // turn baseline prompt (<env>, identity, repo instructions); the runner builds it
 	Messages []Message // historial proyectado convertido al formato del proveedor
 	Tools    []ToolDef // schemas materializados por el registry (M4)
 }

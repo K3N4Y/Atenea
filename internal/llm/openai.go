@@ -60,9 +60,16 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request) (<-chan Event,
 		model = p.model
 	}
 
+	// The system prompt (turn baseline) goes as the first message with role system,
+	// before the history. Empty = not prepended (no empty system message is sent).
+	msgs := toOpenAIMessages(req.Messages)
+	if req.System != "" {
+		msgs = append([]openai.ChatCompletionMessageParamUnion{openai.SystemMessage(req.System)}, msgs...)
+	}
+
 	params := openai.ChatCompletionNewParams{
 		Model:    openai.ChatModel(model),
-		Messages: toOpenAIMessages(req.Messages),
+		Messages: msgs,
 		StreamOptions: openai.ChatCompletionStreamOptionsParam{
 			IncludeUsage: openai.Bool(true),
 		},

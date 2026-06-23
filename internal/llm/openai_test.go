@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -1119,5 +1120,110 @@ func TestOpenAIProvider_StreamSerializesAssistantTextAndToolCall(t *testing.T) {
 	}
 	if mTool["tool_call_id"] != "call_1" {
 		t.Fatalf("messages[2].tool_call_id: got %v, want %q", mTool["tool_call_id"], "call_1")
+	}
+}
+
+// systemAndUser walks the POST body and returns the messages (role + raw content)
+// in order, so a test can assert that the system prompt comes first.
+func systemAndUser(t *testing.T, body []byte) []struct {
+	Role    string
+	Content string
+} {
+	t.Helper()
+	var sent struct {
+		Messages []struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &sent); err != nil {
+		t.Fatalf("could not parse the request body: %v; body: %s", err, body)
+	}
+	out := make([]struct {
+		Role    string
+		Content string
+	}, len(sent.Messages))
+	for i, m := range sent.Messages {
+		out[i].Role = m.Role
+		out[i].Content = string(m.Content)
+	}
+	return out
+}
+
+// TestOpenAIProvider_StreamSendsSystemPrompt demands that Request.System travels as
+// the FIRST message of the request with role "system". Without it the model runs
+// without a baseline prompt (<env>, identity, repo instructions): the system built
+// by internal/session/prompt never reaches the provider. The handler captures the
+// POST body and the test inspects messages[0]. It kills the implementation that
+// builds Messages from the history alone and ignores req.System.
+func TestOpenAIProvider_StreamSendsSystemPrompt(t *testing.T) {
+	var body []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	p := NewOpenAIProvider("test-key", server.URL, "test-model")
+
+	out, err := p.Stream(context.Background(), Request{
+		System:   "you are atenea",
+		Messages: []Message{{Role: "user", Text: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("Stream returned error: %v", err)
+	}
+	drain(out)
+
+	if body == nil {
+		t.Fatalf("the handler did not capture the POST body")
+	}
+	msgs := systemAndUser(t, body)
+	if len(msgs) < 2 {
+		t.Fatalf("the request carried %d messages, want system + user; body: %s", len(msgs), body)
+	}
+	if msgs[0].Role != "system" {
+		t.Fatalf("messages[0].role: got %q, want \"system\"; messages = %+v", msgs[0].Role, msgs)
+	}
+	if !strings.Contains(msgs[0].Content, "you are atenea") {
+		t.Fatalf("messages[0].content does not contain the system prompt; got %q", msgs[0].Content)
+	}
+	if msgs[1].Role != "user" {
+		t.Fatalf("messages[1].role: got %q, want \"user\" (history comes after system)", msgs[1].Role)
+	}
+}
+
+// TestOpenAIProvider_StreamWithoutSystemOmitsSystemMessage is the edge case: with
+// an empty Request.System the request does NOT prepend a system message; the first
+// one is from the history. It avoids an empty system message when there is no
+// baseline prompt.
+func TestOpenAIProvider_StreamWithoutSystemOmitsSystemMessage(t *testing.T) {
+	var body []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	p := NewOpenAIProvider("test-key", server.URL, "test-model")
+
+	out, err := p.Stream(context.Background(), Request{
+		Messages: []Message{{Role: "user", Text: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("Stream returned error: %v", err)
+	}
+	drain(out)
+
+	msgs := systemAndUser(t, body)
+	if len(msgs) == 0 {
+		t.Fatalf("the request carried no messages; body: %s", body)
+	}
+	if msgs[0].Role == "system" {
+		t.Fatalf("without Request.System there must be no system message; messages = %+v", msgs)
 	}
 }
