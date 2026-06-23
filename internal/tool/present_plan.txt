@@ -1,0 +1,7 @@
+Presenta tu plan final al usuario para que lo apruebe antes de ejecutarlo.
+
+Uso:
+- plan es el plan completo en Markdown (requerido): pasa el plan entero, no un resumen. title es un titulo corto y opcional.
+- El plan se guarda en el workspace y se muestra al usuario en la interfaz.
+- Llama esta herramienta UNA sola vez cuando el plan este listo, no para pasos intermedios.
+- Tras llamarla DETENTE: no llames mas herramientas y espera la decision del usuario (Aceptar o Solicitar cambio).
