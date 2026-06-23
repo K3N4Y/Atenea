@@ -205,6 +205,56 @@ func TestLoadInstructions_NoneFoundReturnsEmpty(t *testing.T) {
 	}
 }
 
+// BuildPlan agrega el contrato de modo plan despues de la salida normal de
+// Build. RED: BuildPlan y plan.txt aun no existen.
+func TestBuildPlan_AppendsPlanContractToBase(t *testing.T) {
+	env := Env{
+		WorkingDir:   "/home/u/dev/atenea",
+		WorktreeRoot: "/home/u/dev/atenea",
+		IsGitRepo:    true,
+		Platform:     "linux",
+		Date:         "Mon Jun 22 2026",
+	}
+	got := BuildPlan("claude-opus-4-8", env, "")
+
+	if !strings.Contains(got, Build("claude-opus-4-8", env, "")) {
+		t.Fatalf("BuildPlan no contiene la salida normal de Build; got:\n%s", got)
+	}
+	if !strings.Contains(got, "present_plan") {
+		t.Fatalf("BuildPlan no menciona la herramienta present_plan; got:\n%s", got)
+	}
+}
+
+// TRIANGULATE: con instrucciones, su texto debe aparecer en la salida de
+// BuildPlan, probando que se apoya en Build y no es una cadena hardcodeada.
+func TestBuildPlan_IncludesInstructionsWhenPresent(t *testing.T) {
+	env := Env{
+		WorkingDir:   "/r",
+		WorktreeRoot: "/r",
+		IsGitRepo:    true,
+		Platform:     "linux",
+		Date:         "Mon Jun 22 2026",
+	}
+	instructions := "Instructions from: /r/AGENTS.md\nreglas"
+	got := BuildPlan("claude-x", env, instructions)
+	if !strings.Contains(got, instructions) {
+		t.Fatalf("BuildPlan no incluye el bloque de instrucciones.\nquiero contener:\n%s\ngot:\n%s", instructions, got)
+	}
+}
+
+// Cableado del //go:embed de plan.txt: no vacio y distinto de los prompts base.
+func TestPlanInstructions_EmbeddedNonEmpty(t *testing.T) {
+	if strings.TrimSpace(planInstructions) == "" {
+		t.Errorf("planInstructions vacio (embed mal cableado o plan.txt vacio)")
+	}
+	if planInstructions == anthropicPrompt {
+		t.Errorf("planInstructions igual a anthropicPrompt (embed apunta al .txt equivocado)")
+	}
+	if planInstructions == defaultPrompt {
+		t.Errorf("planInstructions igual a defaultPrompt (embed apunta al .txt equivocado)")
+	}
+}
+
 // Cableado de los //go:embed: ambos prompts base deben ser no vacios y
 // distintos entre si. Si ambos //go:embed apuntan al mismo .txt, o un .txt
 // queda vacio, este test los tumba (analogo a descriptions_test.go en tool).

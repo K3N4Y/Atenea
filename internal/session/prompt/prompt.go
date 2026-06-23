@@ -16,6 +16,12 @@ var anthropicPrompt string
 //go:embed default.txt
 var defaultPrompt string
 
+// Bloque de instrucciones para el modo plan, embebido. Se agrega al final de
+// la salida normal de Build.
+//
+//go:embed plan.txt
+var planInstructions string
+
 // Env son los datos de runtime que van en el bloque <env>. Se inyectan por
 // parametro (no se leen del reloj ni del SO aqui) para que Build sea pura.
 type Env struct {
@@ -46,6 +52,12 @@ func Build(modelID string, env Env, instructions string) string {
 		parts = append(parts, instructions)
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+// BuildPlan devuelve la salida normal de Build mas el bloque de instrucciones
+// del modo plan, separado por "\n\n".
+func BuildPlan(modelID string, env Env, instructions string) string {
+	return Build(modelID, env, instructions) + "\n\n" + planInstructions
 }
 
 // renderEnv arma el bloque <env> literal con dos espacios de indentacion.
