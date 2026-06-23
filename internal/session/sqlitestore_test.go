@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -48,7 +49,7 @@ func TestSQLiteStore_ReopenResumesLog(t *testing.T) {
 		t.Fatalf("Messages tras reabrir: got %d, want %d (%+v)", len(got), len(want), got)
 	}
 	for i := range want {
-		if got[i] != want[i] {
+		if !reflect.DeepEqual(got[i], want[i]) {
 			t.Fatalf("Messages[%d] tras reabrir: got %+v, want %+v", i, got[i], want[i])
 		}
 	}
@@ -59,5 +60,49 @@ func TestSQLiteStore_ReopenResumesLog(t *testing.T) {
 	}
 	if next != lastSeq+1 {
 		t.Fatalf("AppendEvent tras reabrir: got Seq %d, want %d (la secuencia no continuo)", next, lastSeq+1)
+	}
+}
+
+// TestSQLiteStore_ProjectsToolCallsAndToolCallID fija la paridad de SQLite con
+// MemoryStore para las partes ricas de la proyeccion: el assistant con tool calls
+// y el resultado de la tool con su tool_call_id deben sobrevivir el round-trip por
+// la base. Apende ambos eventos y afirma que Messages reconstruye los DOS mensajes
+// con sus ToolCalls / ToolCallID intactos (incluido Seq). Hoy SQLite no persiste
+// esas columnas, asi que el round-trip las pierde.
+func TestSQLiteStore_ProjectsToolCallsAndToolCallID(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewSQLiteStore(":memory:")
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	if _, err := store.AppendEvent(ctx, "s1", SessionEvent{Kind: KindStepEnded, Message: &Message{
+		ID: "a1", Role: RoleAssistant,
+		ToolCalls: []ToolCall{{ID: "call_1", Name: "read", Arguments: `{"path":"foo.go"}`}},
+	}}); err != nil {
+		t.Fatalf("AppendEvent (assistant): %v", err)
+	}
+	if _, err := store.AppendEvent(ctx, "s1", SessionEvent{Kind: KindToolSuccess, Message: &Message{
+		ID: "call_1", Role: RoleTool, Text: "contenido", ToolCallID: "call_1",
+	}}); err != nil {
+		t.Fatalf("AppendEvent (tool result): %v", err)
+	}
+
+	got, err := store.Messages(ctx, "s1", 0)
+	if err != nil {
+		t.Fatalf("Messages: %v", err)
+	}
+	want := []Message{
+		{ID: "a1", Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "call_1", Name: "read", Arguments: `{"path":"foo.go"}`}}, Seq: 1},
+		{ID: "call_1", Role: RoleTool, Text: "contenido", ToolCallID: "call_1", Seq: 2},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("Messages: got %d, want %d (%+v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if !reflect.DeepEqual(got[i], want[i]) {
+			t.Fatalf("Messages[%d]: got %+v, want %+v", i, got[i], want[i])
+		}
 	}
 }

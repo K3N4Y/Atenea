@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"sync"
 
 	_ "modernc.org/sqlite"
@@ -27,6 +28,8 @@ CREATE TABLE IF NOT EXISTS events (
   input       BLOB,
   usage       BLOB,
   error       TEXT,
+  tool_calls  BLOB,
+  tool_call_id TEXT,
   PRIMARY KEY (session_id, seq)
 );`
 
@@ -52,6 +55,18 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 		db.Close()
 		return nil, err
 	}
+	// Migracion idempotente para bases ya creadas: CREATE TABLE IF NOT EXISTS no
+	// agrega columnas, asi que las anadimos con ALTER ignorando solo el error de
+	// columna duplicada (la base ya tenia la columna).
+	for _, stmt := range []string{
+		`ALTER TABLE events ADD COLUMN tool_calls BLOB`,
+		`ALTER TABLE events ADD COLUMN tool_call_id TEXT`,
+	} {
+		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			db.Close()
+			return nil, err
+		}
+	}
 	return &SQLiteStore{db: db}, nil
 }
 
@@ -74,12 +89,21 @@ func (s *SQLiteStore) AppendEvent(ctx context.Context, sessionID string, ev Sess
 	seq := maxSeq.Int64 + 1
 
 	hasMessage := 0
-	var msgID, role, text sql.NullString
+	var msgID, role, text, toolCallID sql.NullString
+	var toolCalls []byte
 	if ev.Message != nil {
 		hasMessage = 1
 		msgID = sql.NullString{String: ev.Message.ID, Valid: true}
 		role = sql.NullString{String: string(ev.Message.Role), Valid: true}
 		text = sql.NullString{String: ev.Message.Text, Valid: true}
+		toolCallID = sql.NullString{String: ev.Message.ToolCallID, Valid: true}
+		if len(ev.Message.ToolCalls) > 0 {
+			b, err := json.Marshal(ev.Message.ToolCalls)
+			if err != nil {
+				return 0, err
+			}
+			toolCalls = b
+		}
 	}
 
 	var usage []byte
@@ -93,10 +117,10 @@ func (s *SQLiteStore) AppendEvent(ctx context.Context, sessionID string, ev Sess
 
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO events
-		   (session_id, seq, kind, has_message, msg_id, role, text, call_id, tool_name, input, usage, error)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		   (session_id, seq, kind, has_message, msg_id, role, text, call_id, tool_name, input, usage, error, tool_calls, tool_call_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sessionID, seq, string(ev.Kind), hasMessage, msgID, role, text,
-		ev.CallID, ev.ToolName, []byte(ev.Input), usage, ev.Error,
+		ev.CallID, ev.ToolName, []byte(ev.Input), usage, ev.Error, toolCalls, toolCallID,
 	); err != nil {
 		return 0, err
 	}
@@ -146,7 +170,7 @@ func (s *SQLiteStore) Messages(ctx context.Context, sessionID string, sinceSeq S
 	}
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT msg_id, role, text, seq
+		`SELECT msg_id, role, text, seq, tool_calls, tool_call_id
 		   FROM events
 		  WHERE session_id = ? AND has_message = 1 AND seq > ?
 		  ORDER BY seq`,
@@ -160,15 +184,23 @@ func (s *SQLiteStore) Messages(ctx context.Context, sessionID string, sinceSeq S
 	out := make([]Message, 0)
 	for rows.Next() {
 		var (
-			id   string
-			role string
-			text string
-			seq  int64
+			id         string
+			role       string
+			text       string
+			seq        int64
+			toolCalls  []byte
+			toolCallID sql.NullString
 		)
-		if err := rows.Scan(&id, &role, &text, &seq); err != nil {
+		if err := rows.Scan(&id, &role, &text, &seq, &toolCalls, &toolCallID); err != nil {
 			return nil, err
 		}
-		out = append(out, Message{ID: id, Role: Role(role), Text: text, Seq: Seq(seq)})
+		msg := Message{ID: id, Role: Role(role), Text: text, Seq: Seq(seq), ToolCallID: toolCallID.String}
+		if len(toolCalls) > 0 {
+			if err := json.Unmarshal(toolCalls, &msg.ToolCalls); err != nil {
+				return nil, err
+			}
+		}
+		out = append(out, msg)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

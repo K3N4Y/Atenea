@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sort"
 	"sync"
 	"testing"
@@ -62,7 +63,7 @@ func testStoreContract(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatalf("Messages: got %d messages, want %d (%+v)", len(got), len(want), got)
 		}
 		for i := range want {
-			if got[i] != want[i] {
+			if !reflect.DeepEqual(got[i], want[i]) {
 				t.Fatalf("Messages[%d]: got %+v, want %+v", i, got[i], want[i])
 			}
 		}
