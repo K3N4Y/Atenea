@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"golang.org/x/sync/errgroup"
@@ -168,10 +169,20 @@ func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Ev
 }
 
 // toLLMMessages convierte el historial proyectado al formato del proveedor.
+// Propaga las partes ricas que el proveedor necesita para emparejar: las tool
+// calls del assistant (mapeadas a llm.ToolCallPart con Arguments como
+// json.RawMessage) y el tool_call_id del resultado de la tool.
 func toLLMMessages(msgs []session.Message) []llm.Message {
 	out := make([]llm.Message, len(msgs))
 	for i, m := range msgs {
-		out[i] = llm.Message{Role: string(m.Role), Text: m.Text}
+		var calls []llm.ToolCallPart
+		if len(m.ToolCalls) > 0 {
+			calls = make([]llm.ToolCallPart, len(m.ToolCalls))
+			for j, tc := range m.ToolCalls {
+				calls[j] = llm.ToolCallPart{ID: tc.ID, Name: tc.Name, Arguments: json.RawMessage(tc.Arguments)}
+			}
+		}
+		out[i] = llm.Message{Role: string(m.Role), Text: m.Text, ToolCalls: calls, ToolCallID: m.ToolCallID}
 	}
 	return out
 }

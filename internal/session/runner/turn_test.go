@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"sync"
 	"testing"
 
@@ -433,5 +434,49 @@ func TestRunner_ProviderExecutedToolIsOnlyPersisted(t *testing.T) {
 	}
 	if cont {
 		t.Errorf("runTurn cont = true, quiero false (no hubo tool call local)")
+	}
+}
+
+// TestToLLMMessages_CarriesToolCallsAndToolCallID fija que la proyeccion
+// session.Message -> llm.Message propaga las partes ricas: el assistant con tool
+// calls cruza con sus ToolCalls mapeadas a []llm.ToolCallPart (Arguments como
+// json.RawMessage), y el resultado de la tool cruza con su ToolCallID. Hoy
+// toLLMMessages solo copia Role/Text, asi que el emparejamiento que el proveedor
+// necesita se pierde al armar el Request.
+func TestToLLMMessages_CarriesToolCallsAndToolCallID(t *testing.T) {
+	msgs := []session.Message{
+		{Role: session.RoleAssistant, Text: "voy a leer", ToolCalls: []session.ToolCall{{ID: "call_1", Name: "read", Arguments: `{"path":"foo.go"}`}}},
+		{Role: session.RoleTool, Text: "contenido", ToolCallID: "call_1"},
+	}
+	got := toLLMMessages(msgs)
+
+	if len(got) != 2 {
+		t.Fatalf("toLLMMessages devolvio %d mensajes, quiero 2", len(got))
+	}
+
+	asst := got[0]
+	if asst.Role != "assistant" {
+		t.Errorf("got[0].Role = %q, quiero %q", asst.Role, "assistant")
+	}
+	if asst.Text != "voy a leer" {
+		t.Errorf("got[0].Text = %q, quiero %q", asst.Text, "voy a leer")
+	}
+	if len(asst.ToolCalls) != 1 {
+		t.Fatalf("got[0].ToolCalls = %+v, quiero 1 tool call", asst.ToolCalls)
+	}
+	wantPart := llm.ToolCallPart{ID: "call_1", Name: "read", Arguments: json.RawMessage(`{"path":"foo.go"}`)}
+	if !reflect.DeepEqual(asst.ToolCalls[0], wantPart) {
+		t.Errorf("got[0].ToolCalls[0] = %+v, quiero %+v", asst.ToolCalls[0], wantPart)
+	}
+
+	tool := got[1]
+	if tool.Role != "tool" {
+		t.Errorf("got[1].Role = %q, quiero %q", tool.Role, "tool")
+	}
+	if tool.Text != "contenido" {
+		t.Errorf("got[1].Text = %q, quiero %q", tool.Text, "contenido")
+	}
+	if tool.ToolCallID != "call_1" {
+		t.Errorf("got[1].ToolCallID = %q, quiero %q", tool.ToolCallID, "call_1")
 	}
 }
