@@ -1,0 +1,9 @@
+Ejecuta un comando de shell con bash -c y devuelve su salida combinada (stdout + stderr).
+
+Uso:
+- command es el comando que corre bash -c. El estado (directorio actual, variables, alias) NO persiste entre llamadas: cada call es un proceso fresco. Encadena con && o usa rutas absolutas si necesitas varios pasos.
+- IMPORTANTE: es para operaciones de terminal (git, go, npm, builds, tests). NO lo uses para leer, buscar o editar archivos: usa las tools dedicadas (read, edit, write, glob, grep).
+- Evita find, grep, cat, sed, head, tail y echo para tareas de archivos; prefiere las tools dedicadas.
+- No uses comandos interactivos (editores, pagers, prompts de password): se cuelgan esperando input.
+- Marca slow_ok=true para comandos potencialmente lentos (builds, descargas, instalaciones, tests): usan un timeout extendido.
+- Un exit code distinto de cero no es un fallo de la tool: la salida llega con un marcador [exit N].

@@ -11,6 +11,9 @@
 // graba su snapshot para que un edit posterior ancle sin re-leer (los tres
 // comparten root y snaps por sesion). glob busca archivos por patron ripgrep y
 // devuelve rutas relativas al workspace; grep busca contenido y devuelve lineas en
-// formato hashline para encadenar edit. El builtin restante (bash) sigue pendiente
-// con sus tests.
+// formato hashline para encadenar edit. bash ya aterrizo: corre comandos con
+// bash -c por llamada (sin sesion persistente, el cwd y el env no sobreviven entre
+// calls), combina stdout+stderr, aplica un timeout por tiers (rapido por defecto,
+// lento con slow_ok), mata el grupo de procesos al expirar, scrubea los secretos
+// del env y acota el output head+tail.
 package tool
