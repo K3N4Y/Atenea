@@ -30,6 +30,14 @@ type Runner struct {
 	// so internal/session/prompt picks the base prompt by family.
 	system func(model string) string
 
+	// gate and needsApproval implement ask-before-run: before settling a tool
+	// call for which needsApproval returns true, the runner asks the gate for
+	// approval (which blocks until the user's decision). Both nil (default) =
+	// no gating: every tool call is settled directly (M5 behavior). Set
+	// from app.go via SetPermissionGate; tests inject a fakeGate.
+	gate          session.PermissionGate
+	needsApproval func(call tool.Call) bool
+
 	// logf registra a stderr los fallos de tool para visibilidad en desarrollo:
 	// hoy un fallo solo vive en el log durable y en el mensaje al modelo, asi que
 	// corriendo `wails dev` no hay como enterarse de que las tools fallan. Default
@@ -69,4 +77,13 @@ func NewRunner(store session.Store, inbox session.Inbox, provider llm.Provider,
 // assembly (app.go, in package main, cannot touch the unexported field).
 func (r *Runner) SetSystemPrompt(build func(model string) string) {
 	r.system = build
+}
+
+// SetPermissionGate wires ask-before-run: gate resolves the user's approval and
+// needsApproval decides which tool calls require it (e.g. only "bash"). If
+// either is nil the runner gates nothing. Exported entry point for app.go
+// (package main); tests inject the fields directly.
+func (r *Runner) SetPermissionGate(gate session.PermissionGate, needsApproval func(call tool.Call) bool) {
+	r.gate = gate
+	r.needsApproval = needsApproval
 }

@@ -27,6 +27,11 @@ var (
 	errContinueAfterCompaction = errors.New("continue after overflow compaction")
 )
 
+// errPermissionDenied is the cause of the Tool.Failed when the user denies a
+// gated tool call (ask-before-run). The message travels to the model as the
+// tool's result so it understands the rejection and reacts.
+var errPermissionDenied = errors.New("tool denied by the user")
+
 // ProviderError envuelve un StepFailed del proveedor para devolverlo con
 // errors.As y persistir la misma causa como Step.Failed.
 type ProviderError struct {
@@ -138,10 +143,31 @@ func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Ev
 			return false, err
 		}
 		if ev.Kind == llm.ToolCall && !ev.ProviderExecuted {
-			ev := ev // captura para la goroutine
+			ev := ev // capture for the goroutine
 			needsContinuation = true
 			g.Go(func() error {
-				res, err := settle(tool.WithSessionID(gctx, sessionID), tool.Call{ID: ev.CallID, Name: ev.ToolName, Input: ev.Input})
+				call := tool.Call{ID: ev.CallID, Name: ev.ToolName, Input: ev.Input}
+				// Ask-before-run: if the tool is gated, ask for approval before
+				// settling. The request is persisted (the UI shows the prompt) and
+				// Ask blocks until the decision. Deny publishes Tool.Failed and does
+				// NOT run the tool.
+				if r.gate != nil && r.needsApproval != nil && r.needsApproval(call) {
+					if err := pub.ToolPermissionRequested(cleanupCtx, ev.CallID); err != nil {
+						return err
+					}
+					approved, askErr := r.gate.Ask(gctx, session.PermissionRequest{
+						SessionID: sessionID, CallID: ev.CallID, ToolName: ev.ToolName, Input: ev.Input,
+					})
+					if askErr != nil {
+						// ctx cancelled or other gate failure: leave the call unsettled;
+						// the turn close (FailUnresolvedTools) marks it Tool.Failed.
+						return nil
+					}
+					if !approved {
+						return pub.ToolFailed(cleanupCtx, ev.CallID, errPermissionDenied)
+					}
+				}
+				res, err := settle(tool.WithSessionID(gctx, sessionID), call)
 				if err != nil {
 					r.logf("atenea: tool %q (call %s) fallo: %v", ev.ToolName, ev.CallID, err)
 					return pub.ToolFailed(cleanupCtx, ev.CallID, err)

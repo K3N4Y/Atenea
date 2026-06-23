@@ -143,6 +143,23 @@ func (p *Publisher) Publish(ctx context.Context, ev llm.Event) error {
 	return nil // StepFailed (M8) y kinds sin semantica de sesion en M3 se ignoran
 }
 
+// ToolPermissionRequested publishes the approval request of a gated tool call
+// (ask-before-run): it persists a Tool.Permission.Requested with the callID and
+// the turn's toolName so the UI can show the Approve/Deny prompt. It does not
+// materialize a Message (it does not feed the projection) nor mark settled: the
+// outcome is persisted by the subsequent Tool.Success/Tool.Failed. The toolName
+// comes from the turn's map (already populated by the prior Tool.Called in the
+// consumption loop).
+func (p *Publisher) ToolPermissionRequested(ctx context.Context, callID string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.emit(ctx, session.SessionEvent{
+		Kind:     session.KindToolPermissionRequested,
+		CallID:   callID,
+		ToolName: p.tools[callID],
+	})
+}
+
 // ToolSuccess publica el resultado de una tool local asentada: persiste un
 // Tool.Success con el output acotado (lo que vera el modelo) y materializa un
 // Message{Role: tool, ID: callID} para que el resultado entre en la proyeccion y
