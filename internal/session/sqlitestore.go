@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS events (
   error       TEXT,
   tool_calls  BLOB,
   tool_call_id TEXT,
+  ev_text     TEXT,
   PRIMARY KEY (session_id, seq)
 );`
 
@@ -61,6 +62,7 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 	for _, stmt := range []string{
 		`ALTER TABLE events ADD COLUMN tool_calls BLOB`,
 		`ALTER TABLE events ADD COLUMN tool_call_id TEXT`,
+		`ALTER TABLE events ADD COLUMN ev_text TEXT`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			db.Close()
@@ -115,12 +117,16 @@ func (s *SQLiteStore) AppendEvent(ctx context.Context, sessionID string, ev Sess
 		usage = b
 	}
 
+	// ev_text guarda el Text top-level del SessionEvent (Reasoning/Text.*,
+	// Tool.Input.Delta), independiente de la columna text (que es Message.Text).
+	// Sin esto la rehidratacion pierde el razonamiento y la respuesta del asistente,
+	// que viajan en ev.Text y no en un Message.
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO events
-		   (session_id, seq, kind, has_message, msg_id, role, text, call_id, tool_name, input, usage, error, tool_calls, tool_call_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		   (session_id, seq, kind, has_message, msg_id, role, text, call_id, tool_name, input, usage, error, tool_calls, tool_call_id, ev_text)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sessionID, seq, string(ev.Kind), hasMessage, msgID, role, text,
-		ev.CallID, ev.ToolName, []byte(ev.Input), usage, ev.Error, toolCalls, toolCallID,
+		ev.CallID, ev.ToolName, []byte(ev.Input), usage, ev.Error, toolCalls, toolCallID, ev.Text,
 	); err != nil {
 		return 0, err
 	}
@@ -201,6 +207,131 @@ func (s *SQLiteStore) Messages(ctx context.Context, sessionID string, sinceSeq S
 			}
 		}
 		out = append(out, msg)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Sessions devuelve un resumen por sesion con al menos un evento, ordenado por
+// actividad mas reciente primero. Ordena por MAX(rowid) DESC (el rowid implicito
+// es monotonico con la insercion, esta tabla NO es WITHOUT ROWID), y para cada
+// sesion toma como Title el texto del primer mensaje del usuario (menor seq,
+// role=user, has_message=1), truncado. Title "" si la sesion no tiene aun uno.
+func (s *SQLiteStore) Sessions(ctx context.Context) ([]SessionSummary, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT e.session_id,
+		        (SELECT u.text
+		           FROM events u
+		          WHERE u.session_id = e.session_id
+		            AND u.has_message = 1
+		            AND u.role = 'user'
+		          ORDER BY u.seq
+		          LIMIT 1) AS title
+		   FROM events e
+		  GROUP BY e.session_id
+		  ORDER BY MAX(e.rowid) DESC`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]SessionSummary, 0)
+	for rows.Next() {
+		var id string
+		var title sql.NullString
+		if err := rows.Scan(&id, &title); err != nil {
+			return nil, err
+		}
+		out = append(out, SessionSummary{ID: id, Title: truncateTitle(title.String)})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Events devuelve todos los SessionEvent durables de la sesion en orden de Seq
+// con Seq > sinceSeq. ErrSessionNotFound si la sesion no existe. Reconstruye cada
+// evento como el inverso de AppendEvent: rehidrata Kind, Message (con ToolCalls /
+// ToolCallID), payload de streaming (Text, CallID, ToolName, Input, Error) y Usage.
+func (s *SQLiteStore) Events(ctx context.Context, sessionID string, sinceSeq Seq) ([]SessionEvent, error) {
+	ok, err := s.exists(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrSessionNotFound
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT seq, kind, has_message, msg_id, role, text, call_id, tool_name,
+		        input, usage, error, tool_calls, tool_call_id, ev_text
+		   FROM events
+		  WHERE session_id = ? AND seq > ?
+		  ORDER BY seq`,
+		sessionID, int64(sinceSeq),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]SessionEvent, 0)
+	for rows.Next() {
+		var (
+			seq                                       int64
+			kind                                      string
+			hasMessage                                int
+			msgID, role, text, callID, toolName, tcID sql.NullString
+			errText, evText                           sql.NullString
+			input, usage, toolCalls                   []byte
+		)
+		if err := rows.Scan(&seq, &kind, &hasMessage, &msgID, &role, &text,
+			&callID, &toolName, &input, &usage, &errText, &toolCalls, &tcID, &evText); err != nil {
+			return nil, err
+		}
+
+		ev := SessionEvent{
+			SessionID: sessionID,
+			Seq:       Seq(seq),
+			Kind:      EventKind(kind),
+			Text:      evText.String,
+			CallID:    callID.String,
+			ToolName:  toolName.String,
+			Error:     errText.String,
+		}
+		if len(input) > 0 {
+			ev.Input = json.RawMessage(input)
+		}
+		if hasMessage == 1 {
+			// Message.Seq se deja en cero: AppendEvent no lo persiste (no hay
+			// columna para el Seq del Message dentro del evento), y MemoryStore lo
+			// guarda verbatim, asi que el round-trip de Events lo refleja igual. El
+			// Seq del evento vive en ev.Seq; quien quiera Messages usa esa proyeccion.
+			msg := Message{
+				ID:         msgID.String,
+				Role:       Role(role.String),
+				Text:       text.String,
+				ToolCallID: tcID.String,
+			}
+			if len(toolCalls) > 0 {
+				if err := json.Unmarshal(toolCalls, &msg.ToolCalls); err != nil {
+					return nil, err
+				}
+			}
+			ev.Message = &msg
+		}
+		if len(usage) > 0 {
+			var u Usage
+			if err := json.Unmarshal(usage, &u); err != nil {
+				return nil, err
+			}
+			ev.Usage = &u
+		}
+		out = append(out, ev)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
