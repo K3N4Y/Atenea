@@ -16,6 +16,7 @@ import (
 	"atenea/internal/session"
 	"atenea/internal/session/prompt"
 	"atenea/internal/session/runner"
+	"atenea/internal/skill"
 	"atenea/internal/tool"
 	"atenea/internal/tool/hashline"
 
@@ -71,17 +72,31 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 	if err != nil {
 		root = "."
 	}
+	// Skills al estilo opencode (disclosure progresivo): se descubren una vez bajo
+	// <root>/.atenea/skills (propio) y <root>/.agents/skills (el estandar, mismo
+	// layout que comparten otros agentes). Sus metadatos van en el system prompt
+	// (skill.Format) y la tool skill carga el cuerpo bajo demanda. .atenea/skills
+	// va primero: ante un nombre duplicado, la skill propia override la estandar.
+	// Un fallo de descubrimiento no es fatal: el agente arranca sin skills.
+	skills, err := skill.Discover(
+		filepath.Join(root, ".atenea", "skills"),
+		filepath.Join(root, ".agents", "skills"),
+	)
+	if err != nil {
+		log.Printf("atenea: no se pudieron descubrir las skills: %v", err)
+	}
+	skillsBlock := skill.Format(skills)
 	// present_plan se registra para que el runner pueda ejecutarla, pero NO entra
 	// en los Permissions normales: solo se anuncia en plan-mode (SetPlanMode).
 	registry := tool.NewRegistry(tool.NewOutputStore(outputLimit), tool.Echo{},
 		tool.NewReadToolWithSnapshotProvider(root, snaps), tool.NewWriteToolWithSnapshotProvider(root, snaps),
 		tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, snaps),
 		tool.NewGlobTool(root), tool.NewGrepToolWithSnapshotProvider(root, snaps),
-		tool.NewBashTool(root), tool.NewPresentPlanTool(root))
+		tool.NewBashTool(root), tool.NewPresentPlanTool(root), tool.NewSkillTool(skills))
 	a.runner = runner.NewRunner(emitting, a.inbox, provider, registry,
-		tool.Permissions{"echo": true, "read": true, "write": true, "edit": true, "glob": true, "grep": true, "bash": true},
+		tool.Permissions{"echo": true, "read": true, "write": true, "edit": true, "glob": true, "grep": true, "bash": true, "skill": true},
 		newIDGen())
-	a.runner.SetSystemPrompt(systemPromptBuilder(root, ""))
+	a.runner.SetSystemPrompt(systemPromptBuilder(root, skillsBlock))
 	// Ask-before-run: bash is the only gated tool for now. The UI approves/denies
 	// each command via ResolveToolPermission before it runs on the real machine.
 	a.gate = session.NewMemoryPermissionGate()
@@ -90,8 +105,8 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 	// echo). El hook de modo decide por sesion; SetMode/SetPlanMode toman efecto
 	// solo cuando modeFor reporta ModePlan.
 	a.runner.SetMode(a.modeFor)
-	a.runner.SetPlanMode(planSystemPromptBuilder(root, ""),
-		tool.Permissions{"read": true, "glob": true, "grep": true, "present_plan": true})
+	a.runner.SetPlanMode(planSystemPromptBuilder(root, skillsBlock),
+		tool.Permissions{"read": true, "glob": true, "grep": true, "present_plan": true, "skill": true})
 	return a
 }
 

@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -325,6 +327,82 @@ func TestApp_SendPlanPromptUsesPlanModeToolsAndPrompt(t *testing.T) {
 	}
 	if !strings.Contains(req.System, "present_plan") {
 		t.Errorf("Request.System no lleva el contrato de plan-mode; system = %q", req.System)
+	}
+}
+
+// TestApp_SystemPromptAdvertisesDiscoveredSkills: con un SKILL.md bajo
+// <root>/.atenea/skills, el agente lo descubre al ensamblar; su bloque
+// <available_skills> (name + description) viaja en el system prompt y la tool
+// skill queda anunciada para cargarlo bajo demanda. Verificacion end-to-end del
+// disclosure progresivo sin GUI.
+func TestApp_SystemPromptAdvertisesDiscoveredSkills(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, ".atenea", "skills", "demo")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	body := "---\nname: demo\ndescription: skill de prueba\n---\ninstrucciones demo\n"
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+	// newAppWithStore ancla el root en os.Getwd(): situarse en el tempdir hace que
+	// el descubrimiento halle la skill demo.
+	t.Chdir(root)
+
+	rec := &recordingEmit{}
+	prov := &requestRecordingProvider{FakeProvider: llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.StepEnded},
+	)}
+	app := newApp(prov, rec.emit)
+
+	if err := app.SendPrompt("s1", "hola"); err != nil {
+		t.Fatalf("SendPrompt: %v", err)
+	}
+	app.wait()
+
+	req := prov.captured()
+	if !requestHasTool(req, "skill") {
+		t.Errorf("Request.Tools no contiene la tool skill; tools = %+v", req.Tools)
+	}
+	if !strings.Contains(req.System, "<available_skills>") {
+		t.Errorf("Request.System no lleva el bloque de skills; system = %q", req.System)
+	}
+	if !strings.Contains(req.System, "demo") || !strings.Contains(req.System, "skill de prueba") {
+		t.Errorf("Request.System no lista la skill demo con su description; system = %q", req.System)
+	}
+}
+
+// TestApp_DiscoversSkillsFromAgentsDir: el agente tambien descubre skills bajo el
+// estandar <root>/.agents/skills, no solo .atenea/skills. Su bloque viaja en el
+// system prompt igual que las propias.
+func TestApp_DiscoversSkillsFromAgentsDir(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, ".agents", "skills", "estandar")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	body := "---\nname: estandar\ndescription: skill bajo .agents\n---\ncuerpo\n"
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+	t.Chdir(root)
+
+	rec := &recordingEmit{}
+	prov := &requestRecordingProvider{FakeProvider: llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.StepEnded},
+	)}
+	app := newApp(prov, rec.emit)
+
+	if err := app.SendPrompt("s1", "hola"); err != nil {
+		t.Fatalf("SendPrompt: %v", err)
+	}
+	app.wait()
+
+	req := prov.captured()
+	if !strings.Contains(req.System, "estandar") || !strings.Contains(req.System, "skill bajo .agents") {
+		t.Errorf("Request.System no lista la skill de .agents/skills; system = %q", req.System)
 	}
 }
 
