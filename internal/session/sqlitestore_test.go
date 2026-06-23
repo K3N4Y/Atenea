@@ -63,6 +63,48 @@ func TestSQLiteStore_ReopenResumesLog(t *testing.T) {
 	}
 }
 
+// TestSQLiteStore_SessionsOrderSurvivesReopen verifica que el orden por recencia
+// de Sessions se apoya en el rowid persistido, no en estado en memoria: tras
+// cerrar y reabrir la base, la sesion con actividad mas reciente sigue primero.
+func TestSQLiteStore_SessionsOrderSurvivesReopen(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "atenea.db")
+
+	s1, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore (primera): %v", err)
+	}
+	// "old" recibe el primer evento; "new" el ultimo: "new" es la mas reciente.
+	if _, err := s1.AppendEvent(ctx, "old", SessionEvent{Message: &Message{ID: "u1", Role: RoleUser, Text: "vieja"}}); err != nil {
+		t.Fatalf("AppendEvent (old): %v", err)
+	}
+	if _, err := s1.AppendEvent(ctx, "new", SessionEvent{Message: &Message{ID: "u2", Role: RoleUser, Text: "nueva"}}); err != nil {
+		t.Fatalf("AppendEvent (new): %v", err)
+	}
+	if err := s1.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	s2, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore (reabrir): %v", err)
+	}
+	t.Cleanup(func() { s2.Close() })
+
+	got, err := s2.Sessions(ctx)
+	if err != nil {
+		t.Fatalf("Sessions tras reabrir: %v", err)
+	}
+	want := []SessionSummary{
+		{ID: "new", Title: "nueva"},
+		{ID: "old", Title: "vieja"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Sessions tras reabrir: got %+v, want %+v (el orden por recencia no sobrevivio)", got, want)
+	}
+}
+
 // TestSQLiteStore_ProjectsToolCallsAndToolCallID fija la paridad de SQLite con
 // MemoryStore para las partes ricas de la proyeccion: el assistant con tool calls
 // y el resultado de la tool con su tool_call_id deben sobrevivir el round-trip por
