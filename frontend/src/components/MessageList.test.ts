@@ -36,6 +36,20 @@ describe('MessageList', () => {
     expect(log.attributes('aria-live')).toBe('polite')
   })
 
+  it('renderiza el contenido del slot al final de la conversacion, dentro del scroller', () => {
+    const items: TurnItem[] = [{ kind: 'user', id: 'u1', text: 'hola' }]
+
+    const wrapper = mount(MessageList, {
+      props: { items },
+      slots: { default: '<div data-test="footer">pie</div>' },
+    })
+
+    const footer = wrapper.find('[data-test="footer"]')
+    expect(footer.exists()).toBe(true)
+    // Vive dentro de la region scrolleable (role=log): scrollea con la conversacion.
+    expect(wrapper.get('[role="log"]').find('[data-test="footer"]').exists()).toBe(true)
+  })
+
   it('forwards approve/deny of a pending tool with its callID', async () => {
     const items: TurnItem[] = [
       { kind: 'tool', id: 't1', callID: 'c1', name: 'bash', input: { command: 'ls' }, status: 'pending', output: '', error: null },

@@ -97,6 +97,10 @@ function onEnter(el: Element, done: () => void) {
         <p class="text-2xl tracking-tight opacity-90">atenea</p>
         <p class="mt-2 text-sm opacity-50">Ask anything to get started.</p>
       </div>
+
+      <!-- Pie del flujo: contenido que vive al final de la conversacion y
+           scrollea con ella (p. ej. el plan minimizado como tarjeta). -->
+      <slot />
     </div>
   </div>
 </template>
