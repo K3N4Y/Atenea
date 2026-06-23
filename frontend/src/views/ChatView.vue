@@ -1,9 +1,10 @@
 <script lang="ts" setup>
-import { onMounted, onUnmounted } from 'vue'
-import { PhSidebarSimple } from '@phosphor-icons/vue'
+import { ref, onMounted, onUnmounted } from 'vue'
+import { PhSidebarSimple, PhGear } from '@phosphor-icons/vue'
 import AppSidebar from '../components/AppSidebar.vue'
 import MessageList from '../components/MessageList.vue'
 import ChatComposer from '../components/ChatComposer.vue'
+import SettingsPanel from '../components/SettingsPanel.vue'
 import { useChatStore } from '../stores/chat'
 import { useUiStore } from '../stores/ui'
 
@@ -13,6 +14,10 @@ import { useUiStore } from '../stores/ui'
 // suscripcion, que la Fase 1 dejaba sin limpiar.
 const chat = useChatStore()
 const ui = useUiStore()
+
+// Settings panel open state: ephemeral UI state of the view (not persisted, so
+// it does not reappear on app relaunch).
+const settingsOpen = ref(false)
 
 onMounted(() => chat.subscribe())
 onUnmounted(() => chat.teardown())
@@ -42,10 +47,21 @@ onUnmounted(() => chat.teardown())
         >
           <PhSidebarSimple :size="20" weight="regular" />
         </button>
+
+        <button
+          type="button"
+          aria-label="Open settings"
+          class="ml-auto flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-black/[0.05]"
+          @click="settingsOpen = true"
+        >
+          <PhGear :size="20" weight="regular" />
+        </button>
       </header>
 
       <MessageList :items="chat.items" @approve="chat.approveTool" @deny="chat.denyTool" />
       <ChatComposer :running="chat.running" @send="chat.send" @stop="chat.stop" />
     </main>
+
+    <SettingsPanel v-if="settingsOpen" @close="settingsOpen = false" />
   </div>
 </template>

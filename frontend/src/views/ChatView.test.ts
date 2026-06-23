@@ -53,4 +53,25 @@ describe('ChatView', () => {
 
     expect(toggle.attributes('aria-expanded')).toBe('false')
   })
+
+  it('opens settings when clicking the settings button', async () => {
+    vi.clearAllMocks()
+    const wrapper = mountView()
+
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+
+    await wrapper.find('button[aria-label="Open settings"]').trigger('click')
+
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(true)
+  })
+
+  it('closes settings when close is emitted', async () => {
+    vi.clearAllMocks()
+    const wrapper = mountView()
+    await wrapper.find('button[aria-label="Open settings"]').trigger('click')
+
+    await wrapper.find('button[aria-label="Cerrar configuracion"]').trigger('click')
+
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+  })
 })
