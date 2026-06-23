@@ -41,9 +41,11 @@ func Select(modelID string) string {
 	return defaultPrompt
 }
 
-// Build concatena el prompt base, el bloque <env> y las instrucciones del repo.
-// Si instructions esta vacio, se omite. El separador entre piezas es "\n\n".
-func Build(modelID string, env Env, instructions string) string {
+// Build concatena el prompt base, el bloque <env>, las instrucciones del repo y
+// el bloque de skills disponibles. instructions y skills se omiten si vienen
+// vacios. El separador entre piezas es "\n\n". El bloque de skills (metadatos de
+// las skills, ver internal/skill.Format) va al final, como en opencode.
+func Build(modelID string, env Env, instructions, skills string) string {
 	parts := []string{
 		Select(modelID),
 		renderEnv(env),
@@ -51,13 +53,16 @@ func Build(modelID string, env Env, instructions string) string {
 	if instructions != "" {
 		parts = append(parts, instructions)
 	}
+	if skills != "" {
+		parts = append(parts, skills)
+	}
 	return strings.Join(parts, "\n\n")
 }
 
 // BuildPlan devuelve la salida normal de Build mas el bloque de instrucciones
 // del modo plan, separado por "\n\n".
-func BuildPlan(modelID string, env Env, instructions string) string {
-	return Build(modelID, env, instructions) + "\n\n" + planInstructions
+func BuildPlan(modelID string, env Env, instructions, skills string) string {
+	return Build(modelID, env, instructions, skills) + "\n\n" + planInstructions
 }
 
 // renderEnv arma el bloque <env> literal con dos espacios de indentacion.

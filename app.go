@@ -81,7 +81,7 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 	a.runner = runner.NewRunner(emitting, a.inbox, provider, registry,
 		tool.Permissions{"echo": true, "read": true, "write": true, "edit": true, "glob": true, "grep": true, "bash": true},
 		newIDGen())
-	a.runner.SetSystemPrompt(systemPromptBuilder(root))
+	a.runner.SetSystemPrompt(systemPromptBuilder(root, ""))
 	// Ask-before-run: bash is the only gated tool for now. The UI approves/denies
 	// each command via ResolveToolPermission before it runs on the real machine.
 	a.gate = session.NewMemoryPermissionGate()
@@ -90,7 +90,7 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 	// echo). El hook de modo decide por sesion; SetMode/SetPlanMode toman efecto
 	// solo cuando modeFor reporta ModePlan.
 	a.runner.SetMode(a.modeFor)
-	a.runner.SetPlanMode(planSystemPromptBuilder(root),
+	a.runner.SetPlanMode(planSystemPromptBuilder(root, ""),
 		tool.Permissions{"read": true, "glob": true, "grep": true, "present_plan": true})
 	return a
 }
@@ -122,21 +122,22 @@ func promptSetup(root string) (env func() prompt.Env, instructions string) {
 
 // systemPromptBuilder builds the normal-mode system prompt builder anchored at
 // root: per turn composes the base prompt (chosen by model family) + the <env>
-// block with today's date, over the shared promptSetup.
-func systemPromptBuilder(root string) func(model string) string {
+// block with today's date + the skills block (skills are discovered once at
+// assembly and passed in formatted), over the shared promptSetup.
+func systemPromptBuilder(root, skills string) func(model string) string {
 	env, instructions := promptSetup(root)
 	return func(model string) string {
-		return prompt.Build(model, env(), instructions)
+		return prompt.Build(model, env(), instructions, skills)
 	}
 }
 
 // planSystemPromptBuilder builds the plan-mode system prompt builder: same shape
 // as systemPromptBuilder but uses prompt.BuildPlan, which appends the plan-mode
 // contract (present_plan) on top of the base prompt.
-func planSystemPromptBuilder(root string) func(model string) string {
+func planSystemPromptBuilder(root, skills string) func(model string) string {
 	env, instructions := promptSetup(root)
 	return func(model string) string {
-		return prompt.BuildPlan(model, env(), instructions)
+		return prompt.BuildPlan(model, env(), instructions, skills)
 	}
 }
 

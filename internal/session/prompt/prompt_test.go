@@ -30,7 +30,7 @@ func TestBuild_RendersEnvBlockAndBase(t *testing.T) {
 		Platform:     "linux",
 		Date:         "Mon Jun 22 2026",
 	}
-	got := Build("claude-opus-4-8", env, "")
+	got := Build("claude-opus-4-8", env, "", "")
 
 	if !strings.Contains(got, anthropicPrompt) {
 		t.Fatalf("Build no contiene el anthropicPrompt base; got:\n%s", got)
@@ -45,6 +45,64 @@ func TestBuild_RendersEnvBlockAndBase(t *testing.T) {
 		"</env>"
 	if !strings.Contains(got, wantBlock) {
 		t.Fatalf("Build no contiene el bloque <env> literal esperado.\nquiero contener:\n%s\ngot:\n%s", wantBlock, got)
+	}
+}
+
+// Build anexa el bloque de skills (metadatos para el disclosure progresivo) al
+// final de la salida cuando no viene vacio. RED: hoy Build ignora el parametro.
+func TestBuild_AppendsSkillsBlock(t *testing.T) {
+	env := Env{
+		WorkingDir:   "/r",
+		WorktreeRoot: "/r",
+		IsGitRepo:    true,
+		Platform:     "linux",
+		Date:         "Mon Jun 22 2026",
+	}
+	skills := "<available_skills>\n  <skill>\n    <name>demo</name>\n  </skill>\n</available_skills>"
+	got := Build("claude-x", env, "", skills)
+	if !strings.Contains(got, skills) {
+		t.Fatalf("Build no anexa el bloque de skills.\nquiero contener:\n%s\ngot:\n%s", skills, got)
+	}
+}
+
+// Con skills vacio no se agrega un bloque vacio ni saltos extra (mismo contrato
+// que instructions vacio).
+func TestBuild_OmitsEmptySkills(t *testing.T) {
+	env := Env{
+		WorkingDir:   "/r",
+		WorktreeRoot: "/r",
+		IsGitRepo:    true,
+		Platform:     "linux",
+		Date:         "Mon Jun 22 2026",
+	}
+	got := Build("claude-x", env, "", "")
+	if strings.Contains(got, "<available_skills>") {
+		t.Fatalf("Build con skills vacio no debe contener <available_skills>; got:\n%s", got)
+	}
+	if strings.HasSuffix(got, "\n") {
+		t.Fatalf("Build con skills vacio no debe terminar con saltos extra; got:\n%q", got)
+	}
+}
+
+// TRIANGULATE: con instructions y skills presentes, ambos aparecen y el bloque de
+// skills va DESPUES de las instrucciones (orden estable: base, env, instructions,
+// skills). Tumba una implementacion que los intercale o ignore uno.
+func TestBuild_SkillsAfterInstructions(t *testing.T) {
+	env := Env{
+		WorkingDir:   "/r",
+		WorktreeRoot: "/r",
+		IsGitRepo:    true,
+		Platform:     "linux",
+		Date:         "Mon Jun 22 2026",
+	}
+	instructions := "Instructions from: /r/AGENTS.md\nreglas"
+	skills := "<available_skills></available_skills>"
+	got := Build("claude-x", env, instructions, skills)
+	if !strings.Contains(got, instructions) || !strings.Contains(got, skills) {
+		t.Fatalf("Build debe incluir instructions y skills; got:\n%s", got)
+	}
+	if strings.Index(got, instructions) > strings.Index(got, skills) {
+		t.Fatalf("el bloque de skills debe ir despues de las instrucciones; got:\n%s", got)
 	}
 }
 
@@ -101,7 +159,7 @@ func TestBuild_GitRepoNoWhenFalse(t *testing.T) {
 		Platform:     "linux",
 		Date:         "Mon Jun 22 2026",
 	}
-	got := Build("claude-opus-4-8", env, "")
+	got := Build("claude-opus-4-8", env, "", "")
 	if !strings.Contains(got, "Is directory a git repo: no") {
 		t.Fatalf("Build con IsGitRepo=false no contiene \"Is directory a git repo: no\"; got:\n%s", got)
 	}
@@ -117,7 +175,7 @@ func TestBuild_IncludesInstructionsWhenPresent(t *testing.T) {
 		Date:         "Mon Jun 22 2026",
 	}
 	instructions := "Instructions from: /r/AGENTS.md\nreglas"
-	got := Build("claude-x", env, instructions)
+	got := Build("claude-x", env, instructions, "")
 	if !strings.Contains(got, instructions) {
 		t.Fatalf("Build no incluye el bloque de instrucciones.\nquiero contener:\n%s\ngot:\n%s", instructions, got)
 	}
@@ -133,7 +191,7 @@ func TestBuild_OmitsInstructionsWhenEmpty(t *testing.T) {
 		Platform:     "linux",
 		Date:         "Mon Jun 22 2026",
 	}
-	got := Build("claude-x", env, "")
+	got := Build("claude-x", env, "", "")
 	if strings.Contains(got, "Instructions from:") {
 		t.Fatalf("Build con instructions vacio no debe contener \"Instructions from:\"; got:\n%s", got)
 	}
@@ -215,9 +273,9 @@ func TestBuildPlan_AppendsPlanContractToBase(t *testing.T) {
 		Platform:     "linux",
 		Date:         "Mon Jun 22 2026",
 	}
-	got := BuildPlan("claude-opus-4-8", env, "")
+	got := BuildPlan("claude-opus-4-8", env, "", "")
 
-	if !strings.Contains(got, Build("claude-opus-4-8", env, "")) {
+	if !strings.Contains(got, Build("claude-opus-4-8", env, "", "")) {
 		t.Fatalf("BuildPlan no contiene la salida normal de Build; got:\n%s", got)
 	}
 	if !strings.Contains(got, "present_plan") {
@@ -236,7 +294,7 @@ func TestBuildPlan_IncludesInstructionsWhenPresent(t *testing.T) {
 		Date:         "Mon Jun 22 2026",
 	}
 	instructions := "Instructions from: /r/AGENTS.md\nreglas"
-	got := BuildPlan("claude-x", env, instructions)
+	got := BuildPlan("claude-x", env, instructions, "")
 	if !strings.Contains(got, instructions) {
 		t.Fatalf("BuildPlan no incluye el bloque de instrucciones.\nquiero contener:\n%s\ngot:\n%s", instructions, got)
 	}
