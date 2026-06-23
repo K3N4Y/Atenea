@@ -27,6 +27,13 @@ const (
 	KindToolCalled  EventKind = "Tool.Called"
 	KindToolSuccess EventKind = "Tool.Success" // lo emite el runner en M5
 	KindToolFailed  EventKind = "Tool.Failed"  // lo emite el runner en M5/M8
+
+	// KindToolPermissionRequested asks the user for approval before settling a
+	// gated tool call (ask-before-run). The runner emits it before blocking on
+	// the PermissionGate; the UI shows it as an Approve/Deny prompt. It carries
+	// no Message: the projection ignores it. The outcome is expressed by the
+	// subsequent Tool.Success or Tool.Failed, not by a separate resolution event.
+	KindToolPermissionRequested EventKind = "Tool.Permission.Requested"
 )
 
 // Usage son los tokens del turno que el publisher persiste en Step.Ended. Es un
