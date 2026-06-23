@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { PhSidebarSimple, PhGear } from '@phosphor-icons/vue'
 import AppSidebar from '../components/AppSidebar.vue'
 import MessageList from '../components/MessageList.vue'
+import ErrorNotice from '../components/ErrorNotice.vue'
 import ChatComposer from '../components/ChatComposer.vue'
 import SettingsPanel from '../components/SettingsPanel.vue'
 import { useChatStore } from '../stores/chat'
@@ -59,6 +60,14 @@ onUnmounted(() => chat.teardown())
       </header>
 
       <MessageList :items="chat.items" @approve="chat.approveTool" @deny="chat.denyTool" />
+
+      <!-- Aviso de error de la sesion (fallo del proveedor o stream cortado).
+           Vive sobre el composer, dentro de la columna del chat: visible pero
+           sin alarmar, y el usuario lo descarta cuando quiera (identidad §11). -->
+      <div v-if="chat.errorText" class="mx-auto w-full max-w-3xl px-6 pt-2">
+        <ErrorNotice :message="chat.errorText" @dismiss="chat.clearError" />
+      </div>
+
       <ChatComposer :running="chat.running" @send="chat.send" @stop="chat.stop" />
     </main>
 

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
@@ -16,6 +17,7 @@ vi.mock('../../wailsjs/go/main/App', () => ({
 
 import { EventsOn } from '../../wailsjs/runtime/runtime'
 import ChatView from './ChatView.vue'
+import { useChatStore } from '../stores/chat'
 
 function mountView() {
   const pinia = createPinia()
@@ -73,5 +75,39 @@ describe('ChatView', () => {
     await wrapper.find('button[aria-label="Cerrar configuracion"]').trigger('click')
 
     expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+  })
+
+  it('no muestra ningun aviso de error cuando no hay errorText', () => {
+    vi.clearAllMocks()
+    const wrapper = mountView()
+
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+  })
+
+  it('muestra el errorText del store cuando el proveedor o el stream falla', async () => {
+    vi.clearAllMocks()
+    const wrapper = mountView()
+    const chat = useChatStore()
+
+    chat.applyError('the provider is unavailable')
+    await nextTick()
+
+    const alert = wrapper.find('[role="alert"]')
+    expect(alert.exists()).toBe(true)
+    expect(alert.text()).toContain('the provider is unavailable')
+  })
+
+  it('descarta el error al cerrar el aviso y deja de mostrarlo', async () => {
+    vi.clearAllMocks()
+    const wrapper = mountView()
+    const chat = useChatStore()
+    chat.applyError('boom')
+    await nextTick()
+
+    await wrapper.find('button[aria-label="Dismiss error"]').trigger('click')
+    await nextTick()
+
+    expect(chat.errorText).toBeNull()
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
   })
 })
