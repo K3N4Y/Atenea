@@ -38,6 +38,7 @@ type App struct {
 	inbox  session.Inbox
 	runner *runner.Runner
 	bus    *event.Bus
+	gate   *session.MemoryPermissionGate // ask-before-run: the UI resolves via ResolveToolPermission
 
 	mu   sync.Mutex
 	runs map[string]*runHandle // sessionID -> corrida en vuelo (identidad por puntero)
@@ -70,10 +71,16 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 	registry := tool.NewRegistry(tool.NewOutputStore(outputLimit), tool.Echo{},
 		tool.NewReadToolWithSnapshotProvider(root, snaps), tool.NewWriteToolWithSnapshotProvider(root, snaps),
 		tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, snaps),
-		tool.NewGlobTool(root), tool.NewGrepToolWithSnapshotProvider(root, snaps))
+		tool.NewGlobTool(root), tool.NewGrepToolWithSnapshotProvider(root, snaps),
+		tool.NewBashTool(root))
 	a.runner = runner.NewRunner(emitting, a.inbox, provider, registry,
-		tool.Permissions{"echo": true, "read": true, "write": true, "edit": true, "glob": true, "grep": true}, newIDGen())
+		tool.Permissions{"echo": true, "read": true, "write": true, "edit": true, "glob": true, "grep": true, "bash": true},
+		newIDGen())
 	a.runner.SetSystemPrompt(systemPromptBuilder(root))
+	// Ask-before-run: bash is the only gated tool for now. The UI approves/denies
+	// each command via ResolveToolPermission before it runs on the real machine.
+	a.gate = session.NewMemoryPermissionGate()
+	a.runner.SetPermissionGate(a.gate, func(c tool.Call) bool { return c.Name == "bash" })
 	return a
 }
 
@@ -178,6 +185,14 @@ func (a *App) SendPrompt(sessionID, text string) error {
 	}
 	a.start(sessionID)
 	return nil
+}
+
+// ResolveToolPermission delivers the user's decision on a gated tool call
+// (ask-before-run) to the runner: approved=true lets it run, false denies it.
+// It is the binding the frontend calls on Approve/Deny. No-op if the callID
+// no longer has a pending request (double click or cancelled run).
+func (a *App) ResolveToolPermission(sessionID, callID string, approved bool) {
+	a.gate.Resolve(sessionID, callID, approved)
 }
 
 // Stop cancela la corrida en vuelo de sessionID (boton stop). No-op si no corre.

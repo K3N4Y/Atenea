@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
@@ -173,6 +174,28 @@ func TestApp_RequestAdvertisesGlobTool(t *testing.T) {
 	}
 }
 
+// TestApp_RequestAdvertisesBashTool asserts that the app's registry advertises
+// bash when building the provider Request (ask-before-run gates its execution,
+// but the tool must be advertised for the model to request it).
+func TestApp_RequestAdvertisesBashTool(t *testing.T) {
+	rec := &recordingEmit{}
+	prov := &requestRecordingProvider{FakeProvider: llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.StepEnded},
+	)}
+	app := newApp(prov, rec.emit)
+
+	if err := app.SendPrompt("s1", "run a command"); err != nil {
+		t.Fatalf("SendPrompt: %v", err)
+	}
+	app.wait()
+
+	req := prov.captured()
+	if !requestHasTool(req, "bash") {
+		t.Fatalf("Request.Tools does not contain bash; tools = %+v", req.Tools)
+	}
+}
+
 func requestHasTool(req llm.Request, name string) bool {
 	for _, def := range req.Tools {
 		if def.Name == name {
@@ -241,5 +264,134 @@ func TestApp_StopInterruptsInflightTurn(t *testing.T) {
 
 	if errs := rec.errorsOn("session:s1:error"); len(errs) == 0 {
 		t.Error("no se reenvio el error duro por session:s1:error")
+	}
+}
+
+// scriptedProvider returns a DIFFERENT script per turn (the M2 FakeProvider
+// always replays the same one): the i-th Stream reproduces turns[i], or an
+// empty script if exhausted. It lets us chain "tool in turn 1, text in turn 2"
+// without the loop asking permission forever.
+type scriptedProvider struct {
+	mu    sync.Mutex
+	calls int
+	turns [][]llm.Event
+}
+
+func (p *scriptedProvider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Event, error) {
+	p.mu.Lock()
+	var script []llm.Event
+	if p.calls < len(p.turns) {
+		script = p.turns[p.calls]
+	}
+	p.calls++
+	p.mu.Unlock()
+	return llm.NewFakeProvider(script...).Stream(ctx, req)
+}
+
+// waitForPermissionRequest waits (with a timeout) for the bus to receive the
+// Tool.Permission.Requested for callID: the runner emits it before blocking on
+// the gate, so the test knows when to resolve.
+func waitForPermissionRequest(t *testing.T, rec *recordingEmit, channel, callID string) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		for _, ev := range rec.eventsOn(channel) {
+			if ev.Kind == session.KindToolPermissionRequested && ev.CallID == callID {
+				return
+			}
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("Tool.Permission.Requested for %s did not arrive", callID)
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+}
+
+// TestApp_BashCallAsksPermissionAndDenyDoesNotRun is the end-to-end integration
+// test for ask-before-run wiring: a bash tool call makes the runner emit
+// Tool.Permission.Requested and BLOCK; when denied via the ResolveToolPermission
+// binding the tool does not run and Tool.Failed is published. It covers
+// SetPermissionGate + needsApproval==bash + the end-to-end binding, without
+// actually running bash (it denies) or hanging (a text-only turn 2 closes
+// activity). Run with -race.
+func TestApp_BashCallAsksPermissionAndDenyDoesNotRun(t *testing.T) {
+	rec := &recordingEmit{}
+	prov := &scriptedProvider{turns: [][]llm.Event{
+		{
+			{Kind: llm.StepStarted},
+			{Kind: llm.ToolCall, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"echo should-not-run"}`)},
+			{Kind: llm.StepEnded},
+		},
+		{
+			{Kind: llm.StepStarted},
+			{Kind: llm.TextStarted},
+			{Kind: llm.TextDelta, Text: "done"},
+			{Kind: llm.TextEnded},
+			{Kind: llm.StepEnded},
+		},
+	}}
+	app := newApp(prov, rec.emit)
+
+	if err := app.SendPrompt("s1", "run echo"); err != nil {
+		t.Fatalf("SendPrompt: %v", err)
+	}
+
+	waitForPermissionRequest(t, rec, "session:s1", "c1")
+	app.ResolveToolPermission("s1", "c1", false) // DENY: bash must not run
+	app.wait()
+
+	var sawRequest, sawFailed, sawSuccess bool
+	for _, ev := range rec.eventsOn("session:s1") {
+		switch {
+		case ev.Kind == session.KindToolPermissionRequested && ev.CallID == "c1":
+			sawRequest = true
+		case ev.Kind == session.KindToolFailed && ev.CallID == "c1":
+			sawFailed = true
+		case ev.Kind == session.KindToolSuccess && ev.CallID == "c1":
+			sawSuccess = true
+		}
+	}
+	if !sawRequest {
+		t.Error("missing Tool.Permission.Requested of c1: the gate is not wired for bash")
+	}
+	if !sawFailed {
+		t.Error("missing Tool.Failed of c1: the denial did not propagate via the binding")
+	}
+	if sawSuccess {
+		t.Error("Tool.Success of c1 happened despite denying the permission")
+	}
+}
+
+// TestApp_ResolveToolPermissionWiredToGate verifies the binding in isolation:
+// the decision arriving via ResolveToolPermission unblocks a pending Ask on the
+// app's gate (proves the gate field exists and the binding invokes it).
+func TestApp_ResolveToolPermissionWiredToGate(t *testing.T) {
+	app := newApp(demoProvider(), func(string, ...interface{}) {})
+
+	done := make(chan bool, 1)
+	go func() {
+		approved, err := app.gate.Ask(context.Background(), session.PermissionRequest{SessionID: "s1", CallID: "c1"})
+		if err != nil {
+			t.Errorf("Ask unexpected error: %v", err)
+		}
+		done <- approved
+	}()
+
+	deadline := time.After(2 * time.Second)
+	for {
+		app.ResolveToolPermission("s1", "c1", true)
+		select {
+		case got := <-done:
+			if !got {
+				t.Errorf("the decision did not arrive as approved=true via the binding")
+			}
+			return
+		case <-deadline:
+			t.Fatal("the binding did not deliver the decision to the gate")
+		default:
+			time.Sleep(time.Millisecond)
+		}
 	}
 }
