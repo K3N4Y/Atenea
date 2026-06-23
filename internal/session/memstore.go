@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"sort"
 	"sync"
 )
 
@@ -10,11 +11,19 @@ import (
 type MemoryStore struct {
 	mu       sync.Mutex
 	sessions map[string][]SessionEvent
+	// lastSeen marca el orden global de insercion del ultimo evento de cada
+	// sesion: el equivalente en memoria del MAX(rowid) que ordena Sessions por
+	// recencia. Un contador monotonico global lo alimenta en cada AppendEvent.
+	lastSeen map[string]int
+	clock    int
 }
 
 // NewMemoryStore crea un store vacio listo para usar.
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{sessions: make(map[string][]SessionEvent)}
+	return &MemoryStore{
+		sessions: make(map[string][]SessionEvent),
+		lastSeen: make(map[string]int),
+	}
 }
 
 // var _ Store = (*MemoryStore)(nil) asegura en tiempo de compilacion que
@@ -33,6 +42,8 @@ func (s *MemoryStore) AppendEvent(ctx context.Context, sessionID string, ev Sess
 	ev.SessionID = sessionID
 	ev.Seq = seq
 	s.sessions[sessionID] = append(log, ev)
+	s.clock++
+	s.lastSeen[sessionID] = s.clock
 	return seq, nil
 }
 
@@ -68,6 +79,67 @@ func (s *MemoryStore) Messages(ctx context.Context, sessionID string, sinceSeq S
 		m := *ev.Message
 		m.Seq = ev.Seq
 		out = append(out, m)
+	}
+	return out, nil
+}
+
+// Sessions devuelve un resumen por sesion con al menos un evento, ordenado por
+// actividad mas reciente primero. Replica el orden por rowid del store durable
+// usando el indice del ultimo evento agregado a cada log; el Title es el primer
+// mensaje del usuario de la sesion (truncado), "" si aun no hay uno.
+func (s *MemoryStore) Sessions(ctx context.Context) ([]SessionSummary, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	type entry struct {
+		id    string
+		title string
+		last  int // posicion global del ultimo evento: aproxima MAX(rowid)
+	}
+	entries := make([]entry, 0, len(s.sessions))
+	for id, log := range s.sessions {
+		if len(log) == 0 {
+			continue
+		}
+		title := ""
+		for _, ev := range log {
+			if ev.Message != nil && ev.Message.Role == RoleUser {
+				title = truncateTitle(ev.Message.Text)
+				break
+			}
+		}
+		// El ultimo evento del log lleva el Seq mas alto de la sesion, pero entre
+		// sesiones eso no ordena por recencia. Igualamos al store durable usando un
+		// contador de insercion global; aqui lo reconstruimos por el orden de
+		// llegada que ya quedo en cada log via el contador del store.
+		entries = append(entries, entry{id: id, title: title, last: s.lastSeen[id]})
+	}
+	sort.Slice(entries, func(a, b int) bool { return entries[a].last > entries[b].last })
+
+	out := make([]SessionSummary, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, SessionSummary{ID: e.id, Title: e.title})
+	}
+	return out, nil
+}
+
+// Events devuelve todos los SessionEvent durables de la sesion en orden de Seq
+// con Seq > sinceSeq. ErrSessionNotFound si la sesion no existe. El MemoryStore
+// guarda los eventos verbatim, asi que solo filtra y copia.
+func (s *MemoryStore) Events(ctx context.Context, sessionID string, sinceSeq Seq) ([]SessionEvent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	log, ok := s.sessions[sessionID]
+	if !ok {
+		return nil, ErrSessionNotFound
+	}
+
+	out := make([]SessionEvent, 0)
+	for _, ev := range log {
+		if ev.Seq > sinceSeq {
+			out = append(out, ev)
+		}
 	}
 	return out, nil
 }
