@@ -158,6 +158,49 @@ func TestPublisher_ReasoningBuffersLikeText(t *testing.T) {
 	}
 }
 
+// TestPublisher_ToolSuccessCarriesDiffNotInMessage afirma que el diff (solo-UI)
+// viaja en SessionEvent.Diff pero NO en Message.Text: el modelo lee la proyeccion
+// (Message), asi que el diff no entra a su contexto ni consume tokens. El evento
+// debe seguir siendo json.Marshal-able (frontera Wails).
+func TestPublisher_ToolSuccessCarriesDiffNotInMessage(t *testing.T) {
+	spy := &recordingAppender{}
+	p := NewPublisher(spy, "s1", "a1")
+
+	if err := p.ToolSuccess(context.Background(), "c1", "out", "DIFF"); err != nil {
+		t.Fatalf("ToolSuccess: %v", err)
+	}
+
+	if len(spy.events) != 1 {
+		t.Fatalf("eventos = %d, quiero 1", len(spy.events))
+	}
+	ev := spy.events[0]
+	if ev.Diff != "DIFF" {
+		t.Errorf("ev.Diff = %q, quiero %q", ev.Diff, "DIFF")
+	}
+	if ev.Text != "out" {
+		t.Errorf("ev.Text = %q, quiero %q", ev.Text, "out")
+	}
+	if ev.Message == nil || ev.Message.Text != "out" {
+		t.Fatalf("Message.Text = %v, quiero %q (diff NO debe estar aqui)", ev.Message, "out")
+	}
+	if _, err := json.Marshal(ev); err != nil {
+		t.Errorf("json.Marshal(Tool.Success con Diff): %v", err)
+	}
+}
+
+// TestPublisher_ToolSuccessEmptyDiff: sin diff (bash) el campo queda vacio.
+func TestPublisher_ToolSuccessEmptyDiff(t *testing.T) {
+	spy := &recordingAppender{}
+	p := NewPublisher(spy, "s1", "a1")
+
+	if err := p.ToolSuccess(context.Background(), "c1", "ok", ""); err != nil {
+		t.Fatalf("ToolSuccess: %v", err)
+	}
+	if spy.events[0].Diff != "" {
+		t.Errorf("ev.Diff = %q, quiero vacio", spy.events[0].Diff)
+	}
+}
+
 // TestPublisher_StepEndedCarriesUsageTokens alimenta StepStarted + StepEnded con
 // tokens y afirma que el evento Step.Ended persistido lleva un *session.Usage no
 // nil con los cinco campos copiados desde llm.Usage (espejo cruzando la
@@ -434,7 +477,7 @@ func TestPublisher_ProjectsAssistantToolCallsAndToolResultID(t *testing.T) {
 		llm.Event{Kind: llm.ToolCall, CallID: "call_1", ToolName: "read", Input: json.RawMessage(`{"path":"foo.go"}`)},
 		llm.Event{Kind: llm.StepEnded},
 	)
-	if err := p.ToolSuccess(context.Background(), "call_1", "contenido"); err != nil {
+	if err := p.ToolSuccess(context.Background(), "call_1", "contenido", ""); err != nil {
 		t.Fatalf("ToolSuccess error inesperado: %v", err)
 	}
 

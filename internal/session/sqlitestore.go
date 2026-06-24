@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS events (
   tool_calls  BLOB,
   tool_call_id TEXT,
   ev_text     TEXT,
+  diff        TEXT,
   PRIMARY KEY (session_id, seq)
 );`
 
@@ -63,6 +64,7 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 		`ALTER TABLE events ADD COLUMN tool_calls BLOB`,
 		`ALTER TABLE events ADD COLUMN tool_call_id TEXT`,
 		`ALTER TABLE events ADD COLUMN ev_text TEXT`,
+		`ALTER TABLE events ADD COLUMN diff TEXT`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			db.Close()
@@ -123,10 +125,10 @@ func (s *SQLiteStore) AppendEvent(ctx context.Context, sessionID string, ev Sess
 	// que viajan en ev.Text y no en un Message.
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO events
-		   (session_id, seq, kind, has_message, msg_id, role, text, call_id, tool_name, input, usage, error, tool_calls, tool_call_id, ev_text)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		   (session_id, seq, kind, has_message, msg_id, role, text, call_id, tool_name, input, usage, error, tool_calls, tool_call_id, ev_text, diff)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sessionID, seq, string(ev.Kind), hasMessage, msgID, role, text,
-		ev.CallID, ev.ToolName, []byte(ev.Input), usage, ev.Error, toolCalls, toolCallID, ev.Text,
+		ev.CallID, ev.ToolName, []byte(ev.Input), usage, ev.Error, toolCalls, toolCallID, ev.Text, ev.Diff,
 	); err != nil {
 		return 0, err
 	}
@@ -268,7 +270,7 @@ func (s *SQLiteStore) Events(ctx context.Context, sessionID string, sinceSeq Seq
 
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT seq, kind, has_message, msg_id, role, text, call_id, tool_name,
-		        input, usage, error, tool_calls, tool_call_id, ev_text
+		        input, usage, error, tool_calls, tool_call_id, ev_text, diff
 		   FROM events
 		  WHERE session_id = ? AND seq > ?
 		  ORDER BY seq`,
@@ -286,11 +288,11 @@ func (s *SQLiteStore) Events(ctx context.Context, sessionID string, sinceSeq Seq
 			kind                                      string
 			hasMessage                                int
 			msgID, role, text, callID, toolName, tcID sql.NullString
-			errText, evText                           sql.NullString
+			errText, evText, diff                     sql.NullString
 			input, usage, toolCalls                   []byte
 		)
 		if err := rows.Scan(&seq, &kind, &hasMessage, &msgID, &role, &text,
-			&callID, &toolName, &input, &usage, &errText, &toolCalls, &tcID, &evText); err != nil {
+			&callID, &toolName, &input, &usage, &errText, &toolCalls, &tcID, &evText, &diff); err != nil {
 			return nil, err
 		}
 
@@ -302,6 +304,7 @@ func (s *SQLiteStore) Events(ctx context.Context, sessionID string, sinceSeq Seq
 			CallID:    callID.String,
 			ToolName:  toolName.String,
 			Error:     errText.String,
+			Diff:      diff.String,
 		}
 		if len(input) > 0 {
 			ev.Input = json.RawMessage(input)

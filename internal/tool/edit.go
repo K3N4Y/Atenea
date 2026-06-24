@@ -84,7 +84,10 @@ func (et *EditTool) Execute(ctx context.Context, input json.RawMessage) (Result,
 
 	// res.Header trae la ruta ABS; el modelo encadena por la ruta RELATIVA.
 	header := strings.Replace(res.Header, abs, relPath, 1)
-	return Result{Output: header}, nil
+	// Diff SOLO para la UI: se arma con la ruta RELATIVA (nunca filtra la abs) a
+	// partir del texto viejo/nuevo que devuelve el Patcher.
+	diff := hashline.UnifiedDiff(relPath, res.OldText, res.NewText, 3)
+	return Result{Output: header, Diff: diff}, nil
 }
 
 func (et *EditTool) patcher(ctx context.Context) *hashline.Patcher {

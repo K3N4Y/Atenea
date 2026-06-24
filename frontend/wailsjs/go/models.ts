@@ -87,6 +87,7 @@ export namespace session {
 	    Input: number[];
 	    Usage?: Usage;
 	    Error: string;
+	    Diff: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new SessionEvent(source);
@@ -104,6 +105,7 @@ export namespace session {
 	        this.Input = source["Input"];
 	        this.Usage = this.convertValues(source["Usage"], Usage);
 	        this.Error = source["Error"];
+	        this.Diff = source["Diff"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

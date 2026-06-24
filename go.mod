@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/openai/openai-go/v2 v2.7.1
+	github.com/pmezard/go-difflib v1.0.0
 	github.com/wailsapp/wails/v2 v2.12.0
 	golang.org/x/sync v0.20.0
 	modernc.org/sqlite v1.52.0

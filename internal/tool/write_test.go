@@ -52,6 +52,29 @@ func writeInput(t *testing.T, path, content string) json.RawMessage {
 	return b
 }
 
+// TestWriteTool_ReturnsAllAdditionsDiff afirma que write devuelve un diff de
+// archivo nuevo: hunk "@@ -0,0 +1,N @@", todas las lineas como adicion (+) y sin
+// lineas borradas, con la ruta relativa en el header.
+func TestWriteTool_ReturnsAllAdditionsDiff(t *testing.T) {
+	snaps := hashline.NewMemSnapshotStore()
+	fs := newFakeWriteFS()
+	wt := &WriteTool{Root: "/work", FS: fs, Snapshots: snaps}
+
+	res, err := wt.Execute(context.Background(), writeInput(t, "n.txt", "x\ny\n"))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	for _, want := range []string{"b/n.txt", "@@ -0,0 +1,2 @@", "\n+x\n", "\n+y\n"} {
+		if !strings.Contains(res.Diff, want) {
+			t.Fatalf("Diff no contiene %q\n--- diff ---\n%s", want, res.Diff)
+		}
+	}
+	if strings.Contains(res.Diff, "\n-") {
+		t.Fatalf("archivo nuevo no debe tener lineas borradas\n%s", res.Diff)
+	}
+}
+
 // TestWriteTool_CreatesNewFileAndReturnsHeader es el happy path: write resuelve la
 // ruta relativa "hola.md" bajo Root a la abs "/work/hola.md", escribe el contenido
 // y devuelve el header [hola.md#HASH] (ruta relativa) para que el modelo encadene

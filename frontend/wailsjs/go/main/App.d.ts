@@ -8,6 +8,8 @@ export function DeleteSession(arg1:string):Promise<void>;
 
 export function ListSessions():Promise<Array<session.SessionSummary>>;
 
+export function Model():Promise<string>;
+
 export function ResolveToolPermission(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
 export function SendPlanPrompt(arg1:string,arg2:string):Promise<void>;

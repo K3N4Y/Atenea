@@ -18,6 +18,7 @@ type spyTool struct {
 	name    string
 	calls   *int
 	out     string
+	diff    string
 	execErr error
 }
 
@@ -26,7 +27,45 @@ func (s spyTool) Description() string     { return s.name + " spy" }
 func (s spyTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
 func (s spyTool) Execute(ctx context.Context, in json.RawMessage) (Result, error) {
 	*s.calls++
-	return Result{Output: s.out}, s.execErr
+	return Result{Output: s.out, Diff: s.diff}, s.execErr
+}
+
+// TestRegistry_SettlePreservesDiffThroughCap afirma que el Diff (solo-UI) sobrevive
+// al acotado del OutputStore: aunque el Output se trunque, el Diff pasa entero (no
+// se acota).
+func TestRegistry_SettlePreservesDiffThroughCap(t *testing.T) {
+	calls := 0
+	reg := NewRegistry(NewOutputStore(5), spyTool{name: "edit", calls: &calls, out: "0123456789", diff: "DIFF"})
+	mat := reg.Materialize(Permissions{"edit": true})
+
+	res, err := mat.Settle(context.Background(), Call{ID: "c1", Name: "edit"})
+	if err != nil {
+		t.Fatalf("Settle: %v", err)
+	}
+	if !res.Truncated {
+		t.Fatalf("se esperaba Output truncado")
+	}
+	if res.Output != "01234" {
+		t.Fatalf("Output: se esperaba %q, se obtuvo %q", "01234", res.Output)
+	}
+	if res.Diff != "DIFF" {
+		t.Fatalf("Diff: se esperaba %q (no acotado), se obtuvo %q", "DIFF", res.Diff)
+	}
+}
+
+// TestRegistry_SettleNoDiffStaysEmpty: una tool sin diff (p.ej. bash) deja Diff vacio.
+func TestRegistry_SettleNoDiffStaysEmpty(t *testing.T) {
+	calls := 0
+	reg := NewRegistry(NewOutputStore(0), spyTool{name: "bash", calls: &calls, out: "ok"})
+	mat := reg.Materialize(Permissions{"bash": true})
+
+	res, err := mat.Settle(context.Background(), Call{ID: "c1", Name: "bash"})
+	if err != nil {
+		t.Fatalf("Settle: %v", err)
+	}
+	if res.Diff != "" {
+		t.Fatalf("Diff: se esperaba vacio, se obtuvo %q", res.Diff)
+	}
 }
 
 // TestRegistry_SettleExecutesAllowedTool es el happy path del registry: arma el

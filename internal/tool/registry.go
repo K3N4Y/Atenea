@@ -35,10 +35,12 @@ type Call struct {
 // Result es el resultado asentado de una tool call. Output es lo que vera el
 // modelo en el siguiente turno (acotado por el OutputStore si era grande);
 // Truncated marca que es una version acotada y que el output completo quedo en el
-// OutputStore, referenciable por el CallID de la Call.
+// OutputStore, referenciable por el CallID de la Call. Diff es un diff unificado
+// SOLO para la UI (edit/write): no lo ve el modelo y no se acota.
 type Result struct {
 	Output    string
 	Truncated bool
+	Diff      string
 }
 
 // SettleFunc asienta una tool call: valida contra el set materializado, ejecuta y
@@ -126,7 +128,9 @@ func (r *Registry) Materialize(perms Permissions) Materialized {
 		if err != nil {
 			return Result{}, err
 		}
-		return r.outputs.Cap(call.ID, res.Output), nil
+		capped := r.outputs.Cap(call.ID, res.Output)
+		capped.Diff = res.Diff // el diff (solo-UI) no se acota
+		return capped, nil
 	}
 	return Materialized{Definitions: defs, Settle: settle}
 }

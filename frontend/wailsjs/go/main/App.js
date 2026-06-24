@@ -14,6 +14,10 @@ export function ListSessions() {
   return window['go']['main']['App']['ListSessions']();
 }
 
+export function Model() {
+  return window['go']['main']['App']['Model']();
+}
+
 export function ResolveToolPermission(arg1, arg2, arg3) {
   return window['go']['main']['App']['ResolveToolPermission'](arg1, arg2, arg3);
 }

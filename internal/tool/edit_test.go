@@ -97,6 +97,42 @@ func TestEditTool_AppliesPatchReturnsNewHeader(t *testing.T) {
 	}
 }
 
+// TestEditTool_ReturnsDiff afirma que Execute devuelve un diff unificado con la
+// linea cambiada (-b / +X) usando la ruta RELATIVA en el header; la ruta ABSOLUTA
+// nunca debe filtrarse al diff (la construye con relPath, no por reemplazo).
+func TestEditTool_ReturnsDiff(t *testing.T) {
+	const abs = "/work/foo.go"
+	original := "a\nb\nc\nd\n"
+
+	snaps := hashline.NewMemSnapshotStore()
+	h := snaps.Record(abs, original)
+	snaps.RecordSeenLines(abs, h, []int{2, 3})
+
+	fs := &fakeEditFS{
+		files:  map[string][]byte{abs: []byte(original)},
+		writes: map[string][]byte{},
+	}
+	et := NewEditTool("/work", fs, snaps)
+
+	input, _ := json.Marshal(struct {
+		Patch string `json:"patch"`
+	}{Patch: "[foo.go#" + h + "]\nSWAP 2.=3:\n+X"})
+
+	res, err := et.Execute(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	for _, want := range []string{"a/foo.go", "b/foo.go", "\n-b\n", "\n+X\n"} {
+		if !strings.Contains(res.Diff, want) {
+			t.Fatalf("Diff no contiene %q\n--- diff ---\n%s", want, res.Diff)
+		}
+	}
+	if strings.Contains(res.Diff, abs) {
+		t.Fatalf("Diff filtro la ruta absoluta %q\n%s", abs, res.Diff)
+	}
+}
+
 // TestEditTool_MissingTagErrors afirma que un patch sin header [ruta#HASH] hace que
 // Execute propague el error (MissingTagError) en vez de inventar una ruta.
 func TestEditTool_MissingTagErrors(t *testing.T) {

@@ -365,6 +365,34 @@ func testStoreContract(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 	})
 
+	t.Run("EventsRoundTripsDiff", func(t *testing.T) {
+		ctx := context.Background()
+		store := newStore(t)
+
+		// El diff (solo-UI) de edit/write viaja en SessionEvent.Diff. Events debe
+		// devolverlo intacto o la rehidratacion pierde el diff coloreado al reabrir
+		// una sesion pasada.
+		in := SessionEvent{
+			Kind: KindToolSuccess, CallID: "c1", ToolName: "edit", Text: "[foo.go#ab12]",
+			Diff:    "--- a/foo.go\n+++ b/foo.go\n@@ -1 +1 @@\n-a\n+b\n",
+			Message: &Message{ID: "c1", Role: RoleTool, Text: "[foo.go#ab12]", ToolCallID: "c1"},
+		}
+		if _, err := store.AppendEvent(ctx, "s1", in); err != nil {
+			t.Fatalf("AppendEvent: %v", err)
+		}
+
+		got, err := store.Events(ctx, "s1", 0)
+		if err != nil {
+			t.Fatalf("Events: %v", err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("Events: got %d, want 1", len(got))
+		}
+		if got[0].Diff != in.Diff {
+			t.Fatalf("Events[0].Diff round-trip:\n got %q\nwant %q", got[0].Diff, in.Diff)
+		}
+	})
+
 	t.Run("EventsSinceSeqFiltersOlder", func(t *testing.T) {
 		ctx := context.Background()
 		store := newStore(t)

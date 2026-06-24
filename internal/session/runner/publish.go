@@ -163,8 +163,10 @@ func (p *Publisher) ToolPermissionRequested(ctx context.Context, callID string) 
 // ToolSuccess publica el resultado de una tool local asentada: persiste un
 // Tool.Success con el output acotado (lo que vera el modelo) y materializa un
 // Message{Role: tool, ID: callID} para que el resultado entre en la proyeccion y
-// el modelo lo vea en el siguiente turno. ToolName sale del mapa del turno.
-func (p *Publisher) ToolSuccess(ctx context.Context, callID, output string) error {
+// el modelo lo vea en el siguiente turno. ToolName sale del mapa del turno. diff
+// es solo para la UI (edit/write): viaja en SessionEvent.Diff y NUNCA en el
+// Message, asi el modelo no lo ve.
+func (p *Publisher) ToolSuccess(ctx context.Context, callID, output, diff string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.settled[callID] {
@@ -175,6 +177,7 @@ func (p *Publisher) ToolSuccess(ctx context.Context, callID, output string) erro
 		CallID:   callID,
 		ToolName: p.tools[callID],
 		Text:     output,
+		Diff:     diff,
 		Message:  &session.Message{ID: callID, Role: session.RoleTool, Text: output, ToolCallID: callID},
 	}); err != nil {
 		return err

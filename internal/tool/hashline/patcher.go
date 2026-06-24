@@ -33,11 +33,14 @@ func NewPatcher(fs Filesystem, snaps SnapshotStore) *Patcher {
 }
 
 // PatchResult es el resultado de aplicar un patch: el header del archivo escrito
-// (para encadenar edits), la primera linea cambiada y las advertencias.
+// (para encadenar edits), la primera linea cambiada, las advertencias y el texto
+// viejo/nuevo (normalizados a LF) para que el tool arme el diff sin re-leer.
 type PatchResult struct {
 	Header           string
 	FirstChangedLine int
 	Warnings         []string
+	OldText          string
+	NewText          string
 }
 
 // Apply aplica la primera seccion del patch (v1: una seccion), escribe el
@@ -118,6 +121,8 @@ func (p *Patcher) Apply(patch Patch) (PatchResult, error) {
 		Header:           FormatHeader(s.Path, newHash),
 		FirstChangedLine: ar.FirstChangedLine,
 		Warnings:         warnings,
+		OldText:          norm,
+		NewText:          newText,
 	}, nil
 }
 

@@ -72,6 +72,10 @@ type SessionEvent struct {
 	Input json.RawMessage
 	Usage *Usage // solo Step.Ended
 	Error string // mensaje de fallo de una tool (Tool.Failed); M8 lo reutiliza para Step.Failed
+	// Diff es un diff unificado SOLO para la UI (Tool.Success de edit/write). No
+	// entra en Message, asi que el modelo no lo ve ni consume tokens; se persiste y
+	// se replica al rehidratar la sesion.
+	Diff string
 }
 
 // Session es el agregado durable de una conversacion. En M1 es minimo: solo el

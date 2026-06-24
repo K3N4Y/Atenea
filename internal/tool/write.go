@@ -128,7 +128,10 @@ func (wt *WriteTool) Execute(ctx context.Context, input json.RawMessage) (Result
 	}
 	snaps.RecordSeenLines(abs, tag, seen)
 
-	return Result{Output: hashline.FormatHeader(in.Path, tag)}, nil
+	// Diff SOLO para la UI: archivo nuevo = todo adicion (old vacio), con la ruta
+	// relativa que el modelo encadena.
+	diff := hashline.UnifiedDiff(in.Path, "", norm, 3)
+	return Result{Output: hashline.FormatHeader(in.Path, tag), Diff: diff}, nil
 }
 
 func (wt *WriteTool) snapshots(ctx context.Context) hashline.SnapshotStore {

@@ -83,6 +83,40 @@ func TestPatcher_NoDriftAppliesAndRecordsNewHash(t *testing.T) {
 	}
 }
 
+// TestPatcher_ApplyExposesOldAndNewText afirma que Apply devuelve el texto viejo
+// (normalizado a LF) y el texto nuevo escrito, para que el tool pueda construir el
+// diff sin re-leer el archivo.
+func TestPatcher_ApplyExposesOldAndNewText(t *testing.T) {
+	const path = "/work/foo.go"
+	original := "a\nb\nc\nd\n"
+
+	snaps := NewMemSnapshotStore()
+	hash := snaps.Record(path, original)
+	snaps.RecordSeenLines(path, hash, []int{2, 3})
+
+	fs := &fakePatchFS{
+		files:  map[string][]byte{path: []byte(original)},
+		writes: map[string][]byte{},
+	}
+	patch := Patch{Sections: []Section{{
+		Path:  path,
+		Hash:  hash,
+		Edits: []Edit{{Kind: Replace, Range: Range{Start: 2, End: 3}, Text: "X"}},
+	}}}
+
+	res, err := NewPatcher(fs, snaps).Apply(patch)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	if res.OldText != original {
+		t.Fatalf("OldText: se esperaba %q, se obtuvo %q", original, res.OldText)
+	}
+	if want := "a\nX\nd\n"; res.NewText != want {
+		t.Fatalf("NewText: se esperaba %q, se obtuvo %q", want, res.NewText)
+	}
+}
+
 // TestPatcher_DriftWithAnchorReturnsMismatch afirma que si el archivo vivo cambio
 // desde el read (drift) y el edit ancla a una linea (SWAP), el Patcher devuelve un
 // *MismatchError reconocido (el hash stale si esta en la sesion) y NO escribe: un

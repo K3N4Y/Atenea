@@ -228,6 +228,16 @@ func dbPath() string {
 	return filepath.Join(appDir, "atenea.db")
 }
 
+// resolveModel resuelve el modelo activo: OPENROUTER_MODEL si esta seteado, si no
+// defaultModel. Unico punto del fallback, compartido por chooseProvider (el provider
+// real) y Model (lo que ve la UI) para que ambos coincidan.
+func resolveModel() string {
+	if model := os.Getenv("OPENROUTER_MODEL"); model != "" {
+		return model
+	}
+	return defaultModel
+}
+
 // chooseProvider elige el provider real: si hay OPENROUTER_API_KEY usa el adaptador
 // OpenAI-compatible contra OpenRouter (modelo de OPENROUTER_MODEL o defaultModel);
 // si no, el demoProvider (fake) para que `wails dev` muestre streaming sin red.
@@ -237,12 +247,11 @@ func chooseProvider() llm.Provider {
 		log.Print("atenea: sin OPENROUTER_API_KEY; usando provider de demo (sin red)")
 		return demoProvider()
 	}
-	model := os.Getenv("OPENROUTER_MODEL")
-	if model == "" {
-		model = defaultModel
-	}
-	return llm.NewOpenAIProvider(key, openRouterBaseURL, model)
+	return llm.NewOpenAIProvider(key, openRouterBaseURL, resolveModel())
 }
+
+// Model expone el modelo activo (OPENROUTER_MODEL o defaultModel) para que la UI dimensione la barra de contexto por modelo.
+func (a *App) Model() string { return resolveModel() }
 
 // startup guarda el ctx de Wails (lo usa la EmitFunc real).
 func (a *App) startup(ctx context.Context) { a.ctx = ctx }

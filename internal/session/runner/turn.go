@@ -184,7 +184,7 @@ func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Ev
 					r.logf("atenea: tool %q (call %s) fallo: %v", ev.ToolName, ev.CallID, err)
 					return pub.ToolFailed(cleanupCtx, ev.CallID, err)
 				}
-				return pub.ToolSuccess(cleanupCtx, ev.CallID, res.Output)
+				return pub.ToolSuccess(cleanupCtx, ev.CallID, res.Output, res.Diff)
 			})
 		}
 	}

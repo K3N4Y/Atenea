@@ -704,6 +704,29 @@ func TestApp_AcceptPlanFromPlanModeResetsToNormal(t *testing.T) {
 	}
 }
 
+// TestApp_ModelReportsConfiguredModel: el binding Model() expone a la UI el modelo
+// activo resuelto desde OPENROUTER_MODEL, para que el frontend sepa que ventana de
+// contexto usar al pintar el uso de tokens.
+func TestApp_ModelReportsConfiguredModel(t *testing.T) {
+	t.Setenv("OPENROUTER_MODEL", "anthropic/claude-opus-4.8")
+	app := newApp(demoProvider(), func(string, ...interface{}) {})
+
+	if got := app.Model(); got != "anthropic/claude-opus-4.8" {
+		t.Errorf("Model() = %q, want %q", got, "anthropic/claude-opus-4.8")
+	}
+}
+
+// TestApp_ModelFallsBackToDefault: sin OPENROUTER_MODEL, Model() cae al defaultModel,
+// mismo fallback que chooseProvider para que la UI y el provider coincidan.
+func TestApp_ModelFallsBackToDefault(t *testing.T) {
+	t.Setenv("OPENROUTER_MODEL", "")
+	app := newApp(demoProvider(), func(string, ...interface{}) {})
+
+	if got := app.Model(); got != defaultModel {
+		t.Errorf("Model() = %q, want %q", got, defaultModel)
+	}
+}
+
 func requestHasTool(req llm.Request, name string) bool {
 	for _, def := range req.Tools {
 		if def.Name == name {
