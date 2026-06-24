@@ -48,7 +48,8 @@ describe('SettingsPanel', () => {
     const wrapper = mount(SettingsPanel)
     await mcpsTabOf(wrapper).trigger('click')
     // The card container is the direct parent of each card.
-    const list = wrapper.findComponent(McpCard).element.parentElement as HTMLElement
+    const list = wrapper.findComponent(McpCard).element
+      .parentElement as HTMLElement
     // Same width as the chat column (max-w-3xl), centered.
     expect(list.classList.contains('max-w-3xl')).toBe(true)
     expect(list.classList.contains('mx-auto')).toBe(true)
@@ -64,7 +65,9 @@ describe('SettingsPanel', () => {
 
     // The detail replaces the list: a back control appears and there are no
     // more cards.
-    expect(wrapper.find('button[aria-label="Back to MCPs"]').exists()).toBe(true)
+    expect(wrapper.find('button[aria-label="Back to MCPs"]').exists()).toBe(
+      true,
+    )
     expect(wrapper.findAllComponents(McpCard).length).toBe(0)
     expect(wrapper.text()).toContain(first.name)
     expect(wrapper.text()).toContain(first.description)
@@ -74,7 +77,9 @@ describe('SettingsPanel', () => {
     // When the list/detail nodes are swapped, Flip.from must receive `targets`
     // pointing at the new in-DOM elements; otherwise it animates the detached
     // old nodes and the morph looks instant.
-    const fromSpy = vi.spyOn(Flip, 'from').mockImplementation(() => ({}) as never)
+    const fromSpy = vi
+      .spyOn(Flip, 'from')
+      .mockImplementation(() => ({}) as never)
     const wrapper = mount(SettingsPanel)
     await mcpsTabOf(wrapper).trigger('click')
 
@@ -100,7 +105,9 @@ describe('SettingsPanel', () => {
   })
 
   it('animates the return with Flip toward the new list elements', async () => {
-    const fromSpy = vi.spyOn(Flip, 'from').mockImplementation(() => ({}) as never)
+    const fromSpy = vi
+      .spyOn(Flip, 'from')
+      .mockImplementation(() => ({}) as never)
     const wrapper = mount(SettingsPanel)
     await mcpsTabOf(wrapper).trigger('click')
     await wrapper.findComponent(McpCard).trigger('click')
@@ -111,7 +118,9 @@ describe('SettingsPanel', () => {
     await nextTick()
 
     expect(fromSpy).toHaveBeenCalledTimes(1)
-    expect(typeof (fromSpy.mock.calls[0][1] as Record<string, unknown>).targets).toBe('string')
+    expect(
+      typeof (fromSpy.mock.calls[0][1] as Record<string, unknown>).targets,
+    ).toBe('string')
     fromSpy.mockRestore()
   })
 
@@ -125,7 +134,9 @@ describe('SettingsPanel', () => {
     await nextTick()
 
     expect(wrapper.findAllComponents(McpCard).length).toBeGreaterThan(0)
-    expect(wrapper.find('button[aria-label="Back to MCPs"]').exists()).toBe(false)
+    expect(wrapper.find('button[aria-label="Back to MCPs"]').exists()).toBe(
+      false,
+    )
   })
 
   it('marks the active tab with aria-selected', async () => {
@@ -138,7 +149,9 @@ describe('SettingsPanel', () => {
 
   it('emits close when clicking the close button', async () => {
     const wrapper = mount(SettingsPanel)
-    await wrapper.find('button[aria-label="Cerrar configuracion"]').trigger('click')
+    await wrapper
+      .find('button[aria-label="Cerrar configuracion"]')
+      .trigger('click')
     expect(wrapper.emitted('close')).toBeTruthy()
   })
 

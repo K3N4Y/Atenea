@@ -7,10 +7,17 @@ import { prefersReducedMotion } from '../lib/motion'
 // Composer del MVP: textarea que crece con el contenido + boton pildora. El
 // naranja de acento se reserva para enviar (identidad §3). Es presentacional:
 // emite send/stop y recibe `running` por prop.
-const props = withDefaults(defineProps<{ running: boolean; mode?: 'normal' | 'plan' }>(), {
-  mode: 'normal',
-})
-const emit = defineEmits<{ send: [text: string]; stop: []; 'toggle-mode': [] }>()
+const props = withDefaults(
+  defineProps<{ running: boolean; mode?: 'normal' | 'plan' }>(),
+  {
+    mode: 'normal',
+  },
+)
+const emit = defineEmits<{
+  send: [text: string]
+  stop: []
+  'toggle-mode': []
+}>()
 
 const text = ref('')
 const textarea = ref<HTMLTextAreaElement | null>(null)
@@ -31,7 +38,11 @@ function submit() {
   if (!canSend.value) return
   // Microinteraccion de envio (GSAP): un leve rebote en el boton.
   if (sendButton.value && !prefersReducedMotion()) {
-    gsap.fromTo(sendButton.value, { scale: 0.85 }, { scale: 1, duration: 0.3, ease: 'back.out(3)' })
+    gsap.fromTo(
+      sendButton.value,
+      { scale: 0.85 },
+      { scale: 1, duration: 0.3, ease: 'back.out(3)' },
+    )
   }
   emit('send', text.value)
   text.value = ''

@@ -28,7 +28,9 @@ describe('McpCard', () => {
   })
 
   it('uses the entry own image when present, keeping its aspect ratio', () => {
-    const wrapper = mount(McpCard, { props: { entry: { ...entry, image: '/x/github.png' } } })
+    const wrapper = mount(McpCard, {
+      props: { entry: { ...entry, image: '/x/github.png' } },
+    })
     const img = wrapper.find('img')
     // Uses the own image, not the generated avatar.
     expect(img.attributes('src')).toBe('/x/github.png')

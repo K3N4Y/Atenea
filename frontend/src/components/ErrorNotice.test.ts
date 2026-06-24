@@ -8,7 +8,9 @@ import ErrorNotice from './ErrorNotice.vue'
 // `dismiss`; the store/view own the state.
 describe('ErrorNotice', () => {
   it('renders the message when there is one', () => {
-    const wrapper = mount(ErrorNotice, { props: { message: 'provider unavailable' } })
+    const wrapper = mount(ErrorNotice, {
+      props: { message: 'provider unavailable' },
+    })
     expect(wrapper.text()).toContain('provider unavailable')
   })
 

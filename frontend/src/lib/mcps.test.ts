@@ -25,7 +25,12 @@ describe('mcpCatalog', () => {
 
 describe('mcpIcon', () => {
   it('generates a self-contained SVG data URI with the MCP initial', () => {
-    const uri = mcpIcon({ id: 'gh', name: 'Github', description: 'x', accent: '#1c1c1a' })
+    const uri = mcpIcon({
+      id: 'gh',
+      name: 'Github',
+      description: 'x',
+      accent: '#1c1c1a',
+    })
     expect(uri.startsWith('data:image/svg+xml,')).toBe(true)
     expect(decodeURIComponent(uri)).toContain('>G<')
   })

@@ -80,7 +80,9 @@ describe('PlanView: edge cases de usuario', () => {
 
     // Reabrir: el borrador NO sobrevive a Cancelar.
     await wrapper.get('[data-action="request-change"]').trigger('click')
-    expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('')
+    expect(
+      (wrapper.find('textarea').element as HTMLTextAreaElement).value,
+    ).toBe('')
   })
 
   it('tras enviar un cambio, reabrir el panel muestra el textarea vacio (no conserva el texto enviado)', async () => {
@@ -95,7 +97,9 @@ describe('PlanView: edge cases de usuario', () => {
     expect(wrapper.find('textarea').exists()).toBe(false)
 
     await wrapper.get('[data-action="request-change"]').trigger('click')
-    expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('')
+    expect(
+      (wrapper.find('textarea').element as HTMLTextAreaElement).value,
+    ).toBe('')
   })
 
   it('cerrar el panel con el propio boton "Solicitar cambio" (toggle) CONSERVA el borrador al reabrir', async () => {
@@ -111,7 +115,9 @@ describe('PlanView: edge cases de usuario', () => {
 
     // Tercer click: reabre y el borrador sigue ahi.
     await wrapper.get('[data-action="request-change"]').trigger('click')
-    expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('borrador a medias')
+    expect(
+      (wrapper.find('textarea').element as HTMLTextAreaElement).value,
+    ).toBe('borrador a medias')
   })
 
   it('aceptar con el panel de feedback abierto emite accept y descarta el borrador (no emite request-change)', async () => {
@@ -154,7 +160,9 @@ describe('PlanView: edge cases de usuario', () => {
     await wrapper.find('textarea').setValue('\n\nlinea uno\nlinea dos\n\n')
     await wrapper.get('[data-action="submit-change"]').trigger('click')
 
-    expect(wrapper.emitted('request-change')?.[0]).toEqual(['linea uno\nlinea dos'])
+    expect(wrapper.emitted('request-change')?.[0]).toEqual([
+      'linea uno\nlinea dos',
+    ])
   })
 
   it('feedback de solo tabs y saltos de linea: no emite request-change', async () => {
@@ -172,7 +180,11 @@ describe('PlanView: edge cases de usuario', () => {
     expect(wrapper.text()).toContain('Mi Plan')
 
     await wrapper.setProps({
-      plan: { callID: 'c2', title: 'Plan v2', markdown: '# Revisado\n\n- nuevo paso' },
+      plan: {
+        callID: 'c2',
+        title: 'Plan v2',
+        markdown: '# Revisado\n\n- nuevo paso',
+      },
     })
 
     expect(wrapper.text()).toContain('Plan v2')

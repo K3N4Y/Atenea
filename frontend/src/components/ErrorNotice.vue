@@ -18,8 +18,14 @@ const emit = defineEmits<{ dismiss: [] }>()
     role="alert"
     class="flex items-start gap-2 rounded-soft border border-accent/20 bg-accent/[0.06] px-4 py-3 text-sm"
   >
-    <PhWarningCircle :size="18" weight="regular" class="mt-0.5 shrink-0 text-accent" />
-    <p class="min-w-0 flex-1 break-words leading-relaxed opacity-80">{{ message }}</p>
+    <PhWarningCircle
+      :size="18"
+      weight="regular"
+      class="mt-0.5 shrink-0 text-accent"
+    />
+    <p class="min-w-0 flex-1 break-words leading-relaxed opacity-80">
+      {{ message }}
+    </p>
     <button
       type="button"
       aria-label="Dismiss error"

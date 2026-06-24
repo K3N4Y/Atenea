@@ -11,7 +11,11 @@ import type { PlanState } from '../stores/chat'
 // columna del chat (no tapa la sidebar). Presentacional: emite accept /
 // request-change / minimize y recibe el plan por prop.
 const props = defineProps<{ plan: PlanState }>()
-const emit = defineEmits<{ accept: []; 'request-change': [string]; minimize: [] }>()
+const emit = defineEmits<{
+  accept: []
+  'request-change': [string]
+  minimize: []
+}>()
 
 const title = computed(() => props.plan.title || 'Plan')
 
@@ -41,7 +45,9 @@ function cancelChange() {
   >
     <!-- Barra superior: titulo a la izquierda, acciones a la derecha. -->
     <header class="flex items-center gap-3 border-b border-black/5 px-8 py-4">
-      <h2 class="min-w-0 flex-1 truncate text-lg tracking-tight">{{ title }}</h2>
+      <h2 class="min-w-0 flex-1 truncate text-lg tracking-tight">
+        {{ title }}
+      </h2>
 
       <button
         type="button"

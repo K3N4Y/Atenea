@@ -12,7 +12,10 @@ import type { SessionSummary } from '../stores/chat'
 // store). Presentacional: lista las sesiones, resalta la activa y emite la
 // seleccion hacia arriba; no toca el store de chat directamente.
 const props = withDefaults(
-  defineProps<{ sessions?: SessionSummary[]; activeSessionId?: string | null }>(),
+  defineProps<{
+    sessions?: SessionSummary[]
+    activeSessionId?: string | null
+  }>(),
   { sessions: () => [], activeSessionId: null },
 )
 const emit = defineEmits<{
@@ -76,14 +79,18 @@ function confirmDelete(id: string): void {
           :key="session.ID"
           class="group flex items-center gap-1 rounded-full pr-1 transition"
           :class="
-            session.ID === props.activeSessionId ? 'bg-accent/10' : 'hover:bg-black/[0.04]'
+            session.ID === props.activeSessionId
+              ? 'bg-accent/10'
+              : 'hover:bg-black/[0.04]'
           "
         >
           <button
             type="button"
             :data-session-id="session.ID"
-            :aria-current="session.ID === props.activeSessionId ? 'true' : undefined"
-            class="min-w-0 flex-1 truncate rounded-full px-4 py-2 text-left text-sm transition"
+            :aria-current="
+              session.ID === props.activeSessionId ? 'true' : undefined
+            "
+            class="min-w-0 flex-1 overflow-hidden whitespace-nowrap text-clip rounded-full px-4 py-2 text-left text-sm transition group-hover:text-ellipsis"
             :class="
               session.ID === props.activeSessionId
                 ? 'text-accent'

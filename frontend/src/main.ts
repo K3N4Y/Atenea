@@ -12,7 +12,4 @@ import '@fontsource/red-hat-mono/700.css'
 const pinia = createPinia()
 pinia.use(piniaPluginPersistedstate)
 
-createApp(App)
-  .use(pinia)
-  .use(router)
-  .mount('#app')
+createApp(App).use(pinia).use(router).mount('#app')

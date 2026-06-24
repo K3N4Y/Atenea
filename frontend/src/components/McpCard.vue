@@ -30,7 +30,11 @@ const emit = defineEmits<{ select: [string] }>()
       :alt="props.entry.name"
       :data-flip-id="`mcp-img-${props.entry.id}`"
       class="relative h-20 shrink-0 rounded-2xl"
-      :class="props.entry.image ? 'w-auto max-w-40 object-contain' : 'w-20 object-cover'"
+      :class="
+        props.entry.image
+          ? 'w-auto max-w-40 object-contain'
+          : 'w-20 object-cover'
+      "
     />
     <div class="min-w-0">
       <h3
@@ -39,7 +43,9 @@ const emit = defineEmits<{ select: [string] }>()
       >
         {{ props.entry.name }}
       </h3>
-      <p class="mt-1.5 text-sm leading-relaxed opacity-60">{{ props.entry.description }}</p>
+      <p class="mt-1.5 text-sm leading-relaxed opacity-60">
+        {{ props.entry.description }}
+      </p>
     </div>
   </article>
 </template>

@@ -17,19 +17,31 @@ const { visible, done } = useSmoothText(
 )
 
 const preview = computed(() =>
-  visible.value.split('\n').filter((l) => l.trim().length > 0).slice(-4).join('\n'),
+  visible.value
+    .split('\n')
+    .filter((l) => l.trim().length > 0)
+    .slice(-4)
+    .join('\n'),
 )
-const doneLabel = computed(() => `Thought ${formatThinkingDuration(props.item.durationMs ?? 0)}`)
+const doneLabel = computed(
+  () => `Thought ${formatThinkingDuration(props.item.durationMs ?? 0)}`,
+)
 </script>
 
 <template>
   <div class="text-sm opacity-70">
     <template v-if="!done">
       <div class="mb-1 flex items-center gap-2">
-        <PhBrain :size="16" weight="regular" class="animate-pulse text-accent" />
+        <PhBrain
+          :size="16"
+          weight="regular"
+          class="animate-pulse text-accent"
+        />
         <span>Thinking</span>
       </div>
-      <p class="whitespace-pre-wrap break-words pl-6 opacity-80">{{ preview }}</p>
+      <p class="whitespace-pre-wrap break-words pl-6 opacity-80">
+        {{ preview }}
+      </p>
     </template>
 
     <template v-else>
@@ -39,10 +51,19 @@ const doneLabel = computed(() => `Thought ${formatThinkingDuration(props.item.du
         :aria-expanded="expanded"
         @click="expanded = !expanded"
       >
-        <component :is="expanded ? PhCaretDown : PhCaretRight" :size="14" weight="bold" />
+        <component
+          :is="expanded ? PhCaretDown : PhCaretRight"
+          :size="14"
+          weight="bold"
+        />
         <span>{{ doneLabel }}</span>
       </button>
-      <p v-if="expanded" class="mt-2 whitespace-pre-wrap break-words pl-6 opacity-80">{{ item.text }}</p>
+      <p
+        v-if="expanded"
+        class="mt-2 whitespace-pre-wrap break-words pl-6 opacity-80"
+      >
+        {{ item.text }}
+      </p>
     </template>
   </div>
 </template>

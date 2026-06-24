@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { ref } from 'vue'
+import { ref, type Ref } from 'vue'
 import { mount } from '@vue/test-utils'
 import AssistantMessage from './AssistantMessage.vue'
 
@@ -8,7 +8,10 @@ import AssistantMessage from './AssistantMessage.vue'
 // prueba en aislamiento en lib/useSmoothText.test.ts. Aca lo mockeamos para
 // verificar solo el contrato de render del componente: que pinta `visible`
 // (texto parcial) durante la escritura y hace swap a Markdown cuando `done`.
-const smooth = vi.hoisted(() => ({ visible: null as any, done: null as any }))
+const smooth = vi.hoisted(() => ({
+  visible: null as unknown as Ref<string>,
+  done: null as unknown as Ref<boolean>,
+}))
 vi.mock('../lib/useSmoothText', () => ({
   useSmoothText: () => ({ visible: smooth.visible, done: smooth.done }),
 }))
@@ -24,7 +27,14 @@ describe('AssistantMessage', () => {
     smooth.done.value = false
 
     const wrapper = mount(AssistantMessage, {
-      props: { item: { kind: 'assistant', id: 'a1', text: '**Hola**', streaming: true } },
+      props: {
+        item: {
+          kind: 'assistant',
+          id: 'a1',
+          text: '**Hola**',
+          streaming: true,
+        },
+      },
     })
 
     // Pinta el parcial revelado, no el texto completo del store.
@@ -38,7 +48,9 @@ describe('AssistantMessage', () => {
     smooth.done.value = true
 
     const wrapper = mount(AssistantMessage, {
-      props: { item: { kind: 'assistant', id: 'a1', text: '**x**', streaming: false } },
+      props: {
+        item: { kind: 'assistant', id: 'a1', text: '**x**', streaming: false },
+      },
     })
 
     expect(wrapper.html()).toContain('<strong>x</strong>')

@@ -44,7 +44,9 @@ function mountPick(pick: (i: TurnItem) => string) {
 // dentro de `items`, no la referencia cruda recien pusheada.
 describe('chat store: reactividad del streaming', () => {
   it('re-renderiza el texto del asistente al llegar un Text.Delta en streaming', async () => {
-    const { store, wrapper } = mountPick((i) => (i.kind === 'assistant' ? i.text : ''))
+    const { store, wrapper } = mountPick((i) =>
+      i.kind === 'assistant' ? i.text : '',
+    )
 
     store.applyEvent({ Kind: 'Text.Started' })
     await nextTick()
@@ -57,7 +59,9 @@ describe('chat store: reactividad del streaming', () => {
 
   it('re-renderiza el pensamiento al llegar un Reasoning.Delta en streaming', async () => {
     // Ejercita el camino startReasoning: un fix parcial solo de startAssistant fallaria aqui.
-    const { store, wrapper } = mountPick((i) => (i.kind === 'reasoning' ? i.text : ''))
+    const { store, wrapper } = mountPick((i) =>
+      i.kind === 'reasoning' ? i.text : '',
+    )
 
     store.applyEvent({ Kind: 'Reasoning.Started' })
     await nextTick()
@@ -70,7 +74,9 @@ describe('chat store: reactividad del streaming', () => {
 
   it('re-renderiza la tool al resolverse con Tool.Success', async () => {
     // Ejercita la rama Tool.Called, que guarda el item en un Map por CallID.
-    const { store, wrapper } = mountPick((i) => (i.kind === 'tool' ? `${i.status}:${i.output}` : ''))
+    const { store, wrapper } = mountPick((i) =>
+      i.kind === 'tool' ? `${i.status}:${i.output}` : '',
+    )
 
     store.applyEvent({ Kind: 'Tool.Called', CallID: 'c1', ToolName: 'echo' })
     await nextTick()

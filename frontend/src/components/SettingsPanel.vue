@@ -2,7 +2,13 @@
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import gsap from 'gsap'
 import { Flip } from 'gsap/Flip'
-import { PhX, PhGear, PhPlugs, PhSparkle, PhArrowLeft } from '@phosphor-icons/vue'
+import {
+  PhX,
+  PhGear,
+  PhPlugs,
+  PhSparkle,
+  PhArrowLeft,
+} from '@phosphor-icons/vue'
 import { mcpCatalog, mcpIcon } from '../lib/mcps'
 import McpCard from './McpCard.vue'
 import { prefersReducedMotion } from '../lib/motion'
@@ -29,7 +35,9 @@ const active = ref<TabId>('general')
 // spans the full width and the title moves up and grows. The transition is a
 // GSAP Flip on the shared image and title (matched by data-flip-id).
 const selectedId = ref<string | null>(null)
-const selected = computed(() => mcpCatalog.find((entry) => entry.id === selectedId.value) ?? null)
+const selected = computed(
+  () => mcpCatalog.find((entry) => entry.id === selectedId.value) ?? null,
+)
 
 // Records the shared image/title, applies the state change, then Flips from the
 // recorded layout to the new one. This is a shared-element morph (the same idea
@@ -114,7 +122,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
         role="tab"
         :aria-selected="active === tab.id ? 'true' : 'false'"
         class="flex items-center gap-2 rounded-full px-4 py-2.5 text-left text-sm transition"
-        :class="active === tab.id ? 'bg-black/[0.06] font-medium' : 'hover:bg-black/[0.04]'"
+        :class="
+          active === tab.id
+            ? 'bg-black/[0.06] font-medium'
+            : 'hover:bg-black/[0.04]'
+        "
         @click="selectTab(tab.id)"
       >
         <component :is="tab.icon" :size="18" weight="regular" />
@@ -136,7 +148,9 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       <div class="mx-auto w-full max-w-3xl px-8 py-10">
         <template v-if="active === 'general'">
           <h2 class="text-lg tracking-tight">General</h2>
-          <p class="mt-3 text-sm opacity-50">Preferencias generales coming soon.</p>
+          <p class="mt-3 text-sm opacity-50">
+            Preferencias generales coming soon.
+          </p>
         </template>
 
         <template v-else-if="active === 'mcps'">
@@ -166,7 +180,9 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
               class="relative mt-5 aspect-[16/9] w-full rounded-soft object-cover"
             />
 
-            <p class="mt-5 text-sm leading-relaxed opacity-70">{{ selected.description }}</p>
+            <p class="mt-5 text-sm leading-relaxed opacity-70">
+              {{ selected.description }}
+            </p>
           </div>
 
           <!-- List sub-view. -->

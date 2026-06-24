@@ -51,7 +51,10 @@ describe('ChatView', () => {
 
     const sessionChannel = vi.mocked(EventsOn).mock.calls[0][0]
     expect(sessionChannel).toMatch(/^session:chat-/)
-    expect(EventsOn).toHaveBeenCalledWith(`${sessionChannel}:error`, expect.any(Function))
+    expect(EventsOn).toHaveBeenCalledWith(
+      `${sessionChannel}:error`,
+      expect.any(Function),
+    )
   })
 
   it('carga el historial de sesiones al montar para poblar la sidebar', () => {
@@ -110,7 +113,9 @@ describe('ChatView', () => {
     const wrapper = mountView()
     await wrapper.find('button[aria-label="Open settings"]').trigger('click')
 
-    await wrapper.find('button[aria-label="Cerrar configuracion"]').trigger('click')
+    await wrapper
+      .find('button[aria-label="Cerrar configuracion"]')
+      .trigger('click')
 
     expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
   })
@@ -221,7 +226,9 @@ describe('ChatView', () => {
 
     // Minimizado: el overlay desaparece y la tarjeta vive dentro de MessageList.
     expect(wrapper.findComponent(PlanView).exists()).toBe(false)
-    expect(wrapper.findComponent(MessageList).findComponent(PlanCard).exists()).toBe(true)
+    expect(
+      wrapper.findComponent(MessageList).findComponent(PlanCard).exists(),
+    ).toBe(true)
   })
 
   it('minimizar desde el overlay (PlanView emite minimize) colapsa a la tarjeta', async () => {

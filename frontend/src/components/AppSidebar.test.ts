@@ -69,8 +69,12 @@ describe('AppSidebar', () => {
       ],
       activeSessionId: 's2',
     })
-    expect(wrapper.find('[data-session-id="s1"]').attributes('aria-current')).toBeFalsy()
-    expect(wrapper.find('[data-session-id="s2"]').attributes('aria-current')).toBe('true')
+    expect(
+      wrapper.find('[data-session-id="s1"]').attributes('aria-current'),
+    ).toBeFalsy()
+    expect(
+      wrapper.find('[data-session-id="s2"]').attributes('aria-current'),
+    ).toBe('true')
   })
 
   it('sin sesiones no renderiza ninguna fila', () => {

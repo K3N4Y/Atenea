@@ -22,7 +22,9 @@ const title = computed(() => props.plan.title || 'Plan')
     @click="emit('expand')"
   >
     <PhClipboardText :size="18" weight="regular" class="shrink-0 opacity-70" />
-    <span class="min-w-0 flex-1 truncate text-left font-medium">{{ title }}</span>
+    <span class="min-w-0 flex-1 truncate text-left font-medium">{{
+      title
+    }}</span>
     <span class="flex shrink-0 items-center gap-1.5 opacity-70">
       <PhArrowsOutSimple :size="16" weight="regular" />
       Expandir

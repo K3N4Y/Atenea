@@ -36,7 +36,9 @@ describe('ChatComposer', () => {
     await wrapper.find('textarea').trigger('keydown', { key: 'Enter' })
 
     expect(wrapper.emitted('send')).toBeUndefined()
-    expect(wrapper.find('button[aria-label="Send"]').attributes('disabled')).toBeDefined()
+    expect(
+      wrapper.find('button[aria-label="Send"]').attributes('disabled'),
+    ).toBeDefined()
   })
 
   it('running: anuncia el estado (role=status) y emite stop al click', async () => {
@@ -57,19 +59,27 @@ describe('ChatComposer', () => {
   })
 
   it('mode=plan: el toggle refleja aria-pressed=true', () => {
-    const wrapper = mount(ChatComposer, { props: { running: false, mode: 'plan' } })
+    const wrapper = mount(ChatComposer, {
+      props: { running: false, mode: 'plan' },
+    })
 
-    expect(wrapper.get('[data-action="toggle-mode"]').attributes('aria-pressed')).toBe('true')
+    expect(
+      wrapper.get('[data-action="toggle-mode"]').attributes('aria-pressed'),
+    ).toBe('true')
   })
 
   it('sin prop mode (default normal): el toggle expone aria-pressed=false', () => {
     const wrapper = mount(ChatComposer, { props: { running: false } })
 
-    expect(wrapper.get('[data-action="toggle-mode"]').attributes('aria-pressed')).toBe('false')
+    expect(
+      wrapper.get('[data-action="toggle-mode"]').attributes('aria-pressed'),
+    ).toBe('false')
   })
 
   it('el toggle de modo sigue activo durante una ejecucion (running=true): el usuario puede cambiar a plan mientras corre', async () => {
-    const wrapper = mount(ChatComposer, { props: { running: true, mode: 'normal' } })
+    const wrapper = mount(ChatComposer, {
+      props: { running: true, mode: 'normal' },
+    })
 
     const toggle = wrapper.get('[data-action="toggle-mode"]')
     expect(toggle.attributes('disabled')).toBeUndefined()

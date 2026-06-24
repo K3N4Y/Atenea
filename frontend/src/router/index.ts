@@ -5,9 +5,7 @@ import ChatView from '../views/ChatView.vue'
 // servida por HTTP, asi que evitamos depender del fallback de rutas del server.
 const router = createRouter({
   history: createWebHashHistory(),
-  routes: [
-    { path: '/', name: 'chat', component: ChatView },
-  ],
+  routes: [{ path: '/', name: 'chat', component: ChatView }],
 })
 
 export default router

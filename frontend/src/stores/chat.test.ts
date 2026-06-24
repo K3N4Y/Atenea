@@ -12,6 +12,7 @@ vi.mock('../../wailsjs/go/main/App', () => ({
   ListSessions: vi.fn(() => Promise.resolve([])),
   SessionHistory: vi.fn(() => Promise.resolve([])),
   DeleteSession: vi.fn(() => Promise.resolve()),
+  Model: vi.fn(() => Promise.resolve('anthropic/claude-opus-4.8')),
 }))
 vi.mock('../../wailsjs/runtime/runtime', () => ({
   EventsOn: vi.fn(() => () => {}),
@@ -35,7 +36,11 @@ describe('chat store: texto de la IA (Text.*)', () => {
     store.applyEvent({ Kind: 'Text.Delta', Text: ' mundo' })
 
     expect(store.items).toHaveLength(1)
-    expect(store.items[0]).toMatchObject({ kind: 'assistant', text: 'Hola mundo', streaming: true })
+    expect(store.items[0]).toMatchObject({
+      kind: 'assistant',
+      text: 'Hola mundo',
+      streaming: true,
+    })
 
     store.applyEvent({ Kind: 'Text.Ended', Text: 'Hola mundo' })
 
@@ -54,7 +59,10 @@ describe('chat store: texto de la IA (Text.*)', () => {
     store.applyEvent({ Kind: 'Text.Delta', Text: 'sin started' })
 
     expect(store.items).toHaveLength(1)
-    expect(store.items[0]).toMatchObject({ kind: 'assistant', text: 'sin started' })
+    expect(store.items[0]).toMatchObject({
+      kind: 'assistant',
+      text: 'sin started',
+    })
   })
 })
 
@@ -73,7 +81,11 @@ describe('chat store: prompt del usuario', () => {
 
     store.applyEvent({ Kind: 'Text.Started' })
     store.applyEvent({ Kind: 'Text.Delta', Text: 'x' })
-    store.applyEvent({ Kind: 'Text.Ended', Text: 'x', Message: { Role: 'assistant', Text: 'x' } })
+    store.applyEvent({
+      Kind: 'Text.Ended',
+      Text: 'x',
+      Message: { Role: 'assistant', Text: 'x' },
+    })
 
     expect(store.items).toHaveLength(1)
     expect(store.items[0].kind).toBe('assistant')
@@ -110,7 +122,11 @@ describe('chat store: pensamiento (Reasoning.*)', () => {
     store.applyEvent({ Kind: 'Reasoning.Delta', Text: 'fragmento' })
 
     expect(store.items).toHaveLength(1)
-    expect(store.items[0]).toMatchObject({ kind: 'reasoning', text: 'fragmento', streaming: true })
+    expect(store.items[0]).toMatchObject({
+      kind: 'reasoning',
+      text: 'fragmento',
+      streaming: true,
+    })
   })
 })
 
@@ -118,12 +134,27 @@ describe('chat store: herramientas (Tool.*)', () => {
   it('Tool.Called crea un item en ejecucion y Tool.Success lo completa', () => {
     const store = useChatStore()
 
-    store.applyEvent({ Kind: 'Tool.Called', CallID: 'c1', ToolName: 'echo', Input: { text: 'hi' } })
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      CallID: 'c1',
+      ToolName: 'echo',
+      Input: { text: 'hi' },
+    })
 
     expect(store.items).toHaveLength(1)
-    expect(store.items[0]).toMatchObject({ kind: 'tool', callID: 'c1', name: 'echo', status: 'running' })
+    expect(store.items[0]).toMatchObject({
+      kind: 'tool',
+      callID: 'c1',
+      name: 'echo',
+      status: 'running',
+    })
 
-    store.applyEvent({ Kind: 'Tool.Success', CallID: 'c1', ToolName: 'echo', Text: 'hi' })
+    store.applyEvent({
+      Kind: 'Tool.Success',
+      CallID: 'c1',
+      ToolName: 'echo',
+      Text: 'hi',
+    })
 
     const item = store.items[0]
     if (item.kind === 'tool') {
@@ -132,11 +163,42 @@ describe('chat store: herramientas (Tool.*)', () => {
     }
   })
 
+  it('Tool.Success con Diff puebla item.diff (edit/write); sin Diff queda vacio', () => {
+    const store = useChatStore()
+
+    store.applyEvent({ Kind: 'Tool.Called', CallID: 'e1', ToolName: 'edit', Input: {} })
+    store.applyEvent({
+      Kind: 'Tool.Success',
+      CallID: 'e1',
+      ToolName: 'edit',
+      Text: '[foo.go#ab12]',
+      Diff: '--- a/foo.go\n+++ b/foo.go\n@@ -1 +1 @@\n-a\n+b\n',
+    })
+
+    const edited = store.items[0]
+    if (edited.kind === 'tool') {
+      expect(edited.diff).toContain('+++ b/foo.go')
+    }
+
+    // Una tool sin diff (bash/echo) deja item.diff vacio.
+    store.applyEvent({ Kind: 'Tool.Called', CallID: 'b1', ToolName: 'echo' })
+    store.applyEvent({ Kind: 'Tool.Success', CallID: 'b1', ToolName: 'echo', Text: 'ok' })
+    const bashed = store.items[1]
+    if (bashed.kind === 'tool') {
+      expect(bashed.diff).toBe('')
+    }
+  })
+
   it('Tool.Failed marca el item como fallido con su causa', () => {
     const store = useChatStore()
 
     store.applyEvent({ Kind: 'Tool.Called', CallID: 'c2', ToolName: 'echo' })
-    store.applyEvent({ Kind: 'Tool.Failed', CallID: 'c2', ToolName: 'echo', Error: 'boom' })
+    store.applyEvent({
+      Kind: 'Tool.Failed',
+      CallID: 'c2',
+      ToolName: 'echo',
+      Error: 'boom',
+    })
 
     const item = store.items[0]
     expect(item.kind).toBe('tool')
@@ -159,8 +221,17 @@ describe('chat store: tool permission (ask-before-run)', () => {
   it('Tool.Permission.Requested leaves the tool item pending approval', () => {
     const store = useChatStore()
 
-    store.applyEvent({ Kind: 'Tool.Called', CallID: 'c1', ToolName: 'bash', Input: { command: 'ls' } })
-    store.applyEvent({ Kind: 'Tool.Permission.Requested', CallID: 'c1', ToolName: 'bash' })
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      CallID: 'c1',
+      ToolName: 'bash',
+      Input: { command: 'ls' },
+    })
+    store.applyEvent({
+      Kind: 'Tool.Permission.Requested',
+      CallID: 'c1',
+      ToolName: 'bash',
+    })
 
     const item = store.items[0]
     expect(item.kind).toBe('tool')
@@ -173,11 +244,24 @@ describe('chat store: tool permission (ask-before-run)', () => {
     const store = useChatStore()
     const sessionID = store.sessionID
 
-    store.applyEvent({ Kind: 'Tool.Called', CallID: 'c1', ToolName: 'bash', Input: { command: 'ls' } })
-    store.applyEvent({ Kind: 'Tool.Permission.Requested', CallID: 'c1', ToolName: 'bash' })
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      CallID: 'c1',
+      ToolName: 'bash',
+      Input: { command: 'ls' },
+    })
+    store.applyEvent({
+      Kind: 'Tool.Permission.Requested',
+      CallID: 'c1',
+      ToolName: 'bash',
+    })
     store.approveTool('c1')
 
-    expect(App.ResolveToolPermission).toHaveBeenCalledWith(sessionID, 'c1', true)
+    expect(App.ResolveToolPermission).toHaveBeenCalledWith(
+      sessionID,
+      'c1',
+      true,
+    )
     const item = store.items[0]
     if (item.kind === 'tool') {
       expect(item.status).toBe('running')
@@ -188,11 +272,24 @@ describe('chat store: tool permission (ask-before-run)', () => {
     const store = useChatStore()
     const sessionID = store.sessionID
 
-    store.applyEvent({ Kind: 'Tool.Called', CallID: 'c1', ToolName: 'bash', Input: { command: 'rm -rf /' } })
-    store.applyEvent({ Kind: 'Tool.Permission.Requested', CallID: 'c1', ToolName: 'bash' })
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      CallID: 'c1',
+      ToolName: 'bash',
+      Input: { command: 'rm -rf /' },
+    })
+    store.applyEvent({
+      Kind: 'Tool.Permission.Requested',
+      CallID: 'c1',
+      ToolName: 'bash',
+    })
     store.denyTool('c1')
 
-    expect(App.ResolveToolPermission).toHaveBeenCalledWith(sessionID, 'c1', false)
+    expect(App.ResolveToolPermission).toHaveBeenCalledWith(
+      sessionID,
+      'c1',
+      false,
+    )
     // The item leaves 'pending' (stops offering the buttons); the backend's
     // Tool.Failed confirms the final state.
     const item = store.items[0]
@@ -204,8 +301,17 @@ describe('chat store: tool permission (ask-before-run)', () => {
   it('a Tool.Success after approval completes the item', () => {
     const store = useChatStore()
 
-    store.applyEvent({ Kind: 'Tool.Called', CallID: 'c1', ToolName: 'bash', Input: { command: 'ls' } })
-    store.applyEvent({ Kind: 'Tool.Permission.Requested', CallID: 'c1', ToolName: 'bash' })
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      CallID: 'c1',
+      ToolName: 'bash',
+      Input: { command: 'ls' },
+    })
+    store.applyEvent({
+      Kind: 'Tool.Permission.Requested',
+      CallID: 'c1',
+      ToolName: 'bash',
+    })
     store.approveTool('c1')
     store.applyEvent({ Kind: 'Tool.Success', CallID: 'c1', Text: 'file.txt' })
 
@@ -285,11 +391,16 @@ describe('chat store: historial de sesiones (sidebar)', () => {
 
     // El ultimo par de suscripciones apunta al canal de s7.
     expect(EventsOn).toHaveBeenCalledWith('session:s7', expect.any(Function))
-    expect(EventsOn).toHaveBeenCalledWith('session:s7:error', expect.any(Function))
+    expect(EventsOn).toHaveBeenCalledWith(
+      'session:s7:error',
+      expect.any(Function),
+    )
   })
 
   it('send refresca la lista de sesiones para que la conversacion nueva aparezca', async () => {
-    vi.mocked(App.ListSessions).mockResolvedValue([{ ID: 'x', Title: 'hola' }] as never)
+    vi.mocked(App.ListSessions).mockResolvedValue([
+      { ID: 'x', Title: 'hola' },
+    ] as never)
     const store = useChatStore()
 
     await store.send('hola')
@@ -359,7 +470,12 @@ describe('chat store: rehidratacion del plan', () => {
     // AcceptPlan promueve un prompt de usuario ("implementa..."); solicitar cambio
     // promueve el feedback. En ambos casos, un mensaje de usuario DESPUES del
     // present_plan significa que el plan ya fue accionado: no debe reabrirse.
-    store.applyEvent({ Message: { Role: 'user', Text: 'El plan fue aprobado. Implementalo ahora.' } })
+    store.applyEvent({
+      Message: {
+        Role: 'user',
+        Text: 'El plan fue aprobado. Implementalo ahora.',
+      },
+    })
 
     expect(store.plan).toBeNull()
   })
@@ -382,7 +498,12 @@ describe('chat store: rehidratacion del plan', () => {
     const store = useChatStore()
     vi.mocked(App.SessionHistory).mockResolvedValueOnce([
       { Message: { Role: 'user', Text: 'planea X' } },
-      { Kind: 'Tool.Called', ToolName: 'present_plan', CallID: 'c1', Input: { title: 'T', plan: 'v1' } },
+      {
+        Kind: 'Tool.Called',
+        ToolName: 'present_plan',
+        CallID: 'c1',
+        Input: { title: 'T', plan: 'v1' },
+      },
       { Message: { Role: 'user', Text: 'implementa el plan' } },
     ] as never)
 
@@ -395,7 +516,12 @@ describe('chat store: rehidratacion del plan', () => {
     const store = useChatStore()
     vi.mocked(App.SessionHistory).mockResolvedValueOnce([
       { Message: { Role: 'user', Text: 'planea X' } },
-      { Kind: 'Tool.Called', ToolName: 'present_plan', CallID: 'c1', Input: { title: 'T', plan: 'v1' } },
+      {
+        Kind: 'Tool.Called',
+        ToolName: 'present_plan',
+        CallID: 'c1',
+        Input: { title: 'T', plan: 'v1' },
+      },
     ] as never)
 
     await store.loadSession('s1')
@@ -415,7 +541,12 @@ describe('chat store: flujo continuo y ordenado entre tipos', () => {
     store.applyEvent({ Kind: 'Text.Ended', Text: 'pong' })
     store.applyEvent({ Kind: 'Tool.Called', CallID: 'c1', ToolName: 'echo' })
 
-    expect(store.items.map((i) => i.kind)).toEqual(['user', 'reasoning', 'assistant', 'tool'])
+    expect(store.items.map((i) => i.kind)).toEqual([
+      'user',
+      'reasoning',
+      'assistant',
+      'tool',
+    ])
   })
 })
 
@@ -505,8 +636,14 @@ describe('chat store: acciones sobre los bindings', () => {
 
     store.subscribe()
 
-    expect(EventsOn).toHaveBeenCalledWith(`session:${sessionID}`, expect.any(Function))
-    expect(EventsOn).toHaveBeenCalledWith(`session:${sessionID}:error`, expect.any(Function))
+    expect(EventsOn).toHaveBeenCalledWith(
+      `session:${sessionID}`,
+      expect.any(Function),
+    )
+    expect(EventsOn).toHaveBeenCalledWith(
+      `session:${sessionID}:error`,
+      expect.any(Function),
+    )
   })
 
   it('reset limpia el log, las herramientas y el error para un lienzo nuevo', () => {
@@ -548,8 +685,16 @@ describe('chat store: acciones sobre los bindings', () => {
     const secondSessionID = store.sessionID
 
     expect(secondSessionID).not.toBe(firstSessionID)
-    expect(EventsOn).toHaveBeenNthCalledWith(3, `session:${secondSessionID}`, expect.any(Function))
-    expect(EventsOn).toHaveBeenNthCalledWith(4, `session:${secondSessionID}:error`, expect.any(Function))
+    expect(EventsOn).toHaveBeenNthCalledWith(
+      3,
+      `session:${secondSessionID}`,
+      expect.any(Function),
+    )
+    expect(EventsOn).toHaveBeenNthCalledWith(
+      4,
+      `session:${secondSessionID}:error`,
+      expect.any(Function),
+    )
   })
 })
 
@@ -585,7 +730,11 @@ describe('chat store: modo plan', () => {
       Input: { title: 'T', plan: '# Plan\n- a' },
     })
 
-    expect(store.plan).toEqual({ callID: 'c1', title: 'T', markdown: '# Plan\n- a' })
+    expect(store.plan).toEqual({
+      callID: 'c1',
+      title: 'T',
+      markdown: '# Plan\n- a',
+    })
     expect(store.items).toHaveLength(0)
   })
 
@@ -618,7 +767,10 @@ describe('chat store: modo plan', () => {
 
     await store.requestPlanChange('cambia el paso 2')
 
-    expect(App.SendPlanPrompt).toHaveBeenCalledWith(sessionID, 'cambia el paso 2')
+    expect(App.SendPlanPrompt).toHaveBeenCalledWith(
+      sessionID,
+      'cambia el paso 2',
+    )
     expect(store.plan).toBeNull()
     expect(store.mode).toBe('plan')
   })
@@ -686,7 +838,12 @@ describe('chat store: modo plan (edge cases de usuario)', () => {
   it('present_plan con Input null: degrada a campos vacios sin romper', () => {
     const store = useChatStore()
 
-    store.applyEvent({ Kind: 'Tool.Called', ToolName: 'present_plan', CallID: 'c1', Input: null })
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      ToolName: 'present_plan',
+      CallID: 'c1',
+      Input: null,
+    })
 
     expect(store.plan).toEqual({ callID: 'c1', title: '', markdown: '' })
   })
@@ -755,7 +912,10 @@ describe('chat store: modo plan (edge cases de usuario)', () => {
     await store.send('mejor hablemos de otra cosa')
 
     expect(store.plan).toBeNull()
-    expect(App.SendPrompt).toHaveBeenCalledWith(store.sessionID, 'mejor hablemos de otra cosa')
+    expect(App.SendPrompt).toHaveBeenCalledWith(
+      store.sessionID,
+      'mejor hablemos de otra cosa',
+    )
   })
 
   it('requestPlanChange desde modo normal fuerza el modo plan (un plan que aparecio sin el toggle)', async () => {
@@ -771,7 +931,10 @@ describe('chat store: modo plan (edge cases de usuario)', () => {
     await store.requestPlanChange('reescribe el paso 1')
 
     expect(store.mode).toBe('plan')
-    expect(App.SendPlanPrompt).toHaveBeenCalledWith(store.sessionID, 'reescribe el paso 1')
+    expect(App.SendPlanPrompt).toHaveBeenCalledWith(
+      store.sessionID,
+      'reescribe el paso 1',
+    )
     expect(store.plan).toBeNull()
   })
 
@@ -881,7 +1044,12 @@ describe('chat store: modo plan (edge cases de usuario)', () => {
     expect(store.mode).toBe('plan')
     vi.mocked(App.SessionHistory).mockResolvedValueOnce([
       { Message: { Role: 'user', Text: 'planea X' } },
-      { Kind: 'Tool.Called', ToolName: 'present_plan', CallID: 'c1', Input: { title: 'T', plan: 'v1' } },
+      {
+        Kind: 'Tool.Called',
+        ToolName: 'present_plan',
+        CallID: 'c1',
+        Input: { title: 'T', plan: 'v1' },
+      },
     ] as never)
 
     await store.loadSession('s1')
@@ -891,5 +1059,112 @@ describe('chat store: modo plan (edge cases de usuario)', () => {
     // ...pero clearLog reseteo el modo: el composer mostraria "normal" aun con un
     // plan esperando decision. Pedir un cambio re-sincroniza (requestPlanChange).
     expect(store.mode).toBe('normal')
+  })
+})
+
+// El Usage llega en Step.Ended (input/output/reasoning/cache). El store lo guarda
+// en camelCase para que la UI pinte el contexto usado por modelo, sin costos.
+describe('chat store: uso de tokens (Usage)', () => {
+  it('Step.Ended con Usage llena store.usage', () => {
+    const store = useChatStore()
+
+    store.applyEvent({
+      Kind: 'Step.Ended',
+      Usage: {
+        InputTokens: 1200,
+        OutputTokens: 340,
+        ReasoningTokens: 0,
+        CacheReadTokens: 0,
+        CacheWriteTokens: 0,
+      },
+    })
+
+    expect(store.usage).toMatchObject({ inputTokens: 1200, outputTokens: 340 })
+  })
+
+  it('el ultimo Step.Ended gana', () => {
+    const store = useChatStore()
+
+    store.applyEvent({
+      Kind: 'Step.Ended',
+      Usage: {
+        InputTokens: 1200,
+        OutputTokens: 340,
+        ReasoningTokens: 0,
+        CacheReadTokens: 0,
+        CacheWriteTokens: 0,
+      },
+    })
+    store.applyEvent({
+      Kind: 'Step.Ended',
+      Usage: {
+        InputTokens: 5000,
+        OutputTokens: 800,
+        ReasoningTokens: 0,
+        CacheReadTokens: 0,
+        CacheWriteTokens: 0,
+      },
+    })
+
+    expect(store.usage).toMatchObject({ inputTokens: 5000, outputTokens: 800 })
+  })
+
+  it('clearLog (via reset) resetea usage a null', () => {
+    const store = useChatStore()
+    store.applyEvent({
+      Kind: 'Step.Ended',
+      Usage: {
+        InputTokens: 1200,
+        OutputTokens: 340,
+        ReasoningTokens: 0,
+        CacheReadTokens: 0,
+        CacheWriteTokens: 0,
+      },
+    })
+    expect(store.usage).not.toBeNull()
+
+    store.reset()
+
+    expect(store.usage).toBeNull()
+  })
+
+  it('Step.Ended sin Usage no pisa el usage previo', () => {
+    const store = useChatStore()
+    store.applyEvent({
+      Kind: 'Step.Ended',
+      Usage: {
+        InputTokens: 1200,
+        OutputTokens: 340,
+        ReasoningTokens: 0,
+        CacheReadTokens: 0,
+        CacheWriteTokens: 0,
+      },
+    })
+
+    // Un Step.Ended sin Usage (p. ej. un step sin llamada al modelo) no debe
+    // borrar la ocupacion de contexto ya conocida: el ultimo Usage real se
+    // conserva en vez de quedar en null.
+    store.applyEvent({ Kind: 'Step.Ended' })
+
+    expect(store.usage).toMatchObject({ inputTokens: 1200 })
+  })
+
+  it('loadModel trae el modelo del binding', async () => {
+    const store = useChatStore()
+
+    await store.loadModel()
+
+    expect(store.model).toBe('anthropic/claude-opus-4.8')
+  })
+
+  it('loadModel cae a modelo vacio si el binding falla', async () => {
+    // Sin backend disponible el binding rechaza; loadModel degrada a modelo
+    // vacio para que la barra use la ventana por defecto en vez de romper.
+    vi.mocked(App.Model).mockRejectedValueOnce(new Error('no backend'))
+    const store = useChatStore()
+
+    await store.loadModel()
+
+    expect(store.model).toBe('')
   })
 })

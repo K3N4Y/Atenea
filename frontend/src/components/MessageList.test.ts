@@ -16,8 +16,23 @@ describe('MessageList', () => {
     const items: TurnItem[] = [
       { kind: 'user', id: 'u1', text: 'pregunta' },
       { kind: 'assistant', id: 'a1', text: '**resp**', streaming: false },
-      { kind: 'reasoning', id: 'r1', text: 'idea', streaming: false, durationMs: 3000 },
-      { kind: 'tool', id: 't1', callID: 'c1', name: 'echo', input: {}, status: 'success', output: 'salida', error: null },
+      {
+        kind: 'reasoning',
+        id: 'r1',
+        text: 'idea',
+        streaming: false,
+        durationMs: 3000,
+      },
+      {
+        kind: 'tool',
+        id: 't1',
+        callID: 'c1',
+        name: 'echo',
+        input: {},
+        status: 'success',
+        output: 'salida',
+        error: null,
+      },
     ]
 
     const wrapper = mount(MessageList, { props: { items } })
@@ -47,12 +62,23 @@ describe('MessageList', () => {
     const footer = wrapper.find('[data-test="footer"]')
     expect(footer.exists()).toBe(true)
     // Vive dentro de la region scrolleable (role=log): scrollea con la conversacion.
-    expect(wrapper.get('[role="log"]').find('[data-test="footer"]').exists()).toBe(true)
+    expect(
+      wrapper.get('[role="log"]').find('[data-test="footer"]').exists(),
+    ).toBe(true)
   })
 
   it('forwards approve/deny of a pending tool with its callID', async () => {
     const items: TurnItem[] = [
-      { kind: 'tool', id: 't1', callID: 'c1', name: 'bash', input: { command: 'ls' }, status: 'pending', output: '', error: null },
+      {
+        kind: 'tool',
+        id: 't1',
+        callID: 'c1',
+        name: 'bash',
+        input: { command: 'ls' },
+        status: 'pending',
+        output: '',
+        error: null,
+      },
     ]
 
     const wrapper = mount(MessageList, { props: { items } })

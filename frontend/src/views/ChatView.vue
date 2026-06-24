@@ -8,6 +8,7 @@ import ChatComposer from '../components/ChatComposer.vue'
 import SettingsPanel from '../components/SettingsPanel.vue'
 import PlanView from '../components/PlanView.vue'
 import PlanCard from '../components/PlanCard.vue'
+import ContextUsedBar from '../components/ContextUsedBar.vue'
 import { useChatStore } from '../stores/chat'
 import { useUiStore } from '../stores/ui'
 
@@ -28,6 +29,8 @@ onMounted(() => {
   // chat nuevo vacio (identidad §2, Chat First): NO se auto-carga la ultima
   // sesion; la sidebar es como el usuario vuelve a una conversacion pasada.
   chat.loadSessions()
+  // Trae el modelo activo una vez para dimensionar la barra de contexto.
+  chat.loadModel()
 })
 onUnmounted(() => chat.teardown())
 </script>
@@ -63,17 +66,28 @@ onUnmounted(() => chat.teardown())
           <PhSidebarSimple :size="20" weight="regular" />
         </button>
 
+        <!-- Uso de contexto: alineado a la derecha, antes del engranaje. -->
+        <ContextUsedBar
+          class="ml-auto"
+          :usage="chat.usage"
+          :model="chat.model"
+        />
+
         <button
           type="button"
           aria-label="Open settings"
-          class="ml-auto flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-black/[0.05]"
+          class="ml-2 flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-black/[0.05]"
           @click="settingsOpen = true"
         >
           <PhGear :size="20" weight="regular" />
         </button>
       </header>
 
-      <MessageList :items="chat.items" @approve="chat.approveTool" @deny="chat.denyTool">
+      <MessageList
+        :items="chat.items"
+        @approve="chat.approveTool"
+        @deny="chat.denyTool"
+      >
         <!-- Plan minimizado: tarjeta al final de la conversacion (scrollea con
              ella, como una tool). Expandir reabre el overlay. -->
         <PlanCard

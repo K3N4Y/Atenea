@@ -1,10 +1,23 @@
 <script lang="ts" setup>
 import { computed } from 'vue'
-import { PhFile, PhCircleNotch, PhCheck, PhX, PhWarning } from '@phosphor-icons/vue'
+import {
+  PhFile,
+  PhCircleNotch,
+  PhCheck,
+  PhX,
+  PhWarning,
+} from '@phosphor-icons/vue'
 import type { ToolItem } from '../stores/chat'
 import { basename } from '../lib/path'
+import DiffView from './DiffView.vue'
 
 const props = defineProps<{ item: ToolItem }>()
+
+// edit/write traen un diff unificado (solo-UI): se renderiza coloreado con
+// DiffView en vez del output plano. Sin diff (sesiones viejas, bash) cae al <pre>.
+const isDiff = computed(
+  () => (props.item.name === 'edit' || props.item.name === 'write') && !!props.item.diff,
+)
 
 // approve/deny carry the callID up (MessageList -> ChatView -> store): the
 // component stays presentational, without touching the store.
@@ -20,7 +33,9 @@ function inputPath(input: unknown): string {
   return typeof v === 'string' ? v : ''
 }
 const fileName = computed(() => basename(inputPath(props.item.input)))
-const readLabel = computed(() => (props.item.status === 'running' ? 'Reading' : 'Read'))
+const readLabel = computed(() =>
+  props.item.status === 'running' ? 'Reading' : 'Read',
+)
 
 // Command the model wants to run (bash): shown next to the permission buttons
 // so the user knows what they are approving.
@@ -49,8 +64,18 @@ const isPending = computed(() => props.item.status === 'pending')
         weight="bold"
         class="animate-spin text-accent"
       />
-      <PhWarning v-else-if="isPending" :size="16" weight="bold" class="text-accent" />
-      <PhCheck v-else-if="item.status === 'success'" :size="16" weight="bold" class="opacity-50" />
+      <PhWarning
+        v-else-if="isPending"
+        :size="16"
+        weight="bold"
+        class="text-accent"
+      />
+      <PhCheck
+        v-else-if="item.status === 'success'"
+        :size="16"
+        weight="bold"
+        class="opacity-50"
+      />
       <PhX v-else :size="16" weight="bold" class="text-accent" />
       <span class="font-medium">{{ item.name || 'tool' }}</span>
       <span class="opacity-50">{{ item.status }}</span>
@@ -61,7 +86,8 @@ const isPending = computed(() => props.item.status === 'pending')
       <pre
         v-if="command"
         class="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-xs opacity-80"
-      >{{ command }}</pre>
+        >{{ command }}</pre
+      >
       <div class="mt-3 flex gap-2">
         <button
           type="button"
@@ -82,10 +108,12 @@ const isPending = computed(() => props.item.status === 'pending')
       </div>
     </template>
 
+    <DiffView v-if="isDiff" :diff="item.diff" class="mt-2" />
     <pre
-      v-if="item.output"
+      v-else-if="item.output"
       class="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-xs opacity-80"
-    >{{ item.output }}</pre>
+      >{{ item.output }}</pre
+    >
     <p v-if="item.error" class="mt-2 text-xs text-accent">{{ item.error }}</p>
   </div>
 </template>

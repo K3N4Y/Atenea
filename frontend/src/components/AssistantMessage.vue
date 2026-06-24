@@ -19,7 +19,9 @@ const { visible, done } = useSmoothText(
 <template>
   <div class="w-full">
     <template v-if="!done">
-      <span class="whitespace-pre-wrap break-words leading-relaxed">{{ visible }}</span>
+      <span class="whitespace-pre-wrap break-words leading-relaxed">{{
+        visible
+      }}</span>
       <span
         class="ml-0.5 inline-block h-[1.05em] w-[2px] animate-pulse bg-accent align-middle"
         aria-hidden="true"

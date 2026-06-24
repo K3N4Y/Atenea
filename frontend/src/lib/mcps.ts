@@ -25,35 +25,40 @@ export const mcpCatalog: McpEntry[] = [
   {
     id: 'github',
     name: 'GitHub',
-    description: 'Lee y gestiona repositorios, issues y pull requests sin salir del chat.',
+    description:
+      'Lee y gestiona repositorios, issues y pull requests sin salir del chat.',
     accent: '#1c1c1a',
     image: githubImage,
   },
   {
     id: 'filesystem',
     name: 'Filesystem',
-    description: 'Explora y edita archivos locales con permisos acotados a una carpeta.',
+    description:
+      'Explora y edita archivos locales con permisos acotados a una carpeta.',
     accent: '#f97316',
     image: githubImage,
   },
   {
     id: 'postgres',
     name: 'PostgreSQL',
-    description: 'Consulta bases de datos en lenguaje natural y revisa esquemas al vuelo.',
+    description:
+      'Consulta bases de datos en lenguaje natural y revisa esquemas al vuelo.',
     accent: '#2f6f9f',
     image: githubImage,
   },
   {
     id: 'slack',
     name: 'Slack',
-    description: 'Busca conversaciones, resume canales y envia mensajes a tu equipo.',
+    description:
+      'Busca conversaciones, resume canales y envia mensajes a tu equipo.',
     accent: '#5b3d5b',
     image: githubImage,
   },
   {
     id: 'puppeteer',
     name: 'Puppeteer',
-    description: 'Automatiza el navegador para abrir paginas, capturar pantallas y extraer datos.',
+    description:
+      'Automatiza el navegador para abrir paginas, capturar pantallas y extraer datos.',
     accent: '#3a7d44',
     image: githubImage,
   },

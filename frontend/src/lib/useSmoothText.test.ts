@@ -50,7 +50,13 @@ describe('useSmoothText', () => {
     const producing = ref(true)
     const clock = manualClock()
     const scope = effectScope()
-    const out = scope.run(() => useSmoothText(() => text.value, () => producing.value, clock.scheduler))!
+    const out = scope.run(() =>
+      useSmoothText(
+        () => text.value,
+        () => producing.value,
+        clock.scheduler,
+      ),
+    )!
 
     expect(out.visible.value).toBe('') // producing al montar: arranca vacio
 
@@ -73,7 +79,13 @@ describe('useSmoothText', () => {
     const producing = ref(true)
     const clock = manualClock()
     const scope = effectScope()
-    const out = scope.run(() => useSmoothText(() => text.value, () => producing.value, clock.scheduler))!
+    const out = scope.run(() =>
+      useSmoothText(
+        () => text.value,
+        () => producing.value,
+        clock.scheduler,
+      ),
+    )!
 
     text.value = 'abcdefghij' // 10 chars
     clock.tick(16) // revela algunos, no todos

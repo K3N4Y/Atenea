@@ -39,7 +39,9 @@ export function useSmoothText(
   // done: el backend termino Y ya revelamos todo. Hasta entonces seguimos
   // mostrando el texto plano con caret; recien aca el componente hace swap a
   // Markdown / colapsa el thinking.
-  const done = computed(() => !producing() && revealed.value >= fullText().length)
+  const done = computed(
+    () => !producing() && revealed.value >= fullText().length,
+  )
 
   let handle: unknown = null
   let last = 0
@@ -49,7 +51,8 @@ export function useSmoothText(
     const step = revealStep(remaining, t - last)
     last = t
     if (step > 0) revealed.value += step
-    handle = revealed.value < fullText().length ? scheduler.schedule(frame) : null
+    handle =
+      revealed.value < fullText().length ? scheduler.schedule(frame) : null
   }
 
   // Arranca el loop si hay texto pendiente y no esta corriendo. No hace

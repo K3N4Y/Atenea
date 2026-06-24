@@ -9,6 +9,7 @@ import {
   ListSessions,
   SessionHistory,
   DeleteSession,
+  Model,
 } from '../../wailsjs/go/main/App'
 import { EventsOn } from '../../wailsjs/runtime/runtime'
 
@@ -57,6 +58,8 @@ export interface ToolItem {
   status: ToolStatus
   output: string
   error: string | null
+  // diff unificado solo-UI de edit/write (vacio en el resto); lo renderiza DiffView.
+  diff: string
 }
 
 // El log es una secuencia plana y ordenada de items de distinto tipo, que se
@@ -84,12 +87,23 @@ function planFromInput(callID: string, input: unknown): PlanState {
       obj = {}
     }
   }
-  const o = obj && typeof obj === 'object' ? (obj as Record<string, unknown>) : {}
+  const o =
+    obj && typeof obj === 'object' ? (obj as Record<string, unknown>) : {}
   return {
     callID,
     title: typeof o.title === 'string' ? o.title : '',
     markdown: typeof o.plan === 'string' ? o.plan : '',
   }
+}
+
+// Uso de tokens de la sesion (ocupacion de contexto). camelCase para la UI; el
+// backend lo emite en PascalCase dentro de Step.Ended. Solo tokens, sin costos.
+export interface Usage {
+  inputTokens: number
+  outputTokens: number
+  reasoningTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
 }
 
 // Forma del evento durable serializado por Wails (campos PascalCase, sin json
@@ -101,7 +115,15 @@ export interface SessionEvent {
   CallID?: string
   ToolName?: string
   Input?: unknown
+  Diff?: string
   Message?: { Role?: string; Text?: string }
+  Usage?: {
+    InputTokens: number
+    OutputTokens: number
+    ReasoningTokens: number
+    CacheReadTokens: number
+    CacheWriteTokens: number
+  }
 }
 
 // Resumen de una sesion para el historial de la sidebar (espejo de
@@ -125,6 +147,10 @@ export const useChatStore = defineStore('chat', () => {
   // present_plan abre a pantalla completa (null = sin overlay de plan).
   const mode = ref<'normal' | 'plan'>('normal')
   const plan = ref<PlanState | null>(null)
+  // Uso de tokens del ultimo Step.Ended (ocupacion de contexto actual) y modelo
+  // activo. La UI los combina para pintar la barra de contexto por modelo.
+  const usage = ref<Usage | null>(null)
+  const model = ref('')
   // planExpanded controla como se ve el plan vigente: expandido (overlay sobre la
   // columna del chat) o minimizado (tarjeta en el flujo de la conversacion, como
   // una tool). Cada present_plan reabre expandido; el usuario lo colapsa/expande.
@@ -154,7 +180,12 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function startAssistant(): AssistantItem {
-    const item: AssistantItem = { kind: 'assistant', id: nextId(), text: '', streaming: true }
+    const item: AssistantItem = {
+      kind: 'assistant',
+      id: nextId(),
+      text: '',
+      streaming: true,
+    }
     return (streamingText = pushItem(item))
   }
 
@@ -217,6 +248,7 @@ export const useChatStore = defineStore('chat', () => {
           status: 'running',
           output: '',
           error: null,
+          diff: '',
         }
         const stored = pushItem(item)
         if (stored.callID) toolsByCall.set(stored.callID, stored)
@@ -234,6 +266,7 @@ export const useChatStore = defineStore('chat', () => {
         if (item) {
           item.status = 'success'
           item.output = ev.Text ?? ''
+          item.diff = ev.Diff ?? ''
         }
         break
       }
@@ -247,6 +280,17 @@ export const useChatStore = defineStore('chat', () => {
       }
       case 'Step.Ended':
         running.value = false
+        // usage = ultimo Step.Ended (ocupacion de contexto actual): cada step
+        // reporta el total acumulado, asi que el mas reciente gana.
+        if (ev.Usage) {
+          usage.value = {
+            inputTokens: ev.Usage.InputTokens,
+            outputTokens: ev.Usage.OutputTokens,
+            reasoningTokens: ev.Usage.ReasoningTokens,
+            cacheReadTokens: ev.Usage.CacheReadTokens,
+            cacheWriteTokens: ev.Usage.CacheWriteTokens,
+          }
+        }
         break
       case 'Step.Failed':
         running.value = false
@@ -256,7 +300,11 @@ export const useChatStore = defineStore('chat', () => {
 
     // El prompt del usuario se promueve como Message{Role:user} (Kind vacio).
     if (ev.Message && ev.Message.Role === 'user') {
-      items.value.push({ kind: 'user', id: nextId(), text: ev.Message.Text ?? '' })
+      items.value.push({
+        kind: 'user',
+        id: nextId(),
+        text: ev.Message.Text ?? '',
+      })
       // Un mensaje de usuario despues de present_plan significa que el plan ya fue
       // accionado (AcceptPlan promueve "implementa..."; solicitar cambio promueve el
       // feedback). Cerrar el plan aqui evita que la rehidratacion (loadSession) reabra
@@ -292,6 +340,9 @@ export const useChatStore = defineStore('chat', () => {
     plan.value = null
     planExpanded.value = true
     mode.value = 'normal'
+    // Un lienzo nuevo/cargado no arrastra el uso de tokens de la sesion previa.
+    // model NO se resetea: es global del proceso, no por sesion.
+    usage.value = null
   }
 
   // Lienzo nuevo: abre una sesion vacia y limpia la vista local. La fuente de
@@ -308,6 +359,18 @@ export const useChatStore = defineStore('chat', () => {
   // la vista la llama al montar y el store tras cada send.
   async function loadSessions(): Promise<void> {
     sessions.value = await ListSessions()
+  }
+
+  // loadModel trae el modelo activo del backend una vez (espejo de loadSessions):
+  // la UI lo usa para dimensionar la barra de contexto por modelo. Si el binding
+  // no esta disponible (p. ej. arranque sin backend) cae a un modelo vacio: la
+  // barra usa entonces la ventana por defecto.
+  async function loadModel(): Promise<void> {
+    try {
+      model.value = await Model()
+    } catch {
+      model.value = ''
+    }
   }
 
   // deleteSession borra una conversacion del historial: la quita del backend, y si
@@ -416,8 +479,12 @@ export const useChatStore = defineStore('chat', () => {
   function subscribe(): void {
     teardown()
     unsubscribe.push(
-      EventsOn(`session:${sessionID.value}`, (ev: SessionEvent) => applyEvent(ev)),
-      EventsOn(`session:${sessionID.value}:error`, (msg: string) => applyError(msg)),
+      EventsOn(`session:${sessionID.value}`, (ev: SessionEvent) =>
+        applyEvent(ev),
+      ),
+      EventsOn(`session:${sessionID.value}:error`, (msg: string) =>
+        applyError(msg),
+      ),
     )
   }
 
@@ -434,11 +501,14 @@ export const useChatStore = defineStore('chat', () => {
     mode,
     plan,
     planExpanded,
+    usage,
+    model,
     applyEvent,
     applyError,
     clearError,
     reset,
     loadSessions,
+    loadModel,
     loadSession,
     deleteSession,
     send,

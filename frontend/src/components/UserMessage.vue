@@ -9,6 +9,8 @@ defineProps<{ item: UserItem }>()
   <div class="flex w-full justify-end">
     <div
       class="max-w-[80%] whitespace-pre-wrap break-words rounded-soft bg-black/[0.04] px-5 py-3 leading-relaxed"
-    >{{ item.text }}</div>
+    >
+      {{ item.text }}
+    </div>
   </div>
 </template>

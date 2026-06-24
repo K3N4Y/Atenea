@@ -1,9 +1,9 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
 /* Tokens base de la identidad visual (docs/identidad.md). El ajuste fino de
    spacing, tipografia y color llega en la Fase 4. */
 @theme {
-  --font-mono: "Red Hat Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-mono: 'Red Hat Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   --color-paper: #fef9ed;
   --color-accent: #f97316;
   --radius-soft: 24px;
