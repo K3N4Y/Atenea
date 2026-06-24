@@ -329,6 +329,20 @@ func (a *App) ResolveToolPermission(sessionID, callID string, approved bool) {
 	a.gate.Resolve(sessionID, callID, approved)
 }
 
+// DeleteSession borra una conversacion del historial: corta la corrida en vuelo
+// de la sesion (si la hay), olvida su modo, y borra su log durable del store. Es
+// el binding que el frontend llama al borrar un chat de la sidebar.
+func (a *App) DeleteSession(sessionID string) error {
+	a.mu.Lock()
+	h := a.runs[sessionID]
+	delete(a.modes, sessionID)
+	a.mu.Unlock()
+	if h != nil {
+		h.cancel()
+	}
+	return a.store.DeleteSession(context.Background(), sessionID)
+}
+
 // Stop cancela la corrida en vuelo de sessionID (boton stop). No-op si no corre.
 func (a *App) Stop(sessionID string) {
 	a.mu.Lock()

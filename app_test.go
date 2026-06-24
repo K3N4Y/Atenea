@@ -172,6 +172,55 @@ func TestApp_ListSessionsReturnsSentPrompts(t *testing.T) {
 	}
 }
 
+// TestApp_DeleteSessionRemovesItFromList: tras enviar un prompt para una sesion,
+// DeleteSession la borra del store y ListSessions deja de listarla. Es el wiring
+// del binding que borra una conversacion desde la sidebar.
+func TestApp_DeleteSessionRemovesItFromList(t *testing.T) {
+	rec := &recordingEmit{}
+	fake := llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.TextStarted},
+		llm.Event{Kind: llm.TextDelta, Text: "ok"},
+		llm.Event{Kind: llm.TextEnded},
+		llm.Event{Kind: llm.StepEnded},
+	)
+	app := newApp(fake, rec.emit)
+
+	if err := app.SendPrompt("chat-del", "hola"); err != nil {
+		t.Fatalf("SendPrompt: %v", err)
+	}
+	app.wait()
+
+	got, err := app.ListSessions()
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if !containsSession(got, "chat-del") {
+		t.Fatalf("ListSessions no contiene chat-del antes de borrar: %+v", got)
+	}
+
+	if err := app.DeleteSession("chat-del"); err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+
+	got, err = app.ListSessions()
+	if err != nil {
+		t.Fatalf("ListSessions tras borrar: %v", err)
+	}
+	if containsSession(got, "chat-del") {
+		t.Fatalf("ListSessions sigue conteniendo chat-del tras borrar: %+v", got)
+	}
+}
+
+func containsSession(summaries []session.SessionSummary, id string) bool {
+	for _, s := range summaries {
+		if s.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 // TestApp_SessionHistoryReplaysStoredLog: SessionHistory devuelve el log durable
 // completo de la sesion (el mismo SessionEvent que viaja por el bus), para que el
 // frontend lo reproduzca por applyEvent. Incluye el prompt del usuario y el

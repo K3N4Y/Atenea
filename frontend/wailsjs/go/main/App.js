@@ -6,6 +6,10 @@ export function AcceptPlan(arg1) {
   return window['go']['main']['App']['AcceptPlan'](arg1);
 }
 
+export function DeleteSession(arg1) {
+  return window['go']['main']['App']['DeleteSession'](arg1);
+}
+
 export function ListSessions() {
   return window['go']['main']['App']['ListSessions']();
 }
