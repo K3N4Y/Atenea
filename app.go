@@ -11,11 +11,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"atenea/internal/agent"
 	"atenea/internal/event"
 	"atenea/internal/llm"
 	"atenea/internal/session"
 	"atenea/internal/session/prompt"
 	"atenea/internal/session/runner"
+	"atenea/internal/session/subagent"
 	"atenea/internal/skill"
 	"atenea/internal/tool"
 	"atenea/internal/tool/hashline"
@@ -86,15 +88,36 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 		log.Printf("atenea: no se pudieron descubrir las skills: %v", err)
 	}
 	skillsBlock := skill.Format(skills)
+	// Subagentes: catalogo = built-in (explore read-only, general full) mas los
+	// .md del workspace (.atenea/agents propio, .agents/agents estandar; el propio
+	// override al homonimo). Un fallo de descubrimiento no es fatal: quedan los built-in.
+	agentDefs, err := agent.Catalog(
+		filepath.Join(root, ".atenea", "agents"),
+		filepath.Join(root, ".agents", "agents"),
+	)
+	if err != nil {
+		log.Printf("atenea: no se pudieron descubrir los subagentes: %v", err)
+	}
+	// Registry de los subagentes: las mismas tools de archivo/busqueda/exec, acotadas
+	// por def.Tools de cada agente (un explore read-only solo recibe read/grep/glob).
+	// Sin la tool task: los subagentes no anidan en el wiring real.
+	childRegistry := tool.NewRegistry(tool.NewOutputStore(outputLimit),
+		tool.NewReadToolWithSnapshotProvider(root, snaps), tool.NewWriteToolWithSnapshotProvider(root, snaps),
+		tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, snaps),
+		tool.NewGlobTool(root), tool.NewGrepToolWithSnapshotProvider(root, snaps),
+		tool.NewBashTool(root))
+	// La tool task levanta subagentes hijos. nextID propio (thread-safe) porque
+	// varios subagentes pueden correr en paralelo (cap de concurrencia interno).
+	taskTool := subagent.NewTaskTool(agentDefs, provider, childRegistry, newIDGen())
 	// present_plan se registra para que el runner pueda ejecutarla, pero NO entra
 	// en los Permissions normales: solo se anuncia en plan-mode (SetPlanMode).
 	registry := tool.NewRegistry(tool.NewOutputStore(outputLimit), tool.Echo{},
 		tool.NewReadToolWithSnapshotProvider(root, snaps), tool.NewWriteToolWithSnapshotProvider(root, snaps),
 		tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, snaps),
 		tool.NewGlobTool(root), tool.NewGrepToolWithSnapshotProvider(root, snaps),
-		tool.NewBashTool(root), tool.NewPresentPlanTool(root), tool.NewSkillTool(skills))
+		tool.NewBashTool(root), tool.NewPresentPlanTool(root), tool.NewSkillTool(skills), taskTool)
 	a.runner = runner.NewRunner(emitting, a.inbox, provider, registry,
-		tool.Permissions{"echo": true, "read": true, "write": true, "edit": true, "glob": true, "grep": true, "bash": true, "skill": true},
+		tool.Permissions{"echo": true, "read": true, "write": true, "edit": true, "glob": true, "grep": true, "bash": true, "skill": true, "task": true},
 		newIDGen())
 	a.runner.SetSystemPrompt(systemPromptBuilder(root, skillsBlock))
 	// Ask-before-run: bash is the only gated tool for now. The UI approves/denies

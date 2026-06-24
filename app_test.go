@@ -298,6 +298,108 @@ func TestApp_RequestAdvertisesBashTool(t *testing.T) {
 	}
 }
 
+// TestApp_OffersTaskToolToModel afirma el wiring de app.go (S9 parte B): el
+// registry de la app debe registrar la tool task para que el modelo pueda
+// delegar en subagentes. Se captura el Request del proveedor y se busca un
+// ToolDef con Name=="task" entre las tools anunciadas.
+func TestApp_OffersTaskToolToModel(t *testing.T) {
+	rec := &recordingEmit{}
+	prov := &requestRecordingProvider{FakeProvider: llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.TextStarted},
+		llm.Event{Kind: llm.TextDelta, Text: "ok"},
+		llm.Event{Kind: llm.TextEnded},
+		llm.Event{Kind: llm.StepEnded},
+	)}
+	a := newApp(prov, rec.emit)
+
+	if err := a.SendPrompt("s1", "hola"); err != nil {
+		t.Fatalf("SendPrompt: %v", err)
+	}
+	a.wait()
+
+	// Busca la tool task entre las anunciadas; si no esta, lista los nombres
+	// recibidos para que el mensaje muestre que ofrece hoy el wiring.
+	req := prov.captured()
+	var names []string
+	for _, def := range req.Tools {
+		names = append(names, def.Name)
+		if def.Name == "task" {
+			return
+		}
+	}
+	t.Errorf("el modelo no recibe la tool 'task'; el wiring no la registra; tools = %v", names)
+}
+
+// TestApp_TaskToolDescriptionListsBuiltinSubagents afirma que el catalogo de
+// subagentes fluye del wiring a la descripcion de la tool task: la Description del
+// ToolDef task anunciado lista los built-in (explore read-only y general). Tumba
+// un wiring que pasara defs vacias a NewTaskTool o que no conectara el catalogo
+// de agent.Catalog, casos en que la tool se anunciaria pero sin subagentes.
+func TestApp_TaskToolDescriptionListsBuiltinSubagents(t *testing.T) {
+	rec := &recordingEmit{}
+	prov := &requestRecordingProvider{FakeProvider: llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.TextStarted},
+		llm.Event{Kind: llm.TextDelta, Text: "ok"},
+		llm.Event{Kind: llm.TextEnded},
+		llm.Event{Kind: llm.StepEnded},
+	)}
+	a := newApp(prov, rec.emit)
+
+	if err := a.SendPrompt("s1", "hola"); err != nil {
+		t.Fatalf("SendPrompt: %v", err)
+	}
+	a.wait()
+
+	req := prov.captured()
+	var taskDef *llm.ToolDef
+	for i := range req.Tools {
+		if req.Tools[i].Name == "task" {
+			taskDef = &req.Tools[i]
+			break
+		}
+	}
+	if taskDef == nil {
+		t.Fatalf("el modelo no recibe la tool 'task'; tools = %+v", req.Tools)
+	}
+	if !strings.Contains(taskDef.Description, "explore") {
+		t.Errorf("la descripcion de task no lista el built-in 'explore'; description = %q", taskDef.Description)
+	}
+	if !strings.Contains(taskDef.Description, "general") {
+		t.Errorf("la descripcion de task no lista el built-in 'general'; description = %q", taskDef.Description)
+	}
+}
+
+// TestApp_PlanModeDoesNotOfferTaskTool afirma que plan-mode (solo lectura) NO
+// anuncia la tool task: el agente investiga y presenta un plan, no delega. Tumba
+// un wiring que hubiera metido task tambien en los Permissions de plan-mode. Como
+// sanity de que de verdad estamos en plan-mode, verifica que SI esta present_plan.
+func TestApp_PlanModeDoesNotOfferTaskTool(t *testing.T) {
+	rec := &recordingEmit{}
+	prov := &requestRecordingProvider{FakeProvider: llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.TextStarted},
+		llm.Event{Kind: llm.TextDelta, Text: "ok"},
+		llm.Event{Kind: llm.TextEnded},
+		llm.Event{Kind: llm.StepEnded},
+	)}
+	a := newApp(prov, rec.emit)
+
+	if err := a.SendPlanPrompt("s1", "investiga"); err != nil {
+		t.Fatalf("SendPlanPrompt: %v", err)
+	}
+	a.wait()
+
+	req := prov.captured()
+	if requestHasTool(req, "task") {
+		t.Errorf("plan-mode anuncia la tool task (no debe delegar); tools = %+v", req.Tools)
+	}
+	if !requestHasTool(req, "present_plan") {
+		t.Errorf("sanity: plan-mode no anuncia present_plan; tools = %+v", req.Tools)
+	}
+}
+
 // TestApp_SendPlanPromptUsesPlanModeToolsAndPrompt: SendPlanPrompt arranca la
 // sesion en plan-mode: el Request del proveedor anuncia present_plan (y las tools
 // de investigacion read/glob/grep), NO anuncia las de escritura (bash/write), y el
