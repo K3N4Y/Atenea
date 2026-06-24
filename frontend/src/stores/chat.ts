@@ -8,6 +8,7 @@ import {
   ResolveToolPermission,
   ListSessions,
   SessionHistory,
+  DeleteSession,
 } from '../../wailsjs/go/main/App'
 import { EventsOn } from '../../wailsjs/runtime/runtime'
 
@@ -309,6 +310,14 @@ export const useChatStore = defineStore('chat', () => {
     sessions.value = await ListSessions()
   }
 
+  // deleteSession borra una conversacion del historial: la quita del backend, y si
+  // era la sesion activa abre un chat nuevo (reset). Luego refresca la sidebar.
+  async function deleteSession(id: string): Promise<void> {
+    await DeleteSession(id)
+    if (id === sessionID.value) reset()
+    await loadSessions()
+  }
+
   // loadSession abre una sesion del historial: cambia el sessionID activo, mueve
   // la suscripcion al canal de esa sesion, limpia el lienzo y reproduce el log
   // durable via applyEvent (reusa todo el render de texto/pensamiento/tools). El
@@ -431,6 +440,7 @@ export const useChatStore = defineStore('chat', () => {
     reset,
     loadSessions,
     loadSession,
+    deleteSession,
     send,
     toggleMode,
     togglePlanExpanded,

@@ -11,6 +11,7 @@ vi.mock('../../wailsjs/go/main/App', () => ({
   ResolveToolPermission: vi.fn(),
   ListSessions: vi.fn(() => Promise.resolve([])),
   SessionHistory: vi.fn(() => Promise.resolve([])),
+  DeleteSession: vi.fn(() => Promise.resolve()),
 }))
 vi.mock('../../wailsjs/runtime/runtime', () => ({
   EventsOn: vi.fn(() => () => {}),
@@ -293,6 +294,39 @@ describe('chat store: historial de sesiones (sidebar)', () => {
 
     await store.send('hola')
 
+    expect(App.ListSessions).toHaveBeenCalled()
+  })
+})
+
+describe('chat store: borrar sesion', () => {
+  it('deleteSession llama al binding y refresca la sidebar', async () => {
+    const store = useChatStore()
+
+    await store.deleteSession('chat-x')
+
+    expect(App.DeleteSession).toHaveBeenCalledWith('chat-x')
+    expect(App.ListSessions).toHaveBeenCalled()
+  })
+
+  it('borrar la sesion activa abre un chat nuevo', async () => {
+    const store = useChatStore()
+    const before = store.sessionID
+
+    await store.deleteSession(before)
+
+    expect(store.sessionID).not.toBe(before)
+  })
+
+  it('borrar una sesion NO activa no cambia la sesion actual', async () => {
+    const store = useChatStore()
+    const active = store.sessionID
+
+    await store.deleteSession('otra-sesion-distinta')
+
+    // Borrar otra sesion no reabre un chat nuevo: la activa se conserva.
+    expect(store.sessionID).toBe(active)
+    expect(App.DeleteSession).toHaveBeenCalledWith('otra-sesion-distinta')
+    // ...pero la sidebar igual se refresca para que la fila borrada desaparezca.
     expect(App.ListSessions).toHaveBeenCalled()
   })
 })
