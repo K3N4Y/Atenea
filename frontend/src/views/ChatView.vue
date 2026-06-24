@@ -39,6 +39,7 @@ onUnmounted(() => chat.teardown())
       :active-session-id="chat.sessionID"
       @new-chat="chat.reset()"
       @select-session="(id: string) => chat.loadSession(id)"
+      @delete-session="(id: string) => chat.deleteSession(id)"
     />
 
     <!-- Fondo para cerrar la sidebar superpuesta en pantallas estrechas. -->
