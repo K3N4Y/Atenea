@@ -192,3 +192,17 @@ func (s *MemoryStore) PendingToolCalls(ctx context.Context, sessionID string) ([
 	}
 	return out, nil
 }
+
+// DeleteSession borra todos los eventos durables de la sesion. ErrSessionNotFound
+// si la sesion no existe. Las demas sesiones quedan intactas.
+func (s *MemoryStore) DeleteSession(ctx context.Context, sessionID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.sessions[sessionID]; !ok {
+		return ErrSessionNotFound
+	}
+	delete(s.sessions, sessionID)
+	delete(s.lastSeen, sessionID)
+	return nil
+}

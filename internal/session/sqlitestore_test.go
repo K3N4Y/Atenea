@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -102,6 +103,54 @@ func TestSQLiteStore_SessionsOrderSurvivesReopen(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Sessions tras reabrir: got %+v, want %+v (el orden por recencia no sobrevivio)", got, want)
+	}
+}
+
+// TestSQLiteStore_DeleteSessionSurvivesReopen verifica que el borrado se
+// persiste en la base, no solo en estado en memoria: tras borrar una sesion,
+// cerrar y reabrir en la misma ruta, la sesion borrada sigue sin existir y la
+// que sobrevivio se mantiene. Sin durabilidad, reabrir reviviria los eventos.
+func TestSQLiteStore_DeleteSessionSurvivesReopen(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "atenea.db")
+
+	s1, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore (primera): %v", err)
+	}
+	if _, err := s1.AppendEvent(ctx, "keep", SessionEvent{Message: &Message{ID: "u1", Role: RoleUser, Text: "me quedo"}}); err != nil {
+		t.Fatalf("AppendEvent (keep): %v", err)
+	}
+	if _, err := s1.AppendEvent(ctx, "drop", SessionEvent{Message: &Message{ID: "u2", Role: RoleUser, Text: "me borran"}}); err != nil {
+		t.Fatalf("AppendEvent (drop): %v", err)
+	}
+	if err := s1.DeleteSession(ctx, "drop"); err != nil {
+		t.Fatalf("DeleteSession (drop): %v", err)
+	}
+	if err := s1.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	s2, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore (reabrir): %v", err)
+	}
+	t.Cleanup(func() { s2.Close() })
+
+	if _, err := s2.LoadSession(ctx, "drop"); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("LoadSession(drop) tras reabrir: got %v, want ErrSessionNotFound (el borrado no se persistio)", err)
+	}
+
+	got, err := s2.Sessions(ctx)
+	if err != nil {
+		t.Fatalf("Sessions tras reabrir: %v", err)
+	}
+	want := []SessionSummary{
+		{ID: "keep", Title: "me quedo"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Sessions tras reabrir: got %+v, want %+v (el borrado o el sobreviviente no sobrevivieron)", got, want)
 	}
 }
 

@@ -398,6 +398,44 @@ func testStoreContract(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 	})
 
+	t.Run("DeleteSessionRemovesSessionLeavingOthers", func(t *testing.T) {
+		ctx := context.Background()
+		store := newStore(t)
+
+		appendContractMessage(t, store, "s1", Message{ID: "m1", Role: RoleUser, Text: "hola"})
+		appendContractMessage(t, store, "s2", Message{ID: "m2", Role: RoleUser, Text: "otra"})
+
+		if err := store.DeleteSession(ctx, "s1"); err != nil {
+			t.Fatalf("DeleteSession(s1): unexpected error: %v", err)
+		}
+
+		if _, err := store.LoadSession(ctx, "s1"); !errors.Is(err, ErrSessionNotFound) {
+			t.Fatalf("LoadSession(s1) tras borrar: got %v, want ErrSessionNotFound", err)
+		}
+		if _, err := store.Events(ctx, "s1", 0); !errors.Is(err, ErrSessionNotFound) {
+			t.Fatalf("Events(s1) tras borrar: got %v, want ErrSessionNotFound", err)
+		}
+
+		got, err := store.Sessions(ctx)
+		if err != nil {
+			t.Fatalf("Sessions: unexpected error: %v", err)
+		}
+		if len(got) != 1 || got[0].ID != "s2" {
+			t.Fatalf("Sessions tras borrar s1: got %+v, want only s2", got)
+		}
+	})
+
+	t.Run("DeleteUnknownSessionReturnsNotFound", func(t *testing.T) {
+		ctx := context.Background()
+		store := newStore(t)
+
+		// Borrar una sesion que no existe (sin eventos) no toca nada: el mismo
+		// contrato de no-encontrado que LoadSession/Messages/Events.
+		if err := store.DeleteSession(ctx, "ghost"); !errors.Is(err, ErrSessionNotFound) {
+			t.Fatalf("DeleteSession(ghost): got %v, want ErrSessionNotFound", err)
+		}
+	})
+
 	t.Run("ConcurrentAppendsAssignUniqueSeqs", func(t *testing.T) {
 		ctx := context.Background()
 		store := newStore(t)

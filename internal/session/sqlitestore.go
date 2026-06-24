@@ -407,3 +407,25 @@ func (s *SQLiteStore) PendingToolCalls(ctx context.Context, sessionID string) ([
 	}
 	return out, nil
 }
+
+// DeleteSession borra todos los eventos durables de la sesion. ErrSessionNotFound
+// si la sesion no existe. Las demas sesiones quedan intactas. El mutex serializa
+// el chequeo de existencia y el DELETE, igual que AppendEvent.
+func (s *SQLiteStore) DeleteSession(ctx context.Context, sessionID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	ok, err := s.exists(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrSessionNotFound
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`DELETE FROM events WHERE session_id = ?`, sessionID,
+	); err != nil {
+		return err
+	}
+	return nil
+}

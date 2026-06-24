@@ -79,4 +79,8 @@ type Store interface {
 	// Tool.Success/Tool.Failed posterior, en orden de llamada. ErrSessionNotFound
 	// si la sesion no existe.
 	PendingToolCalls(ctx context.Context, sessionID string) ([]PendingTool, error)
+
+	// DeleteSession borra todos los eventos durables de la sesion. ErrSessionNotFound
+	// si la sesion no existe. Las demas sesiones quedan intactas.
+	DeleteSession(ctx context.Context, sessionID string) error
 }
