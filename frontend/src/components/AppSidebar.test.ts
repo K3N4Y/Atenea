@@ -77,4 +77,47 @@ describe('AppSidebar', () => {
     const wrapper = mountSidebar({ sessions: [] })
     expect(wrapper.findAll('[data-session-id]')).toHaveLength(0)
   })
+
+  it('muestra confirmacion al pulsar borrar y emite delete-session al confirmar', async () => {
+    const wrapper = mountSidebar({ sessions: [{ ID: 's1', Title: 'hola' }] })
+
+    expect(wrapper.find('[data-confirm-delete="s1"]').exists()).toBe(false)
+
+    await wrapper.find('[data-delete-session="s1"]').trigger('click')
+    await nextTick()
+
+    await wrapper.find('[data-confirm-delete="s1"]').trigger('click')
+
+    expect(wrapper.emitted('delete-session')?.[0]).toEqual(['s1'])
+  })
+
+  it('la confirmacion de borrado es por fila', async () => {
+    const wrapper = mountSidebar({
+      sessions: [
+        { ID: 's1', Title: 'uno' },
+        { ID: 's2', Title: 'dos' },
+      ],
+    })
+
+    await wrapper.find('[data-delete-session="s1"]').trigger('click')
+    await nextTick()
+
+    // Solo s1 entra en modo confirmacion; s2 sigue mostrando su papelera.
+    expect(wrapper.find('[data-confirm-delete="s1"]').exists()).toBe(true)
+    expect(wrapper.find('[data-confirm-delete="s2"]').exists()).toBe(false)
+    expect(wrapper.find('[data-delete-session="s2"]').exists()).toBe(true)
+  })
+
+  it('cancelar no emite delete-session', async () => {
+    const wrapper = mountSidebar({ sessions: [{ ID: 's1', Title: 'hola' }] })
+
+    await wrapper.find('[data-delete-session="s1"]').trigger('click')
+    await nextTick()
+
+    await wrapper.find('[data-cancel-delete="s1"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.emitted('delete-session')).toBeFalsy()
+    expect(wrapper.find('[data-confirm-delete="s1"]').exists()).toBe(false)
+  })
 })
