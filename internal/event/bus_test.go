@@ -194,6 +194,9 @@ func (failingStore) Epoch(ctx context.Context, sessionID string) (session.Contex
 func (failingStore) PendingToolCalls(ctx context.Context, sessionID string) ([]session.PendingTool, error) {
 	return nil, nil
 }
+func (failingStore) DeleteSession(ctx context.Context, sessionID string) error {
+	return nil
+}
 
 // TestEmittingStore_AppendErrorDoesNotEmit: si inner.AppendEvent falla, el
 // decorador propaga el error y NO emite al bus.

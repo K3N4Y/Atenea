@@ -71,3 +71,8 @@ func (s *EmittingStore) Epoch(ctx context.Context, sessionID string) (session.Co
 func (s *EmittingStore) PendingToolCalls(ctx context.Context, sessionID string) ([]session.PendingTool, error) {
 	return s.inner.PendingToolCalls(ctx, sessionID)
 }
+
+// DeleteSession delega sin candado ni emision.
+func (s *EmittingStore) DeleteSession(ctx context.Context, sessionID string) error {
+	return s.inner.DeleteSession(ctx, sessionID)
+}
