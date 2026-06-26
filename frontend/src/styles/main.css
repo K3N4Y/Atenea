@@ -121,12 +121,41 @@ body {
   margin: 0.75rem 0;
   overflow-x: auto;
   padding: 1rem 1.25rem;
+  position: relative;
 }
 .md pre code {
   background: transparent;
   border-radius: 0;
   padding: 0;
   font-size: 0.9rem;
+}
+/* Boton "copiar" que MarkdownContent.vue cuelga de cada bloque de codigo. Vive
+   en CSS global porque se inyecta sobre HTML de v-html. Oculto hasta el hover
+   del bloque para no competir con el codigo (identidad: el contenido manda). */
+.md-copy {
+  position: absolute;
+  bottom: 0.5rem;
+  right: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.3rem;
+  background: none;
+  border: none;
+  color: #1c1c1a;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.15s ease,
+    color 0.15s ease;
+}
+.md pre:hover .md-copy,
+.md-copy:focus-visible {
+  opacity: 0.7;
+}
+.md-copy:hover {
+  opacity: 1;
+  color: var(--color-accent);
 }
 .md table {
   border-collapse: collapse;
