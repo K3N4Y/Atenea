@@ -31,6 +31,8 @@ onMounted(() => {
   chat.loadSessions()
   // Trae el modelo activo una vez para dimensionar la barra de contexto.
   chat.loadModel()
+  // Lista los archivos del workspace una vez para el @-menu del composer.
+  chat.loadProjectFiles()
 })
 onUnmounted(() => chat.teardown())
 </script>
@@ -107,6 +109,7 @@ onUnmounted(() => chat.teardown())
       <ChatComposer
         :running="chat.running"
         :mode="chat.mode"
+        :files="chat.projectFiles"
         @send="chat.send"
         @stop="chat.stop"
         @toggle-mode="chat.toggleMode"

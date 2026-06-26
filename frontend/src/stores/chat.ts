@@ -10,6 +10,7 @@ import {
   SessionHistory,
   DeleteSession,
   Model,
+  ListProjectFiles,
 } from '../../wailsjs/go/main/App'
 import { EventsOn } from '../../wailsjs/runtime/runtime'
 
@@ -151,6 +152,10 @@ export const useChatStore = defineStore('chat', () => {
   // activo. La UI los combina para pintar la barra de contexto por modelo.
   const usage = ref<Usage | null>(null)
   const model = ref('')
+  // Rutas del workspace para el @-menu de archivos del composer. La fuente de
+  // verdad es el backend (ListProjectFiles); se cargan una vez al montar la vista
+  // y el composer filtra/ordena en cliente conforme el usuario escribe tras '@'.
+  const projectFiles = ref<string[]>([])
   // planExpanded controla como se ve el plan vigente: expandido (overlay sobre la
   // columna del chat) o minimizado (tarjeta en el flujo de la conversacion, como
   // una tool). Cada present_plan reabre expandido; el usuario lo colapsa/expande.
@@ -373,6 +378,18 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  // loadProjectFiles trae el listado de archivos del workspace del backend para
+  // el @-menu del composer. Idempotente: la vista la llama una vez al montar. Si
+  // el binding falla (arranque sin backend) degrada a lista vacia: el menu queda
+  // sin candidatos en vez de romper.
+  async function loadProjectFiles(): Promise<void> {
+    try {
+      projectFiles.value = await ListProjectFiles()
+    } catch {
+      projectFiles.value = []
+    }
+  }
+
   // deleteSession borra una conversacion del historial: la quita del backend, y si
   // era la sesion activa abre un chat nuevo (reset). Luego refresca la sidebar.
   async function deleteSession(id: string): Promise<void> {
@@ -503,12 +520,14 @@ export const useChatStore = defineStore('chat', () => {
     planExpanded,
     usage,
     model,
+    projectFiles,
     applyEvent,
     applyError,
     clearError,
     reset,
     loadSessions,
     loadModel,
+    loadProjectFiles,
     loadSession,
     deleteSession,
     send,

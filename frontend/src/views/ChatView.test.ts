@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from 'vitest'
 import { nextTick } from 'vue'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
 // La vista cablea el store de chat al canal de la sesion via la frontera Wails;
@@ -17,6 +17,7 @@ vi.mock('../../wailsjs/go/main/App', () => ({
   Stop: vi.fn(),
   ListSessions: vi.fn(() => Promise.resolve([])),
   SessionHistory: vi.fn(() => Promise.resolve([])),
+  ListProjectFiles: vi.fn(() => Promise.resolve([])),
 }))
 
 import { EventsOn } from '../../wailsjs/runtime/runtime'
@@ -62,6 +63,19 @@ describe('ChatView', () => {
     mountView()
 
     expect(App.ListSessions).toHaveBeenCalled()
+  })
+
+  it('carga los archivos del workspace al montar y se los pasa al composer (@-menu)', async () => {
+    vi.clearAllMocks()
+    vi.mocked(App.ListProjectFiles).mockResolvedValueOnce(['app.go'])
+    const wrapper = mountView()
+
+    await flushPromises()
+
+    expect(App.ListProjectFiles).toHaveBeenCalled()
+    expect(wrapper.findComponent(ChatComposer).props('files')).toEqual([
+      'app.go',
+    ])
   })
 
   it('rutea select-session de la sidebar a loadSession del store', async () => {

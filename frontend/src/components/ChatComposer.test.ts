@@ -88,3 +88,90 @@ describe('ChatComposer', () => {
     expect(wrapper.emitted('toggle-mode')).toBeTruthy()
   })
 })
+
+describe('ChatComposer @-menciones de archivos', () => {
+  const files = ['app.go', 'internal/tool/glob.go', 'internal/tool/grep.go']
+
+  it('escribir @ abre el menu con los archivos del workspace', async () => {
+    const wrapper = mount(ChatComposer, { props: { running: false, files } })
+
+    await wrapper.find('textarea').setValue('@')
+
+    expect(wrapper.find('[role="listbox"]').exists()).toBe(true)
+    expect(wrapper.findAll('[role="option"]').length).toBeGreaterThan(0)
+  })
+
+  it('al escribir tras @ filtra los candidatos', async () => {
+    const wrapper = mount(ChatComposer, { props: { running: false, files } })
+
+    await wrapper.find('textarea').setValue('@glob')
+
+    const opts = wrapper.findAll('[role="option"]')
+    expect(opts).toHaveLength(1)
+    expect(opts[0].text()).toContain('glob.go')
+  })
+
+  it('Enter con el menu abierto inserta la ruta y NO envia', async () => {
+    const wrapper = mount(ChatComposer, { props: { running: false, files } })
+    const ta = wrapper.find('textarea')
+
+    await ta.setValue('@glob')
+    await ta.trigger('keydown', { key: 'Enter' })
+
+    expect(wrapper.emitted('send')).toBeUndefined()
+    expect((ta.element as HTMLTextAreaElement).value).toBe(
+      '@internal/tool/glob.go ',
+    )
+    expect(wrapper.find('[role="listbox"]').exists()).toBe(false)
+  })
+
+  it('ArrowDown mueve la seleccion y Enter inserta la opcion activa', async () => {
+    const wrapper = mount(ChatComposer, { props: { running: false, files } })
+    const ta = wrapper.find('textarea')
+
+    await ta.setValue('@internal/tool/g') // matchea glob.go y grep.go
+    expect(wrapper.findAll('[role="option"]')).toHaveLength(2)
+
+    await ta.trigger('keydown', { key: 'ArrowDown' }) // baja a la segunda
+    await ta.trigger('keydown', { key: 'Enter' })
+
+    expect((ta.element as HTMLTextAreaElement).value).toBe(
+      '@internal/tool/grep.go ',
+    )
+  })
+
+  it('Escape cierra el menu; un Enter posterior envia normal', async () => {
+    const wrapper = mount(ChatComposer, { props: { running: false, files } })
+    const ta = wrapper.find('textarea')
+
+    await ta.setValue('@glob')
+    await ta.trigger('keydown', { key: 'Escape' })
+    expect(wrapper.find('[role="listbox"]').exists()).toBe(false)
+
+    await ta.trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('send')?.[0]).toEqual(['@glob'])
+  })
+
+  it('mousedown en una opcion inserta su ruta', async () => {
+    const wrapper = mount(ChatComposer, { props: { running: false, files } })
+    const ta = wrapper.find('textarea')
+
+    await ta.setValue('@grep')
+    await wrapper.findAll('[role="option"]')[0].trigger('mousedown')
+
+    expect((ta.element as HTMLTextAreaElement).value).toBe(
+      '@internal/tool/grep.go ',
+    )
+  })
+
+  it('sin archivos: @ no abre menu y Enter envia normal', async () => {
+    const wrapper = mount(ChatComposer, { props: { running: false } })
+    const ta = wrapper.find('textarea')
+
+    await ta.setValue('@x')
+    expect(wrapper.find('[role="listbox"]').exists()).toBe(false)
+
+    await ta.trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('send')?.[0]).toEqual(['@x'])
+  })
+})

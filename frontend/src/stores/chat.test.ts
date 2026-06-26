@@ -13,6 +13,7 @@ vi.mock('../../wailsjs/go/main/App', () => ({
   SessionHistory: vi.fn(() => Promise.resolve([])),
   DeleteSession: vi.fn(() => Promise.resolve()),
   Model: vi.fn(() => Promise.resolve('anthropic/claude-opus-4.8')),
+  ListProjectFiles: vi.fn(() => Promise.resolve([])),
 }))
 vi.mock('../../wailsjs/runtime/runtime', () => ({
   EventsOn: vi.fn(() => () => {}),
@@ -166,7 +167,12 @@ describe('chat store: herramientas (Tool.*)', () => {
   it('Tool.Success con Diff puebla item.diff (edit/write); sin Diff queda vacio', () => {
     const store = useChatStore()
 
-    store.applyEvent({ Kind: 'Tool.Called', CallID: 'e1', ToolName: 'edit', Input: {} })
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      CallID: 'e1',
+      ToolName: 'edit',
+      Input: {},
+    })
     store.applyEvent({
       Kind: 'Tool.Success',
       CallID: 'e1',
@@ -182,7 +188,12 @@ describe('chat store: herramientas (Tool.*)', () => {
 
     // Una tool sin diff (bash/echo) deja item.diff vacio.
     store.applyEvent({ Kind: 'Tool.Called', CallID: 'b1', ToolName: 'echo' })
-    store.applyEvent({ Kind: 'Tool.Success', CallID: 'b1', ToolName: 'echo', Text: 'ok' })
+    store.applyEvent({
+      Kind: 'Tool.Success',
+      CallID: 'b1',
+      ToolName: 'echo',
+      Text: 'ok',
+    })
     const bashed = store.items[1]
     if (bashed.kind === 'tool') {
       expect(bashed.diff).toBe('')
@@ -1166,5 +1177,31 @@ describe('chat store: uso de tokens (Usage)', () => {
     await store.loadModel()
 
     expect(store.model).toBe('')
+  })
+
+  it('loadProjectFiles trae las rutas del workspace para el @-menu', async () => {
+    vi.mocked(App.ListProjectFiles).mockResolvedValueOnce([
+      'app.go',
+      'internal/tool/glob.go',
+    ])
+    const store = useChatStore()
+
+    await store.loadProjectFiles()
+
+    expect(App.ListProjectFiles).toHaveBeenCalled()
+    expect(store.projectFiles).toEqual(['app.go', 'internal/tool/glob.go'])
+  })
+
+  it('loadProjectFiles degrada a lista vacia si el binding falla', async () => {
+    // Sin backend el binding rechaza; el @-menu simplemente queda sin candidatos
+    // en vez de romper el composer.
+    vi.mocked(App.ListProjectFiles).mockRejectedValueOnce(
+      new Error('no backend'),
+    )
+    const store = useChatStore()
+
+    await store.loadProjectFiles()
+
+    expect(store.projectFiles).toEqual([])
   })
 })

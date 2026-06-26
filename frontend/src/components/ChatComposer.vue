@@ -3,14 +3,23 @@ import { ref, computed, nextTick } from 'vue'
 import gsap from 'gsap'
 import { PhArrowUp, PhStop } from '@phosphor-icons/vue'
 import { prefersReducedMotion } from '../lib/motion'
+import { detectMention, filterFiles, applyMention } from '../lib/mention'
+import type { MentionQuery } from '../lib/mention'
+import MentionMenu from './MentionMenu.vue'
 
 // Composer del MVP: textarea que crece con el contenido + boton pildora. El
 // naranja de acento se reserva para enviar (identidad §3). Es presentacional:
-// emite send/stop y recibe `running` por prop.
+// emite send/stop y recibe `running` por prop. `files` alimenta el @-menu de
+// archivos del workspace (la vista lo pasa desde el store).
 const props = withDefaults(
-  defineProps<{ running: boolean; mode?: 'normal' | 'plan' }>(),
+  defineProps<{
+    running: boolean
+    mode?: 'normal' | 'plan'
+    files?: string[]
+  }>(),
   {
     mode: 'normal',
+    files: () => [],
   },
 )
 const emit = defineEmits<{
@@ -27,11 +36,81 @@ const canSend = computed(() => text.value.trim().length > 0)
 
 const MAX_HEIGHT = 200
 
+// @-menciones de archivos: detectMention lee el token bajo el caret, filterFiles
+// ordena candidatos del workspace (props.files) y applyMention inserta la ruta
+// elegida. El menu se cierra poniendo la mencion inactiva; al volver a escribir
+// (input) se recalcula y reabre. MENU_LIMIT acota cuantos candidatos se muestran.
+const MENU_LIMIT = 8
+const INACTIVE: MentionQuery = { active: false, query: '', start: -1, end: -1 }
+const mention = ref<MentionQuery>(INACTIVE)
+const activeIndex = ref(0)
+
+const suggestions = computed(() =>
+  mention.value.active
+    ? filterFiles(props.files, mention.value.query, MENU_LIMIT)
+    : [],
+)
+const menuOpen = computed(
+  () => mention.value.active && suggestions.value.length > 0,
+)
+
 function autoGrow() {
   const el = textarea.value
   if (!el) return
   el.style.height = 'auto'
   el.style.height = `${Math.min(el.scrollHeight, MAX_HEIGHT)}px`
+}
+
+// refreshMention recalcula el token @ bajo el caret tras escribir o mover el
+// cursor; reinicia la opcion activa al tope de la lista filtrada.
+function refreshMention() {
+  const el = textarea.value
+  const caret = el
+    ? (el.selectionStart ?? text.value.length)
+    : text.value.length
+  mention.value = detectMention(text.value, caret)
+  activeIndex.value = 0
+}
+
+function onInput() {
+  autoGrow()
+  refreshMention()
+}
+
+function closeMenu() {
+  mention.value = INACTIVE
+}
+
+function onBlur() {
+  // Cerrar al salir del composer. Las opciones usan mousedown.prevent, asi que
+  // elegir una NO dispara blur antes de insertar.
+  closeMenu()
+}
+
+function moveActive(delta: number) {
+  const n = suggestions.value.length
+  if (n === 0) return
+  activeIndex.value = (activeIndex.value + delta + n) % n
+}
+
+function onHover(i: number) {
+  activeIndex.value = i
+}
+
+// choose inserta la ruta elegida en el token @, cierra el menu y deja el caret
+// justo despues, listo para seguir escribiendo.
+function choose(path: string) {
+  const { text: next, caret } = applyMention(text.value, mention.value, path)
+  text.value = next
+  closeMenu()
+  nextTick(() => {
+    autoGrow()
+    const el = textarea.value
+    if (el) {
+      el.focus()
+      el.selectionStart = el.selectionEnd = caret
+    }
+  })
 }
 
 function submit() {
@@ -50,6 +129,29 @@ function submit() {
 }
 
 function onKeydown(e: KeyboardEvent) {
+  // Con el @-menu abierto el teclado lo controla: flechas navegan, Enter/Tab
+  // eligen, Escape cierra. Solo si esta cerrado, Enter envia.
+  if (menuOpen.value) {
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault()
+        moveActive(1)
+        return
+      case 'ArrowUp':
+        e.preventDefault()
+        moveActive(-1)
+        return
+      case 'Enter':
+      case 'Tab':
+        e.preventDefault()
+        choose(suggestions.value[activeIndex.value])
+        return
+      case 'Escape':
+        e.preventDefault()
+        closeMenu()
+        return
+    }
+  }
   // Enter envia; Shift+Enter inserta salto de linea.
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
@@ -90,17 +192,30 @@ function onKeydown(e: KeyboardEvent) {
       </div>
 
       <div
-        class="flex items-end gap-2 rounded-soft bg-black/[0.04] p-2 pl-4 transition focus-within:ring-2 focus-within:ring-accent/20"
+        class="relative flex items-end gap-2 rounded-soft bg-black/[0.04] p-2 pl-4 transition focus-within:ring-2 focus-within:ring-accent/20"
       >
+        <!-- @-menu de archivos: flota sobre el composer mientras se escribe un
+             token @ con candidatos del workspace. -->
+        <MentionMenu
+          v-if="menuOpen"
+          :items="suggestions"
+          :active-index="activeIndex"
+          class="absolute inset-x-0 bottom-full z-30 mb-2"
+          @select="choose"
+          @hover="onHover"
+        />
         <textarea
           ref="textarea"
           v-model="text"
           rows="1"
           aria-label="Message atenea"
           placeholder="Message atenea"
+          :aria-expanded="menuOpen"
           class="max-h-[200px] flex-1 resize-none bg-transparent py-2 leading-relaxed placeholder:opacity-40 focus:outline-none"
-          @input="autoGrow"
+          @input="onInput"
           @keydown="onKeydown"
+          @click="refreshMention"
+          @blur="onBlur"
         ></textarea>
 
         <button
