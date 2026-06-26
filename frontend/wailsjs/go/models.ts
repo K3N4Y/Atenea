@@ -1,3 +1,24 @@
+export namespace command {
+	
+	export class Command {
+	    Name: string;
+	    Description: string;
+	    Template: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Command(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Name = source["Name"];
+	        this.Description = source["Description"];
+	        this.Template = source["Template"];
+	    }
+	}
+
+}
+
 export namespace session {
 	
 	export class ToolCall {

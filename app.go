@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"atenea/internal/agent"
+	"atenea/internal/command"
 	"atenea/internal/event"
 	"atenea/internal/llm"
 	"atenea/internal/session"
@@ -37,13 +38,14 @@ const (
 // App cablea el loop del agente (M1..M8) a la app Wails: arranca/corta Run desde
 // el frontend y reenvia el log durable por el Bus. La logica del loop no cambia.
 type App struct {
-	ctx    context.Context // ctx de Wails; lo fija startup. Solo lo usa la EmitFunc real.
-	inbox  session.Inbox
-	runner *runner.Runner
-	bus    *event.Bus
-	store  session.Store                 // lectura del historial para la sidebar (ListSessions/SessionHistory)
-	gate   *session.MemoryPermissionGate // ask-before-run: the UI resolves via ResolveToolPermission
-	glob   *tool.GlobTool                // listado de archivos del workspace para el @-menu del composer (ListProjectFiles)
+	ctx      context.Context // ctx de Wails; lo fija startup. Solo lo usa la EmitFunc real.
+	inbox    session.Inbox
+	runner   *runner.Runner
+	bus      *event.Bus
+	store    session.Store                 // lectura del historial para la sidebar (ListSessions/SessionHistory)
+	gate     *session.MemoryPermissionGate // ask-before-run: the UI resolves via ResolveToolPermission
+	glob     *tool.GlobTool                // listado de archivos del workspace para el @-menu del composer (ListProjectFiles)
+	commands *command.Set                  // slash-commands del composer (ListCommands + expansion en SendPrompt)
 
 	mu    sync.Mutex
 	runs  map[string]*runHandle   // sessionID -> corrida en vuelo (identidad por puntero)
@@ -80,19 +82,26 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 	// de ripgrep ya probado (respeta .gitignore, excluye .git).
 	a.glob = tool.NewGlobTool(root)
 	// Skills al estilo opencode (disclosure progresivo): se descubren una vez bajo
-	// <root>/.atenea/skills (propio) y <root>/.agents/skills (el estandar, mismo
-	// layout que comparten otros agentes). Sus metadatos van en el system prompt
-	// (skill.Format) y la tool skill carga el cuerpo bajo demanda. .atenea/skills
-	// va primero: ante un nombre duplicado, la skill propia override la estandar.
+	// <root>/.atenea/skills (propio), <root>/.agents/skills (el estandar entre
+	// agentes) y <root>/.claude/skills (donde Claude Code -y este repo- las guarda).
+	// Sus metadatos van en el system prompt (skill.Format), la tool skill carga el
+	// cuerpo bajo demanda, y de cada una se deriva un slash-command. .atenea/skills
+	// va primero: ante un nombre duplicado, la skill propia override a las estandar.
 	// Un fallo de descubrimiento no es fatal: el agente arranca sin skills.
 	skills, err := skill.Discover(
 		filepath.Join(root, ".atenea", "skills"),
 		filepath.Join(root, ".agents", "skills"),
+		filepath.Join(root, ".claude", "skills"),
 	)
 	if err != nil {
 		log.Printf("atenea: no se pudieron descubrir las skills: %v", err)
 	}
 	skillsBlock := skill.Format(skills)
+	// Slash-commands del composer: hoy se derivan de las skills (un "/<name>" por
+	// skill que instruye al agente a usarla), pero el registro es general: agregar
+	// /commit u otro comando es agregar un command.Command con su plantilla. El menu
+	// los lista via ListCommands; SendPrompt expande el "/name args" antes de enviar.
+	a.commands = command.New(command.FromSkills(skills))
 	// Subagentes: catalogo = built-in (explore read-only, general full) mas los
 	// .md del workspace (.atenea/agents propio, .agents/agents estandar; el propio
 	// override al homonimo). Un fallo de descubrimiento no es fatal: quedan los built-in.
@@ -287,11 +296,21 @@ func (a *App) setMode(sessionID string, m session.Mode) {
 func (a *App) SendPrompt(sessionID, text string) error {
 	a.setMode(sessionID, session.ModeNormal)
 	if err := a.inbox.Admit(context.Background(), sessionID,
-		session.Prompt{Text: text}, session.DeliveryQueue); err != nil {
+		session.Prompt{Text: a.expandCommand(text)}, session.DeliveryQueue); err != nil {
 		return err
 	}
 	a.start(sessionID)
 	return nil
+}
+
+// expandCommand resuelve un slash-command ("/name args") al prompt expandido
+// segun el registro; el texto que no es un comando registrado pasa sin cambios.
+// Lo comparten SendPrompt y SendPlanPrompt para un comportamiento consistente.
+func (a *App) expandCommand(text string) string {
+	if expanded, ok := a.commands.Resolve(text); ok {
+		return expanded
+	}
+	return text
 }
 
 // SendPlanPrompt admite el texto en plan-mode: investigacion de solo lectura mas
@@ -300,7 +319,7 @@ func (a *App) SendPrompt(sessionID, text string) error {
 func (a *App) SendPlanPrompt(sessionID, text string) error {
 	a.setMode(sessionID, session.ModePlan)
 	if err := a.inbox.Admit(context.Background(), sessionID,
-		session.Prompt{Text: text}, session.DeliveryQueue); err != nil {
+		session.Prompt{Text: a.expandCommand(text)}, session.DeliveryQueue); err != nil {
 		return err
 	}
 	a.start(sessionID)
@@ -345,6 +364,13 @@ func (a *App) ListProjectFiles() ([]string, error) {
 		return nil, err
 	}
 	return files, nil
+}
+
+// ListCommands lista los slash-commands disponibles (nombre + descripcion) para
+// el menu del composer, ordenados por nombre. El frontend filtra/ordena en cliente
+// conforme el usuario escribe tras "/"; al enviar, el backend expande el comando.
+func (a *App) ListCommands() ([]command.Command, error) {
+	return a.commands.List(), nil
 }
 
 // ResolveToolPermission delivers the user's decision on a gated tool call

@@ -10,6 +10,10 @@ export function DeleteSession(arg1) {
   return window['go']['main']['App']['DeleteSession'](arg1);
 }
 
+export function ListCommands() {
+  return window['go']['main']['App']['ListCommands']();
+}
+
 export function ListProjectFiles() {
   return window['go']['main']['App']['ListProjectFiles']();
 }
