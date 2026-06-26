@@ -33,6 +33,8 @@ onMounted(() => {
   chat.loadModel()
   // Lista los archivos del workspace una vez para el @-menu del composer.
   chat.loadProjectFiles()
+  // Lista los comandos una vez para el slash-menu del composer.
+  chat.loadCommands()
 })
 onUnmounted(() => chat.teardown())
 </script>
@@ -110,6 +112,7 @@ onUnmounted(() => chat.teardown())
         :running="chat.running"
         :mode="chat.mode"
         :files="chat.projectFiles"
+        :commands="chat.commands"
         @send="chat.send"
         @stop="chat.stop"
         @toggle-mode="chat.toggleMode"

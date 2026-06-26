@@ -11,8 +11,10 @@ import {
   DeleteSession,
   Model,
   ListProjectFiles,
+  ListCommands,
 } from '../../wailsjs/go/main/App'
 import { EventsOn } from '../../wailsjs/runtime/runtime'
+import type { Command } from '../lib/command'
 
 // Mapeo evento->estado de la sesion (front.md §74). El store formaliza la
 // traduccion de los eventos durables del canal `session:<id>` a items del log
@@ -156,6 +158,11 @@ export const useChatStore = defineStore('chat', () => {
   // verdad es el backend (ListProjectFiles); se cargan una vez al montar la vista
   // y el composer filtra/ordena en cliente conforme el usuario escribe tras '@'.
   const projectFiles = ref<string[]>([])
+  // Comandos del workspace para el slash-menu del composer. La fuente de verdad es
+  // el backend (ListCommands); se cargan una vez al montar la vista y el composer
+  // filtra/ordena en cliente conforme el usuario escribe tras '/'. Se normalizan a
+  // {name, description} (el binding los entrega en PascalCase).
+  const commands = ref<Command[]>([])
   // planExpanded controla como se ve el plan vigente: expandido (overlay sobre la
   // columna del chat) o minimizado (tarjeta en el flujo de la conversacion, como
   // una tool). Cada present_plan reabre expandido; el usuario lo colapsa/expande.
@@ -390,6 +397,22 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  // loadCommands trae los slash-commands del backend para el menu del composer y los
+  // normaliza a {name, description}. Idempotente: la vista la llama una vez al montar.
+  // Si el binding falla (arranque sin backend) degrada a lista vacia: el menu queda
+  // sin candidatos en vez de romper.
+  async function loadCommands(): Promise<void> {
+    try {
+      const list = await ListCommands()
+      commands.value = list.map((c) => ({
+        name: c.Name,
+        description: c.Description,
+      }))
+    } catch {
+      commands.value = []
+    }
+  }
+
   // deleteSession borra una conversacion del historial: la quita del backend, y si
   // era la sesion activa abre un chat nuevo (reset). Luego refresca la sidebar.
   async function deleteSession(id: string): Promise<void> {
@@ -521,6 +544,7 @@ export const useChatStore = defineStore('chat', () => {
     usage,
     model,
     projectFiles,
+    commands,
     applyEvent,
     applyError,
     clearError,
@@ -528,6 +552,7 @@ export const useChatStore = defineStore('chat', () => {
     loadSessions,
     loadModel,
     loadProjectFiles,
+    loadCommands,
     loadSession,
     deleteSession,
     send,

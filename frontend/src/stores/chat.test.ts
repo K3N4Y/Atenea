@@ -14,6 +14,7 @@ vi.mock('../../wailsjs/go/main/App', () => ({
   DeleteSession: vi.fn(() => Promise.resolve()),
   Model: vi.fn(() => Promise.resolve('anthropic/claude-opus-4.8')),
   ListProjectFiles: vi.fn(() => Promise.resolve([])),
+  ListCommands: vi.fn(() => Promise.resolve([])),
 }))
 vi.mock('../../wailsjs/runtime/runtime', () => ({
   EventsOn: vi.fn(() => () => {}),
@@ -1203,5 +1204,32 @@ describe('chat store: uso de tokens (Usage)', () => {
     await store.loadProjectFiles()
 
     expect(store.projectFiles).toEqual([])
+  })
+
+  it('loadCommands trae los comandos y los mapea a {name, description} para el slash-menu', async () => {
+    // El binding entrega los campos en PascalCase (forma del modelo Wails); el store
+    // los normaliza a la forma minuscula que consume el composer.
+    vi.mocked(App.ListCommands).mockResolvedValueOnce([
+      { Name: 'commit', Description: 'arma el commit', Template: 'x' },
+      { Name: 'tdd-cycle-evidence', Description: 'TDD', Template: 'y' },
+    ] as Awaited<ReturnType<typeof App.ListCommands>>)
+    const store = useChatStore()
+
+    await store.loadCommands()
+
+    expect(App.ListCommands).toHaveBeenCalled()
+    expect(store.commands).toEqual([
+      { name: 'commit', description: 'arma el commit' },
+      { name: 'tdd-cycle-evidence', description: 'TDD' },
+    ])
+  })
+
+  it('loadCommands degrada a lista vacia si el binding falla', async () => {
+    vi.mocked(App.ListCommands).mockRejectedValueOnce(new Error('no backend'))
+    const store = useChatStore()
+
+    await store.loadCommands()
+
+    expect(store.commands).toEqual([])
   })
 })

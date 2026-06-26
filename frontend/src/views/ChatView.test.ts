@@ -18,6 +18,7 @@ vi.mock('../../wailsjs/go/main/App', () => ({
   ListSessions: vi.fn(() => Promise.resolve([])),
   SessionHistory: vi.fn(() => Promise.resolve([])),
   ListProjectFiles: vi.fn(() => Promise.resolve([])),
+  ListCommands: vi.fn(() => Promise.resolve([])),
 }))
 
 import { EventsOn } from '../../wailsjs/runtime/runtime'
@@ -75,6 +76,21 @@ describe('ChatView', () => {
     expect(App.ListProjectFiles).toHaveBeenCalled()
     expect(wrapper.findComponent(ChatComposer).props('files')).toEqual([
       'app.go',
+    ])
+  })
+
+  it('carga los comandos al montar y se los pasa al composer (slash-menu)', async () => {
+    vi.clearAllMocks()
+    vi.mocked(App.ListCommands).mockResolvedValueOnce([
+      { Name: 'commit', Description: 'arma el commit', Template: 'x' },
+    ] as Awaited<ReturnType<typeof App.ListCommands>>)
+    const wrapper = mountView()
+
+    await flushPromises()
+
+    expect(App.ListCommands).toHaveBeenCalled()
+    expect(wrapper.findComponent(ChatComposer).props('commands')).toEqual([
+      { name: 'commit', description: 'arma el commit' },
     ])
   })
 

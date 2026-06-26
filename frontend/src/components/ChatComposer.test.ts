@@ -175,3 +175,98 @@ describe('ChatComposer @-menciones de archivos', () => {
     expect(wrapper.emitted('send')?.[0]).toEqual(['@x'])
   })
 })
+
+describe('ChatComposer slash-commands', () => {
+  const commands = [
+    { name: 'commit', description: 'arma el mensaje y commitea' },
+    { name: 'tdd-cycle-evidence', description: 'TDD con evidencia' },
+    { name: 'deep-research', description: 'investigacion profunda' },
+  ]
+
+  it('escribir "/" al inicio abre el menu con los comandos', async () => {
+    const wrapper = mount(ChatComposer, { props: { running: false, commands } })
+
+    await wrapper.find('textarea').setValue('/')
+
+    expect(wrapper.find('[role="listbox"]').exists()).toBe(true)
+    expect(wrapper.findAll('[role="option"]').length).toBe(3)
+  })
+
+  it('al escribir tras "/" filtra los comandos', async () => {
+    const wrapper = mount(ChatComposer, { props: { running: false, commands } })
+
+    await wrapper.find('textarea').setValue('/comm')
+
+    const opts = wrapper.findAll('[role="option"]')
+    expect(opts).toHaveLength(1)
+    expect(opts[0].text()).toContain('commit')
+  })
+
+  it('Enter con el menu abierto inserta "/comando " y NO envia', async () => {
+    const wrapper = mount(ChatComposer, { props: { running: false, commands } })
+    const ta = wrapper.find('textarea')
+
+    await ta.setValue('/comm')
+    await ta.trigger('keydown', { key: 'Enter' })
+
+    expect(wrapper.emitted('send')).toBeUndefined()
+    expect((ta.element as HTMLTextAreaElement).value).toBe('/commit ')
+    expect(wrapper.find('[role="listbox"]').exists()).toBe(false)
+  })
+
+  it('ArrowDown mueve la seleccion y Enter inserta el comando activo', async () => {
+    const wrapper = mount(ChatComposer, { props: { running: false, commands } })
+    const ta = wrapper.find('textarea')
+
+    await ta.setValue('/') // los tres comandos en el orden recibido
+    await ta.trigger('keydown', { key: 'ArrowDown' }) // baja al segundo de la lista
+    await ta.trigger('keydown', { key: 'Enter' })
+
+    expect((ta.element as HTMLTextAreaElement).value).toBe(
+      '/tdd-cycle-evidence ',
+    )
+  })
+
+  it('Escape cierra el menu; un Enter posterior envia normal', async () => {
+    const wrapper = mount(ChatComposer, { props: { running: false, commands } })
+    const ta = wrapper.find('textarea')
+
+    await ta.setValue('/comm')
+    await ta.trigger('keydown', { key: 'Escape' })
+    expect(wrapper.find('[role="listbox"]').exists()).toBe(false)
+
+    await ta.trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('send')?.[0]).toEqual(['/comm'])
+  })
+
+  it('mousedown en una opcion inserta su comando', async () => {
+    const wrapper = mount(ChatComposer, { props: { running: false, commands } })
+    const ta = wrapper.find('textarea')
+
+    await ta.setValue('/tdd')
+    await wrapper.findAll('[role="option"]')[0].trigger('mousedown')
+
+    expect((ta.element as HTMLTextAreaElement).value).toBe(
+      '/tdd-cycle-evidence ',
+    )
+  })
+
+  it('"/" a mitad del mensaje NO abre el menu (el comando es todo el mensaje)', async () => {
+    const wrapper = mount(ChatComposer, { props: { running: false, commands } })
+    const ta = wrapper.find('textarea')
+
+    await ta.setValue('hola /comm')
+    expect(wrapper.find('[role="listbox"]').exists()).toBe(false)
+  })
+
+  it('sin comandos: "/" no abre menu y Enter envia normal', async () => {
+    const wrapper = mount(ChatComposer, { props: { running: false } })
+    const ta = wrapper.find('textarea')
+
+    await ta.setValue('/commit')
+    expect(wrapper.find('[role="listbox"]').exists()).toBe(false)
+
+    await ta.trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('send')?.[0]).toEqual(['/commit'])
+  })
+})

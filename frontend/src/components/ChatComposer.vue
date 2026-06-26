@@ -5,21 +5,27 @@ import { PhArrowUp, PhStop } from '@phosphor-icons/vue'
 import { prefersReducedMotion } from '../lib/motion'
 import { detectMention, filterFiles, applyMention } from '../lib/mention'
 import type { MentionQuery } from '../lib/mention'
+import { detectCommand, filterCommands, applyCommand } from '../lib/command'
+import type { CommandQuery, Command } from '../lib/command'
 import MentionMenu from './MentionMenu.vue'
+import CommandMenu from './CommandMenu.vue'
 
 // Composer del MVP: textarea que crece con el contenido + boton pildora. El
 // naranja de acento se reserva para enviar (identidad §3). Es presentacional:
 // emite send/stop y recibe `running` por prop. `files` alimenta el @-menu de
-// archivos del workspace (la vista lo pasa desde el store).
+// archivos del workspace y `commands` el slash-menu de comandos (la vista los pasa
+// desde el store).
 const props = withDefaults(
   defineProps<{
     running: boolean
     mode?: 'normal' | 'plan'
     files?: string[]
+    commands?: Command[]
   }>(),
   {
     mode: 'normal',
     files: () => [],
+    commands: () => [],
   },
 )
 const emit = defineEmits<{
@@ -36,22 +42,53 @@ const canSend = computed(() => text.value.trim().length > 0)
 
 const MAX_HEIGHT = 200
 
-// @-menciones de archivos: detectMention lee el token bajo el caret, filterFiles
-// ordena candidatos del workspace (props.files) y applyMention inserta la ruta
-// elegida. El menu se cierra poniendo la mencion inactiva; al volver a escribir
-// (input) se recalcula y reabre. MENU_LIMIT acota cuantos candidatos se muestran.
+// Dos menus flotantes sobre el composer comparten el mismo patron: detectan un
+// token bajo el caret, filtran candidatos y, al elegir, reemplazan el token. Son
+// mutuamente excluyentes por construccion (el @-menu necesita un token "@"; el
+// slash-menu necesita "/" como primer caracter), asi que como mucho hay uno abierto.
+//   - @-menciones de archivos: detectMention + filterFiles(props.files) + applyMention.
+//   - slash-commands: detectCommand + filterCommands(props.commands) + applyCommand.
+// El teclado (flechas/Enter/Tab/Escape) opera sobre el que este abierto via menuOpen
+// y activeIndex compartido. MENU_LIMIT acota cuantos candidatos se muestran.
 const MENU_LIMIT = 8
-const INACTIVE: MentionQuery = { active: false, query: '', start: -1, end: -1 }
-const mention = ref<MentionQuery>(INACTIVE)
+const INACTIVE_MENTION: MentionQuery = {
+  active: false,
+  query: '',
+  start: -1,
+  end: -1,
+}
+const INACTIVE_COMMAND: CommandQuery = {
+  active: false,
+  query: '',
+  start: -1,
+  end: -1,
+}
+const mention = ref<MentionQuery>(INACTIVE_MENTION)
+const command = ref<CommandQuery>(INACTIVE_COMMAND)
 const activeIndex = ref(0)
 
-const suggestions = computed(() =>
+const fileSuggestions = computed(() =>
   mention.value.active
     ? filterFiles(props.files, mention.value.query, MENU_LIMIT)
     : [],
 )
-const menuOpen = computed(
-  () => mention.value.active && suggestions.value.length > 0,
+const commandSuggestions = computed(() =>
+  command.value.active
+    ? filterCommands(props.commands, command.value.query, MENU_LIMIT)
+    : [],
+)
+const mentionMenuOpen = computed(
+  () => mention.value.active && fileSuggestions.value.length > 0,
+)
+const commandMenuOpen = computed(
+  () => command.value.active && commandSuggestions.value.length > 0,
+)
+const menuOpen = computed(() => mentionMenuOpen.value || commandMenuOpen.value)
+// Cuantas opciones tiene el menu abierto, para acotar la navegacion con flechas.
+const activeCount = computed(() =>
+  commandMenuOpen.value
+    ? commandSuggestions.value.length
+    : fileSuggestions.value.length,
 )
 
 function autoGrow() {
@@ -61,24 +98,27 @@ function autoGrow() {
   el.style.height = `${Math.min(el.scrollHeight, MAX_HEIGHT)}px`
 }
 
-// refreshMention recalcula el token @ bajo el caret tras escribir o mover el
-// cursor; reinicia la opcion activa al tope de la lista filtrada.
-function refreshMention() {
+// refreshMenus recalcula ambos tokens (@ y /) bajo el caret tras escribir o mover
+// el cursor; reinicia la opcion activa al tope de la lista filtrada. Ambos detectores
+// son baratos y mutuamente excluyentes, asi que recalcular los dos es seguro.
+function refreshMenus() {
   const el = textarea.value
   const caret = el
     ? (el.selectionStart ?? text.value.length)
     : text.value.length
   mention.value = detectMention(text.value, caret)
+  command.value = detectCommand(text.value, caret)
   activeIndex.value = 0
 }
 
 function onInput() {
   autoGrow()
-  refreshMention()
+  refreshMenus()
 }
 
 function closeMenu() {
-  mention.value = INACTIVE
+  mention.value = INACTIVE_MENTION
+  command.value = INACTIVE_COMMAND
 }
 
 function onBlur() {
@@ -88,7 +128,7 @@ function onBlur() {
 }
 
 function moveActive(delta: number) {
-  const n = suggestions.value.length
+  const n = activeCount.value
   if (n === 0) return
   activeIndex.value = (activeIndex.value + delta + n) % n
 }
@@ -97,10 +137,9 @@ function onHover(i: number) {
   activeIndex.value = i
 }
 
-// choose inserta la ruta elegida en el token @, cierra el menu y deja el caret
-// justo despues, listo para seguir escribiendo.
-function choose(path: string) {
-  const { text: next, caret } = applyMention(text.value, mention.value, path)
+// replaceText fija el texto nuevo, cierra los menus y deja el caret en su sitio,
+// listo para seguir escribiendo. Lo comparten la insercion de archivo y la de comando.
+function replaceText(next: string, caret: number) {
   text.value = next
   closeMenu()
   nextTick(() => {
@@ -111,6 +150,26 @@ function choose(path: string) {
       el.selectionStart = el.selectionEnd = caret
     }
   })
+}
+
+// chooseFile inserta la ruta elegida en el token @; chooseCommand inserta el
+// "/comando " elegido en el token /. chooseActive elige sobre el menu abierto.
+function chooseFile(path: string) {
+  const { text: next, caret } = applyMention(text.value, mention.value, path)
+  replaceText(next, caret)
+}
+
+function chooseCommand(name: string) {
+  const { text: next, caret } = applyCommand(text.value, command.value, name)
+  replaceText(next, caret)
+}
+
+function chooseActive() {
+  if (commandMenuOpen.value) {
+    chooseCommand(commandSuggestions.value[activeIndex.value].name)
+  } else if (mentionMenuOpen.value) {
+    chooseFile(fileSuggestions.value[activeIndex.value])
+  }
 }
 
 function submit() {
@@ -129,7 +188,7 @@ function submit() {
 }
 
 function onKeydown(e: KeyboardEvent) {
-  // Con el @-menu abierto el teclado lo controla: flechas navegan, Enter/Tab
+  // Con un menu abierto (@ o /) el teclado lo controla: flechas navegan, Enter/Tab
   // eligen, Escape cierra. Solo si esta cerrado, Enter envia.
   if (menuOpen.value) {
     switch (e.key) {
@@ -144,7 +203,7 @@ function onKeydown(e: KeyboardEvent) {
       case 'Enter':
       case 'Tab':
         e.preventDefault()
-        choose(suggestions.value[activeIndex.value])
+        chooseActive()
         return
       case 'Escape':
         e.preventDefault()
@@ -197,11 +256,21 @@ function onKeydown(e: KeyboardEvent) {
         <!-- @-menu de archivos: flota sobre el composer mientras se escribe un
              token @ con candidatos del workspace. -->
         <MentionMenu
-          v-if="menuOpen"
-          :items="suggestions"
+          v-if="mentionMenuOpen"
+          :items="fileSuggestions"
           :active-index="activeIndex"
           class="absolute inset-x-0 bottom-full z-30 mb-2"
-          @select="choose"
+          @select="chooseFile"
+          @hover="onHover"
+        />
+        <!-- slash-menu de comandos: flota sobre el composer mientras se escribe un
+             "/" al inicio del mensaje con los comandos disponibles. -->
+        <CommandMenu
+          v-if="commandMenuOpen"
+          :items="commandSuggestions"
+          :active-index="activeIndex"
+          class="absolute inset-x-0 bottom-full z-30 mb-2"
+          @select="chooseCommand"
           @hover="onHover"
         />
         <textarea
@@ -214,7 +283,7 @@ function onKeydown(e: KeyboardEvent) {
           class="max-h-[200px] flex-1 resize-none bg-transparent py-2 leading-relaxed placeholder:opacity-40 focus:outline-none"
           @input="onInput"
           @keydown="onKeydown"
-          @click="refreshMention"
+          @click="refreshMenus"
           @blur="onBlur"
         ></textarea>
 
