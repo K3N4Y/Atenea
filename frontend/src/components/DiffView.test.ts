@@ -43,4 +43,38 @@ describe('DiffView', () => {
     expect(w.findAll('[data-type="add"]')).toHaveLength(0)
     expect(w.findAll('[data-type="del"]')).toHaveLength(0)
   })
+
+  // El contenedor recorta sus esquinas con overflow-hidden; un radio grande
+  // comeria parte del fondo coloreado de la primera/ultima linea del diff. Por
+  // eso va con esquinas rectas (sin rounded-soft).
+  it('no redondea las esquinas del contenedor para no tapar los cambios', () => {
+    const w = mount(DiffView, { props: { diff: DIFF } })
+    expect(w.classes()).not.toContain('rounded-soft')
+  })
+
+  it('por defecto muestra las lineas (expandido)', () => {
+    const w = mount(DiffView, { props: { diff: DIFF } })
+    expect(w.findAll('[data-type]').length).toBeGreaterThan(0)
+  })
+
+  it('colapsa al hacer click en la cabecera y oculta las lineas', async () => {
+    const w = mount(DiffView, { props: { diff: DIFF } })
+    await w.get('[data-action="toggle"]').trigger('click')
+    expect(w.findAll('[data-type]')).toHaveLength(0)
+  })
+
+  it('un segundo click vuelve a expandir', async () => {
+    const w = mount(DiffView, { props: { diff: DIFF } })
+    const toggle = w.get('[data-action="toggle"]')
+    await toggle.trigger('click')
+    await toggle.trigger('click')
+    expect(w.findAll('[data-type]').length).toBeGreaterThan(0)
+  })
+
+  it('la cabecera resume el conteo de adiciones y borrados', () => {
+    const w = mount(DiffView, { props: { diff: DIFF } })
+    const header = w.get('[data-action="toggle"]').text()
+    expect(header).toContain('+1')
+    expect(header).toContain('-1')
+  })
 })

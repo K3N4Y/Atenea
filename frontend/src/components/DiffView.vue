@@ -1,5 +1,6 @@
 <script lang="ts" setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { PhCaretDown, PhCaretRight } from '@phosphor-icons/vue'
 import hljs from 'highlight.js/lib/common'
 import DOMPurify from 'dompurify'
 import { parseDiff, pathFromDiff, langForPath, type DiffLine } from '../lib/diff'
@@ -22,6 +23,12 @@ const lang = computed(() => {
 })
 
 const lines = computed(() => parseDiff(props.diff).filter((l) => l.type !== 'meta'))
+
+// Colapsar el diff (click en la cabecera): util cuando el cambio es largo y solo
+// se quiere ver el archivo. Empieza expandido. La cabecera resume +adds/-dels.
+const collapsed = ref(false)
+const adds = computed(() => lines.value.filter((l) => l.type === 'add').length)
+const dels = computed(() => lines.value.filter((l) => l.type === 'del').length)
 
 function gutter(l: DiffLine): string {
   if (l.type === 'add') return '+'
@@ -46,11 +53,23 @@ const lineClass: Record<DiffLine['type'], string> = {
 </script>
 
 <template>
-  <div class="overflow-hidden rounded-soft border border-black/[0.06] text-xs">
-    <div class="border-b border-black/[0.06] bg-black/[0.04] px-3 py-1.5 font-mono opacity-70">
-      {{ fileName }}
-    </div>
-    <div class="overflow-x-auto font-mono leading-relaxed">
+  <div class="overflow-hidden border border-black/[0.06] text-xs">
+    <button
+      type="button"
+      data-action="toggle"
+      class="flex w-full items-center gap-2 bg-black/[0.04] px-3 py-1.5 font-mono opacity-70 transition hover:opacity-100"
+      :class="{ 'border-b border-black/[0.06]': !collapsed }"
+      @click="collapsed = !collapsed"
+    >
+      <PhCaretRight v-if="collapsed" :size="12" weight="bold" />
+      <PhCaretDown v-else :size="12" weight="bold" />
+      <span>{{ fileName }}</span>
+      <span class="ml-auto flex gap-1.5 text-[10px]">
+        <span class="text-green-600">+{{ adds }}</span>
+        <span class="text-red-600">-{{ dels }}</span>
+      </span>
+    </button>
+    <div v-if="!collapsed" class="overflow-x-auto font-mono leading-relaxed">
       <div
         v-for="(l, i) in lines"
         :key="i"
