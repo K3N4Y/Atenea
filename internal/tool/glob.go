@@ -90,32 +90,49 @@ func (gt *GlobTool) Execute(ctx context.Context, input json.RawMessage) (Result,
 		return Result{}, fmt.Errorf("glob: limit no puede exceder %d", maxLimit)
 	}
 
-	searchPath := in.Path
+	paths, truncated, err := gt.Files(ctx, in.Pattern, in.Path, limit)
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{Output: formatGlobOutput(paths, truncated, limit)}, nil
+}
+
+// Files ejecuta la busqueda y devuelve las rutas relativas al workspace mas si
+// el resultado quedo truncado. Execute las formatea para el modelo; el binding
+// ListProjectFiles (el @-menu de archivos del composer) consume el slice tal
+// cual. Un pattern vacio lista todos los archivos (respetando .gitignore); un
+// limit <= 0 usa el default del tool. Comparte el sandbox y la relativizacion
+// con Execute, que ademas valida pattern y rango de limit antes de llamar aqui.
+func (gt *GlobTool) Files(ctx context.Context, pattern, path string, limit int) ([]string, bool, error) {
+	if limit <= 0 {
+		limit = gt.defaultLimit()
+	}
+	searchPath := path
 	if searchPath == "" {
 		searchPath = "."
 	}
 	cwd, err := sandboxJoin(gt.Root, searchPath, "glob")
 	if err != nil {
-		return Result{}, err
+		return nil, false, err
 	}
 
 	searcher := gt.searcher()
 	if isRipgrepGlobSearcher(searcher) {
 		if err := rejectRealPathOutside(gt.Root, cwd, searchPath, "glob"); err != nil {
-			return Result{}, err
+			return nil, false, err
 		}
 	}
 
-	result, err := searcher.Glob(ctx, GlobSearch{Cwd: cwd, Pattern: in.Pattern, Limit: limit})
+	result, err := searcher.Glob(ctx, GlobSearch{Cwd: cwd, Pattern: pattern, Limit: limit})
 	if err != nil {
-		return Result{}, fmt.Errorf("glob: %w", err)
+		return nil, false, fmt.Errorf("glob: %w", err)
 	}
 
 	paths, err := gt.workspaceRelativePaths(cwd, result.Entries)
 	if err != nil {
-		return Result{}, err
+		return nil, false, err
 	}
-	return Result{Output: formatGlobOutput(paths, result.Truncated, limit)}, nil
+	return paths, result.Truncated, nil
 }
 
 func (gt *GlobTool) defaultLimit() int {
@@ -202,7 +219,12 @@ func (s *RipgrepGlobSearcher) Glob(ctx context.Context, input GlobSearch) (GlobS
 	if runner == nil {
 		runner = execLineRunner{}
 	}
-	args := []string{"--no-config", "--files", "--glob=" + input.Pattern, "--glob=!**/.git/**", "."}
+	// Un pattern vacio lista todos los archivos: se omite el include --glob
+	// porque un include (p. ej. "*") des-ignoraria lo que .gitignore excluye.
+	args := []string{"--no-config", "--files", "--glob=!**/.git/**", "."}
+	if input.Pattern != "" {
+		args = []string{"--no-config", "--files", "--glob=" + input.Pattern, "--glob=!**/.git/**", "."}
+	}
 	lines, truncated, err := runner.RunLines(ctx, input.Cwd, binary, args, input.Limit)
 	if err != nil {
 		var exitErr *ripgrepExitError

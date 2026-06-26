@@ -6,6 +6,8 @@ export function AcceptPlan(arg1:string):Promise<void>;
 
 export function DeleteSession(arg1:string):Promise<void>;
 
+export function ListProjectFiles():Promise<Array<string>>;
+
 export function ListSessions():Promise<Array<session.SessionSummary>>;
 
 export function Model():Promise<string>;

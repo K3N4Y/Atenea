@@ -43,6 +43,7 @@ type App struct {
 	bus    *event.Bus
 	store  session.Store                 // lectura del historial para la sidebar (ListSessions/SessionHistory)
 	gate   *session.MemoryPermissionGate // ask-before-run: the UI resolves via ResolveToolPermission
+	glob   *tool.GlobTool                // listado de archivos del workspace para el @-menu del composer (ListProjectFiles)
 
 	mu    sync.Mutex
 	runs  map[string]*runHandle   // sessionID -> corrida en vuelo (identidad por puntero)
@@ -74,6 +75,10 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 	if err != nil {
 		root = "."
 	}
+	// El @-menu de archivos del composer lista el workspace via este glob
+	// (ListProjectFiles). Comparte la raiz con las file tools; reusa el searcher
+	// de ripgrep ya probado (respeta .gitignore, excluye .git).
+	a.glob = tool.NewGlobTool(root)
 	// Skills al estilo opencode (disclosure progresivo): se descubren una vez bajo
 	// <root>/.atenea/skills (propio) y <root>/.agents/skills (el estandar, mismo
 	// layout que comparten otros agentes). Sus metadatos van en el system prompt
@@ -328,6 +333,18 @@ func (a *App) ListSessions() ([]session.SessionSummary, error) {
 // sesion del historial.
 func (a *App) SessionHistory(sessionID string) ([]session.SessionEvent, error) {
 	return a.store.Events(context.Background(), sessionID, 0)
+}
+
+// ListProjectFiles lista los archivos del workspace (rutas relativas a la raiz,
+// respetando .gitignore y excluyendo .git) para el @-menu de archivos del
+// composer. El frontend filtra/ordena en cliente conforme el usuario escribe;
+// aqui se devuelve el listado completo, acotado por el limite del glob.
+func (a *App) ListProjectFiles() ([]string, error) {
+	files, _, err := a.glob.Files(context.Background(), "", ".", a.glob.MaxLimit)
+	if err != nil {
+		return nil, err
+	}
+	return files, nil
 }
 
 // ResolveToolPermission delivers the user's decision on a gated tool call
