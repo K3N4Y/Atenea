@@ -48,6 +48,7 @@ type App struct {
 	glob     *tool.GlobTool                // listado de archivos del workspace para el @-menu del composer (ListProjectFiles)
 	commands *command.Set                  // slash-commands del composer (ListCommands + expansion en SendPrompt)
 	provider llm.Provider                  // el modelo; lo reusa el titler para resumir el primer mensaje
+	root     string                        // raiz del workspace; ancla las tools de git del panel de desarrollo
 
 	// titler genera el titulo de una sesion a partir de su primer mensaje. nil
 	// (default en tests) = sin auto-title: la sidebar cae al primer mensaje.
@@ -86,6 +87,7 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 	if err != nil {
 		root = "."
 	}
+	a.root = root
 	// El @-menu de archivos del composer lista el workspace via este glob
 	// (ListProjectFiles). Comparte la raiz con las file tools; reusa el searcher
 	// de ripgrep ya probado (respeta .gitignore, excluye .git).
