@@ -94,6 +94,7 @@ func (s *MemoryStore) Sessions(ctx context.Context) ([]SessionSummary, error) {
 	type entry struct {
 		id    string
 		title string
+		cwd   string
 		last  int // posicion global del ultimo evento: aproxima MAX(rowid)
 	}
 	entries := make([]entry, 0, len(s.sessions))
@@ -102,11 +103,16 @@ func (s *MemoryStore) Sessions(ctx context.Context) ([]SessionSummary, error) {
 			continue
 		}
 		// El titulo generado (ultimo Session.Title) gana sobre el primer mensaje del
-		// usuario, que queda como fallback si aun no se genero ninguno.
-		firstUser, generated := "", ""
+		// usuario, que queda como fallback si aun no se genero ninguno. El Cwd es el
+		// ultimo Session.Cwd (la carpeta vigente de la sesion).
+		firstUser, generated, cwd := "", "", ""
 		for _, ev := range log {
 			if ev.Kind == KindSessionTitle {
 				generated = ev.Text
+				continue
+			}
+			if ev.Kind == KindSessionCwd {
+				cwd = ev.Text
 				continue
 			}
 			if firstUser == "" && ev.Message != nil && ev.Message.Role == RoleUser {
@@ -122,13 +128,13 @@ func (s *MemoryStore) Sessions(ctx context.Context) ([]SessionSummary, error) {
 		// sesiones eso no ordena por recencia. Igualamos al store durable usando un
 		// contador de insercion global; aqui lo reconstruimos por el orden de
 		// llegada que ya quedo en cada log via el contador del store.
-		entries = append(entries, entry{id: id, title: title, last: s.lastSeen[id]})
+		entries = append(entries, entry{id: id, title: title, cwd: cwd, last: s.lastSeen[id]})
 	}
 	sort.Slice(entries, func(a, b int) bool { return entries[a].last > entries[b].last })
 
 	out := make([]SessionSummary, 0, len(entries))
 	for _, e := range entries {
-		out = append(out, SessionSummary{ID: e.id, Title: e.title})
+		out = append(out, SessionSummary{ID: e.id, Title: e.title, Cwd: e.cwd})
 	}
 	return out, nil
 }

@@ -54,6 +54,10 @@ export function ResolveToolPermission(arg1, arg2, arg3) {
   return window['go']['main']['App']['ResolveToolPermission'](arg1, arg2, arg3);
 }
 
+export function SelectWorkspace() {
+  return window['go']['main']['App']['SelectWorkspace']();
+}
+
 export function SendPlanPrompt(arg1, arg2) {
   return window['go']['main']['App']['SendPlanPrompt'](arg1, arg2);
 }
@@ -66,12 +70,20 @@ export function SessionHistory(arg1) {
   return window['go']['main']['App']['SessionHistory'](arg1);
 }
 
+export function SetWorkspace(arg1) {
+  return window['go']['main']['App']['SetWorkspace'](arg1);
+}
+
 export function StartPty(arg1, arg2, arg3) {
   return window['go']['main']['App']['StartPty'](arg1, arg2, arg3);
 }
 
 export function Stop(arg1) {
   return window['go']['main']['App']['Stop'](arg1);
+}
+
+export function Workspace() {
+  return window['go']['main']['App']['Workspace']();
 }
 
 export function WritePty(arg1, arg2) {

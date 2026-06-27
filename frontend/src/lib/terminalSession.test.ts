@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import type { ITerminalOptions } from '@xterm/xterm'
 
 const StartPty = vi.fn()
 const ResizePty = vi.fn()
@@ -7,6 +8,9 @@ const ClosePty = vi.fn()
 const connectTerminal = vi.fn()
 
 const fitFit = vi.fn()
+// Captura las opciones con las que se construye el xterm para poder afirmar el
+// tema/fuente sin montar un terminal real (no corre headless).
+let captured: ITerminalOptions = {}
 class FakeTerminal {
   cols = 80
   rows = 24
@@ -15,6 +19,9 @@ class FakeTerminal {
   focus = vi.fn()
   refresh = vi.fn()
   dispose = vi.fn()
+  constructor(opts: ITerminalOptions) {
+    captured = opts
+  }
 }
 class FakeFitAddon {
   fit = fitFit
@@ -38,6 +45,7 @@ beforeEach(() => {
   ClosePty.mockReset()
   connectTerminal.mockReset()
   fitFit.mockReset()
+  captured = {}
 })
 
 describe('terminalSession (persistencia + multi-sesion)', () => {
@@ -71,5 +79,43 @@ describe('terminalSession (persistencia + multi-sesion)', () => {
     await attach('a', document.createElement('div'))
     destroy('a')
     expect(ClosePty).toHaveBeenCalledWith('a')
+  })
+})
+
+describe('terminalSession (tema visual)', () => {
+  it('crea el xterm con el tema papel del proyecto y Red Hat Mono', async () => {
+    const { attach } = await import('./terminalSession')
+    await attach('a', document.createElement('div'))
+
+    expect(captured.theme?.background).toBe('#fef9ed')
+    expect(captured.theme?.foreground).toBe('#1c1c1a')
+    expect(captured.theme?.cursor).toBe('#f97316')
+    expect(captured.fontFamily).toContain('Red Hat Mono')
+  })
+
+  it('lleva seleccion con tinte de acento y paleta ANSI completa', async () => {
+    const { attach } = await import('./terminalSession')
+    await attach('a', document.createElement('div'))
+
+    expect(captured.theme?.selectionBackground).toBe('rgba(249, 115, 22, 0.22)')
+    // Paleta ANSI presente (afinada para fondo claro), no la default de xterm.
+    expect(captured.theme?.red).toBeDefined()
+    expect(captured.theme?.brightBlue).toBeDefined()
+  })
+
+  it('no regresiona otras opciones del constructor (fontSize/cursorBlink)', async () => {
+    const { attach } = await import('./terminalSession')
+    await attach('a', document.createElement('div'))
+
+    expect(captured.fontSize).toBe(13)
+    expect(captured.cursorBlink).toBe(true)
+  })
+
+  it('active es el theme papel con sus hex base (datos puros)', async () => {
+    const { active, paper } = await import('./terminalThemes')
+    expect(active).toBe(paper)
+    expect(active.background).toBe('#fef9ed')
+    expect(active.foreground).toBe('#1c1c1a')
+    expect(active.cursor).toBe('#f97316')
   })
 })

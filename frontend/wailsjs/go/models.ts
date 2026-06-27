@@ -203,6 +203,7 @@ export namespace session {
 	export class SessionSummary {
 	    ID: string;
 	    Title: string;
+	    Cwd: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new SessionSummary(source);
@@ -212,6 +213,7 @@ export namespace session {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ID = source["ID"];
 	        this.Title = source["Title"];
+	        this.Cwd = source["Cwd"];
 	    }
 	}
 	

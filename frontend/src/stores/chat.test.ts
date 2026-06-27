@@ -15,6 +15,9 @@ vi.mock('../../wailsjs/go/main/App', () => ({
   Model: vi.fn(() => Promise.resolve('anthropic/claude-opus-4.8')),
   ListProjectFiles: vi.fn(() => Promise.resolve([])),
   ListCommands: vi.fn(() => Promise.resolve([])),
+  Workspace: vi.fn(() => Promise.resolve('/home/u/a')),
+  SetWorkspace: vi.fn(() => Promise.resolve()),
+  SelectWorkspace: vi.fn(() => Promise.resolve('/home/u/picked')),
 }))
 vi.mock('../../wailsjs/runtime/runtime', () => ({
   EventsOn: vi.fn(() => () => {}),
@@ -1281,5 +1284,60 @@ describe('chat store: checklist de tareas (todo_write)', () => {
     })
 
     expect(store.todos).toEqual([{ content: 'b', status: 'completed' }])
+  })
+})
+
+describe('chat store: carpeta de trabajo (workspace)', () => {
+  it('loadWorkspace trae la carpeta vigente del backend', async () => {
+    vi.mocked(App.Workspace).mockResolvedValueOnce('/home/u/a')
+    const store = useChatStore()
+    await store.loadWorkspace()
+    expect(store.workspace).toBe('/home/u/a')
+  })
+
+  it('loadSession cambia el workspace a la carpeta del chat abierto', async () => {
+    vi.mocked(App.Workspace).mockResolvedValueOnce('/home/u/a')
+    vi.mocked(App.ListSessions).mockResolvedValueOnce([
+      { ID: 's1', Title: 'x', Cwd: '/home/u/b' },
+    ])
+    const store = useChatStore()
+    await store.loadWorkspace()
+    await store.loadSessions()
+    await store.loadSession('s1')
+    expect(App.SetWorkspace).toHaveBeenCalledWith('/home/u/b')
+    expect(store.workspace).toBe('/home/u/b')
+  })
+
+  it('loadSession no cambia el workspace si el chat es de la carpeta vigente', async () => {
+    vi.mocked(App.Workspace).mockResolvedValueOnce('/home/u/a')
+    vi.mocked(App.ListSessions).mockResolvedValueOnce([
+      { ID: 's1', Title: 'x', Cwd: '/home/u/a' },
+    ])
+    const store = useChatStore()
+    await store.loadWorkspace()
+    await store.loadSessions()
+    await store.loadSession('s1')
+    expect(App.SetWorkspace).not.toHaveBeenCalled()
+  })
+
+  it('selectWorkspace fija la carpeta elegida y abre un chat nuevo', async () => {
+    vi.mocked(App.Workspace).mockResolvedValueOnce('/home/u/a')
+    vi.mocked(App.SelectWorkspace).mockResolvedValueOnce('/home/u/picked')
+    const store = useChatStore()
+    await store.loadWorkspace()
+    const prevID = store.sessionID
+    await store.selectWorkspace()
+    expect(store.workspace).toBe('/home/u/picked')
+    expect(store.sessionID).not.toBe(prevID)
+  })
+
+  it('selectWorkspace cancelado (misma carpeta) no abre un chat nuevo', async () => {
+    vi.mocked(App.Workspace).mockResolvedValueOnce('/home/u/a')
+    vi.mocked(App.SelectWorkspace).mockResolvedValueOnce('/home/u/a')
+    const store = useChatStore()
+    await store.loadWorkspace()
+    const prevID = store.sessionID
+    await store.selectWorkspace()
+    expect(store.sessionID).toBe(prevID)
   })
 })

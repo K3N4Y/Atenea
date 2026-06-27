@@ -3,6 +3,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { StartPty, ResizePty, ClosePty } from '../../wailsjs/go/main/App'
 import { connectTerminal } from './terminal'
+import { FONT, active } from './terminalThemes'
 
 // Registro de terminales por id: cada xterm + su pty viven a nivel de modulo, NO
 // atados a ningun componente. Asi sobreviven a cerrar el panel o cambiar de tab —
@@ -27,8 +28,9 @@ function ensure(id: string): State {
   el.style.height = '100%'
   const term = new Terminal({
     fontSize: 13,
-    fontFamily: 'monospace',
+    fontFamily: FONT,
     cursorBlink: true,
+    theme: active,
   })
   const fit = new FitAddon()
   term.loadAddon(fit)

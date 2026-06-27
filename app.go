@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -50,7 +51,8 @@ type App struct {
 	glob     *tool.GlobTool                // listado de archivos del workspace para el @-menu del composer (ListProjectFiles)
 	commands *command.Set                  // slash-commands del composer (ListCommands + expansion en SendPrompt)
 	provider llm.Provider                  // el modelo; lo reusa el titler para resumir el primer mensaje
-	root     string                        // raiz del workspace; ancla las tools de git del panel de desarrollo
+	snaps    *tool.SessionSnapshots        // read-state por sesion; sobrevive a los cambios de workspace (se crea una vez)
+	root     string                        // raiz del workspace; mutable via SetWorkspace, leida con mu (workspaceRoot)
 
 	// titler genera el titulo de una sesion a partir de su primer mensaje. nil
 	// (default en tests) = sin auto-title: la sidebar cae al primer mensaje.
@@ -84,38 +86,49 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 	emitting := event.NewEmittingStore(store, a.bus)
 	a.store = emitting // las lecturas del historial delegan en inner sin emitir
 	a.inbox = session.NewMemoryInbox()
-	// El read ancla su sandbox en la raiz del workspace; en v1 es el cwd del
-	// proceso (no hay aun seleccion de proyecto en la UI). read, write y edit
-	// comparten root y snapshots por sesion: read graba hash + lineas vistas, edit
-	// lo lee para anclar ediciones, y write crea archivos nuevos con su snapshot.
-	snaps := tool.NewSessionSnapshots()
+	// read, write y edit comparten snapshots por sesion: read graba hash + lineas
+	// vistas, edit lo lee para anclar ediciones, write crea archivos nuevos con su
+	// snapshot. El read-state es por sesion (no por carpeta): se crea una vez y
+	// sobrevive a los cambios de workspace.
+	a.snaps = tool.NewSessionSnapshots()
+	// Ask-before-run: bash is the only gated tool for now. The UI approves/denies
+	// each command via ResolveToolPermission. El gate no depende del root: se crea
+	// una vez y wire lo recablea en cada runner.
+	a.gate = session.NewMemoryPermissionGate()
+	// La raiz inicial es el cwd del proceso; SetWorkspace la cambia en vivo.
 	root, err := os.Getwd()
 	if err != nil {
 		root = "."
 	}
-	a.root = root
+	a.wire(root)
+	return a
+}
+
+// wire arma (o re-arma) todo el cableado anclado a root: las file/exec tools, el
+// glob del @-menu, las skills y sus slash-commands, el catalogo de subagentes y un
+// runner nuevo con el system prompt apuntando a root. Lo construye fuera del lock y
+// publica los punteros mutables (root, glob, commands, runner) bajo mu en un swap
+// corto, asi un SetWorkspace en vivo no compite con las lecturas. Lo llama el
+// constructor (root = cwd) y SetWorkspace (root nuevo).
+func (a *App) wire(root string) {
 	// El @-menu de archivos del composer lista el workspace via este glob
 	// (ListProjectFiles). Comparte la raiz con las file tools; reusa el searcher
 	// de ripgrep ya probado (respeta .gitignore, excluye .git).
-	a.glob = tool.NewGlobTool(root)
-	// Skills al estilo opencode (disclosure progresivo): se descubren una vez bajo
-	// las rutas del proyecto Y las globales del home (skillDirs). Sus metadatos van
-	// en el system prompt (skill.Format), la tool skill carga el cuerpo bajo demanda,
-	// y de cada una se deriva un slash-command. Las del proyecto override a las
-	// globales homonimas. Un fallo de descubrimiento no es fatal: arranca sin skills.
+	glob := tool.NewGlobTool(root)
+	// Skills al estilo opencode (disclosure progresivo): se descubren bajo las rutas
+	// del proyecto Y las globales del home (skillDirs). Sus metadatos van en el system
+	// prompt (skill.Format), la tool skill carga el cuerpo bajo demanda, y de cada una
+	// se deriva un slash-command. Un fallo de descubrimiento no es fatal: sin skills.
 	skills, err := skill.Discover(skillDirs(root)...)
 	if err != nil {
 		log.Printf("atenea: no se pudieron descubrir las skills: %v", err)
 	}
 	skillsBlock := skill.Format(skills)
-	// Slash-commands del composer: hoy se derivan de las skills (un "/<name>" por
-	// skill que instruye al agente a usarla), pero el registro es general: agregar
-	// /commit u otro comando es agregar un command.Command con su plantilla. El menu
-	// los lista via ListCommands; SendPrompt expande el "/name args" antes de enviar.
-	a.commands = command.New(command.FromSkills(skills))
-	// Subagentes: catalogo = built-in (explore read-only, general full) mas los
-	// .md del workspace (.atenea/agents propio, .agents/agents estandar; el propio
-	// override al homonimo). Un fallo de descubrimiento no es fatal: quedan los built-in.
+	// Slash-commands del composer, derivados de las skills (un "/<name>" por skill).
+	commands := command.New(command.FromSkills(skills))
+	// Subagentes: catalogo = built-in (explore read-only, general full) mas los .md
+	// del workspace (.atenea/agents propio, .agents/agents estandar; el propio override
+	// al homonimo). Un fallo de descubrimiento no es fatal: quedan los built-in.
 	agentDefs, err := agent.Catalog(
 		filepath.Join(root, ".atenea", "agents"),
 		filepath.Join(root, ".agents", "agents"),
@@ -127,36 +140,60 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 	// por def.Tools de cada agente (un explore read-only solo recibe read/grep/glob).
 	// Sin la tool task: los subagentes no anidan en el wiring real.
 	childRegistry := tool.NewRegistry(tool.NewOutputStore(outputLimit),
-		tool.NewReadToolWithSnapshotProvider(root, snaps), tool.NewWriteToolWithSnapshotProvider(root, snaps),
-		tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, snaps),
-		tool.NewGlobTool(root), tool.NewGrepToolWithSnapshotProvider(root, snaps),
+		tool.NewReadToolWithSnapshotProvider(root, a.snaps), tool.NewWriteToolWithSnapshotProvider(root, a.snaps),
+		tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, a.snaps),
+		tool.NewGlobTool(root), tool.NewGrepToolWithSnapshotProvider(root, a.snaps),
 		tool.NewBashTool(root))
 	// La tool task levanta subagentes hijos. nextID propio (thread-safe) porque
 	// varios subagentes pueden correr en paralelo (cap de concurrencia interno).
-	taskTool := subagent.NewTaskTool(agentDefs, provider, childRegistry, newIDGen())
+	taskTool := subagent.NewTaskTool(agentDefs, a.provider, childRegistry, newIDGen())
 	// present_plan se registra para que el runner pueda ejecutarla, pero NO entra
 	// en los Permissions normales: solo se anuncia en plan-mode (SetPlanMode).
 	registry := tool.NewRegistry(tool.NewOutputStore(outputLimit), tool.Echo{},
-		tool.NewReadToolWithSnapshotProvider(root, snaps), tool.NewWriteToolWithSnapshotProvider(root, snaps),
-		tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, snaps),
-		tool.NewGlobTool(root), tool.NewGrepToolWithSnapshotProvider(root, snaps),
+		tool.NewReadToolWithSnapshotProvider(root, a.snaps), tool.NewWriteToolWithSnapshotProvider(root, a.snaps),
+		tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, a.snaps),
+		tool.NewGlobTool(root), tool.NewGrepToolWithSnapshotProvider(root, a.snaps),
 		tool.NewBashTool(root), tool.NewPresentPlanTool(root), tool.NewSkillTool(skills), taskTool,
-		tool.NewWebFetchTool(provider), tool.TodoWriteTool{})
-	a.runner = runner.NewRunner(emitting, a.inbox, provider, registry,
+		tool.NewWebFetchTool(a.provider), tool.TodoWriteTool{})
+	r := runner.NewRunner(a.store, a.inbox, a.provider, registry,
 		tool.Permissions{"echo": true, "read": true, "write": true, "edit": true, "glob": true, "grep": true, "bash": true, "skill": true, "task": true, "web_fetch": true, "todo_write": true},
 		newIDGen())
-	a.runner.SetSystemPrompt(systemPromptBuilder(root, skillsBlock))
-	// Ask-before-run: bash is the only gated tool for now. The UI approves/denies
-	// each command via ResolveToolPermission before it runs on the real machine.
-	a.gate = session.NewMemoryPermissionGate()
-	a.runner.SetPermissionGate(a.gate, func(c tool.Call) bool { return c.Name == "bash" })
+	r.SetSystemPrompt(systemPromptBuilder(root, skillsBlock))
+	r.SetPermissionGate(a.gate, func(c tool.Call) bool { return c.Name == "bash" })
 	// Plan-mode: investigacion de solo lectura mas present_plan (sin write/edit/bash/
-	// echo). El hook de modo decide por sesion; SetMode/SetPlanMode toman efecto
-	// solo cuando modeFor reporta ModePlan.
-	a.runner.SetMode(a.modeFor)
-	a.runner.SetPlanMode(planSystemPromptBuilder(root, skillsBlock),
+	// echo). El hook de modo decide por sesion; SetMode/SetPlanMode toman efecto solo
+	// cuando modeFor reporta ModePlan.
+	r.SetMode(a.modeFor)
+	r.SetPlanMode(planSystemPromptBuilder(root, skillsBlock),
 		tool.Permissions{"read": true, "glob": true, "grep": true, "present_plan": true, "skill": true})
-	return a
+
+	a.mu.Lock()
+	a.root = root
+	a.glob = glob
+	a.commands = commands
+	a.runner = r
+	a.mu.Unlock()
+}
+
+// workspaceRoot devuelve la raiz vigente bajo mu (SetWorkspace la cambia en vivo).
+func (a *App) workspaceRoot() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.root
+}
+
+// currentGlob y currentCommands devuelven los punteros vigentes bajo mu; wire los
+// reemplaza al cambiar de workspace, asi las lecturas no compiten con el swap.
+func (a *App) currentGlob() *tool.GlobTool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.glob
+}
+
+func (a *App) currentCommands() *command.Set {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.commands
 }
 
 // skillDirs returns the directories scanned for skills, project (workspace root)
@@ -358,6 +395,7 @@ func (a *App) setMode(sessionID string, m session.Mode) {
 func (a *App) SendPrompt(sessionID, text string) error {
 	a.setMode(sessionID, session.ModeNormal)
 	job := a.titleJob(sessionID, text)
+	a.captureCwd(sessionID)
 	if err := a.inbox.Admit(context.Background(), sessionID,
 		session.Prompt{Text: a.expandCommand(text)}, session.DeliveryQueue); err != nil {
 		return err
@@ -370,7 +408,7 @@ func (a *App) SendPrompt(sessionID, text string) error {
 // segun el registro; el texto que no es un comando registrado pasa sin cambios.
 // Lo comparten SendPrompt y SendPlanPrompt para un comportamiento consistente.
 func (a *App) expandCommand(text string) string {
-	if expanded, ok := a.commands.Resolve(text); ok {
+	if expanded, ok := a.currentCommands().Resolve(text); ok {
 		return expanded
 	}
 	return text
@@ -428,12 +466,79 @@ func titleFromProvider(p llm.Provider, model, message string) string {
 	return strings.TrimSpace(b.String())
 }
 
+// captureCwd graba la carpeta de trabajo vigente como Session.Cwd la PRIMERA vez
+// que se manda un prompt a la sesion (cuando aun no existe en el store). La sidebar
+// agrupa los chats por esa carpeta. Debe correr DESPUES del chequeo de "sesion
+// nueva" de titleJob (ambos miran LoadSession) y ANTES de admitir el prompt, asi el
+// Session.Cwd queda de primero en el log. Idempotente: en la sesion ya existente no
+// hace nada. Un fallo al grabar no corta el envio: la carpeta solo afecta la sidebar.
+func (a *App) captureCwd(sessionID string) {
+	if _, err := a.store.LoadSession(context.Background(), sessionID); err == nil {
+		return // la sesion ya existe: no es el primer prompt
+	}
+	if _, err := a.store.AppendEvent(context.Background(), sessionID,
+		session.SessionEvent{Kind: session.KindSessionCwd, Text: a.workspaceRoot()}); err != nil {
+		log.Printf("atenea: no se pudo guardar la carpeta de %s: %v", sessionID, err)
+	}
+}
+
+// Workspace devuelve la carpeta de trabajo vigente. La UI la muestra en la sidebar
+// y la usa para decidir si abrir un chat de otra carpeta cambia el workspace.
+func (a *App) Workspace() string { return a.workspaceRoot() }
+
+// SetWorkspace cambia la carpeta de trabajo en vivo: valida que path sea una
+// carpeta, corta las corridas en vuelo (apuntaban al root viejo) y recablea todas
+// las tools/skills/subagentes/prompt al root nuevo. Las sesiones nuevas capturan
+// esta carpeta. Es el binding que el frontend llama al elegir o cambiar de carpeta.
+func (a *App) SetWorkspace(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("workspace invalido: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("workspace invalido: %s no es una carpeta", path)
+	}
+	a.cancelAllRuns()
+	a.wire(path)
+	return nil
+}
+
+// SelectWorkspace abre el dialogo nativo de carpeta y, si el usuario elige una, la
+// fija con SetWorkspace; devuelve la carpeta vigente resultante. Es la frontera
+// Wails (necesita el ctx y el GUI), no testeable headless; la logica testeable vive
+// en SetWorkspace. Si el usuario cancela (path ""), deja la carpeta como estaba.
+func (a *App) SelectWorkspace() (string, error) {
+	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "Elegir carpeta de trabajo"})
+	if err != nil {
+		return a.workspaceRoot(), err
+	}
+	if dir == "" {
+		return a.workspaceRoot(), nil // cancelado
+	}
+	if err := a.SetWorkspace(dir); err != nil {
+		return a.workspaceRoot(), err
+	}
+	return dir, nil
+}
+
+// cancelAllRuns corta toda corrida en vuelo. ponytail: las cancela pero no las
+// espera; cada runner viejo termina solo en su ctx cancelado mientras el nuevo ya
+// atiende los envios. Lo usa SetWorkspace antes de recablear.
+func (a *App) cancelAllRuns() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, h := range a.runs {
+		h.cancel()
+	}
+}
+
 // SendPlanPrompt admite el texto en plan-mode: investigacion de solo lectura mas
 // present_plan, con el contrato de plan-mode en el system prompt. Fija ModePlan
 // antes de arrancar. Es el binding que el frontend llama al planear una feature.
 func (a *App) SendPlanPrompt(sessionID, text string) error {
 	a.setMode(sessionID, session.ModePlan)
 	job := a.titleJob(sessionID, text)
+	a.captureCwd(sessionID)
 	if err := a.inbox.Admit(context.Background(), sessionID,
 		session.Prompt{Text: a.expandCommand(text)}, session.DeliveryQueue); err != nil {
 		return err
@@ -475,7 +580,8 @@ func (a *App) SessionHistory(sessionID string) ([]session.SessionEvent, error) {
 // composer. El frontend filtra/ordena en cliente conforme el usuario escribe;
 // aqui se devuelve el listado completo, acotado por el limite del glob.
 func (a *App) ListProjectFiles() ([]string, error) {
-	files, _, err := a.glob.Files(context.Background(), "", ".", a.glob.MaxLimit)
+	g := a.currentGlob()
+	files, _, err := g.Files(context.Background(), "", ".", g.MaxLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -533,13 +639,14 @@ func (a *App) start(sessionID string, afterRun func()) {
 		old.cancel() // una corrida previa de la misma sesion no debe quedar viva
 	}
 	a.runs[sessionID] = h
+	r := a.runner // capturado bajo el lock: SetWorkspace puede cambiarlo en vuelo
 	a.mu.Unlock()
 
 	a.wg.Add(1)
 	go func() {
 		defer a.wg.Done()
 		defer a.clear(sessionID, h)
-		if err := a.runner.Run(ctx, sessionID, false); err != nil {
+		if err := r.Run(ctx, sessionID, false); err != nil {
 			a.bus.PublishError(sessionID, err)
 		}
 		if afterRun != nil {

@@ -304,6 +304,48 @@ func testStoreContract(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 	})
 
+	t.Run("SessionsCarryCwdFromCwdEvent", func(t *testing.T) {
+		ctx := context.Background()
+		store := newStore(t)
+
+		// El Session.Cwd lleva la carpeta de la sesion; la proyeccion la expone en
+		// SessionSummary.Cwd para que la sidebar agrupe los chats por carpeta. El
+		// ultimo Session.Cwd vigente gana sobre uno previo.
+		if _, err := store.AppendEvent(ctx, "s1", SessionEvent{Kind: KindSessionCwd, Text: "/home/u/viejo"}); err != nil {
+			t.Fatalf("AppendEvent (Session.Cwd previo): unexpected error: %v", err)
+		}
+		appendContractMessage(t, store, "s1", Message{ID: "m1", Role: RoleUser, Text: "hola"})
+		if _, err := store.AppendEvent(ctx, "s1", SessionEvent{Kind: KindSessionCwd, Text: "/home/u/proj"}); err != nil {
+			t.Fatalf("AppendEvent (Session.Cwd): unexpected error: %v", err)
+		}
+
+		got, err := store.Sessions(ctx)
+		if err != nil {
+			t.Fatalf("Sessions: unexpected error: %v", err)
+		}
+		want := []SessionSummary{{ID: "s1", Title: "hola", Cwd: "/home/u/proj"}}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("Sessions: got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("SessionsCwdEmptyWithoutCwdEvent", func(t *testing.T) {
+		ctx := context.Background()
+		store := newStore(t)
+
+		// Sin Session.Cwd (sesion vieja): Cwd queda "" y la sidebar la agrupa aparte.
+		appendContractMessage(t, store, "s1", Message{ID: "m1", Role: RoleUser, Text: "hola"})
+
+		got, err := store.Sessions(ctx)
+		if err != nil {
+			t.Fatalf("Sessions: unexpected error: %v", err)
+		}
+		want := []SessionSummary{{ID: "s1", Title: "hola", Cwd: ""}}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("Sessions: got %+v, want %+v", got, want)
+		}
+	})
+
 	t.Run("SessionsTruncatesLongTitleTo80Runes", func(t *testing.T) {
 		ctx := context.Background()
 		store := newStore(t)

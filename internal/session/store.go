@@ -17,10 +17,13 @@ type PendingTool struct {
 
 // SessionSummary es la fila del historial de chats para la sidebar: el ID de la
 // sesion y un Title derivado del primer mensaje del usuario. Title queda "" si la
-// sesion aun no tiene mensaje de usuario (el frontend cae a un placeholder).
+// sesion aun no tiene mensaje de usuario (el frontend cae a un placeholder). Cwd
+// es la carpeta de trabajo en que se creo la sesion (del ultimo Session.Cwd); ""
+// en sesiones viejas anteriores a la captura de carpeta. La sidebar agrupa por Cwd.
 type SessionSummary struct {
 	ID    string
 	Title string
+	Cwd   string
 }
 
 // titleMaxRunes es el largo maximo del Title de una sesion. Un corte por rune

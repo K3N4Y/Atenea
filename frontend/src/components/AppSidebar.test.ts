@@ -130,4 +130,29 @@ describe('AppSidebar', () => {
     expect(wrapper.emitted('delete-session')).toBeFalsy()
     expect(wrapper.find('[data-confirm-delete="s1"]').exists()).toBe(false)
   })
+
+  it('agrupa las sesiones por carpeta con un encabezado por carpeta', () => {
+    const wrapper = mountSidebar({
+      sessions: [
+        { ID: 's1', Title: 'a', Cwd: '/home/u/proj' },
+        { ID: 's2', Title: 'b', Cwd: '/home/u/otro' },
+        { ID: 's3', Title: 'c', Cwd: '/home/u/proj' },
+      ],
+    })
+    const headers = wrapper.findAll('[data-folder-group]')
+    expect(headers).toHaveLength(2)
+    expect(headers[0].text()).toContain('proj')
+    expect(headers[1].text()).toContain('otro')
+    // Las tres filas siguen presentes, repartidas en sus grupos.
+    expect(wrapper.findAll('[data-session-id]')).toHaveLength(3)
+  })
+
+  it('muestra la carpeta de trabajo vigente y emite change-workspace al pulsarla', async () => {
+    const wrapper = mountSidebar({ workspace: '/home/u/atenea' })
+    const btn = wrapper.find('[data-change-workspace]')
+    expect(btn.exists()).toBe(true)
+    expect(btn.text()).toContain('atenea')
+    await btn.trigger('click')
+    expect(wrapper.emitted('change-workspace')).toBeTruthy()
+  })
 })

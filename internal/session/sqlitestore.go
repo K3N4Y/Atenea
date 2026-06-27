@@ -239,7 +239,13 @@ func (s *SQLiteStore) Sessions(ctx context.Context) ([]SessionSummary, error) {
 		              AND u.has_message = 1
 		              AND u.role = 'user'
 		            ORDER BY u.seq
-		            LIMIT 1)) AS title
+		            LIMIT 1)) AS title,
+		        (SELECT c.ev_text
+		           FROM events c
+		          WHERE c.session_id = e.session_id
+		            AND c.kind = 'Session.Cwd'
+		          ORDER BY c.seq DESC
+		          LIMIT 1) AS cwd
 		   FROM events e
 		  GROUP BY e.session_id
 		  ORDER BY MAX(e.rowid) DESC`,
@@ -252,11 +258,11 @@ func (s *SQLiteStore) Sessions(ctx context.Context) ([]SessionSummary, error) {
 	out := make([]SessionSummary, 0)
 	for rows.Next() {
 		var id string
-		var title sql.NullString
-		if err := rows.Scan(&id, &title); err != nil {
+		var title, cwd sql.NullString
+		if err := rows.Scan(&id, &title, &cwd); err != nil {
 			return nil, err
 		}
-		out = append(out, SessionSummary{ID: id, Title: truncateTitle(title.String)})
+		out = append(out, SessionSummary{ID: id, Title: truncateTitle(title.String), Cwd: cwd.String})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

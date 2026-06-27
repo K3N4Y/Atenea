@@ -12,6 +12,9 @@ import {
   Model,
   ListProjectFiles,
   ListCommands,
+  Workspace,
+  SetWorkspace,
+  SelectWorkspace,
 } from '../../wailsjs/go/main/App'
 import { EventsOn } from '../../wailsjs/runtime/runtime'
 import type { Command } from '../lib/command'
@@ -124,7 +127,10 @@ function todosFromInput(input: unknown): TodoItem[] {
   const valid: TodoStatus[] = ['pending', 'in_progress', 'completed']
   return todos.flatMap((t): TodoItem[] => {
     const o = t && typeof t === 'object' ? (t as Record<string, unknown>) : {}
-    if (typeof o.content !== 'string' || !valid.includes(o.status as TodoStatus))
+    if (
+      typeof o.content !== 'string' ||
+      !valid.includes(o.status as TodoStatus)
+    )
       return []
     return [{ content: o.content, status: o.status as TodoStatus }]
   })
@@ -166,6 +172,9 @@ export interface SessionEvent {
 export interface SessionSummary {
   ID: string
   Title: string
+  // Carpeta de trabajo en que se creo la sesion; '' en chats viejos anteriores a
+  // la captura. La sidebar agrupa por esta carpeta (groupSessionsByFolder).
+  Cwd: string
 }
 
 export const useChatStore = defineStore('chat', () => {
@@ -176,6 +185,10 @@ export const useChatStore = defineStore('chat', () => {
   // Historial de chats para la sidebar. La fuente de verdad es el backend; se
   // refresca con loadSessions (al montar la vista) y tras enviar un prompt.
   const sessions = ref<SessionSummary[]>([])
+  // Carpeta de trabajo vigente (la raiz a la que apuntan las tools del agente). La
+  // fuente de verdad es el backend (Workspace/SetWorkspace); la sidebar la muestra
+  // y la usa para agrupar y para cambiar de carpeta al abrir un chat de otra.
+  const workspace = ref('')
   // Modo de envio: 'normal' manda prompts directos; 'plan' pide al agente que
   // planifique antes de ejecutar. `plan` guarda el plan vigente que la tool
   // present_plan abre a pantalla completa (null = sin overlay de plan).
@@ -420,6 +433,29 @@ export const useChatStore = defineStore('chat', () => {
     sessions.value = await ListSessions()
   }
 
+  // loadWorkspace trae la carpeta de trabajo vigente del backend (espejo de
+  // loadModel). La vista la llama al montar. Si el binding falla (arranque sin
+  // backend) degrada a '' y la sidebar omite el encabezado de carpeta.
+  async function loadWorkspace(): Promise<void> {
+    try {
+      workspace.value = await Workspace()
+    } catch {
+      workspace.value = ''
+    }
+  }
+
+  // selectWorkspace abre el dialogo nativo de carpeta (backend) y, si el usuario
+  // elige una distinta, el agente queda apuntando alli; abre un chat nuevo para que
+  // capture la carpeta nueva y refresca la sidebar. Si cancela o repite, no cambia.
+  async function selectWorkspace(): Promise<void> {
+    const dir = await SelectWorkspace()
+    if (dir && dir !== workspace.value) {
+      workspace.value = dir
+      reset()
+    }
+    await loadSessions()
+  }
+
   // loadModel trae el modelo activo del backend una vez (espejo de loadSessions):
   // la UI lo usa para dimensionar la barra de contexto por modelo. Si el binding
   // no esta disponible (p. ej. arranque sin backend) cae a un modelo vacio: la
@@ -474,6 +510,14 @@ export const useChatStore = defineStore('chat', () => {
   // log persistido incluye los *.Ended/Step.Ended, asi que los items convergen a
   // su estado terminal (no quedan en streaming) y running queda apagado.
   async function loadSession(id: string): Promise<void> {
+    // Abrir un chat de otra carpeta cambia el workspace en vivo: el agente queda
+    // apuntando a la carpeta en que se creo ese chat. Se hace antes de reproducir
+    // el log para que un envio posterior corra en la carpeta correcta.
+    const summary = sessions.value.find((s) => s.ID === id)
+    if (summary?.Cwd && summary.Cwd !== workspace.value) {
+      await SetWorkspace(summary.Cwd)
+      workspace.value = summary.Cwd
+    }
     const wasSubscribed = unsubscribe.length > 0
     teardown()
     sessionID.value = id
@@ -585,6 +629,7 @@ export const useChatStore = defineStore('chat', () => {
     running,
     errorText,
     sessions,
+    workspace,
     mode,
     plan,
     planExpanded,
@@ -598,6 +643,8 @@ export const useChatStore = defineStore('chat', () => {
     clearError,
     reset,
     loadSessions,
+    loadWorkspace,
+    selectWorkspace,
     loadModel,
     loadProjectFiles,
     loadCommands,

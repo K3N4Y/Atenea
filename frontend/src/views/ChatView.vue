@@ -37,6 +37,8 @@ onMounted(() => {
   chat.loadSessions()
   // Trae el modelo activo una vez para dimensionar la barra de contexto.
   chat.loadModel()
+  // Trae la carpeta de trabajo vigente para el control de carpeta de la sidebar.
+  chat.loadWorkspace()
   // Lista los archivos del workspace una vez para el @-menu del composer.
   chat.loadProjectFiles()
   // Lista los comandos una vez para el slash-menu del composer.
@@ -50,9 +52,11 @@ onUnmounted(() => chat.teardown())
     <AppSidebar
       :sessions="chat.sessions"
       :active-session-id="chat.sessionID"
+      :workspace="chat.workspace"
       @new-chat="chat.reset()"
       @select-session="(id: string) => chat.loadSession(id)"
       @delete-session="(id: string) => chat.deleteSession(id)"
+      @change-workspace="chat.selectWorkspace()"
       @open-settings="settingsOpen = true"
     />
 

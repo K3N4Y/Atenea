@@ -30,14 +30,20 @@ export function ResizePty(arg1:string,arg2:number,arg3:number):Promise<void>;
 
 export function ResolveToolPermission(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
+export function SelectWorkspace():Promise<string>;
+
 export function SendPlanPrompt(arg1:string,arg2:string):Promise<void>;
 
 export function SendPrompt(arg1:string,arg2:string):Promise<void>;
 
 export function SessionHistory(arg1:string):Promise<Array<session.SessionEvent>>;
 
+export function SetWorkspace(arg1:string):Promise<void>;
+
 export function StartPty(arg1:string,arg2:number,arg3:number):Promise<void>;
 
 export function Stop(arg1:string):Promise<void>;
+
+export function Workspace():Promise<string>;
 
 export function WritePty(arg1:string,arg2:string):Promise<void>;

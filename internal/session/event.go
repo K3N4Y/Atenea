@@ -40,6 +40,12 @@ const (
 	// primer mensaje del usuario; el ultimo Session.Title es el vigente. No
 	// materializa Message: no aporta a la conversacion, solo a la sidebar.
 	KindSessionTitle EventKind = "Session.Title"
+
+	// KindSessionCwd lleva en Text la carpeta de trabajo en que se creo la sesion.
+	// La app lo emite al primer prompt; la proyeccion Sessions lo expone en
+	// SessionSummary.Cwd para que la sidebar agrupe los chats por carpeta. El
+	// ultimo Session.Cwd es el vigente. No materializa Message.
+	KindSessionCwd EventKind = "Session.Cwd"
 )
 
 // Usage son los tokens del turno que el publisher persiste en Step.Ended. Es un

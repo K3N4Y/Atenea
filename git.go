@@ -124,19 +124,19 @@ func commitMessageFromProvider(p llm.Provider, model, diff string) string {
 }
 
 // GitStatus expone al frontend los cambios staged + untracked del workspace.
-func (a *App) GitStatus() (GitStatus, error) { return gitStatus(a.root) }
+func (a *App) GitStatus() (GitStatus, error) { return gitStatus(a.workspaceRoot()) }
 
 // InitRepo inicializa un repo git en el proyecto (boton del panel cuando no hay
 // repo). Tras llamarlo el frontend recarga GitStatus.
-func (a *App) InitRepo() error { return gitInit(a.root) }
+func (a *App) InitRepo() error { return gitInit(a.workspaceRoot()) }
 
 // Commit confirma lo staged con el mensaje que arma el usuario en el panel.
-func (a *App) Commit(message string) error { return gitCommit(a.root, message) }
+func (a *App) Commit(message string) error { return gitCommit(a.workspaceRoot(), message) }
 
 // GenerateCommitMessage genera un mensaje de commit a partir del diff staged.
 // Falla si no hay nada staged (no hay diff que resumir).
 func (a *App) GenerateCommitMessage() (string, error) {
-	diff, err := runGit(a.root, "diff", "--cached")
+	diff, err := runGit(a.workspaceRoot(), "diff", "--cached")
 	if err != nil {
 		return "", err
 	}
