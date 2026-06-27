@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { computed, ref } from 'vue'
-import { PhCaretDown, PhCaretRight } from '@phosphor-icons/vue'
+import { PhCaretRight } from '@phosphor-icons/vue'
 import hljs from 'highlight.js/lib/common'
 import DOMPurify from 'dompurify'
 import { parseDiff, pathFromDiff, langForPath, type DiffLine } from '../lib/diff'
@@ -61,29 +61,42 @@ const lineClass: Record<DiffLine['type'], string> = {
       :class="{ 'border-b border-black/[0.06]': !collapsed }"
       @click="collapsed = !collapsed"
     >
-      <PhCaretRight v-if="collapsed" :size="12" weight="bold" />
-      <PhCaretDown v-else :size="12" weight="bold" />
+      <PhCaretRight
+        :size="12"
+        weight="bold"
+        class="transition-transform duration-200 ease-snappy"
+        :class="{ 'rotate-90': !collapsed }"
+      />
       <span>{{ fileName }}</span>
       <span class="ml-auto flex gap-1.5 text-[10px]">
         <span class="text-green-600">+{{ adds }}</span>
         <span class="text-red-600">-{{ dels }}</span>
       </span>
     </button>
-    <div v-if="!collapsed" class="overflow-x-auto font-mono leading-relaxed">
-      <div
-        v-for="(l, i) in lines"
-        :key="i"
-        :data-type="l.type"
-        class="flex whitespace-pre"
-        :class="lineClass[l.type]"
-      >
-        <template v-if="l.type === 'hunk'">
-          <span class="px-3 py-0.5 opacity-70">{{ l.text }}</span>
-        </template>
-        <template v-else>
-          <span class="w-5 shrink-0 select-none px-1 text-center opacity-40">{{ gutter(l) }}</span>
-          <span class="hljs flex-1 pr-3" v-html="codeHtml(l.text)"></span>
-        </template>
+    <div
+      class="grid transition-[grid-template-rows] duration-200 ease-snappy"
+      :class="collapsed ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]'"
+      :data-expanded="collapsed ? undefined : ''"
+      :data-collapsed="collapsed ? '' : undefined"
+    >
+      <div class="overflow-hidden">
+        <div class="overflow-x-auto font-mono leading-relaxed">
+          <div
+            v-for="(l, i) in lines"
+            :key="i"
+            :data-type="l.type"
+            class="flex whitespace-pre"
+            :class="lineClass[l.type]"
+          >
+            <template v-if="l.type === 'hunk'">
+              <span class="px-3 py-0.5 opacity-70">{{ l.text }}</span>
+            </template>
+            <template v-else>
+              <span class="w-5 shrink-0 select-none px-1 text-center opacity-40">{{ gutter(l) }}</span>
+              <span class="hljs flex-1 pr-3" v-html="codeHtml(l.text)"></span>
+            </template>
+          </div>
+        </div>
       </div>
     </div>
   </div>

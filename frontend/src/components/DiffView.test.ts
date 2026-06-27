@@ -55,12 +55,18 @@ describe('DiffView', () => {
   it('por defecto muestra las lineas (expandido)', () => {
     const w = mount(DiffView, { props: { diff: DIFF } })
     expect(w.findAll('[data-type]').length).toBeGreaterThan(0)
+    // Estado inicial expandido (el contenedor colapsable lleva data-expanded).
+    expect(w.find('[data-expanded]').exists()).toBe(true)
   })
 
+  // Las filas del diff viven siempre en el DOM (colapsable por altura via
+  // grid-rows, clipeado cuando cerrado); la intencion "oculta las lineas" se
+  // aserta sobre el estado colapsado del contenedor.
   it('colapsa al hacer click en la cabecera y oculta las lineas', async () => {
     const w = mount(DiffView, { props: { diff: DIFF } })
     await w.get('[data-action="toggle"]').trigger('click')
-    expect(w.findAll('[data-type]')).toHaveLength(0)
+    expect(w.find('[data-collapsed]').exists()).toBe(true)
+    expect(w.find('[data-expanded]').exists()).toBe(false)
   })
 
   it('un segundo click vuelve a expandir', async () => {
@@ -68,7 +74,8 @@ describe('DiffView', () => {
     const toggle = w.get('[data-action="toggle"]')
     await toggle.trigger('click')
     await toggle.trigger('click')
-    expect(w.findAll('[data-type]').length).toBeGreaterThan(0)
+    expect(w.find('[data-expanded]').exists()).toBe(true)
+    expect(w.find('[data-collapsed]').exists()).toBe(false)
   })
 
   it('la cabecera resume el conteo de adiciones y borrados', () => {

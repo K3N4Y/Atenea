@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { ref, computed } from 'vue'
-import { PhBrain, PhCaretRight, PhCaretDown } from '@phosphor-icons/vue'
+import { PhBrain, PhCaretRight } from '@phosphor-icons/vue'
 import type { ReasoningItem } from '../stores/chat'
 import { formatThinkingDuration } from '../lib/duration'
 import { useSmoothText } from '../lib/useSmoothText'
@@ -51,19 +51,26 @@ const doneLabel = computed(
         :aria-expanded="expanded"
         @click="expanded = !expanded"
       >
-        <component
-          :is="expanded ? PhCaretDown : PhCaretRight"
+        <PhCaretRight
           :size="14"
           weight="bold"
+          class="transition-transform duration-200 ease-snappy"
+          :class="{ 'rotate-90': expanded }"
         />
         <span>{{ doneLabel }}</span>
       </button>
-      <p
-        v-if="expanded"
-        class="mt-2 whitespace-pre-wrap break-words pl-6 opacity-80"
+      <div
+        class="grid transition-[grid-template-rows] duration-200 ease-snappy"
+        :class="expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'"
+        :data-expanded="expanded ? '' : undefined"
+        :data-collapsed="expanded ? undefined : ''"
       >
-        {{ item.text }}
-      </p>
+        <div class="overflow-hidden">
+          <p class="mt-2 whitespace-pre-wrap break-words pl-6 opacity-80">
+            {{ item.text }}
+          </p>
+        </div>
+      </div>
     </template>
   </div>
 </template>

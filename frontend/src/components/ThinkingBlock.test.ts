@@ -61,11 +61,16 @@ describe('ThinkingBlock', () => {
     expect(wrapper.text()).toContain('Thought 3s')
     const button = wrapper.find('button')
     expect(button.attributes('aria-expanded')).toBe('false')
-    expect(wrapper.text()).not.toContain('contenido completo')
+    // El cuerpo siempre vive en el DOM (colapsable por altura via grid-rows);
+    // la intencion "no esta mostrado" se aserta sobre el estado colapsado.
+    expect(wrapper.find('[data-collapsed]').exists()).toBe(true)
+    expect(wrapper.find('[data-expanded]').exists()).toBe(false)
 
     await button.trigger('click')
 
     expect(button.attributes('aria-expanded')).toBe('true')
     expect(wrapper.text()).toContain('contenido completo')
+    expect(wrapper.find('[data-expanded]').exists()).toBe(true)
+    expect(wrapper.find('[data-collapsed]').exists()).toBe(false)
   })
 })
