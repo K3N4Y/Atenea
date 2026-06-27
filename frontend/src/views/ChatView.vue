@@ -10,7 +10,11 @@ import PlanView from '../components/PlanView.vue'
 import PlanCard from '../components/PlanCard.vue'
 import TodoList from '../components/TodoList.vue'
 import ContextUsedBar from '../components/ContextUsedBar.vue'
+import DevEventPanel from '../components/DevEventPanel.vue'
 import { useChatStore } from '../stores/chat'
+
+// Solo en dev: panel para disparar eventos canned y construir la UI sin agente.
+const dev = import.meta.env.DEV
 import { useUiStore } from '../stores/ui'
 
 // Vista raiz del chat: arma el layout (sidebar persistente + chat central) y
@@ -136,5 +140,7 @@ onUnmounted(() => chat.teardown())
     </main>
 
     <SettingsPanel v-if="settingsOpen" @close="settingsOpen = false" />
+
+    <DevEventPanel v-if="dev" />
   </div>
 </template>
