@@ -34,6 +34,12 @@ const (
 	// no Message: the projection ignores it. The outcome is expressed by the
 	// subsequent Tool.Success or Tool.Failed, not by a separate resolution event.
 	KindToolPermissionRequested EventKind = "Tool.Permission.Requested"
+
+	// KindSessionTitle lleva en Text el titulo generado de la sesion (resumen
+	// corto del primer mensaje). La proyeccion Sessions lo prefiere sobre el
+	// primer mensaje del usuario; el ultimo Session.Title es el vigente. No
+	// materializa Message: no aporta a la conversacion, solo a la sidebar.
+	KindSessionTitle EventKind = "Session.Title"
 )
 
 // Usage son los tokens del turno que el publisher persiste en Step.Ended. Es un

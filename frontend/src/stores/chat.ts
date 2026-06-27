@@ -349,6 +349,11 @@ export const useChatStore = defineStore('chat', () => {
         running.value = false
         if (ev.Error) errorText.value = ev.Error
         break
+      case 'Session.Title':
+        // El backend genero el titulo de la sesion (async tras el primer mensaje):
+        // refresca la sidebar para que reemplace al primer prompt. Fire-and-forget.
+        void loadSessions()
+        break
     }
 
     // El prompt del usuario se promueve como Message{Role:user} (Kind vacio).

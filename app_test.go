@@ -929,3 +929,143 @@ func TestApp_ResolveToolPermissionWiredToGate(t *testing.T) {
 		}
 	}
 }
+
+// TestTitleFromProvider_AccumulatesStreamText: el helper de titulado abre un turno
+// aislado contra el provider y concatena los Text.Delta del stream en el titulo,
+// recortando espacios. Es la pieza que NewApp cablea como titler real.
+func TestTitleFromProvider_AccumulatesStreamText(t *testing.T) {
+	prov := llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.TextStarted},
+		llm.Event{Kind: llm.TextDelta, Text: "Configurar "},
+		llm.Event{Kind: llm.TextDelta, Text: "el proxy"},
+		llm.Event{Kind: llm.TextEnded},
+		llm.Event{Kind: llm.StepEnded},
+	)
+	if got := titleFromProvider(prov, "modelo", "como configuro el proxy"); got != "Configurar el proxy" {
+		t.Fatalf("titleFromProvider: got %q, want %q", got, "Configurar el proxy")
+	}
+}
+
+// TestTitleFromProvider_EmptyWhenNoText: si el stream no produce texto, el titulo es
+// "" para que el caller caiga al fallback (el primer mensaje).
+func TestTitleFromProvider_EmptyWhenNoText(t *testing.T) {
+	prov := llm.NewFakeProvider(llm.Event{Kind: llm.StepStarted}, llm.Event{Kind: llm.StepEnded})
+	if got := titleFromProvider(prov, "modelo", "hola"); got != "" {
+		t.Fatalf("titleFromProvider sin texto: got %q, want empty", got)
+	}
+}
+
+// TestApp_AutoTitlesFirstMessage: con un titler cableado, el primer mensaje de una
+// sesion nueva genera un Session.Title que la sidebar (ListSessions) muestra en vez
+// del primer prompt.
+func TestApp_AutoTitlesFirstMessage(t *testing.T) {
+	app := newApp(demoProvider(), func(string, ...interface{}) {})
+	app.titler = func(string) string { return "Titulo Generado" }
+
+	if err := app.SendPrompt("s1", "hola, este es el primer mensaje"); err != nil {
+		t.Fatalf("SendPrompt: %v", err)
+	}
+	app.wait()
+
+	sessions, err := app.ListSessions()
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].Title != "Titulo Generado" {
+		t.Fatalf("ListSessions: got %+v, want title %q", sessions, "Titulo Generado")
+	}
+}
+
+// TestApp_AutoTitleFallsBackToFirstMessageWhenEmpty: si el titler no produce titulo,
+// no se persiste nada y la sidebar cae al primer mensaje (el fallback pedido).
+func TestApp_AutoTitleFallsBackToFirstMessageWhenEmpty(t *testing.T) {
+	app := newApp(demoProvider(), func(string, ...interface{}) {})
+	app.titler = func(string) string { return "" }
+
+	if err := app.SendPrompt("s1", "mi primer mensaje"); err != nil {
+		t.Fatalf("SendPrompt: %v", err)
+	}
+	app.wait()
+
+	sessions, err := app.ListSessions()
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].Title != "mi primer mensaje" {
+		t.Fatalf("ListSessions: got %+v, want fallback al primer mensaje", sessions)
+	}
+}
+
+// TestApp_AutoTitleSkipsSecondMessage: el titulo se genera solo en el primer mensaje;
+// los siguientes no vuelven a invocar al titler.
+func TestApp_AutoTitleSkipsSecondMessage(t *testing.T) {
+	app := newApp(demoProvider(), func(string, ...interface{}) {})
+	var mu sync.Mutex
+	calls := 0
+	app.titler = func(string) string {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		return "T"
+	}
+
+	if err := app.SendPrompt("s1", "primero"); err != nil {
+		t.Fatalf("SendPrompt #1: %v", err)
+	}
+	app.wait()
+	if err := app.SendPrompt("s1", "segundo"); err != nil {
+		t.Fatalf("SendPrompt #2: %v", err)
+	}
+	app.wait()
+
+	mu.Lock()
+	n := calls
+	mu.Unlock()
+	if n != 1 {
+		t.Fatalf("titler llamado %d veces, want 1 (solo primer mensaje)", n)
+	}
+}
+
+// TestApp_TitleGeneratedAfterTurnStreams: regresion. El titulado del primer mensaje
+// corre DESPUES del turno, no en paralelo: al titular, el turno ya cerro (Step.Ended
+// en el bus) y la respuesta ya viajo al frontend. Asi el titulado no le compite el
+// proveedor al turno (lo que retrasaba el streaming en vivo).
+func TestApp_TitleGeneratedAfterTurnStreams(t *testing.T) {
+	rec := &recordingEmit{}
+	app := newApp(llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.TextStarted},
+		llm.Event{Kind: llm.TextDelta, Text: "respuesta del agente"},
+		llm.Event{Kind: llm.TextEnded},
+		llm.Event{Kind: llm.StepEnded},
+	), rec.emit)
+
+	turnDoneBeforeTitle := false
+	app.titler = func(string) string {
+		for _, ev := range rec.eventsOn("session:s1") {
+			if ev.Kind == session.KindStepEnded {
+				turnDoneBeforeTitle = true
+			}
+		}
+		return "Titulo"
+	}
+
+	if err := app.SendPrompt("s1", "hola"); err != nil {
+		t.Fatalf("SendPrompt: %v", err)
+	}
+	app.wait()
+
+	if !turnDoneBeforeTitle {
+		t.Fatal("el titulado corrio antes de cerrar el turno; debe correr despues para no competirle el proveedor")
+	}
+	sawText := false
+	for _, ev := range rec.eventsOn("session:s1") {
+		if ev.Kind == session.KindTextEnded && ev.Text == "respuesta del agente" {
+			sawText = true
+		}
+	}
+	if !sawText {
+		t.Fatal("la respuesta del turno no llego al bus")
+	}
+}

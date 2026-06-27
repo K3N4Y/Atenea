@@ -101,13 +101,23 @@ func (s *MemoryStore) Sessions(ctx context.Context) ([]SessionSummary, error) {
 		if len(log) == 0 {
 			continue
 		}
-		title := ""
+		// El titulo generado (ultimo Session.Title) gana sobre el primer mensaje del
+		// usuario, que queda como fallback si aun no se genero ninguno.
+		firstUser, generated := "", ""
 		for _, ev := range log {
-			if ev.Message != nil && ev.Message.Role == RoleUser {
-				title = truncateTitle(ev.Message.Text)
-				break
+			if ev.Kind == KindSessionTitle {
+				generated = ev.Text
+				continue
+			}
+			if firstUser == "" && ev.Message != nil && ev.Message.Role == RoleUser {
+				firstUser = ev.Message.Text
 			}
 		}
+		title := firstUser
+		if generated != "" {
+			title = generated
+		}
+		title = truncateTitle(title)
 		// El ultimo evento del log lleva el Seq mas alto de la sesion, pero entre
 		// sesiones eso no ordena por recencia. Igualamos al store durable usando un
 		// contador de insercion global; aqui lo reconstruimos por el orden de

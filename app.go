@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	goruntime "runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -46,6 +47,13 @@ type App struct {
 	gate     *session.MemoryPermissionGate // ask-before-run: the UI resolves via ResolveToolPermission
 	glob     *tool.GlobTool                // listado de archivos del workspace para el @-menu del composer (ListProjectFiles)
 	commands *command.Set                  // slash-commands del composer (ListCommands + expansion en SendPrompt)
+	provider llm.Provider                  // el modelo; lo reusa el titler para resumir el primer mensaje
+
+	// titler genera el titulo de una sesion a partir de su primer mensaje. nil
+	// (default en tests) = sin auto-title: la sidebar cae al primer mensaje.
+	// NewApp lo cablea contra el provider real; un titler vacio ("") tambien cae
+	// al fallback.
+	titler func(firstMessage string) string
 
 	mu    sync.Mutex
 	runs  map[string]*runHandle   // sessionID -> corrida en vuelo (identidad por puntero)
@@ -64,6 +72,7 @@ type runHandle struct{ cancel context.CancelFunc }
 // NewApp (SQLiteStore + provider real).
 func newAppWithStore(store session.Store, provider llm.Provider, emit event.EmitFunc) *App {
 	a := &App{runs: map[string]*runHandle{}, modes: map[string]session.Mode{}}
+	a.provider = provider
 	a.bus = event.NewBus(emit)
 	emitting := event.NewEmittingStore(store, a.bus)
 	a.store = emitting // las lecturas del historial delegan en inner sin emitir
@@ -239,6 +248,12 @@ func NewApp() *App {
 		runtime.EventsEmit(a.ctx, name, data...)
 	}
 	a = newAppWithStore(openStore(), chooseProvider(), emit)
+	// Auto-title: el primer mensaje de cada sesion se resume con el provider real.
+	// Solo en produccion; los tests dejan titler nil para no doblar las llamadas al
+	// provider en cada envio.
+	a.titler = func(message string) string {
+		return titleFromProvider(a.provider, resolveModel(), message)
+	}
 	return a
 }
 
@@ -325,11 +340,12 @@ func (a *App) setMode(sessionID string, m session.Mode) {
 // sesion que estaba en plan-mode vuelve a las tools normales al enviar.
 func (a *App) SendPrompt(sessionID, text string) error {
 	a.setMode(sessionID, session.ModeNormal)
+	job := a.titleJob(sessionID, text)
 	if err := a.inbox.Admit(context.Background(), sessionID,
 		session.Prompt{Text: a.expandCommand(text)}, session.DeliveryQueue); err != nil {
 		return err
 	}
-	a.start(sessionID)
+	a.start(sessionID, job)
 	return nil
 }
 
@@ -343,16 +359,69 @@ func (a *App) expandCommand(text string) string {
 	return text
 }
 
+// titleSystemPrompt instruye al modelo a devolver SOLO un titulo corto del primer
+// mensaje, sin adornos. El recorte a 80 runes lo hace la proyeccion Sessions.
+const titleSystemPrompt = "Genera un titulo muy corto (maximo 6 palabras) para una conversacion que empieza con el mensaje del usuario. Responde SOLO con el titulo, en el idioma del mensaje, sin comillas, sin punto final y sin prefijos."
+
+// titleJob devuelve la tarea de titulado para el PRIMER mensaje de una sesion
+// nueva, o nil si no aplica (sin titler cableado, o la sesion ya existe). El
+// chequeo de "sesion nueva" es sincrono y debe correr ANTES de arrancar Run (que
+// crea la sesion al promover el prompt). La tarea se ejecuta DESPUES del turno, no
+// en paralelo: el titulado comparte el provider con el turno y, lanzado a la vez,
+// le compite la peticion (en proveedores que encolan/limitan peticiones
+// concurrentes el turno se atrasa y el streaming en vivo no aparece a tiempo).
+// Si el titulo sale vacio no persiste nada y la sidebar cae al primer mensaje.
+func (a *App) titleJob(sessionID, message string) func() {
+	if a.titler == nil {
+		return nil
+	}
+	if _, err := a.store.LoadSession(context.Background(), sessionID); err == nil {
+		return nil // la sesion ya existe: no es el primer mensaje
+	}
+	return func() {
+		title := strings.TrimSpace(a.titler(message))
+		if title == "" {
+			return
+		}
+		if _, err := a.store.AppendEvent(context.Background(), sessionID,
+			session.SessionEvent{Kind: session.KindSessionTitle, Text: title}); err != nil {
+			log.Printf("atenea: no se pudo guardar el titulo de %s: %v", sessionID, err)
+		}
+	}
+}
+
+// titleFromProvider abre un turno aislado contra el provider (system de titulado +
+// el primer mensaje) y concatena el texto del stream como titulo, recortando
+// espacios. "" si el stream falla o no produce texto: el caller cae al fallback.
+func titleFromProvider(p llm.Provider, model, message string) string {
+	out, err := p.Stream(context.Background(), llm.Request{
+		Model:    model,
+		System:   titleSystemPrompt,
+		Messages: []llm.Message{{Role: "user", Text: message}},
+	})
+	if err != nil {
+		return ""
+	}
+	var b strings.Builder
+	for ev := range out {
+		if ev.Kind == llm.TextDelta {
+			b.WriteString(ev.Text)
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
 // SendPlanPrompt admite el texto en plan-mode: investigacion de solo lectura mas
 // present_plan, con el contrato de plan-mode en el system prompt. Fija ModePlan
 // antes de arrancar. Es el binding que el frontend llama al planear una feature.
 func (a *App) SendPlanPrompt(sessionID, text string) error {
 	a.setMode(sessionID, session.ModePlan)
+	job := a.titleJob(sessionID, text)
 	if err := a.inbox.Admit(context.Background(), sessionID,
 		session.Prompt{Text: a.expandCommand(text)}, session.DeliveryQueue); err != nil {
 		return err
 	}
-	a.start(sessionID)
+	a.start(sessionID, job)
 	return nil
 }
 
@@ -365,7 +434,7 @@ func (a *App) AcceptPlan(sessionID string) error {
 		session.Prompt{Text: acceptPlanPrompt}, session.DeliveryQueue); err != nil {
 		return err
 	}
-	a.start(sessionID)
+	a.start(sessionID, nil) // ejecutar un plan nunca es el primer mensaje: sin titulado
 	return nil
 }
 
@@ -437,7 +506,9 @@ func (a *App) Stop(sessionID string) {
 
 // start lanza Run con un ctx cancelable registrado por sesion y lo limpia al
 // terminar; reenvia por PublishError el error duro con que Run corta la actividad.
-func (a *App) start(sessionID string) {
+// afterRun (opcional) corre tras el turno en la misma goroutine: lo usa el titulado
+// del primer mensaje para no competirle el proveedor al turno (ver titleJob).
+func (a *App) start(sessionID string, afterRun func()) {
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &runHandle{cancel: cancel}
 	a.mu.Lock()
@@ -453,6 +524,9 @@ func (a *App) start(sessionID string) {
 		defer a.clear(sessionID, h)
 		if err := a.runner.Run(ctx, sessionID, false); err != nil {
 			a.bus.PublishError(sessionID, err)
+		}
+		if afterRun != nil {
+			afterRun()
 		}
 	}()
 }

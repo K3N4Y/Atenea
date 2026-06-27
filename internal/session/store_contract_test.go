@@ -260,6 +260,50 @@ func testStoreContract(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 	})
 
+	t.Run("SessionsPrefersTitleEventOverFirstUserMessage", func(t *testing.T) {
+		ctx := context.Background()
+		store := newStore(t)
+
+		// Primer mensaje del usuario (el fallback) y luego un evento Session.Title:
+		// el titulo generado gana sobre el primer prompt. El ultimo Session.Title
+		// es el vigente.
+		appendContractMessage(t, store, "s1", Message{ID: "m1", Role: RoleUser, Text: "como configuro el proxy"})
+		if _, err := store.AppendEvent(ctx, "s1", SessionEvent{Kind: KindSessionTitle, Text: "Configuracion del proxy"}); err != nil {
+			t.Fatalf("AppendEvent (Session.Title): unexpected error: %v", err)
+		}
+
+		got, err := store.Sessions(ctx)
+		if err != nil {
+			t.Fatalf("Sessions: unexpected error: %v", err)
+		}
+		want := []SessionSummary{{ID: "s1", Title: "Configuracion del proxy"}}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("Sessions: got %+v, want %+v", got, want)
+		}
+
+		// El titulo generado tambien se trunca a 80 runes, igual que el fallback.
+		long := strings.Repeat("ñ", 200)
+		if _, err := store.AppendEvent(ctx, "s2", SessionEvent{Kind: KindSessionTitle, Text: long}); err != nil {
+			t.Fatalf("AppendEvent (Session.Title largo): unexpected error: %v", err)
+		}
+		got, err = store.Sessions(ctx)
+		if err != nil {
+			t.Fatalf("Sessions: unexpected error: %v", err)
+		}
+		var s2 *SessionSummary
+		for i := range got {
+			if got[i].ID == "s2" {
+				s2 = &got[i]
+			}
+		}
+		if s2 == nil {
+			t.Fatalf("Sessions: no aparece s2 en %+v", got)
+		}
+		if wantTitle := strings.Repeat("ñ", 80); s2.Title != wantTitle {
+			t.Fatalf("Session.Title no truncado a 80 runes: got %d runes", len([]rune(s2.Title)))
+		}
+	})
+
 	t.Run("SessionsTruncatesLongTitleTo80Runes", func(t *testing.T) {
 		ctx := context.Background()
 		store := newStore(t)

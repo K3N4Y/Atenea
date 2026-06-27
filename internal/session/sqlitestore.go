@@ -222,15 +222,24 @@ func (s *SQLiteStore) Messages(ctx context.Context, sessionID string, sinceSeq S
 // sesion toma como Title el texto del primer mensaje del usuario (menor seq,
 // role=user, has_message=1), truncado. Title "" si la sesion no tiene aun uno.
 func (s *SQLiteStore) Sessions(ctx context.Context) ([]SessionSummary, error) {
+	// El titulo generado (ultimo Session.Title) gana sobre el primer mensaje del
+	// usuario, que queda como fallback via COALESCE si aun no se genero ninguno.
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT e.session_id,
-		        (SELECT u.text
-		           FROM events u
-		          WHERE u.session_id = e.session_id
-		            AND u.has_message = 1
-		            AND u.role = 'user'
-		          ORDER BY u.seq
-		          LIMIT 1) AS title
+		        COALESCE(
+		          (SELECT g.ev_text
+		             FROM events g
+		            WHERE g.session_id = e.session_id
+		              AND g.kind = 'Session.Title'
+		            ORDER BY g.seq DESC
+		            LIMIT 1),
+		          (SELECT u.text
+		             FROM events u
+		            WHERE u.session_id = e.session_id
+		              AND u.has_message = 1
+		              AND u.role = 'user'
+		            ORDER BY u.seq
+		            LIMIT 1)) AS title
 		   FROM events e
 		  GROUP BY e.session_id
 		  ORDER BY MAX(e.rowid) DESC`,

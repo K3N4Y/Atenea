@@ -352,6 +352,15 @@ describe('chat store: historial de sesiones (sidebar)', () => {
     ])
   })
 
+  it('un evento Session.Title refresca la sidebar (re-pide ListSessions)', async () => {
+    const store = useChatStore()
+    vi.mocked(App.ListSessions).mockClear()
+
+    store.applyEvent({ Kind: 'Session.Title', Text: 'Titulo Generado' })
+
+    expect(App.ListSessions).toHaveBeenCalled()
+  })
+
   it('loadSession fija el sessionID activo y reproduce el historial via applyEvent', async () => {
     vi.mocked(App.SessionHistory).mockResolvedValueOnce([
       { Message: { Role: 'user', Text: 'hola' } },
