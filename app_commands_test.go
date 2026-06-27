@@ -4,12 +4,37 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 
 	"atenea/internal/command"
 	"atenea/internal/session"
 )
+
+// writeSkillMD escribe un SKILL.md minimo (frontmatter name+description) en
+// <base>/<name>/SKILL.md, creando el arbol. Helper de los tests de descubrimiento.
+func writeSkillMD(t *testing.T, base, name, description string) {
+	t.Helper()
+	dir := filepath.Join(base, name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	body := "---\nname: " + name + "\ndescription: " + description + "\n---\ncuerpo\n"
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+}
+
+// commandByName busca un comando por nombre en el resultado de ListCommands.
+func commandByName(cmds []command.Command, name string) (command.Command, bool) {
+	for _, c := range cmds {
+		if c.Name == name {
+			return c, true
+		}
+	}
+	return command.Command{}, false
+}
 
 // recordingInbox registra cada Admit para inspeccionar que texto llega al inbox
 // (el prompt ya expandido cuando es un slash-command). Delega en un MemoryInbox
@@ -69,7 +94,9 @@ func TestApp_ListCommandsDiscoversSkillsFromClaudeDir(t *testing.T) {
 		t.Fatalf("write SKILL.md: %v", err)
 	}
 	// newAppWithStore ancla el root en os.Getwd(): situarse en el tempdir hace que
-	// el descubrimiento halle la skill demo bajo .claude/skills.
+	// el descubrimiento halle la skill demo bajo .claude/skills. HOME a un tempdir
+	// vacio aisla el test de las skills globales reales del home.
+	t.Setenv("HOME", t.TempDir())
 	t.Chdir(root)
 
 	app := newApp(demoProvider(), func(string, ...interface{}) {})
@@ -85,6 +112,77 @@ func TestApp_ListCommandsDiscoversSkillsFromClaudeDir(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("ListCommands no incluye la skill de .claude/skills; got %+v", cmds)
+	}
+}
+
+// TestSkillDirs_ProjectBeforeGlobalDeduped: skillDirs lista primero las rutas del
+// proyecto (root) y luego las globales (home), en el orden .atenea/.agents/.claude,
+// para que una skill del proyecto override a una global homonima. Rutas identicas
+// (root == home) se deduplican.
+func TestSkillDirs_ProjectBeforeGlobalDeduped(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	got := skillDirs("/proj")
+	want := []string{
+		filepath.Join("/proj", ".atenea", "skills"),
+		filepath.Join("/proj", ".agents", "skills"),
+		filepath.Join("/proj", ".claude", "skills"),
+		filepath.Join(home, ".atenea", "skills"),
+		filepath.Join(home, ".agents", "skills"),
+		filepath.Join(home, ".claude", "skills"),
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("skillDirs orden = %v,\n want %v", got, want)
+	}
+	// root == home: las rutas coinciden, deben deduplicarse a las 3 del home.
+	if d := skillDirs(home); len(d) != 3 {
+		t.Fatalf("root==home debe deduplicar a 3 dirs, got %v", d)
+	}
+}
+
+// TestApp_ListCommandsDiscoversGlobalSkills: las skills globales del home (p.ej.
+// ~/.agents/skills, la convencion estandar entre agentes) tambien se vuelven
+// slash-commands, no solo las del proyecto.
+func TestApp_ListCommandsDiscoversGlobalSkills(t *testing.T) {
+	home := t.TempDir()
+	writeSkillMD(t, filepath.Join(home, ".agents", "skills"), "global-demo", "skill global")
+	t.Setenv("HOME", home)
+	// Proyecto vacio (sin skills propias): solo debe aparecer la global.
+	t.Chdir(t.TempDir())
+
+	app := newApp(demoProvider(), func(string, ...interface{}) {})
+	cmds, err := app.ListCommands()
+	if err != nil {
+		t.Fatalf("ListCommands: %v", err)
+	}
+	if _, ok := commandByName(cmds, "global-demo"); !ok {
+		t.Fatalf("ListCommands no incluye la skill global ~/.agents/skills; got %+v", cmds)
+	}
+}
+
+// TestApp_ProjectSkillOverridesGlobalSkill: ante una skill con el mismo nombre en
+// el proyecto y en el home, gana la del proyecto (mas local). Se verifica por la
+// description del comando resultante.
+func TestApp_ProjectSkillOverridesGlobalSkill(t *testing.T) {
+	home := t.TempDir()
+	writeSkillMD(t, filepath.Join(home, ".agents", "skills"), "dup", "global")
+	t.Setenv("HOME", home)
+	root := t.TempDir()
+	writeSkillMD(t, filepath.Join(root, ".claude", "skills"), "dup", "project")
+	t.Chdir(root)
+
+	app := newApp(demoProvider(), func(string, ...interface{}) {})
+	cmds, err := app.ListCommands()
+	if err != nil {
+		t.Fatalf("ListCommands: %v", err)
+	}
+	c, ok := commandByName(cmds, "dup")
+	if !ok {
+		t.Fatalf("ListCommands no incluye 'dup'; got %+v", cmds)
+	}
+	if c.Description != "project" {
+		t.Fatalf("la skill del proyecto debe ganar; description = %q, want \"project\"", c.Description)
 	}
 }
 

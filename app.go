@@ -82,17 +82,11 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 	// de ripgrep ya probado (respeta .gitignore, excluye .git).
 	a.glob = tool.NewGlobTool(root)
 	// Skills al estilo opencode (disclosure progresivo): se descubren una vez bajo
-	// <root>/.atenea/skills (propio), <root>/.agents/skills (el estandar entre
-	// agentes) y <root>/.claude/skills (donde Claude Code -y este repo- las guarda).
-	// Sus metadatos van en el system prompt (skill.Format), la tool skill carga el
-	// cuerpo bajo demanda, y de cada una se deriva un slash-command. .atenea/skills
-	// va primero: ante un nombre duplicado, la skill propia override a las estandar.
-	// Un fallo de descubrimiento no es fatal: el agente arranca sin skills.
-	skills, err := skill.Discover(
-		filepath.Join(root, ".atenea", "skills"),
-		filepath.Join(root, ".agents", "skills"),
-		filepath.Join(root, ".claude", "skills"),
-	)
+	// las rutas del proyecto Y las globales del home (skillDirs). Sus metadatos van
+	// en el system prompt (skill.Format), la tool skill carga el cuerpo bajo demanda,
+	// y de cada una se deriva un slash-command. Las del proyecto override a las
+	// globales homonimas. Un fallo de descubrimiento no es fatal: arranca sin skills.
+	skills, err := skill.Discover(skillDirs(root)...)
 	if err != nil {
 		log.Printf("atenea: no se pudieron descubrir las skills: %v", err)
 	}
@@ -146,6 +140,41 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 	a.runner.SetPlanMode(planSystemPromptBuilder(root, skillsBlock),
 		tool.Permissions{"read": true, "glob": true, "grep": true, "present_plan": true, "skill": true})
 	return a
+}
+
+// skillDirs returns the directories scanned for skills, project (workspace root)
+// first and then global (the user's home), so a project skill overrides a global one
+// with the same name (skill.Discover is first-wins). Under each base it looks at
+// .atenea/skills (atenea's own), .agents/skills (the tool-agnostic standard shared
+// across agents) and .claude/skills (Claude Code). Las skills globales viven asi en
+// ~/.agents/skills, ~/.claude/skills, etc. Si no se puede resolver el home, quedan
+// solo las del proyecto. Rutas identicas (p.ej. si el root ES el home) se deduplican
+// para no recorrer el mismo arbol dos veces.
+func skillDirs(root string) []string {
+	subdirs := []string{
+		filepath.Join(".atenea", "skills"),
+		filepath.Join(".agents", "skills"),
+		filepath.Join(".claude", "skills"),
+	}
+	bases := []string{root}
+	if home, herr := os.UserHomeDir(); herr != nil {
+		log.Printf("atenea: no se pudo resolver el home para skills globales: %v", herr)
+	} else if home != "" {
+		bases = append(bases, home)
+	}
+	var dirs []string
+	seen := map[string]bool{}
+	for _, base := range bases {
+		for _, sub := range subdirs {
+			dir := filepath.Join(base, sub)
+			if seen[dir] {
+				continue
+			}
+			seen[dir] = true
+			dirs = append(dirs, dir)
+		}
+	}
+	return dirs
 }
 
 // promptSetup anchors the shared system-prompt setup at root: it detects whether

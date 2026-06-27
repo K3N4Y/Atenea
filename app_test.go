@@ -497,7 +497,9 @@ func TestApp_SystemPromptAdvertisesDiscoveredSkills(t *testing.T) {
 		t.Fatalf("write SKILL.md: %v", err)
 	}
 	// newAppWithStore ancla el root en os.Getwd(): situarse en el tempdir hace que
-	// el descubrimiento halle la skill demo.
+	// el descubrimiento halle la skill demo. HOME a un tempdir vacio aisla el test de
+	// las skills globales reales del home (skillDirs tambien escanea ~/.agents, etc.).
+	t.Setenv("HOME", t.TempDir())
 	t.Chdir(root)
 
 	rec := &recordingEmit{}
@@ -537,6 +539,7 @@ func TestApp_DiscoversSkillsFromAgentsDir(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o644); err != nil {
 		t.Fatalf("write SKILL.md: %v", err)
 	}
+	t.Setenv("HOME", t.TempDir()) // aisla de las skills globales reales del home
 	t.Chdir(root)
 
 	rec := &recordingEmit{}
