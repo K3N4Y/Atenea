@@ -57,4 +57,16 @@ describe('ui store: persistencia del estado de UI', () => {
     ui.toggleDevPanel()
     expect(ui.devPanelOpen).toBe(false)
   })
+
+  it('setDevPanelWidth limita el ancho a [280, 640]', () => {
+    installPinia()
+    const ui = useUiStore()
+
+    ui.setDevPanelWidth(500)
+    expect(ui.devPanelWidth).toBe(500)
+    ui.setDevPanelWidth(100) // por debajo del minimo
+    expect(ui.devPanelWidth).toBe(280)
+    ui.setDevPanelWidth(9999) // por encima del maximo
+    expect(ui.devPanelWidth).toBe(640)
+  })
 })

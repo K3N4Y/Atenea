@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { PhX, PhGitBranch, PhSpinnerGap } from '@phosphor-icons/vue'
 import { useGitStore } from '../stores/git'
+import { useUiStore } from '../stores/ui'
 
 // Panel de herramientas de desarrollo: barra de tabs (hoy solo Git) y el
 // contenido de la tab activa. La tab Git es el MVP de commit: mensaje, generar
@@ -16,14 +17,42 @@ const tabs = [{ id: 'git', label: 'Git', icon: PhGitBranch }] as const
 const active = ref<(typeof tabs)[number]['id']>('git')
 
 const git = useGitStore()
+const ui = useUiStore()
 onMounted(git.loadStatus)
+
+// Resize arrastrando el borde izquierdo: el panel esta a la derecha, asi que
+// mover el handle hacia la izquierda lo ensancha. El ancho (acotado) vive en el
+// store de UI y se persiste. ponytail: pointer events nativos, sin libreria.
+function startResize(e: PointerEvent) {
+  const startX = e.clientX
+  const startW = ui.devPanelWidth
+  document.body.style.userSelect = 'none' // no seleccionar texto al arrastrar
+  const move = (ev: PointerEvent) => ui.setDevPanelWidth(startW + (startX - ev.clientX))
+  const up = () => {
+    document.body.style.userSelect = ''
+    window.removeEventListener('pointermove', move)
+    window.removeEventListener('pointerup', up)
+  }
+  window.addEventListener('pointermove', move)
+  window.addEventListener('pointerup', up)
+}
 </script>
 
 <template>
   <aside
     aria-label="Developer tools"
-    class="flex h-full w-80 shrink-0 flex-col border-l border-black/5 bg-black/[0.015]"
+    :style="{ width: ui.devPanelWidth + 'px' }"
+    class="relative flex h-full shrink-0 flex-col border-l border-black/5 bg-black/[0.015]"
   >
+    <!-- Handle de resize: franja sobre el borde izquierdo. -->
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize developer tools"
+      class="absolute inset-y-0 left-0 z-10 w-1 touch-none cursor-col-resize transition-colors hover:bg-accent/30 active:bg-accent/40"
+      @pointerdown.prevent="startResize"
+    ></div>
+
     <!-- Barra de tabs + cerrar. -->
     <nav
       role="tablist"

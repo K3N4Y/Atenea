@@ -172,7 +172,7 @@ onUnmounted(() => chat.teardown())
       leave-active-class="transition-[width] duration-200 ease-drawer"
       leave-to-class="w-0"
     >
-      <div v-if="ui.devPanelOpen" class="overflow-hidden">
+      <div v-if="ui.devPanelOpen" class="shrink-0 overflow-hidden">
         <DevToolsPanel @close="ui.toggleDevPanel()" />
       </div>
     </Transition>
