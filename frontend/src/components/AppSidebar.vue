@@ -62,7 +62,7 @@ function confirmDelete(id: string): void {
 
       <button
         type="button"
-        class="flex items-center gap-2 rounded-full px-4 py-2.5 text-left text-sm transition hover:bg-black/[0.04]"
+        class="flex items-center gap-2 rounded-full px-4 py-2.5 text-left text-sm transition hover:bg-black/[0.04] active:scale-[0.97]"
         @click="emit('new-chat')"
       >
         <PhPlus :size="18" weight="regular" />
@@ -106,7 +106,7 @@ function confirmDelete(id: string): void {
               type="button"
               :data-confirm-delete="session.ID"
               aria-label="Confirm delete"
-              class="flex shrink-0 items-center justify-center rounded-full p-1.5 text-sm transition hover:bg-black/[0.06]"
+              class="flex shrink-0 items-center justify-center rounded-full p-1.5 text-sm transition hover:bg-black/[0.06] active:scale-95"
               @click="confirmDelete(session.ID)"
             >
               <PhCheck :size="16" />
@@ -115,7 +115,7 @@ function confirmDelete(id: string): void {
               type="button"
               :data-cancel-delete="session.ID"
               aria-label="Cancel delete"
-              class="flex shrink-0 items-center justify-center rounded-full p-1.5 text-sm transition hover:bg-black/[0.06]"
+              class="flex shrink-0 items-center justify-center rounded-full p-1.5 text-sm transition hover:bg-black/[0.06] active:scale-95"
               @click="confirmingId = null"
             >
               <PhX :size="16" />
@@ -126,7 +126,7 @@ function confirmDelete(id: string): void {
             type="button"
             :data-delete-session="session.ID"
             aria-label="Delete chat"
-            class="flex shrink-0 items-center justify-center rounded-full p-1.5 text-sm opacity-0 transition hover:bg-black/[0.06] group-hover:opacity-100"
+            class="flex shrink-0 items-center justify-center rounded-full p-1.5 text-sm opacity-0 transition hover:bg-black/[0.06] active:scale-95 group-hover:opacity-100"
             @click="confirmingId = session.ID"
           >
             <PhTrash :size="16" />

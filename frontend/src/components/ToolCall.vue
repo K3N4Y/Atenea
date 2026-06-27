@@ -92,7 +92,7 @@ const isPending = computed(() => props.item.status === 'pending')
         <button
           type="button"
           data-action="approve"
-          class="rounded-soft bg-accent px-3 py-1 text-xs font-medium text-white transition hover:opacity-90"
+          class="rounded-soft bg-accent px-3 py-1 text-xs font-medium text-white transition hover:opacity-90 active:scale-[0.97]"
           @click="emit('approve', item.callID)"
         >
           Aprobar
@@ -100,7 +100,7 @@ const isPending = computed(() => props.item.status === 'pending')
         <button
           type="button"
           data-action="deny"
-          class="rounded-soft bg-black/[0.06] px-3 py-1 text-xs font-medium transition hover:bg-black/[0.1]"
+          class="rounded-soft bg-black/[0.06] px-3 py-1 text-xs font-medium transition hover:bg-black/[0.1] active:scale-[0.97]"
           @click="emit('deny', item.callID)"
         >
           Denegar

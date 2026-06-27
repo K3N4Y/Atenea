@@ -29,7 +29,7 @@ const emit = defineEmits<{ dismiss: [] }>()
     <button
       type="button"
       aria-label="Dismiss error"
-      class="-mr-1 -mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition hover:bg-black/[0.05]"
+      class="-mr-1 -mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition hover:bg-black/[0.05] active:scale-95"
       @click="emit('dismiss')"
     >
       <PhX :size="16" weight="regular" />

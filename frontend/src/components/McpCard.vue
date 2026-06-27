@@ -20,7 +20,7 @@ const emit = defineEmits<{ select: [string] }>()
   <article
     role="button"
     tabindex="0"
-    class="flex cursor-pointer items-center gap-5 rounded-soft border border-black/5 bg-black/[0.02] p-4 transition hover:bg-black/[0.04]"
+    class="flex cursor-pointer items-center gap-5 rounded-soft border border-black/5 bg-black/[0.02] p-4 transition hover:bg-black/[0.04] active:scale-[0.97]"
     @click="emit('select', props.entry.id)"
     @keydown.enter="emit('select', props.entry.id)"
     @keydown.space.prevent="emit('select', props.entry.id)"

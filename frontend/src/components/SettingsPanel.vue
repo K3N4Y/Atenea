@@ -121,7 +121,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
         type="button"
         role="tab"
         :aria-selected="active === tab.id ? 'true' : 'false'"
-        class="flex items-center gap-2 rounded-full px-4 py-2.5 text-left text-sm transition"
+        class="flex items-center gap-2 rounded-full px-4 py-2.5 text-left text-sm transition active:scale-[0.97]"
         :class="
           active === tab.id
             ? 'bg-black/[0.06] font-medium'
@@ -139,7 +139,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       <button
         type="button"
         aria-label="Cerrar configuracion"
-        class="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-black/[0.05]"
+        class="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-black/[0.05] active:scale-95"
         @click="emit('close')"
       >
         <PhX :size="20" weight="regular" />
@@ -159,7 +159,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
             <button
               type="button"
               aria-label="Back to MCPs"
-              class="flex w-fit items-center gap-1.5 rounded-full py-1 pr-3 text-sm opacity-60 transition hover:opacity-100"
+              class="flex w-fit items-center gap-1.5 rounded-full py-1 pr-3 text-sm opacity-60 transition hover:opacity-100 active:scale-[0.97]"
               @click="closeDetail"
             >
               <PhArrowLeft :size="18" weight="regular" />

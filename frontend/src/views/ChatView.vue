@@ -69,7 +69,7 @@ onUnmounted(() => chat.teardown())
           aria-label="Toggle sidebar"
           aria-controls="app-sidebar"
           :aria-expanded="!ui.sidebarCollapsed"
-          class="flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-black/[0.05]"
+          class="flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-black/[0.05] active:scale-95"
           @click="ui.toggleSidebar()"
         >
           <PhSidebarSimple :size="20" weight="regular" />
@@ -85,7 +85,7 @@ onUnmounted(() => chat.teardown())
         <button
           type="button"
           aria-label="Open settings"
-          class="ml-2 flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-black/[0.05]"
+          class="ml-2 flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-black/[0.05] active:scale-95"
           @click="settingsOpen = true"
         >
           <PhGear :size="20" weight="regular" />

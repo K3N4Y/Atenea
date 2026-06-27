@@ -53,7 +53,7 @@ function cancelChange() {
         type="button"
         data-action="minimize"
         aria-label="Minimizar plan"
-        class="flex items-center gap-1.5 rounded-full bg-black/[0.06] px-4 py-2 text-sm transition hover:bg-black/[0.09]"
+        class="flex items-center gap-1.5 rounded-full bg-black/[0.06] px-4 py-2 text-sm transition hover:bg-black/[0.09] active:scale-[0.97]"
         @click="emit('minimize')"
       >
         <PhArrowsInSimple :size="16" weight="regular" />
@@ -62,7 +62,7 @@ function cancelChange() {
       <button
         type="button"
         data-action="request-change"
-        class="flex items-center gap-1.5 rounded-full bg-black/[0.06] px-4 py-2 text-sm transition hover:bg-black/[0.09]"
+        class="flex items-center gap-1.5 rounded-full bg-black/[0.06] px-4 py-2 text-sm transition hover:bg-black/[0.09] active:scale-[0.97]"
         :class="requesting ? 'bg-black/[0.09]' : ''"
         @click="requesting = !requesting"
       >
@@ -72,7 +72,7 @@ function cancelChange() {
       <button
         type="button"
         data-action="accept"
-        class="flex items-center gap-1.5 rounded-full bg-accent px-4 py-2 text-sm text-paper transition hover:opacity-90"
+        class="flex items-center gap-1.5 rounded-full bg-accent px-4 py-2 text-sm text-paper transition hover:opacity-90 active:scale-[0.97]"
         @click="emit('accept')"
       >
         <PhCheck :size="16" weight="bold" />
@@ -94,7 +94,7 @@ function cancelChange() {
           <button
             type="button"
             data-action="cancel-change"
-            class="rounded-full px-4 py-2 text-sm opacity-60 transition hover:bg-black/[0.04] hover:opacity-100"
+            class="rounded-full px-4 py-2 text-sm opacity-60 transition hover:bg-black/[0.04] hover:opacity-100 active:scale-[0.97]"
             @click="cancelChange"
           >
             Cancelar
@@ -102,7 +102,7 @@ function cancelChange() {
           <button
             type="button"
             data-action="submit-change"
-            class="rounded-full bg-accent px-4 py-2 text-sm text-paper transition hover:opacity-90"
+            class="rounded-full bg-accent px-4 py-2 text-sm text-paper transition hover:opacity-90 active:scale-[0.97]"
             @click="submitChange"
           >
             Enviar cambio

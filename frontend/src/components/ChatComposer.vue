@@ -291,7 +291,7 @@ function onKeydown(e: KeyboardEvent) {
           v-if="props.running"
           type="button"
           aria-label="Stop"
-          class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent text-paper transition hover:opacity-90"
+          class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent text-paper transition hover:opacity-90 active:scale-95"
           @click="emit('stop')"
         >
           <PhStop :size="20" weight="fill" />
@@ -302,7 +302,7 @@ function onKeydown(e: KeyboardEvent) {
           type="button"
           aria-label="Send"
           :disabled="!canSend"
-          class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent text-paper transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-30"
+          class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent text-paper transition hover:opacity-90 active:scale-95 disabled:cursor-not-allowed disabled:opacity-30"
           @click="submit"
         >
           <PhArrowUp :size="20" weight="bold" />

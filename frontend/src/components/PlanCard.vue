@@ -18,7 +18,7 @@ const title = computed(() => props.plan.title || 'Plan')
     type="button"
     data-action="expand"
     aria-label="Expandir plan"
-    class="flex w-full items-center gap-3 rounded-soft border border-black/5 bg-black/[0.04] px-4 py-3 text-sm transition hover:bg-black/[0.06]"
+    class="flex w-full items-center gap-3 rounded-soft border border-black/5 bg-black/[0.04] px-4 py-3 text-sm transition hover:bg-black/[0.06] active:scale-[0.97]"
     @click="emit('expand')"
   >
     <PhClipboardText :size="18" weight="regular" class="shrink-0 opacity-70" />
