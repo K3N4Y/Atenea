@@ -57,6 +57,24 @@ body {
   }
 }
 
+/* Caret de escritura del streaming (AssistantMessage): blink tipo cursor de
+   terminal, no `animate-pulse` (filosofia Emil: el pulse lento "parece cargando,
+   no un caret"). On/off duro (~1s) en vez de fade. Bajo reduced-motion la regla
+   global anula la animacion -> caret solido, aceptable. */
+@keyframes caret-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+.animate-caret-blink {
+  animation: caret-blink 1s steps(1, end) infinite;
+}
+
 /* Seleccion con un tinte de acento muy sutil (identidad §3: naranja moderado). */
 ::selection {
   background: color-mix(in srgb, var(--color-accent) 22%, transparent);

@@ -23,7 +23,7 @@ const { visible, done } = useSmoothText(
         visible
       }}</span>
       <span
-        class="ml-0.5 inline-block h-[1.05em] w-[2px] animate-pulse bg-accent align-middle"
+        class="ml-0.5 inline-block h-[1.05em] w-[2px] animate-caret-blink bg-accent align-middle"
         aria-hidden="true"
       ></span>
     </template>
