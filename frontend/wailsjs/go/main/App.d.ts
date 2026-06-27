@@ -14,6 +14,8 @@ export function GenerateCommitMessage():Promise<string>;
 
 export function GitStatus():Promise<main.GitStatus>;
 
+export function InitRepo():Promise<void>;
+
 export function ListCommands():Promise<Array<command.Command>>;
 
 export function ListProjectFiles():Promise<Array<string>>;

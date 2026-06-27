@@ -36,6 +36,7 @@ export namespace main {
 	    }
 	}
 	export class GitStatus {
+	    isRepo: boolean;
 	    staged: GitChange[];
 	    untracked: GitChange[];
 	
@@ -45,6 +46,7 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.isRepo = source["isRepo"];
 	        this.staged = this.convertValues(source["staged"], GitChange);
 	        this.untracked = this.convertValues(source["untracked"], GitChange);
 	    }

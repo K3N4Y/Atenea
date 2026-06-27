@@ -20,7 +20,7 @@ function showGit(
   untracked: { path: string; status: string }[],
   err = '',
 ): void {
-  git.setCanned(err ? null : { staged, untracked }, err)
+  git.setCanned(err ? null : { isRepo: true, staged, untracked }, err)
   ui.devPanelOpen = true
 }
 
@@ -93,8 +93,17 @@ const presets: { key: string; label: string; run: () => void }[] = [
     run: () => {
       const id = cid()
       fire(
-        { Kind: 'Tool.Called', ToolName: 'bash', CallID: id, Input: { command: 'ls -la' } },
-        { Kind: 'Tool.Success', CallID: id, Text: 'total 8\ndrwxr-xr-x  2 user user\n-rw-r--r--  1 user user main.go' },
+        {
+          Kind: 'Tool.Called',
+          ToolName: 'bash',
+          CallID: id,
+          Input: { command: 'ls -la' },
+        },
+        {
+          Kind: 'Tool.Success',
+          CallID: id,
+          Text: 'total 8\ndrwxr-xr-x  2 user user\n-rw-r--r--  1 user user main.go',
+        },
       )
     },
   },
@@ -104,7 +113,12 @@ const presets: { key: string; label: string; run: () => void }[] = [
     run: () => {
       const id = cid()
       fire(
-        { Kind: 'Tool.Called', ToolName: 'bash', CallID: id, Input: { command: 'rm -rf build/' } },
+        {
+          Kind: 'Tool.Called',
+          ToolName: 'bash',
+          CallID: id,
+          Input: { command: 'rm -rf build/' },
+        },
         { Kind: 'Tool.Permission.Requested', CallID: id },
       )
     },
@@ -115,7 +129,12 @@ const presets: { key: string; label: string; run: () => void }[] = [
     run: () => {
       const id = cid()
       fire(
-        { Kind: 'Tool.Called', ToolName: 'edit', CallID: id, Input: { path: 'main.go' } },
+        {
+          Kind: 'Tool.Called',
+          ToolName: 'edit',
+          CallID: id,
+          Input: { path: 'main.go' },
+        },
         {
           Kind: 'Tool.Success',
           CallID: id,
@@ -131,8 +150,17 @@ const presets: { key: string; label: string; run: () => void }[] = [
     run: () => {
       const id = cid()
       fire(
-        { Kind: 'Tool.Called', ToolName: 'bash', CallID: id, Input: { command: 'cat nope.txt' } },
-        { Kind: 'Tool.Failed', CallID: id, Error: 'cat: nope.txt: No such file or directory' },
+        {
+          Kind: 'Tool.Called',
+          ToolName: 'bash',
+          CallID: id,
+          Input: { command: 'cat nope.txt' },
+        },
+        {
+          Kind: 'Tool.Failed',
+          CallID: id,
+          Error: 'cat: nope.txt: No such file or directory',
+        },
       )
     },
   },
@@ -183,7 +211,10 @@ const presets: { key: string; label: string; run: () => void }[] = [
           { path: 'internal/session/runner/runner.go', status: 'M' },
           { path: 'internal/tool/git.go', status: 'A' },
           { path: 'internal/llm/openai/provider.go', status: 'M' },
-          { path: 'frontend/src/components/un/path/larguisimo/que/desborda/Componente.vue', status: 'R' },
+          {
+            path: 'frontend/src/components/un/path/larguisimo/que/desborda/Componente.vue',
+            status: 'R',
+          },
         ],
         [
           { path: 'frontend/src/stores/git.ts', status: '??' },
@@ -193,9 +224,17 @@ const presets: { key: string; label: string; run: () => void }[] = [
       ),
   },
   {
+    key: 'git-sin-repo',
+    label: 'Git: sin repo',
+    run: () => {
+      git.setCanned({ isRepo: false, staged: [], untracked: [] })
+      ui.devPanelOpen = true
+    },
+  },
+  {
     key: 'git-error',
     label: 'Git: error',
-    run: () => showGit([], [], 'git status: not a git repository'),
+    run: () => showGit([], [], 'git status: stream cortado'),
   },
   { key: 'reset', label: 'Reset', run: () => chat.reset() },
 ]

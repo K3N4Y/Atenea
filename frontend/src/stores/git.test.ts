@@ -4,11 +4,13 @@ import { setActivePinia, createPinia } from 'pinia'
 
 const GitStatus = vi.fn()
 const Commit = vi.fn()
+const InitRepo = vi.fn()
 
 vi.mock('../../wailsjs/go/main/App', () => ({
   GitStatus: () => GitStatus(),
   GenerateCommitMessage: vi.fn(),
   Commit: (msg: string) => Commit(msg),
+  InitRepo: () => InitRepo(),
 }))
 
 import { useGitStore } from './git'
@@ -17,8 +19,10 @@ beforeEach(() => {
   setActivePinia(createPinia())
   GitStatus.mockReset()
   Commit.mockReset()
-  GitStatus.mockResolvedValue({ staged: [], untracked: [] })
+  InitRepo.mockReset()
+  GitStatus.mockResolvedValue({ isRepo: true, staged: [], untracked: [] })
   Commit.mockResolvedValue(undefined)
+  InitRepo.mockResolvedValue(undefined)
 })
 
 describe('git store', () => {
@@ -30,6 +34,23 @@ describe('git store', () => {
     const git = useGitStore()
     await git.loadStatus()
     expect(git.status?.staged).toHaveLength(1)
+  })
+
+  it('initRepo inicializa el repo y recarga el estado', async () => {
+    GitStatus.mockResolvedValueOnce({
+      isRepo: false,
+      staged: [],
+      untracked: [],
+    })
+    const git = useGitStore()
+    await git.loadStatus()
+    expect(git.status?.isRepo).toBe(false)
+
+    // Tras iniciar, el siguiente GitStatus ya reporta un repo.
+    GitStatus.mockResolvedValue({ isRepo: true, staged: [], untracked: [] })
+    await git.initRepo()
+    expect(InitRepo).toHaveBeenCalled()
+    expect(git.status?.isRepo).toBe(true)
   })
 
   // El seam de la devtool: con estado canned inyectado, las acciones NO tocan el

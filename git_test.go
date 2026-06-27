@@ -66,6 +66,47 @@ func TestGitStatus_CleanRepoIsEmpty(t *testing.T) {
 	}
 }
 
+// TestGitStatus_RepoReportsIsRepo: dentro de un repo, gitStatus marca IsRepo.
+func TestGitStatus_RepoReportsIsRepo(t *testing.T) {
+	root := setupRepo(t)
+	st, err := gitStatus(root)
+	if err != nil {
+		t.Fatalf("gitStatus: %v", err)
+	}
+	if !st.IsRepo {
+		t.Fatalf("repo inicializado deberia reportar IsRepo true: %+v", st)
+	}
+}
+
+// TestGitStatus_NonRepoReportsNotRepo: en un directorio sin repo, gitStatus no
+// falla; devuelve IsRepo false para que el panel ofrezca iniciar uno.
+func TestGitStatus_NonRepoReportsNotRepo(t *testing.T) {
+	root := t.TempDir()
+	st, err := gitStatus(root)
+	if err != nil {
+		t.Fatalf("gitStatus en dir sin repo no deberia fallar: %v", err)
+	}
+	if st.IsRepo {
+		t.Fatalf("dir sin repo deberia reportar IsRepo false: %+v", st)
+	}
+}
+
+// TestGitInit_CreatesRepo: gitInit inicializa un repo en un directorio sin uno,
+// y a partir de ahi gitStatus lo reconoce.
+func TestGitInit_CreatesRepo(t *testing.T) {
+	root := t.TempDir()
+	if err := gitInit(root); err != nil {
+		t.Fatalf("gitInit: %v", err)
+	}
+	st, err := gitStatus(root)
+	if err != nil {
+		t.Fatalf("gitStatus tras init: %v", err)
+	}
+	if !st.IsRepo {
+		t.Fatalf("tras gitInit deberia ser repo: %+v", st)
+	}
+}
+
 // TestGitCommit_CommitsStagedChanges: gitCommit confirma lo staged y deja el
 // repo limpio.
 func TestGitCommit_CommitsStagedChanges(t *testing.T) {

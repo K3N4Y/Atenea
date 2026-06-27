@@ -249,6 +249,15 @@ func NewApp() *App {
 	emit := func(name string, data ...interface{}) {
 		runtime.EventsEmit(a.ctx, name, data...)
 	}
+	// Skills built-in: materializar a ~/.atenea/skills (ruta que skillDirs ya escanea)
+	// las skills que viajan embebidas en el binario, antes de descubrir. Asi vienen "de
+	// fabrica" tras instalar, sin que el usuario copie nada. No es fatal: si falla, la
+	// app arranca igual con las skills que haya en disco.
+	if home, herr := os.UserHomeDir(); herr != nil {
+		log.Printf("atenea: no se pudo resolver el home para extraer skills built-in: %v", herr)
+	} else if eerr := skill.ExtractBuiltins(filepath.Join(home, ".atenea", "skills")); eerr != nil {
+		log.Printf("atenea: no se pudieron extraer las skills built-in: %v", eerr)
+	}
 	a = newAppWithStore(openStore(), chooseProvider(), emit)
 	// Auto-title: el primer mensaje de cada sesion se resume con el provider real.
 	// Solo en produccion; los tests dejan titler nil para no doblar las llamadas al

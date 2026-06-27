@@ -17,8 +17,10 @@ type GitChange struct {
 }
 
 // GitStatus reparte los cambios en staged (en el index) y untracked, que es lo
-// que el panel de git muestra en el MVP.
+// que el panel de git muestra en el MVP. IsRepo es false cuando root no es un
+// repo git: el panel lo usa para ofrecer iniciar uno en vez de listar cambios.
 type GitStatus struct {
+	IsRepo    bool        `json:"isRepo"`
 	Staged    []GitChange `json:"staged"`
 	Untracked []GitChange `json:"untracked"`
 }
@@ -53,9 +55,14 @@ func runGit(root string, args ...string) (string, error) {
 func gitStatus(root string) (GitStatus, error) {
 	out, err := runGit(root, "status", "--porcelain")
 	if err != nil {
+		// Sin repo no es un error a mostrar: el panel ofrece iniciar uno. Solo
+		// propagamos fallos reales (status roto dentro de un repo).
+		if !isGitRepo(root) {
+			return GitStatus{IsRepo: false}, nil
+		}
 		return GitStatus{}, err
 	}
-	var st GitStatus
+	st := GitStatus{IsRepo: true}
 	for _, line := range strings.Split(out, "\n") {
 		if len(line) < 4 {
 			continue
@@ -70,6 +77,20 @@ func gitStatus(root string) (GitStatus, error) {
 		}
 	}
 	return st, nil
+}
+
+// isGitRepo dice si root esta dentro de un work tree de git. Se apoya en el
+// codigo de salida de rev-parse, asi no depende del idioma del mensaje de error.
+func isGitRepo(root string) bool {
+	_, err := runGit(root, "rev-parse", "--is-inside-work-tree")
+	return err == nil
+}
+
+// gitInit inicializa un repo git en root (`git init`), para el boton del panel
+// cuando el proyecto todavia no tiene repo.
+func gitInit(root string) error {
+	_, err := runGit(root, "init")
+	return err
 }
 
 // gitCommit confirma lo staged con message. Rechaza un mensaje vacio antes de
@@ -104,6 +125,10 @@ func commitMessageFromProvider(p llm.Provider, model, diff string) string {
 
 // GitStatus expone al frontend los cambios staged + untracked del workspace.
 func (a *App) GitStatus() (GitStatus, error) { return gitStatus(a.root) }
+
+// InitRepo inicializa un repo git en el proyecto (boton del panel cuando no hay
+// repo). Tras llamarlo el frontend recarga GitStatus.
+func (a *App) InitRepo() error { return gitInit(a.root) }
 
 // Commit confirma lo staged con el mensaje que arma el usuario en el panel.
 func (a *App) Commit(message string) error { return gitCommit(a.root, message) }

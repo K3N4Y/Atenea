@@ -1,18 +1,28 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
-import { GitStatus, GenerateCommitMessage, Commit } from '../../wailsjs/go/main/App'
+import {
+  GitStatus,
+  GenerateCommitMessage,
+  Commit,
+  InitRepo,
+} from '../../wailsjs/go/main/App'
 
 // Estado de la tab Git de las dev tools: los cambios staged/untracked, el mensaje
 // del commit y los flags de carga. Las acciones hablan con el backend (bindings
 // Wails). No se persiste: es estado efimero derivado del repo.
 type GitChange = { path: string; status: string }
-type GitStatus = { staged: GitChange[]; untracked: GitChange[] }
+type GitStatus = {
+  isRepo: boolean
+  staged: GitChange[]
+  untracked: GitChange[]
+}
 
 export const useGitStore = defineStore('git', () => {
   const status = ref<GitStatus | null>(null)
   const message = ref('')
   const generating = ref(false)
   const committing = ref(false)
+  const initializing = ref(false)
   const error = ref('')
 
   // canned: la devtool (DevEventPanel) inyecto un estado de ejemplo para iterar la
@@ -64,6 +74,27 @@ export const useGitStore = defineStore('git', () => {
     }
   }
 
+  // initRepo inicializa un repo git en el proyecto (boton del panel cuando no hay
+  // repo) y recarga el estado. En canned simula que el proyecto ya es un repo
+  // vacio, para iterar la UI sin backend.
+  async function initRepo() {
+    if (canned.value) {
+      status.value = { isRepo: true, staged: [], untracked: [] }
+      error.value = ''
+      return
+    }
+    initializing.value = true
+    error.value = ''
+    try {
+      await InitRepo()
+      await loadStatus()
+    } catch (e) {
+      error.value = String(e)
+    } finally {
+      initializing.value = false
+    }
+  }
+
   // setCanned inyecta un estado de git de ejemplo (devtool): marca canned para que
   // loadStatus/commit no pisen el ejemplo ni toquen el repo real. err simula el
   // estado de error del panel.
@@ -79,10 +110,12 @@ export const useGitStore = defineStore('git', () => {
     message,
     generating,
     committing,
+    initializing,
     error,
     loadStatus,
     generate,
     commit,
+    initRepo,
     setCanned,
   }
 })

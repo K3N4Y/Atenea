@@ -22,6 +22,10 @@ export function GitStatus() {
   return window['go']['main']['App']['GitStatus']();
 }
 
+export function InitRepo() {
+  return window['go']['main']['App']['InitRepo']();
+}
+
 export function ListCommands() {
   return window['go']['main']['App']['ListCommands']();
 }
