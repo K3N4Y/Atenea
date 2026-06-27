@@ -112,10 +112,20 @@ onUnmounted(() => chat.teardown())
 
       <!-- Aviso de error de la sesion (fallo del proveedor o stream cortado).
            Vive sobre el composer, dentro de la columna del chat: visible pero
-           sin alarmar, y el usuario lo descarta cuando quiera (identidad §11). -->
-      <div v-if="chat.errorText" class="mx-auto w-full max-w-3xl px-6 pt-2">
-        <ErrorNotice :message="chat.errorText" @dismiss="chat.clearError" />
-      </div>
+           sin alarmar, y el usuario lo descarta cuando quiera (identidad §11).
+           Aparece/desaparece con transicion (Emil: surgir sin transicion se
+           siente roto). role=alert => fade + leve translateY de entrada; salida
+           mas rapida y sin movimiento. -->
+      <Transition
+        enter-active-class="transition duration-200 ease-snappy"
+        enter-from-class="opacity-0 translate-y-2"
+        leave-active-class="transition duration-150 ease-snappy"
+        leave-to-class="opacity-0"
+      >
+        <div v-if="chat.errorText" class="mx-auto w-full max-w-3xl px-6 pt-2">
+          <ErrorNotice :message="chat.errorText" @dismiss="chat.clearError" />
+        </div>
+      </Transition>
 
       <ChatComposer
         :running="chat.running"
@@ -129,17 +139,37 @@ onUnmounted(() => chat.teardown())
 
       <!-- Plan expandido: overlay sobre la columna del chat (no tapa la sidebar).
            Minimizar lo colapsa a la tarjeta de la conversacion; aceptar lo
-           ejecuta; solicitar cambio lo reescribe. -->
-      <PlanView
-        v-if="chat.plan && chat.planExpanded"
-        :plan="chat.plan"
-        @accept="chat.acceptPlan"
-        @request-change="chat.requestPlanChange"
-        @minimize="chat.togglePlanExpanded"
-      />
+           ejecuta; solicitar cambio lo reescribe. Transicion modal (origin
+           center, no anclado a un trigger): entra con fade + leve scale; sale
+           mas rapido (Emil: la salida mas rapida que la entrada). -->
+      <Transition
+        enter-active-class="transition duration-[250ms] ease-snappy"
+        enter-from-class="opacity-0 scale-[0.98]"
+        leave-active-class="transition duration-[180ms] ease-snappy"
+        leave-to-class="opacity-0 scale-[0.98]"
+      >
+        <PlanView
+          v-if="chat.plan && chat.planExpanded"
+          :plan="chat.plan"
+          @accept="chat.acceptPlan"
+          @request-change="chat.requestPlanChange"
+          @minimize="chat.togglePlanExpanded"
+        />
+      </Transition>
     </main>
 
-    <SettingsPanel v-if="settingsOpen" @close="settingsOpen = false" />
+    <!-- Panel de configuracion full-screen: es un modal (origin center, no
+         anclado a un trigger). Entra con fade + leve scale; sale mas rapido
+         (Emil: la salida mas rapida que la entrada). El Flip GSAP interno de
+         las cards MCP corre en interaccion posterior, no choca con esto. -->
+    <Transition
+      enter-active-class="transition duration-200 ease-snappy"
+      enter-from-class="opacity-0 scale-[0.98]"
+      leave-active-class="transition duration-150 ease-snappy"
+      leave-to-class="opacity-0 scale-[0.98]"
+    >
+      <SettingsPanel v-if="settingsOpen" @close="settingsOpen = false" />
+    </Transition>
 
     <DevEventPanel v-if="dev" />
   </div>
