@@ -46,14 +46,28 @@ body {
   height: 100vh;
 }
 
-/* Accesibilidad: respeta la preferencia de reducir movimiento del sistema. */
+/* Accesibilidad: respeta la preferencia de reducir movimiento del sistema.
+   Filosofia Emil Kowalski: "reduced motion" significa menos movimiento y mas
+   suave, no cero. Conservamos los fades de opacidad/color (ayudan a comprender
+   que algo aparece o cambia) y quitamos solo el MOVIMIENTO. En vez de anular la
+   `transition-duration` (que mataria tambien los fades), restringimos la
+   `transition-property` a propiedades no-movimiento: opacidad y colores siguen
+   animando suave; `transform` (scale/translate/rotate), `grid-template-rows` y
+   `width` quedan fuera de la lista -> saltan instantaneos a su estado FINAL
+   (sin tween). El estado final del transform se sigue aplicando: el caret rota
+   a su posicion correcta, el reveal de altura aparece y el `:active` scale se
+   nota; solo desaparece el movimiento intermedio. Las animaciones por
+   keyframes (spinners, pulse, caret-blink) siguen gobernadas por `animation-*`,
+   que mantenemos casi anulado -> quedan estaticas (parpadeo/giro removido). */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
+    transition-property:
+      opacity, color, background-color, border-color, text-decoration-color,
+      fill, stroke, box-shadow, filter !important;
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
-    transition-duration: 0.001ms !important;
   }
 }
 
