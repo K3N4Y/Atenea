@@ -254,25 +254,44 @@ function onKeydown(e: KeyboardEvent) {
         class="relative flex items-end gap-2 rounded-soft bg-black/[0.04] p-2 pl-4 transition focus-within:ring-2 focus-within:ring-accent/20"
       >
         <!-- @-menu de archivos: flota sobre el composer mientras se escribe un
-             token @ con candidatos del workspace. -->
-        <MentionMenu
-          v-if="mentionMenuOpen"
-          :items="fileSuggestions"
-          :active-index="activeIndex"
-          class="absolute inset-x-0 bottom-full z-30 mb-2"
-          @select="chooseFile"
-          @hover="onHover"
-        />
+             token @ con candidatos del workspace. Popover origin-aware: crece
+             hacia arriba desde el composer, asi que escala desde abajo
+             (origin-bottom). La transicion solo corre al abrir/cerrar: el v-if
+             togglea por menuOpen, no por keystroke (escribir solo cambia las
+             props del componente ya montado, no lo remonta). -->
+        <Transition
+          enter-active-class="transition duration-150 ease-snappy"
+          enter-from-class="opacity-0 scale-[0.97]"
+          leave-active-class="transition duration-[120ms] ease-snappy"
+          leave-to-class="opacity-0 scale-[0.97]"
+        >
+          <MentionMenu
+            v-if="mentionMenuOpen"
+            :items="fileSuggestions"
+            :active-index="activeIndex"
+            class="absolute inset-x-0 bottom-full z-30 mb-2 origin-bottom"
+            @select="chooseFile"
+            @hover="onHover"
+          />
+        </Transition>
         <!-- slash-menu de comandos: flota sobre el composer mientras se escribe un
-             "/" al inicio del mensaje con los comandos disponibles. -->
-        <CommandMenu
-          v-if="commandMenuOpen"
-          :items="commandSuggestions"
-          :active-index="activeIndex"
-          class="absolute inset-x-0 bottom-full z-30 mb-2"
-          @select="chooseCommand"
-          @hover="onHover"
-        />
+             "/" al inicio del mensaje con los comandos disponibles. Mismo patron
+             que el @-menu: popover origin-bottom, anima solo open/close. -->
+        <Transition
+          enter-active-class="transition duration-150 ease-snappy"
+          enter-from-class="opacity-0 scale-[0.97]"
+          leave-active-class="transition duration-[120ms] ease-snappy"
+          leave-to-class="opacity-0 scale-[0.97]"
+        >
+          <CommandMenu
+            v-if="commandMenuOpen"
+            :items="commandSuggestions"
+            :active-index="activeIndex"
+            class="absolute inset-x-0 bottom-full z-30 mb-2 origin-bottom"
+            @select="chooseCommand"
+            @hover="onHover"
+          />
+        </Transition>
         <textarea
           ref="textarea"
           v-model="text"
