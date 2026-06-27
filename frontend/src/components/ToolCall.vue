@@ -58,25 +58,33 @@ const isPending = computed(() => props.item.status === 'pending')
   <!-- Resto de tools (edit/diff/echo...): bloque con su propio fondo (§8). -->
   <div v-else class="rounded-soft bg-black/[0.04] px-4 py-3 text-sm">
     <div class="flex items-center gap-2">
-      <PhCircleNotch
-        v-if="item.status === 'running'"
-        :size="16"
-        weight="bold"
-        class="animate-spin text-accent"
-      />
-      <PhWarning
-        v-else-if="isPending"
-        :size="16"
-        weight="bold"
-        class="text-accent"
-      />
-      <PhCheck
-        v-else-if="item.status === 'success'"
-        :size="16"
-        weight="bold"
-        class="opacity-50"
-      />
-      <PhX v-else :size="16" weight="bold" class="text-accent" />
+      <!-- Crossfade corto del icono de estado (~120ms): el swap instantaneo entre
+           spinner/warning/check/x se siente brusco. mode="out-in" sobre un unico
+           icono por estado (gateado por :key) mantiene un solo nodo en el flex. -->
+      <Transition name="tool-icon" mode="out-in">
+        <PhCircleNotch
+          v-if="item.status === 'running'"
+          key="running"
+          :size="16"
+          weight="bold"
+          class="animate-spin text-accent [animation-duration:0.7s]"
+        />
+        <PhWarning
+          v-else-if="isPending"
+          key="pending"
+          :size="16"
+          weight="bold"
+          class="text-accent"
+        />
+        <PhCheck
+          v-else-if="item.status === 'success'"
+          key="success"
+          :size="16"
+          weight="bold"
+          class="opacity-50"
+        />
+        <PhX v-else key="fail" :size="16" weight="bold" class="text-accent" />
+      </Transition>
       <span class="font-medium">{{ item.name || 'tool' }}</span>
       <span class="opacity-50">{{ item.status }}</span>
     </div>
@@ -117,3 +125,16 @@ const isPending = computed(() => props.item.status === 'pending')
     <p v-if="item.error" class="mt-2 text-xs text-accent">{{ item.error }}</p>
   </div>
 </template>
+
+<style scoped>
+/* Crossfade del icono de estado (ver template): solo opacidad, sin blur (caro en
+   webkit). ease-snappy = misma curva que el resto de la app. */
+.tool-icon-enter-active,
+.tool-icon-leave-active {
+  transition: opacity 0.12s var(--ease-snappy);
+}
+.tool-icon-enter-from,
+.tool-icon-leave-to {
+  opacity: 0;
+}
+</style>

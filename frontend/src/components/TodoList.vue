@@ -32,7 +32,7 @@ defineProps<{ todos: TodoItem[] }>()
           v-else-if="todo.status === 'in_progress'"
           :size="16"
           weight="bold"
-          class="mt-0.5 shrink-0 animate-spin text-accent"
+          class="mt-0.5 shrink-0 animate-spin text-accent [animation-duration:0.7s]"
         />
         <PhCircle v-else :size="16" class="mt-0.5 shrink-0 opacity-40" />
         <span
