@@ -20,6 +20,7 @@ func TestBuiltinDescriptions_WiredAndDistinct(t *testing.T) {
 		&BashTool{},
 		&PresentPlanTool{},
 		&SkillTool{},
+		TodoWriteTool{},
 		Echo{},
 	}
 

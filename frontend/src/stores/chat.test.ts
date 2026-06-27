@@ -1233,3 +1233,44 @@ describe('chat store: uso de tokens (Usage)', () => {
     expect(store.commands).toEqual([])
   })
 })
+
+describe('chat store: checklist de tareas (todo_write)', () => {
+  it('todo_write llena store.todos y NO agrega una tool card al log', () => {
+    const store = useChatStore()
+
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      ToolName: 'todo_write',
+      CallID: 'c1',
+      Input: {
+        todos: [
+          { content: 'a', status: 'completed' },
+          { content: 'b', status: 'in_progress' },
+        ],
+      },
+    })
+
+    expect(store.items).toHaveLength(0)
+    expect(store.todos).toEqual([
+      { content: 'a', status: 'completed' },
+      { content: 'b', status: 'in_progress' },
+    ])
+  })
+
+  it('cada todo_write REEMPLAZA la lista entera', () => {
+    const store = useChatStore()
+
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      ToolName: 'todo_write',
+      Input: { todos: [{ content: 'a', status: 'pending' }] },
+    })
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      ToolName: 'todo_write',
+      Input: { todos: [{ content: 'b', status: 'completed' }] },
+    })
+
+    expect(store.todos).toEqual([{ content: 'b', status: 'completed' }])
+  })
+})

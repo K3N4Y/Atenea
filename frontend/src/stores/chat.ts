@@ -99,6 +99,37 @@ function planFromInput(callID: string, input: unknown): PlanState {
   }
 }
 
+// Item del checklist de tareas en vivo (tool todo_write). El agente reemplaza la
+// lista entera en cada call; la UI la pinta arriba a la derecha (estilo Codex).
+export type TodoStatus = 'pending' | 'in_progress' | 'completed'
+export interface TodoItem {
+  content: string
+  status: TodoStatus
+}
+
+// todosFromInput normaliza el Input de todo_write a TodoItem[]. Como planFromInput,
+// tolera un string JSON y degrada a lista vacia ante cualquier forma inesperada;
+// descarta items sin content o con status fuera del enum (defensa de frontera).
+function todosFromInput(input: unknown): TodoItem[] {
+  let obj = input
+  if (typeof obj === 'string') {
+    try {
+      obj = JSON.parse(obj)
+    } catch {
+      return []
+    }
+  }
+  const todos = (obj as { todos?: unknown } | null)?.todos
+  if (!Array.isArray(todos)) return []
+  const valid: TodoStatus[] = ['pending', 'in_progress', 'completed']
+  return todos.flatMap((t): TodoItem[] => {
+    const o = t && typeof t === 'object' ? (t as Record<string, unknown>) : {}
+    if (typeof o.content !== 'string' || !valid.includes(o.status as TodoStatus))
+      return []
+    return [{ content: o.content, status: o.status as TodoStatus }]
+  })
+}
+
 // Uso de tokens de la sesion (ocupacion de contexto). camelCase para la UI; el
 // backend lo emite en PascalCase dentro de Step.Ended. Solo tokens, sin costos.
 export interface Usage {
@@ -150,6 +181,10 @@ export const useChatStore = defineStore('chat', () => {
   // present_plan abre a pantalla completa (null = sin overlay de plan).
   const mode = ref<'normal' | 'plan'>('normal')
   const plan = ref<PlanState | null>(null)
+  // Checklist de tareas en vivo: lo reemplaza cada todo_write. Persiste entre
+  // turnos (a proposito: es para no perder el hilo en trabajos de varios pasos);
+  // se vacia solo al cambiar de sesion (clearLog) y se reconstruye al rehidratar.
+  const todos = ref<TodoItem[]>([])
   // Uso de tokens del ultimo Step.Ended (ocupacion de contexto actual) y modelo
   // activo. La UI los combina para pintar la barra de contexto por modelo.
   const usage = ref<Usage | null>(null)
@@ -249,6 +284,12 @@ export const useChatStore = defineStore('chat', () => {
           plan.value = planFromInput(ev.CallID ?? '', ev.Input)
           // Un plan recien presentado (o reescrito) se abre expandido.
           planExpanded.value = true
+          break
+        }
+        // todo_write tampoco es una tool card inline: reemplaza el checklist
+        // que la UI pinta arriba a la derecha.
+        if (ev.ToolName === 'todo_write') {
+          todos.value = todosFromInput(ev.Input)
           break
         }
         const item: ToolItem = {
@@ -351,6 +392,7 @@ export const useChatStore = defineStore('chat', () => {
     // applyEvent durante la rehidratacion.
     plan.value = null
     planExpanded.value = true
+    todos.value = []
     mode.value = 'normal'
     // Un lienzo nuevo/cargado no arrastra el uso de tokens de la sesion previa.
     // model NO se resetea: es global del proceso, no por sesion.
@@ -541,6 +583,7 @@ export const useChatStore = defineStore('chat', () => {
     mode,
     plan,
     planExpanded,
+    todos,
     usage,
     model,
     projectFiles,

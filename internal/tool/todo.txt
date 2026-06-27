@@ -1,0 +1,13 @@
+Lleva una lista de tareas en vivo para trabajos de varios pasos. Usala para planear y mostrar tu avance en tareas no triviales (mas o menos 3+ pasos, o cuando el usuario pide una lista); omitela en pedidos triviales o de un solo paso.
+
+Cada call REEMPLAZA la lista entera, asi que manda siempre todos los items. Cada item es {content, status} donde status es uno de:
+- pending: aun no empezada
+- in_progress: en curso ahora mismo
+- completed: terminada
+
+Reglas:
+- Manten exactamente un item in_progress a la vez.
+- Marca un item como completed apenas termine, y pasa el siguiente a in_progress, en la misma call o en la siguiente.
+- content es corto y en imperativo ("Escribir el test que falla"), no una frase.
+
+Actualizar la lista no te detiene: sigue trabajando despues de la call.

@@ -8,6 +8,7 @@ import ChatComposer from '../components/ChatComposer.vue'
 import SettingsPanel from '../components/SettingsPanel.vue'
 import PlanView from '../components/PlanView.vue'
 import PlanCard from '../components/PlanCard.vue'
+import TodoList from '../components/TodoList.vue'
 import ContextUsedBar from '../components/ContextUsedBar.vue'
 import { useChatStore } from '../stores/chat'
 import { useUiStore } from '../stores/ui'
@@ -86,6 +87,10 @@ onUnmounted(() => chat.teardown())
           <PhGear :size="20" weight="regular" />
         </button>
       </header>
+
+      <!-- Checklist de tareas en vivo: flota arriba a la derecha (estilo Codex),
+           bajo el header. Vacio => no renderiza nada. -->
+      <TodoList class="absolute right-3 top-16 z-10" :todos="chat.todos" />
 
       <MessageList
         :items="chat.items"
