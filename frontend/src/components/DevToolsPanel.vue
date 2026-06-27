@@ -1,24 +1,55 @@
 <script lang="ts" setup>
-import { ref, onMounted } from 'vue'
-import { PhX, PhGitBranch, PhSpinnerGap } from '@phosphor-icons/vue'
+import { ref, computed, onMounted } from 'vue'
+import {
+  PhX,
+  PhPlus,
+  PhGitBranch,
+  PhTerminal,
+  PhSpinnerGap,
+} from '@phosphor-icons/vue'
 import { useGitStore } from '../stores/git'
 import { useUiStore } from '../stores/ui'
+import { useTabsStore, type Tab, type TabKind } from '../stores/tabs'
+import { destroy } from '../lib/terminalSession'
+import TerminalPanel from './TerminalPanel.vue'
 
-// Panel de herramientas de desarrollo: barra de tabs (hoy solo Git) y el
-// contenido de la tab activa. La tab Git es el MVP de commit: mensaje, generar
-// mensaje con el modelo, y listas de cambios staged/untracked. El estado de git
-// vive en su store (inyectable por la devtool DevEventPanel para iterar la UI sin
-// repo). Presentacional respecto del open/close (lo controla la vista via el store
-// de UI); aqui solo emitimos close.
-// ponytail: una sola tab por ahora; agregar terminal/browser es sumar a `tabs`.
+// Panel de herramientas: barra de tabs ABIERTAS (instancias, no un set fijo) con
+// un boton "+" para agregar Git/Terminal y un cierre por tab. El contenido se elige
+// por el `kind` de la tab activa. Presentacional respecto del open/close del panel
+// (lo controla la vista via el store de UI); aqui solo emitimos close.
+// ponytail: agregar un tipo de tab es sumar al menu + un bloque por `kind`.
 const emit = defineEmits<{ close: [] }>()
-
-const tabs = [{ id: 'git', label: 'Git', icon: PhGitBranch }] as const
-const active = ref<(typeof tabs)[number]['id']>('git')
 
 const git = useGitStore()
 const ui = useUiStore()
-onMounted(git.loadStatus)
+const tabs = useTabsStore()
+
+const KINDS: { kind: TabKind; label: string; icon: unknown }[] = [
+  { kind: 'terminal', label: 'Terminal', icon: PhTerminal },
+  { kind: 'git', label: 'Git', icon: PhGitBranch },
+]
+const iconFor = (kind: TabKind) =>
+  kind === 'terminal' ? PhTerminal : PhGitBranch
+
+const addOpen = ref(false)
+function add(kind: TabKind) {
+  tabs.addTab(kind)
+  addOpen.value = false
+}
+
+// Cerrar una tab: si es terminal hay que matar su pty (destroy); luego la saca de
+// la lista. Cambiar de tab o cerrar el panel NO pasan por aca (la terminal persiste).
+function closeTab(tab: Tab) {
+  if (tab.kind === 'terminal') destroy(tab.id)
+  tabs.closeTab(tab.id)
+}
+
+const active = computed(() => tabs.active)
+
+onMounted(() => {
+  tabs.ensureDefault()
+  git.loadStatus()
+})
 
 // Resize arrastrando el borde izquierdo: el panel esta a la derecha, asi que
 // mover el handle hacia la izquierda lo ensancha. El ancho (acotado) vive en el
@@ -54,42 +85,103 @@ function startResize(e: PointerEvent) {
       @pointerdown.prevent="startResize"
     ></div>
 
-    <!-- Barra de tabs + cerrar. -->
-    <nav
-      role="tablist"
-      aria-label="Developer tools"
-      class="flex items-center gap-1 border-b border-black/5 px-2 py-2"
-    >
-      <button
-        v-for="tab in tabs"
-        :key="tab.id"
-        type="button"
-        role="tab"
-        :aria-selected="active === tab.id ? 'true' : 'false'"
-        class="flex items-center gap-2 rounded-full px-3 py-1.5 text-sm transition active:scale-[0.97]"
-        :class="
-          active === tab.id
-            ? 'bg-black/[0.06] font-medium'
-            : 'hover:bg-black/[0.04]'
-        "
-        @click="active = tab.id"
+    <!-- Barra: tabs (con scroll propio) + boton agregar + cerrar panel. El "+" y su
+         menu viven FUERA del nav: overflow-x-auto recorta el overflow vertical y
+         taparia el menu que se abre hacia abajo. -->
+    <div class="flex items-center gap-1 border-b border-black/5 px-2 py-2">
+      <nav
+        role="tablist"
+        aria-label="Developer tools"
+        class="flex min-w-0 items-center gap-1 overflow-x-auto"
       >
-        <component :is="tab.icon" :size="16" weight="regular" />
-        {{ tab.label }}
-      </button>
+        <div
+          v-for="tab in tabs.tabs"
+          :key="tab.id"
+          role="tab"
+          :aria-selected="active?.id === tab.id ? 'true' : 'false'"
+          class="flex shrink-0 items-center gap-1.5 rounded-full py-1.5 pl-3 pr-1.5 text-sm transition"
+          :class="
+            active?.id === tab.id
+              ? 'bg-black/[0.06] font-medium'
+              : 'cursor-pointer hover:bg-black/[0.04]'
+          "
+          @click="tabs.setActive(tab.id)"
+        >
+          <component :is="iconFor(tab.kind)" :size="16" weight="regular" />
+          {{ tab.title }}
+          <button
+            type="button"
+            aria-label="Cerrar tab"
+            class="flex h-5 w-5 items-center justify-center rounded-full transition hover:bg-black/10 active:scale-90"
+            @click.stop="closeTab(tab)"
+          >
+            <PhX :size="12" weight="bold" />
+          </button>
+        </div>
+      </nav>
+
+      <!-- Agregar tab: boton + menu de tipos. -->
+      <div class="relative shrink-0">
+        <button
+          type="button"
+          aria-label="Agregar herramienta"
+          class="flex h-8 w-8 items-center justify-center rounded-full transition hover:bg-black/[0.05] active:scale-95"
+          @click="addOpen = !addOpen"
+        >
+          <PhPlus :size="16" weight="bold" />
+        </button>
+        <template v-if="addOpen">
+          <!-- backdrop para cerrar al clickear fuera -->
+          <div class="fixed inset-0 z-20" @click="addOpen = false"></div>
+          <div
+            role="menu"
+            class="absolute left-0 top-full z-30 mt-1 flex w-40 flex-col rounded-lg border border-black/10 bg-paper p-1 shadow-lg"
+          >
+            <button
+              v-for="k in KINDS"
+              :key="k.kind"
+              type="button"
+              role="menuitem"
+              class="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition hover:bg-black/[0.05]"
+              @click="add(k.kind)"
+            >
+              <component :is="k.icon" :size="16" weight="regular" />
+              {{ k.label }}
+            </button>
+          </div>
+        </template>
+      </div>
+
       <button
         type="button"
         aria-label="Cerrar herramientas"
-        class="ml-auto flex h-8 w-8 items-center justify-center rounded-full transition hover:bg-black/[0.05] active:scale-95"
+        class="ml-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition hover:bg-black/[0.05] active:scale-95"
         @click="emit('close')"
       >
         <PhX :size="18" weight="regular" />
       </button>
-    </nav>
+    </div>
+
+    <!-- Panel vacio (sin tabs). -->
+    <div
+      v-if="!active"
+      class="flex flex-1 flex-col items-center justify-center gap-2 text-center text-sm opacity-50"
+    >
+      <PhPlus :size="24" weight="regular" class="opacity-40" />
+      Agrega una herramienta con +
+    </div>
+
+    <!-- Tab Terminal: shell real bajo un pty (una por id). -->
+    <TerminalPanel
+      v-else-if="active.kind === 'terminal'"
+      :key="active.id"
+      :session-id="active.id"
+      class="min-h-0 flex-1"
+    />
 
     <!-- Tab Git. -->
     <div
-      v-if="active === 'git'"
+      v-else
       class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3"
     >
       <!-- Sin repo: ofrecer iniciar uno en vez de la UI de commit. -->

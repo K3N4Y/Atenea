@@ -6,6 +6,8 @@ import {session} from '../models';
 
 export function AcceptPlan(arg1:string):Promise<void>;
 
+export function ClosePty(arg1:string):Promise<void>;
+
 export function Commit(arg1:string):Promise<void>;
 
 export function DeleteSession(arg1:string):Promise<void>;
@@ -24,6 +26,8 @@ export function ListSessions():Promise<Array<session.SessionSummary>>;
 
 export function Model():Promise<string>;
 
+export function ResizePty(arg1:string,arg2:number,arg3:number):Promise<void>;
+
 export function ResolveToolPermission(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
 export function SendPlanPrompt(arg1:string,arg2:string):Promise<void>;
@@ -32,4 +36,8 @@ export function SendPrompt(arg1:string,arg2:string):Promise<void>;
 
 export function SessionHistory(arg1:string):Promise<Array<session.SessionEvent>>;
 
+export function StartPty(arg1:string,arg2:number,arg3:number):Promise<void>;
+
 export function Stop(arg1:string):Promise<void>;
+
+export function WritePty(arg1:string,arg2:string):Promise<void>;

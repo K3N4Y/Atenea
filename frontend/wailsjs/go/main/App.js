@@ -6,6 +6,10 @@ export function AcceptPlan(arg1) {
   return window['go']['main']['App']['AcceptPlan'](arg1);
 }
 
+export function ClosePty(arg1) {
+  return window['go']['main']['App']['ClosePty'](arg1);
+}
+
 export function Commit(arg1) {
   return window['go']['main']['App']['Commit'](arg1);
 }
@@ -42,6 +46,10 @@ export function Model() {
   return window['go']['main']['App']['Model']();
 }
 
+export function ResizePty(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ResizePty'](arg1, arg2, arg3);
+}
+
 export function ResolveToolPermission(arg1, arg2, arg3) {
   return window['go']['main']['App']['ResolveToolPermission'](arg1, arg2, arg3);
 }
@@ -58,6 +66,14 @@ export function SessionHistory(arg1) {
   return window['go']['main']['App']['SessionHistory'](arg1);
 }
 
+export function StartPty(arg1, arg2, arg3) {
+  return window['go']['main']['App']['StartPty'](arg1, arg2, arg3);
+}
+
 export function Stop(arg1) {
   return window['go']['main']['App']['Stop'](arg1);
+}
+
+export function WritePty(arg1, arg2) {
+  return window['go']['main']['App']['WritePty'](arg1, arg2);
 }

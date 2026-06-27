@@ -17,9 +17,15 @@ vi.mock('../../wailsjs/go/main/App', () => ({
 
 import DevToolsPanel from './DevToolsPanel.vue'
 
+// TerminalPanel monta xterm (GUI, no corre headless); lo stubeamos para probar
+// el cableado de la tab sin instanciar un terminal real.
+const TerminalStub = { template: '<div data-terminal-stub />' }
+
 function mountPanel() {
   setActivePinia(createPinia())
-  return mount(DevToolsPanel)
+  return mount(DevToolsPanel, {
+    global: { stubs: { TerminalPanel: TerminalStub } },
+  })
 }
 
 beforeEach(() => {
@@ -80,6 +86,56 @@ describe('DevToolsPanel', () => {
     await flushPromises()
     expect(InitRepo).toHaveBeenCalled()
     expect(GitStatus).toHaveBeenCalled() // recarga tras iniciar
+  })
+
+  it('arranca con una tab Git por defecto', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+    const tabsBar = wrapper.findAll('[role="tab"]')
+    expect(tabsBar).toHaveLength(1)
+    expect(tabsBar[0].text()).toContain('Git')
+  })
+
+  it('agrega una tab Terminal desde el menu +', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(wrapper.find('[data-terminal-stub]').exists()).toBe(false)
+
+    await wrapper
+      .find('button[aria-label="Agregar herramienta"]')
+      .trigger('click')
+    const termItem = wrapper
+      .findAll('[role="menuitem"]')
+      .find((b) => b.text().includes('Terminal'))
+    expect(termItem).toBeTruthy()
+    await termItem!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-terminal-stub]').exists()).toBe(true)
+    expect(wrapper.findAll('[role="tab"]')).toHaveLength(2) // Git + Terminal
+  })
+
+  it('cierra una tab desde su boton de cierre', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+    // Agrega una segunda tab (Terminal) y cierrala: vuelve a quedar solo Git.
+    await wrapper
+      .find('button[aria-label="Agregar herramienta"]')
+      .trigger('click')
+    await wrapper
+      .findAll('[role="menuitem"]')
+      .find((b) => b.text().includes('Terminal'))!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('[role="tab"]')).toHaveLength(2)
+
+    const termTab = wrapper
+      .findAll('[role="tab"]')
+      .find((t) => t.text().includes('Terminal'))!
+    await termTab.find('button[aria-label="Cerrar tab"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('[role="tab"]')).toHaveLength(1)
+    expect(wrapper.find('[data-terminal-stub]').exists()).toBe(false)
   })
 
   it('emite close al cerrar', async () => {

@@ -21,6 +21,7 @@ import (
 	"atenea/internal/session/runner"
 	"atenea/internal/session/subagent"
 	"atenea/internal/skill"
+	"atenea/internal/terminal"
 	"atenea/internal/tool"
 	"atenea/internal/tool/hashline"
 
@@ -43,6 +44,7 @@ type App struct {
 	inbox    session.Inbox
 	runner   *runner.Runner
 	bus      *event.Bus
+	emit     event.EmitFunc                // la misma frontera que usa el bus; la tab Terminal empuja su salida por aca
 	store    session.Store                 // lectura del historial para la sidebar (ListSessions/SessionHistory)
 	gate     *session.MemoryPermissionGate // ask-before-run: the UI resolves via ResolveToolPermission
 	glob     *tool.GlobTool                // listado de archivos del workspace para el @-menu del composer (ListProjectFiles)
@@ -60,6 +62,8 @@ type App struct {
 	runs  map[string]*runHandle   // sessionID -> corrida en vuelo (identidad por puntero)
 	modes map[string]session.Mode // sessionID -> modo (normal/plan); guardado con mu como runs
 	wg    sync.WaitGroup          // los tests esperan a las corridas; la UI es fire-and-forget
+
+	term *terminal.Manager // las tabs Terminal: varias sesiones pty vivas por id
 }
 
 // runHandle identifica una corrida en vuelo. Se compara por puntero porque
@@ -74,7 +78,9 @@ type runHandle struct{ cancel context.CancelFunc }
 func newAppWithStore(store session.Store, provider llm.Provider, emit event.EmitFunc) *App {
 	a := &App{runs: map[string]*runHandle{}, modes: map[string]session.Mode{}}
 	a.provider = provider
+	a.emit = emit
 	a.bus = event.NewBus(emit)
+	a.term = terminal.NewManager()
 	emitting := event.NewEmittingStore(store, a.bus)
 	a.store = emitting // las lecturas del historial delegan en inner sin emitir
 	a.inbox = session.NewMemoryInbox()
