@@ -46,4 +46,15 @@ describe('ui store: persistencia del estado de UI', () => {
     expect(stored).not.toBeNull()
     expect(JSON.parse(stored as string).sidebarCollapsed).toBe(true)
   })
+
+  it('el panel de desarrollo arranca cerrado y toggleDevPanel lo alterna', () => {
+    installPinia()
+    const ui = useUiStore()
+
+    expect(ui.devPanelOpen).toBe(false)
+    ui.toggleDevPanel()
+    expect(ui.devPanelOpen).toBe(true)
+    ui.toggleDevPanel()
+    expect(ui.devPanelOpen).toBe(false)
+  })
 })

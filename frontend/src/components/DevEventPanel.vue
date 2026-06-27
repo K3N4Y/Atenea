@@ -1,13 +1,28 @@
 <script lang="ts" setup>
 import { ref } from 'vue'
 import { useChatStore, type SessionEvent } from '../stores/chat'
+import { useGitStore } from '../stores/git'
+import { useUiStore } from '../stores/ui'
 
 // ponytail: herramienta solo-dev. Dispara SessionEvents canned por el mismo
 // applyEvent que usa EventsOn, asi se construye/depura la UI (todos, tools,
 // streaming, permisos, uso) sin un agente vivo. ChatView la monta bajo
 // import.meta.env.DEV, de modo que no entra al bundle de produccion.
 const chat = useChatStore()
+const git = useGitStore()
+const ui = useUiStore()
 const open = ref(false)
+
+// showGit inyecta un estado de git canned en su store y abre el panel de dev
+// tools, para iterar la UI de la tab Git (vacio, lleno, error) sin repo ni backend.
+function showGit(
+  staged: { path: string; status: string }[],
+  untracked: { path: string; status: string }[],
+  err = '',
+): void {
+  git.setCanned(err ? null : { staged, untracked }, err)
+  ui.devPanelOpen = true
+}
 
 function fire(...evs: SessionEvent[]): void {
   for (const ev of evs) chat.applyEvent(ev)
@@ -145,6 +160,42 @@ const presets: { key: string; label: string; run: () => void }[] = [
     key: 'user',
     label: 'Msg usuario',
     run: () => fire({ Message: { Role: 'user', Text: 'Hola, prueba de dev' } }),
+  },
+  {
+    key: 'git-tipico',
+    label: 'Git: tipico',
+    run: () =>
+      showGit(
+        [
+          { path: 'app.go', status: 'M' },
+          { path: 'git.go', status: 'A' },
+        ],
+        [{ path: 'docs/Harness.md', status: '??' }],
+      ),
+  },
+  { key: 'git-vacio', label: 'Git: vacio', run: () => showGit([], []) },
+  {
+    key: 'git-lleno',
+    label: 'Git: lleno',
+    run: () =>
+      showGit(
+        [
+          { path: 'internal/session/runner/runner.go', status: 'M' },
+          { path: 'internal/tool/git.go', status: 'A' },
+          { path: 'internal/llm/openai/provider.go', status: 'M' },
+          { path: 'frontend/src/components/un/path/larguisimo/que/desborda/Componente.vue', status: 'R' },
+        ],
+        [
+          { path: 'frontend/src/stores/git.ts', status: '??' },
+          { path: 'frontend/src/components/DevToolsPanel.vue', status: '??' },
+          { path: 'notas/borrador-sin-trackear.md', status: '??' },
+        ],
+      ),
+  },
+  {
+    key: 'git-error',
+    label: 'Git: error',
+    run: () => showGit([], [], 'git status: not a git repository'),
   },
   { key: 'reset', label: 'Reset', run: () => chat.reset() },
 ]

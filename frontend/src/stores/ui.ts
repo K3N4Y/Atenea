@@ -15,7 +15,15 @@ export const useUiStore = defineStore(
       sidebarCollapsed.value = !sidebarCollapsed.value
     }
 
-    return { sidebarCollapsed, toggleSidebar }
+    // Panel de herramientas de desarrollo (git, etc.): abierto/cerrado. Persiste
+    // como el resto del estado de UI para que siga abierto al reabrir la app.
+    const devPanelOpen = ref(false)
+
+    function toggleDevPanel() {
+      devPanelOpen.value = !devPanelOpen.value
+    }
+
+    return { sidebarCollapsed, toggleSidebar, devPanelOpen, toggleDevPanel }
   },
   { persist: true },
 )

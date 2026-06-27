@@ -1,7 +1,8 @@
 <script lang="ts" setup>
 import { ref, onMounted, onUnmounted } from 'vue'
-import { PhSidebarSimple } from '@phosphor-icons/vue'
+import { PhSidebarSimple, PhWrench } from '@phosphor-icons/vue'
 import AppSidebar from '../components/AppSidebar.vue'
+import DevToolsPanel from '../components/DevToolsPanel.vue'
 import MessageList from '../components/MessageList.vue'
 import ErrorNotice from '../components/ErrorNotice.vue'
 import ChatComposer from '../components/ChatComposer.vue'
@@ -83,6 +84,18 @@ onUnmounted(() => chat.teardown())
           :usage="chat.usage"
           :model="chat.model"
         />
+
+        <!-- Abre/cierra el panel de herramientas de desarrollo (git, ...). -->
+        <button
+          type="button"
+          aria-label="Toggle developer tools"
+          :aria-pressed="ui.devPanelOpen"
+          class="ml-2 flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-black/[0.05] active:scale-95"
+          :class="ui.devPanelOpen ? 'text-accent' : ''"
+          @click="ui.toggleDevPanel()"
+        >
+          <PhWrench :size="20" weight="regular" />
+        </button>
       </header>
 
       <!-- Checklist de tareas en vivo: flota arriba a la derecha (estilo Codex),
@@ -150,6 +163,19 @@ onUnmounted(() => chat.teardown())
         />
       </Transition>
     </main>
+
+    <!-- Panel de herramientas de desarrollo: columna a la derecha (no overlay),
+         con tabs (hoy solo Git). Entra/sale deslizando desde la derecha. -->
+    <Transition
+      enter-active-class="transition-[width] duration-200 ease-drawer"
+      enter-from-class="w-0"
+      leave-active-class="transition-[width] duration-200 ease-drawer"
+      leave-to-class="w-0"
+    >
+      <div v-if="ui.devPanelOpen" class="overflow-hidden">
+        <DevToolsPanel @close="ui.toggleDevPanel()" />
+      </div>
+    </Transition>
 
     <!-- Panel de configuracion full-screen: es un modal (origin center, no
          anclado a un trigger). Entra con fade + leve scale; sale mas rapido
