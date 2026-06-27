@@ -24,6 +24,12 @@ describe('AppSidebar', () => {
     expect(wrapper.emitted('new-chat')).toBeTruthy()
   })
 
+  it('emite open-settings al pulsar el engranaje del fondo', async () => {
+    const wrapper = mountSidebar()
+    await wrapper.find('button[aria-label="Open settings"]').trigger('click')
+    expect(wrapper.emitted('open-settings')).toBeTruthy()
+  })
+
   it('refleja el estado colapsado del store de UI', async () => {
     const wrapper = mountSidebar()
     const ui = useUiStore()

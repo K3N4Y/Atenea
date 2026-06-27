@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { ref } from 'vue'
-import { PhPlus, PhTrash, PhCheck, PhX } from '@phosphor-icons/vue'
+import { PhPlus, PhTrash, PhCheck, PhX, PhGear } from '@phosphor-icons/vue'
 import { useUiStore } from '../stores/ui'
 import type { SessionSummary } from '../stores/chat'
 
@@ -26,6 +26,7 @@ const emit = defineEmits<{
   'new-chat': []
   'select-session': [string]
   'delete-session': [string]
+  'open-settings': []
 }>()
 const ui = useUiStore()
 
@@ -137,6 +138,16 @@ function confirmDelete(id: string): void {
           </button>
         </div>
       </nav>
+
+      <button
+        type="button"
+        aria-label="Open settings"
+        class="mt-auto flex items-center gap-2 rounded-full px-4 py-2.5 text-left text-sm opacity-70 transition hover:bg-black/[0.04] hover:opacity-100 active:scale-[0.97]"
+        @click="emit('open-settings')"
+      >
+        <PhGear :size="18" weight="regular" />
+        Settings
+      </button>
     </div>
   </aside>
 </template>

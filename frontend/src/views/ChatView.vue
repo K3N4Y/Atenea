@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { ref, onMounted, onUnmounted } from 'vue'
-import { PhSidebarSimple, PhGear } from '@phosphor-icons/vue'
+import { PhSidebarSimple } from '@phosphor-icons/vue'
 import AppSidebar from '../components/AppSidebar.vue'
 import MessageList from '../components/MessageList.vue'
 import ErrorNotice from '../components/ErrorNotice.vue'
@@ -52,6 +52,7 @@ onUnmounted(() => chat.teardown())
       @new-chat="chat.reset()"
       @select-session="(id: string) => chat.loadSession(id)"
       @delete-session="(id: string) => chat.deleteSession(id)"
+      @open-settings="settingsOpen = true"
     />
 
     <!-- Fondo para cerrar la sidebar superpuesta en pantallas estrechas. -->
@@ -75,21 +76,13 @@ onUnmounted(() => chat.teardown())
           <PhSidebarSimple :size="20" weight="regular" />
         </button>
 
-        <!-- Uso de contexto: alineado a la derecha, antes del engranaje. -->
+        <!-- Uso de contexto: alineado a la derecha (el engranaje vive ahora al
+             fondo de la sidebar). -->
         <ContextUsedBar
           class="ml-auto"
           :usage="chat.usage"
           :model="chat.model"
         />
-
-        <button
-          type="button"
-          aria-label="Open settings"
-          class="ml-2 flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-black/[0.05] active:scale-95"
-          @click="settingsOpen = true"
-        >
-          <PhGear :size="20" weight="regular" />
-        </button>
       </header>
 
       <!-- Checklist de tareas en vivo: flota arriba a la derecha (estilo Codex),
