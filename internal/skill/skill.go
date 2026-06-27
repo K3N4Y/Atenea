@@ -39,13 +39,38 @@ func Parse(raw []byte) (Info, error) {
 	body := strings.TrimPrefix(rest[end+len("\n---"):], "\n")
 
 	var info Info
-	for _, line := range strings.Split(front, "\n") {
-		key, val, found := strings.Cut(line, ":")
+	lines := strings.Split(front, "\n")
+	for i := 0; i < len(lines); i++ {
+		key, val, found := strings.Cut(lines[i], ":")
 		if !found {
 			continue
 		}
-		val = strings.Trim(strings.TrimSpace(val), `"'`)
-		switch strings.TrimSpace(key) {
+		// Solo claves de nivel superior (sin indentar); una linea indentada con ":"
+		// es continuacion de un valor en bloque, no una clave nueva.
+		if strings.TrimLeft(key, " \t") != key {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		val = strings.TrimSpace(val)
+		// Bloque YAML ('>' plegado o '|' literal): el valor real son las lineas
+		// indentadas que siguen. Las juntamos y colapsamos a una sola linea, que es
+		// lo que necesitan el menu y el system prompt (la description es de una linea).
+		if val != "" && (val[0] == '>' || val[0] == '|') {
+			var b strings.Builder
+			for i+1 < len(lines) {
+				next := lines[i+1]
+				if strings.TrimSpace(next) != "" && strings.TrimLeft(next, " \t") == next {
+					break // linea no vacia y sin indentar: fin del bloque
+				}
+				b.WriteByte(' ')
+				b.WriteString(next)
+				i++
+			}
+			val = strings.Join(strings.Fields(b.String()), " ")
+		} else {
+			val = strings.Trim(val, `"'`)
+		}
+		switch key {
 		case "name":
 			info.Name = val
 		case "description":

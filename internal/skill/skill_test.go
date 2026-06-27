@@ -54,6 +54,51 @@ func TestParse_ExtractsNameDescriptionAndBody(t *testing.T) {
 	}
 }
 
+// Parse soporta descripciones en bloque YAML plegado ('>'): las lineas indentadas
+// siguientes se juntan en una sola linea (espacios colapsados) para el menu/prompt.
+// Muchas skills globales (p.ej. ~/.claude/skills) usan esta forma.
+func TestParse_FoldedBlockDescription(t *testing.T) {
+	raw := []byte("---\nname: demo\ndescription: >\n  Primera linea\n  segunda linea.\n---\ncuerpo\n")
+	info, err := Parse(raw)
+	if err != nil {
+		t.Fatalf("Parse: error inesperado: %v", err)
+	}
+	if info.Description != "Primera linea segunda linea." {
+		t.Fatalf("Description = %q, quiero la del bloque plegado en una linea", info.Description)
+	}
+	if strings.Contains(info.Content, "Primera linea") {
+		t.Errorf("la description del bloque no debe filtrarse al Content: %q", info.Content)
+	}
+}
+
+// TRIANGULATE: una linea de continuacion del bloque con ":" (p.ej. "X: Y") NO debe
+// confundirse con una clave nueva; se conserva entera en la description. Esta es la
+// forma real de varias skills globales (p.ej. ~/.claude/skills/ponytail).
+func TestParse_FoldedBlockDescriptionWithColon(t *testing.T) {
+	raw := []byte("---\nname: demo\ndescription: >\n  Usar cuando pasa X: hace la cosa\n  y algo mas.\n---\ncuerpo\n")
+	info, err := Parse(raw)
+	if err != nil {
+		t.Fatalf("Parse: error inesperado: %v", err)
+	}
+	want := "Usar cuando pasa X: hace la cosa y algo mas."
+	if info.Description != want {
+		t.Fatalf("Description = %q, quiero %q", info.Description, want)
+	}
+}
+
+// TRIANGULATE: bloque literal ('|') con linea en blanco intermedia; tambien se
+// normaliza a una sola linea (la description es metadato de una linea para el menu).
+func TestParse_LiteralBlockDescription(t *testing.T) {
+	raw := []byte("---\nname: demo\ndescription: |\n  Una\n\n  Dos\n---\ncuerpo\n")
+	info, err := Parse(raw)
+	if err != nil {
+		t.Fatalf("Parse: error inesperado: %v", err)
+	}
+	if info.Description != "Una Dos" {
+		t.Fatalf("Description = %q, quiero \"Una Dos\"", info.Description)
+	}
+}
+
 // TRIANGULATE: una skill sin description es valida (se parsea con Description "");
 // Format luego la filtra, pero Parse no debe rechazarla.
 func TestParse_MissingDescription(t *testing.T) {
