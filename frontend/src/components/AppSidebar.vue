@@ -11,6 +11,10 @@ import type { SessionSummary } from '../stores/chat'
 // de chats es propiedad del backend y llega via prop (la vista lo trae del
 // store). Presentacional: lista las sesiones, resalta la activa y emite la
 // seleccion hacia arriba; no toca el store de chat directamente.
+// TODO(motion): en >=md el colapso anima `width` (w-64 -> md:w-0), que dispara
+// layout/reflow en cada frame. Lo ideal (Emil) seria translate + ancho fijo,
+// pero ese refactor es arriesgado para el layout y no se puede testear headless;
+// se conserva el mecanismo actual y solo se ajusta la curva (ease-drawer).
 const props = withDefaults(
   defineProps<{
     sessions?: SessionSummary[]
@@ -50,7 +54,7 @@ function confirmDelete(id: string): void {
     id="app-sidebar"
     aria-label="Chat history"
     :data-collapsed="ui.sidebarCollapsed ? 'true' : 'false'"
-    class="fixed inset-y-0 left-0 z-30 flex h-full w-64 flex-col overflow-hidden border-black/5 bg-paper transition-all duration-300 ease-out md:static md:bg-black/[0.015]"
+    class="fixed inset-y-0 left-0 z-30 flex h-full w-64 flex-col overflow-hidden border-black/5 bg-paper transition-[transform,width,border-color] duration-300 ease-drawer md:static md:bg-black/[0.015]"
     :class="
       ui.sidebarCollapsed
         ? '-translate-x-full border-r-0 md:w-0 md:translate-x-0'

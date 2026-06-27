@@ -7,6 +7,25 @@
   --color-paper: #fef9ed;
   --color-accent: #f97316;
   --radius-soft: 24px;
+
+  /* Tokens de easing (filosofia Emil Kowalski: las curvas nativas "carecen de
+     punch"). Nombres semanticos propios para no clobberear los built-ins de
+     Tailwind (--ease-out / --ease-in-out) y poder seguir usando ease-out donde
+     ya estaba. En Tailwind v4 el namespace --ease-* genera utilidades:
+     --ease-snappy -> .ease-snappy, etc. (verificado contra tailwindcss 4.3.1).
+       snappy: ease-out fuerte para interacciones UI (hover, press, fades).
+       fluid:  ease-in-out fuerte para movimiento mas largo en pantalla.
+       drawer: curva estilo iOS para paneles que entran/salen. */
+  --ease-snappy: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-fluid: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+
+  /* Alto-leverage: la utilidad bare `transition` resuelve su timing a
+     var(--tw-ease, var(--default-transition-timing-function)). Sobrescribir
+     este default hace que TODOS los `transition` sin ease explicito usen la
+     curva fuerte, sin tocar cada componente (verificado en el CSS compilado de
+     tailwindcss 4.3.1). Igual a --ease-snappy. */
+  --default-transition-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 html,
@@ -146,8 +165,8 @@ body {
   cursor: pointer;
   opacity: 0;
   transition:
-    opacity 0.15s ease,
-    color 0.15s ease;
+    opacity 0.15s var(--ease-snappy),
+    color 0.15s var(--ease-snappy);
 }
 .md pre:hover .md-copy,
 .md-copy:focus-visible {

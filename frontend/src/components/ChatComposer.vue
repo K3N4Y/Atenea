@@ -179,7 +179,7 @@ function submit() {
     gsap.fromTo(
       sendButton.value,
       { scale: 0.85 },
-      { scale: 1, duration: 0.3, ease: 'back.out(3)' },
+      { scale: 1, duration: 0.3, ease: 'back.out(1.5)' },
     )
   }
   emit('send', text.value)
