@@ -1,0 +1,11 @@
+- Trae el contenido de una URL y responde una instruccion sobre el.
+- Entrada: una URL (http o https) y un prompt con lo que queres extraer.
+- Baja la pagina, la convierte a markdown y responde el prompt usando SOLO ese contenido.
+- Devuelve una respuesta concisa, no el HTML crudo: evita inundar el contexto.
+
+Notas:
+  - Es de solo lectura: no modifica archivos ni hace pedidos que cambien estado.
+  - http se actualiza a https automaticamente.
+  - Las URLs deben ser publicas: se bloquea el acceso a hosts locales/privados (SSRF).
+  - Limite de tamano de respuesta: 5MB.
+  - Si hay otra herramienta mas especifica o con menos restricciones, preferila.

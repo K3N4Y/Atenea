@@ -129,9 +129,10 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 		tool.NewReadToolWithSnapshotProvider(root, snaps), tool.NewWriteToolWithSnapshotProvider(root, snaps),
 		tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, snaps),
 		tool.NewGlobTool(root), tool.NewGrepToolWithSnapshotProvider(root, snaps),
-		tool.NewBashTool(root), tool.NewPresentPlanTool(root), tool.NewSkillTool(skills), taskTool)
+		tool.NewBashTool(root), tool.NewPresentPlanTool(root), tool.NewSkillTool(skills), taskTool,
+		tool.NewWebFetchTool(provider))
 	a.runner = runner.NewRunner(emitting, a.inbox, provider, registry,
-		tool.Permissions{"echo": true, "read": true, "write": true, "edit": true, "glob": true, "grep": true, "bash": true, "skill": true, "task": true},
+		tool.Permissions{"echo": true, "read": true, "write": true, "edit": true, "glob": true, "grep": true, "bash": true, "skill": true, "task": true, "web_fetch": true},
 		newIDGen())
 	a.runner.SetSystemPrompt(systemPromptBuilder(root, skillsBlock))
 	// Ask-before-run: bash is the only gated tool for now. The UI approves/denies
