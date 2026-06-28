@@ -13,7 +13,9 @@ import PlanCard from '../components/PlanCard.vue'
 import TodoList from '../components/TodoList.vue'
 import ContextUsedBar from '../components/ContextUsedBar.vue'
 import DevEventPanel from '../components/DevEventPanel.vue'
+import DiffScreen from '../components/DiffScreen.vue'
 import { useChatStore } from '../stores/chat'
+import { useGitStore } from '../stores/git'
 import { knownWorkspaces } from '../lib/sessions'
 
 // Solo en dev: panel para disparar eventos canned y construir la UI sin agente.
@@ -26,6 +28,9 @@ import { useUiStore } from '../stores/ui'
 // suscripcion, que la Fase 1 dejaba sin limpiar.
 const chat = useChatStore()
 const ui = useUiStore()
+// Pantalla de diff: la abre el panel de git (git.openDiff) y vive como overlay en
+// la columna del chat. La fuente de verdad (archivo + diff) esta en el store de git.
+const git = useGitStore()
 
 // Settings panel open state: ephemeral UI state of the view (not persisted, so
 // it does not reappear on app relaunch).
@@ -232,6 +237,24 @@ onUnmounted(() => chat.teardown())
           @accept="chat.acceptPlan"
           @request-change="chat.requestPlanChange"
           @minimize="chat.togglePlanExpanded"
+        />
+      </Transition>
+
+      <!-- Pantalla de diff (estilo VSCode): overlay sobre la columna del chat al
+           seleccionar un archivo en el panel de git. No tapa la sidebar ni el
+           panel, asi se puede saltar de archivo en archivo. Misma transicion modal
+           que el plan: entra con fade + leve scale; sale mas rapido. -->
+      <Transition
+        enter-active-class="transition duration-[250ms] ease-snappy"
+        enter-from-class="opacity-0 scale-[0.98]"
+        leave-active-class="transition duration-[180ms] ease-snappy"
+        leave-to-class="opacity-0 scale-[0.98]"
+      >
+        <DiffScreen
+          v-if="git.diffPath"
+          :path="git.diffPath"
+          :diff="git.diff"
+          @close="git.closeDiff()"
         />
       </Transition>
     </main>

@@ -33,7 +33,9 @@ import MessageList from '../components/MessageList.vue'
 import PlanView from '../components/PlanView.vue'
 import PlanCard from '../components/PlanCard.vue'
 import WorkspacePicker from '../components/WorkspacePicker.vue'
+import DiffScreen from '../components/DiffScreen.vue'
 import { useChatStore } from '../stores/chat'
+import { useGitStore } from '../stores/git'
 
 function presentPlan(chat: ReturnType<typeof useChatStore>) {
   chat.applyEvent({
@@ -338,6 +340,37 @@ describe('ChatView', () => {
     await nextTick()
 
     expect(spy).toHaveBeenCalled()
+  })
+
+  it('muestra DiffScreen dentro de <main> cuando hay un diff abierto', async () => {
+    vi.clearAllMocks()
+    const wrapper = mountView()
+    const git = useGitStore()
+
+    expect(wrapper.findComponent(DiffScreen).exists()).toBe(false)
+
+    git.diffPath = 'app.go'
+    git.diff = '--- a/app.go\n+++ b/app.go\n@@ -1 +1 @@\n-x\n+y\n'
+    await nextTick()
+
+    // Vive en la columna del chat (como PlanView): la sidebar y el panel de git
+    // siguen libres, asi se puede cambiar de archivo con el diff abierto.
+    expect(wrapper.get('main').findComponent(DiffScreen).exists()).toBe(true)
+  })
+
+  it('cierra DiffScreen cuando emite close (closeDiff limpia el path)', async () => {
+    vi.clearAllMocks()
+    const wrapper = mountView()
+    const git = useGitStore()
+    git.diffPath = 'app.go'
+    git.diff = '--- a/app.go\n+++ b/app.go\n@@ -1 +1 @@\n-x\n+y\n'
+    await nextTick()
+
+    wrapper.findComponent(DiffScreen).vm.$emit('close')
+    await nextTick()
+
+    expect(git.diffPath).toBe('')
+    expect(wrapper.findComponent(DiffScreen).exists()).toBe(false)
   })
 
   it('cablea el modo del composer: emitir toggle-mode alterna chat.mode', async () => {
