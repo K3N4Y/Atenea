@@ -5,6 +5,7 @@ import {
   GenerateCommitMessage,
   Commit,
   InitRepo,
+  FileDiff,
 } from '../../wailsjs/go/main/App'
 
 // Estado de la tab Git de las dev tools: los cambios staged/untracked, el mensaje
@@ -14,6 +15,7 @@ type GitChange = { path: string; status: string }
 type GitStatus = {
   isRepo: boolean
   staged: GitChange[]
+  unstaged: GitChange[]
   untracked: GitChange[]
 }
 
@@ -30,6 +32,11 @@ export const useGitStore = defineStore('git', () => {
   // real (que con `wails dev` apunta a este mismo proyecto). Se limpia recargando
   // la app. ponytail: solo-dev; en produccion siempre es false.
   const canned = ref(false)
+
+  // Pantalla de diff: el archivo abierto (diffPath != '' => pantalla visible) y su
+  // diff unificado. La vista monta DiffScreen cuando diffPath no esta vacio.
+  const diffPath = ref('')
+  const diff = ref('')
 
   async function loadStatus() {
     if (canned.value) return
@@ -79,7 +86,7 @@ export const useGitStore = defineStore('git', () => {
   // vacio, para iterar la UI sin backend.
   async function initRepo() {
     if (canned.value) {
-      status.value = { isRepo: true, staged: [], untracked: [] }
+      status.value = { isRepo: true, staged: [], unstaged: [], untracked: [] }
       error.value = ''
       return
     }
@@ -93,6 +100,31 @@ export const useGitStore = defineStore('git', () => {
     } finally {
       initializing.value = false
     }
+  }
+
+  // openDiff trae el diff del archivo y, si llega, abre la pantalla (diffPath). El
+  // diff local es rapido, asi que esperamos el resultado y abrimos con el contenido
+  // ya cargado (sin estado de carga). Un fallo NO abre la pantalla: deja el error a
+  // la vista del panel. En canned arma un diff de ejemplo sin tocar el backend.
+  async function openDiff(path: string) {
+    if (canned.value) {
+      diff.value = cannedDiffFor(path)
+      diffPath.value = path
+      return
+    }
+    error.value = ''
+    try {
+      diff.value = await FileDiff(path)
+      diffPath.value = path
+    } catch (e) {
+      error.value = String(e)
+    }
+  }
+
+  // closeDiff cierra la pantalla de diff (boton/Escape de DiffScreen).
+  function closeDiff() {
+    diffPath.value = ''
+    diff.value = ''
   }
 
   // setCanned inyecta un estado de git de ejemplo (devtool): marca canned para que
@@ -112,10 +144,30 @@ export const useGitStore = defineStore('git', () => {
     committing,
     initializing,
     error,
+    diffPath,
+    diff,
     loadStatus,
     generate,
     commit,
     initRepo,
+    openDiff,
+    closeDiff,
     setCanned,
   }
 })
+
+// cannedDiffFor arma un diff de ejemplo para el modo canned (devtool): permite
+// iterar la pantalla DiffScreen sin repo ni backend. ponytail: solo-dev.
+function cannedDiffFor(path: string): string {
+  return [
+    `--- a/${path}`,
+    `+++ b/${path}`,
+    '@@ -1,4 +1,4 @@',
+    ' contexto sin cambios',
+    '-linea vieja',
+    '+linea nueva',
+    ' otra linea',
+    '+linea agregada',
+    '',
+  ].join('\n')
+}

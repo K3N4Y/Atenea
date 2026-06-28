@@ -5,12 +5,14 @@ import { setActivePinia, createPinia } from 'pinia'
 const GitStatus = vi.fn()
 const Commit = vi.fn()
 const InitRepo = vi.fn()
+const FileDiff = vi.fn()
 
 vi.mock('../../wailsjs/go/main/App', () => ({
   GitStatus: () => GitStatus(),
   GenerateCommitMessage: vi.fn(),
   Commit: (msg: string) => Commit(msg),
   InitRepo: () => InitRepo(),
+  FileDiff: (p: string) => FileDiff(p),
 }))
 
 import { useGitStore } from './git'
@@ -20,9 +22,11 @@ beforeEach(() => {
   GitStatus.mockReset()
   Commit.mockReset()
   InitRepo.mockReset()
+  FileDiff.mockReset()
   GitStatus.mockResolvedValue({ isRepo: true, staged: [], untracked: [] })
   Commit.mockResolvedValue(undefined)
   InitRepo.mockResolvedValue(undefined)
+  FileDiff.mockResolvedValue('--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n')
 })
 
 describe('git store', () => {
@@ -51,6 +55,42 @@ describe('git store', () => {
     await git.initRepo()
     expect(InitRepo).toHaveBeenCalled()
     expect(git.status?.isRepo).toBe(true)
+  })
+
+  it('openDiff trae el diff del archivo y guarda path y contenido', async () => {
+    FileDiff.mockResolvedValue(
+      '--- a/app.go\n+++ b/app.go\n@@ -1 +1 @@\n-x\n+y\n',
+    )
+    const git = useGitStore()
+    await git.openDiff('app.go')
+    expect(FileDiff).toHaveBeenCalledWith('app.go')
+    expect(git.diffPath).toBe('app.go')
+    expect(git.diff).toContain('+y')
+  })
+
+  it('closeDiff limpia el path y el diff', async () => {
+    const git = useGitStore()
+    await git.openDiff('app.go')
+    git.closeDiff()
+    expect(git.diffPath).toBe('')
+    expect(git.diff).toBe('')
+  })
+
+  it('openDiff que falla deja la pantalla cerrada y registra el error', async () => {
+    FileDiff.mockRejectedValue(new Error('no such file'))
+    const git = useGitStore()
+    await git.openDiff('nope.go')
+    expect(git.diffPath).toBe('')
+    expect(git.error).toContain('no such file')
+  })
+
+  it('en canned, openDiff arma un diff sin llamar al backend', async () => {
+    const git = useGitStore()
+    git.setCanned({ staged: [{ path: 'demo.go', status: 'M' }], untracked: [] })
+    await git.openDiff('demo.go')
+    expect(FileDiff).not.toHaveBeenCalled()
+    expect(git.diffPath).toBe('demo.go')
+    expect(git.diff).toContain('demo.go')
   })
 
   // El seam de la devtool: con estado canned inyectado, las acciones NO tocan el
