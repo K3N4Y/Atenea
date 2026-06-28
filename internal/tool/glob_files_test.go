@@ -2,6 +2,9 @@ package tool
 
 import (
 	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -59,8 +62,42 @@ func TestRipgrepGlobSearcher_EmptyPatternListsAllFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Glob: %v", err)
 	}
-	wantArgs := []string{"--no-config", "--files", "--glob=!**/.git/**", "."}
+	wantArgs := []string{"--no-config", "--files", "--glob=!**/.git/**", "--glob=!**/node_modules/**", "."}
 	if !reflect.DeepEqual(runner.calls[0].args, wantArgs) {
 		t.Fatalf("args\nwant %v\ngot  %v", wantArgs, runner.calls[0].args)
+	}
+}
+
+// TestRipgrepGlobSearcher_ExcludesNodeModules: con rg real, un archivo dentro de
+// node_modules no aparece aunque no haya .gitignore que lo excluya.
+func TestRipgrepGlobSearcher_ExcludesNodeModules(t *testing.T) {
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skipf("rg unavailable: %v", err)
+	}
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "app.go"), "package main")
+	mustWrite(t, filepath.Join(root, "node_modules", "pkg", "b.go"), "package pkg")
+
+	res, err := (&RipgrepGlobSearcher{}).Glob(context.Background(), GlobSearch{Cwd: root, Pattern: "**/*.go", Limit: 10})
+	if err != nil {
+		t.Fatalf("Glob: %v", err)
+	}
+	for _, e := range res.Entries {
+		if filepath.Base(filepath.Dir(filepath.Dir(e.Path))) == "node_modules" || e.Path == "node_modules/pkg/b.go" {
+			t.Fatalf("node_modules no fue excluido: %+v", res.Entries)
+		}
+	}
+	if len(res.Entries) != 1 || res.Entries[0].Path != "app.go" {
+		t.Fatalf("Entries = %+v, want [app.go]", res.Entries)
+	}
+}
+
+func mustWrite(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
 	}
 }

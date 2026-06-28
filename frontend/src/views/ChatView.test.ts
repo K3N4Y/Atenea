@@ -19,6 +19,9 @@ vi.mock('../../wailsjs/go/main/App', () => ({
   SessionHistory: vi.fn(() => Promise.resolve([])),
   ListProjectFiles: vi.fn(() => Promise.resolve([])),
   ListCommands: vi.fn(() => Promise.resolve([])),
+  Workspace: vi.fn(() => Promise.resolve('/home/u/a')),
+  SetWorkspace: vi.fn(() => Promise.resolve()),
+  SelectWorkspace: vi.fn(() => Promise.resolve('')),
 }))
 
 import { EventsOn } from '../../wailsjs/runtime/runtime'
@@ -29,6 +32,7 @@ import ChatComposer from '../components/ChatComposer.vue'
 import MessageList from '../components/MessageList.vue'
 import PlanView from '../components/PlanView.vue'
 import PlanCard from '../components/PlanCard.vue'
+import WorkspacePicker from '../components/WorkspacePicker.vue'
 import { useChatStore } from '../stores/chat'
 
 function presentPlan(chat: ReturnType<typeof useChatStore>) {
@@ -291,6 +295,49 @@ describe('ChatView', () => {
 
     expect(wrapper.findComponent(PlanView).exists()).toBe(true)
     expect(wrapper.findComponent(PlanCard).exists()).toBe(false)
+  })
+
+  it('muestra el selector de carpeta en un chat nuevo (composer al centro)', () => {
+    vi.clearAllMocks()
+    const wrapper = mountView()
+
+    // Chat nuevo e inactivo: el estado vacio ofrece elegir la carpeta de trabajo.
+    expect(wrapper.findComponent(WorkspacePicker).exists()).toBe(true)
+  })
+
+  it('oculta el selector de carpeta cuando la conversacion ya tiene mensajes', async () => {
+    vi.clearAllMocks()
+    const wrapper = mountView()
+    const chat = useChatStore()
+
+    chat.applyEvent({ Message: { Role: 'user', Text: 'hola' } })
+    await nextTick()
+
+    expect(wrapper.findComponent(WorkspacePicker).exists()).toBe(false)
+  })
+
+  it('rutea select del WorkspacePicker a pickWorkspace del store', async () => {
+    vi.clearAllMocks()
+    const wrapper = mountView()
+    const chat = useChatStore()
+    const spy = vi.spyOn(chat, 'pickWorkspace').mockResolvedValue()
+
+    wrapper.findComponent(WorkspacePicker).vm.$emit('select', '/home/u/x')
+    await nextTick()
+
+    expect(spy).toHaveBeenCalledWith('/home/u/x')
+  })
+
+  it('rutea browse del WorkspacePicker a selectWorkspace (dialogo nativo)', async () => {
+    vi.clearAllMocks()
+    const wrapper = mountView()
+    const chat = useChatStore()
+    const spy = vi.spyOn(chat, 'selectWorkspace').mockResolvedValue()
+
+    wrapper.findComponent(WorkspacePicker).vm.$emit('browse')
+    await nextTick()
+
+    expect(spy).toHaveBeenCalled()
   })
 
   it('cablea el modo del composer: emitir toggle-mode alterna chat.mode', async () => {

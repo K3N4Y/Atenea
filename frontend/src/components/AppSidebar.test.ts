@@ -147,12 +147,10 @@ describe('AppSidebar', () => {
     expect(wrapper.findAll('[data-session-id]')).toHaveLength(3)
   })
 
-  it('muestra la carpeta de trabajo vigente y emite change-workspace al pulsarla', async () => {
-    const wrapper = mountSidebar({ workspace: '/home/u/atenea' })
-    const btn = wrapper.find('[data-change-workspace]')
-    expect(btn.exists()).toBe(true)
-    expect(btn.text()).toContain('atenea')
-    await btn.trigger('click')
-    expect(wrapper.emitted('change-workspace')).toBeTruthy()
+  it('ya no muestra el boton de cambiar carpeta (redundante con el selector del chat nuevo y los encabezados de grupo)', () => {
+    const wrapper = mountSidebar({
+      sessions: [{ ID: 's1', Title: 'a', Cwd: '/home/u/atenea' }],
+    })
+    expect(wrapper.find('[data-change-workspace]').exists()).toBe(false)
   })
 })

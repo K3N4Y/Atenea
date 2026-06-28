@@ -1,17 +1,9 @@
 <script lang="ts" setup>
 import { ref, computed } from 'vue'
-import {
-  PhPlus,
-  PhTrash,
-  PhCheck,
-  PhX,
-  PhGear,
-  PhFolderOpen,
-} from '@phosphor-icons/vue'
+import { PhPlus, PhTrash, PhCheck, PhX, PhGear } from '@phosphor-icons/vue'
 import { useUiStore } from '../stores/ui'
 import type { SessionSummary } from '../stores/chat'
 import { groupSessionsByFolder } from '../lib/sessions'
-import { basename } from '../lib/path'
 
 // Sidebar persistente (identidad §4): el estado colapsado vive en el store de
 // UI y se conserva entre sesiones (pinia-plugin-persistedstate). En pantallas
@@ -28,26 +20,22 @@ const props = withDefaults(
   defineProps<{
     sessions?: SessionSummary[]
     activeSessionId?: string | null
-    workspace?: string
   }>(),
-  { sessions: () => [], activeSessionId: null, workspace: '' },
+  { sessions: () => [], activeSessionId: null },
 )
 const emit = defineEmits<{
   'new-chat': []
   'select-session': [string]
   'delete-session': [string]
   'open-settings': []
-  'change-workspace': []
 }>()
 const ui = useUiStore()
 
 // Los chats se agrupan por carpeta de proyecto (identidad: ordenados por carpeta);
-// dentro de cada grupo conservan la recencia que da el backend. workspaceLabel es
-// el nombre corto de la carpeta vigente para el control de cambio de carpeta.
+// dentro de cada grupo conservan la recencia que da el backend. El encabezado de
+// cada grupo ya muestra la carpeta, asi que no hace falta un control de carpeta
+// aparte (la carpeta del chat nuevo se elige en el selector del propio composer).
 const groups = computed(() => groupSessionsByFolder(props.sessions))
-const workspaceLabel = computed(
-  () => basename(props.workspace) || 'Sin carpeta',
-)
 
 // confirmingId guarda el id de la sesion cuya fila esta en modo "confirmar
 // borrado": el control de basura se reemplaza por confirmar/cancelar (borrado en
@@ -91,20 +79,6 @@ function confirmDelete(id: string): void {
       >
         <PhPlus :size="18" weight="regular" />
         New chat
-      </button>
-
-      <!-- Carpeta de trabajo vigente: el agente apunta aqui. Pulsar la cambia
-           (dialogo nativo en el backend). -->
-      <button
-        type="button"
-        data-change-workspace
-        :title="props.workspace || 'Choose working folder'"
-        aria-label="Change working folder"
-        class="flex items-center gap-2 rounded-full px-4 py-2 text-left text-xs opacity-70 transition hover:bg-black/[0.04] hover:opacity-100 active:scale-[0.97]"
-        @click="emit('change-workspace')"
-      >
-        <PhFolderOpen :size="16" weight="regular" class="shrink-0" />
-        <span class="min-w-0 flex-1 truncate">{{ workspaceLabel }}</span>
       </button>
 
       <nav

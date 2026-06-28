@@ -1340,4 +1340,51 @@ describe('chat store: carpeta de trabajo (workspace)', () => {
     await store.selectWorkspace()
     expect(store.sessionID).toBe(prevID)
   })
+
+  it('pickWorkspace fija la carpeta dada (sin dialogo) y abre un chat nuevo', async () => {
+    vi.mocked(App.Workspace).mockResolvedValueOnce('/home/u/a')
+    const store = useChatStore()
+    await store.loadWorkspace()
+    const prevID = store.sessionID
+    await store.pickWorkspace('/home/u/b')
+    expect(App.SetWorkspace).toHaveBeenCalledWith('/home/u/b')
+    expect(store.workspace).toBe('/home/u/b')
+    expect(store.sessionID).not.toBe(prevID)
+  })
+
+  it('pickWorkspace con la carpeta vigente es un no-op (ni recablea ni abre chat)', async () => {
+    vi.mocked(App.Workspace).mockResolvedValueOnce('/home/u/a')
+    const store = useChatStore()
+    await store.loadWorkspace()
+    const prevID = store.sessionID
+    await store.pickWorkspace('/home/u/a')
+    expect(App.SetWorkspace).not.toHaveBeenCalled()
+    expect(store.sessionID).toBe(prevID)
+  })
+
+  it('restoreWorkspace re-aplica al backend la carpeta persistida (entre reinicios)', async () => {
+    const store = useChatStore()
+    store.workspace = '/home/u/persisted' // simula la hidratacion de localStorage
+    await store.restoreWorkspace()
+    expect(App.SetWorkspace).toHaveBeenCalledWith('/home/u/persisted')
+    expect(store.workspace).toBe('/home/u/persisted')
+  })
+
+  it('restoreWorkspace sin carpeta persistida toma la del backend', async () => {
+    vi.mocked(App.Workspace).mockResolvedValueOnce('/home/u/a')
+    const store = useChatStore()
+    await store.restoreWorkspace()
+    expect(App.SetWorkspace).not.toHaveBeenCalled()
+    expect(store.workspace).toBe('/home/u/a')
+  })
+
+  it('restoreWorkspace cae a la del backend si la carpeta persistida ya no existe', async () => {
+    vi.mocked(App.SetWorkspace).mockRejectedValueOnce(new Error('no existe'))
+    vi.mocked(App.Workspace).mockResolvedValueOnce('/home/u/a')
+    const store = useChatStore()
+    store.workspace = '/home/u/borrada'
+    await store.restoreWorkspace()
+    expect(App.SetWorkspace).toHaveBeenCalledWith('/home/u/borrada')
+    expect(store.workspace).toBe('/home/u/a')
+  })
 })
