@@ -17,10 +17,11 @@ const open = ref(false)
 // tools, para iterar la UI de la tab Git (vacio, lleno, error) sin repo ni backend.
 function showGit(
   staged: { path: string; status: string }[],
+  unstaged: { path: string; status: string }[],
   untracked: { path: string; status: string }[],
   err = '',
 ): void {
-  git.setCanned(err ? null : { isRepo: true, staged, untracked }, err)
+  git.setCanned(err ? null : { isRepo: true, staged, unstaged, untracked }, err)
   ui.devPanelOpen = true
 }
 
@@ -198,10 +199,11 @@ const presets: { key: string; label: string; run: () => void }[] = [
           { path: 'app.go', status: 'M' },
           { path: 'git.go', status: 'A' },
         ],
+        [{ path: 'frontend/src/stores/git.ts', status: 'M' }],
         [{ path: 'docs/Harness.md', status: '??' }],
       ),
   },
-  { key: 'git-vacio', label: 'Git: vacio', run: () => showGit([], []) },
+  { key: 'git-vacio', label: 'Git: vacio', run: () => showGit([], [], []) },
   {
     key: 'git-lleno',
     label: 'Git: lleno',
@@ -217,6 +219,11 @@ const presets: { key: string; label: string; run: () => void }[] = [
           },
         ],
         [
+          { path: 'app.go', status: 'M' },
+          { path: 'internal/session/store.go', status: 'M' },
+          { path: 'docs/borrado.md', status: 'D' },
+        ],
+        [
           { path: 'frontend/src/stores/git.ts', status: '??' },
           { path: 'frontend/src/components/DevToolsPanel.vue', status: '??' },
           { path: 'notas/borrador-sin-trackear.md', status: '??' },
@@ -227,14 +234,14 @@ const presets: { key: string; label: string; run: () => void }[] = [
     key: 'git-sin-repo',
     label: 'Git: sin repo',
     run: () => {
-      git.setCanned({ isRepo: false, staged: [], untracked: [] })
+      git.setCanned({ isRepo: false, staged: [], unstaged: [], untracked: [] })
       ui.devPanelOpen = true
     },
   },
   {
     key: 'git-error',
     label: 'Git: error',
-    run: () => showGit([], [], 'git status: stream cortado'),
+    run: () => showGit([], [], [], 'git status: stream cortado'),
   },
   { key: 'reset', label: 'Reset', run: () => chat.reset() },
 ]

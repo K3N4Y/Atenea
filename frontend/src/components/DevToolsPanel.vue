@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import {
   PhX,
   PhPlus,
@@ -8,6 +8,7 @@ import {
   PhSpinnerGap,
 } from '@phosphor-icons/vue'
 import { useGitStore } from '../stores/git'
+import { useChatStore } from '../stores/chat'
 import { useUiStore } from '../stores/ui'
 import { useTabsStore, type Tab, type TabKind } from '../stores/tabs'
 import { destroy } from '../lib/terminalSession'
@@ -21,6 +22,7 @@ import TerminalPanel from './TerminalPanel.vue'
 const emit = defineEmits<{ close: [] }>()
 
 const git = useGitStore()
+const chat = useChatStore()
 const ui = useUiStore()
 const tabs = useTabsStore()
 
@@ -50,6 +52,15 @@ onMounted(() => {
   tabs.ensureDefault()
   git.loadStatus()
 })
+
+// El estado de git lo lee el backend de la carpeta de trabajo vigente. Cambiar de
+// carpeta (elegir/abrir otro proyecto) la mueve en vivo, asi que recargamos para no
+// seguir mostrando los cambios del proyecto anterior. El onMounted cubre el primer
+// load; este watch cubre los cambios mientras el panel esta abierto.
+watch(
+  () => chat.workspace,
+  () => git.loadStatus(),
+)
 
 // Resize arrastrando el borde izquierdo: el panel esta a la derecha, asi que
 // mover el handle hacia la izquierda lo ensancha. El ancho (acotado) vive en el
@@ -180,10 +191,7 @@ function startResize(e: PointerEvent) {
     />
 
     <!-- Tab Git. -->
-    <div
-      v-else
-      class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3"
-    >
+    <div v-else class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3">
       <!-- Sin repo: ofrecer iniciar uno en vez de la UI de commit. -->
       <div
         v-if="git.status && !git.status.isRepo"
@@ -256,17 +264,47 @@ function startResize(e: PointerEvent) {
           <p v-if="!git.status?.staged?.length" class="px-1 text-sm opacity-40">
             Sin cambios staged
           </p>
-          <div
+          <button
             v-for="change in git.status?.staged ?? []"
             :key="change.path"
+            type="button"
             data-staged
-            class="flex items-center gap-2 rounded-md px-1 py-1 text-sm"
+            :title="change.path"
+            class="flex items-center gap-2 rounded-md px-1 py-1 text-left text-sm transition hover:bg-black/[0.04] active:scale-[0.99]"
+            @click="git.openDiff(change.path)"
           >
             <span class="w-4 shrink-0 text-center text-xs opacity-50">{{
               change.status
             }}</span>
             <span class="truncate">{{ change.path }}</span>
-          </div>
+          </button>
+        </section>
+
+        <!-- Cambios sin stage (working tree). -->
+        <section class="flex flex-col gap-1">
+          <h3 class="px-1 text-xs uppercase tracking-wide opacity-50">
+            Cambios ({{ git.status?.unstaged?.length ?? 0 }})
+          </h3>
+          <p
+            v-if="!git.status?.unstaged?.length"
+            class="px-1 text-sm opacity-40"
+          >
+            Sin cambios sin stage
+          </p>
+          <button
+            v-for="change in git.status?.unstaged ?? []"
+            :key="change.path"
+            type="button"
+            data-unstaged
+            :title="change.path"
+            class="flex items-center gap-2 rounded-md px-1 py-1 text-left text-sm transition hover:bg-black/[0.04] active:scale-[0.99]"
+            @click="git.openDiff(change.path)"
+          >
+            <span class="w-4 shrink-0 text-center text-xs opacity-50">{{
+              change.status
+            }}</span>
+            <span class="truncate">{{ change.path }}</span>
+          </button>
         </section>
 
         <!-- Untracked. -->
@@ -280,17 +318,20 @@ function startResize(e: PointerEvent) {
           >
             Sin archivos nuevos
           </p>
-          <div
+          <button
             v-for="change in git.status?.untracked ?? []"
             :key="change.path"
+            type="button"
             data-untracked
-            class="flex items-center gap-2 rounded-md px-1 py-1 text-sm"
+            :title="change.path"
+            class="flex items-center gap-2 rounded-md px-1 py-1 text-left text-sm transition hover:bg-black/[0.04] active:scale-[0.99]"
+            @click="git.openDiff(change.path)"
           >
             <span class="w-4 shrink-0 text-center text-xs opacity-50">{{
               change.status
             }}</span>
             <span class="truncate">{{ change.path }}</span>
-          </div>
+          </button>
         </section>
       </template>
     </div>

@@ -7,15 +7,18 @@ const GitStatus = vi.fn()
 const GenerateCommitMessage = vi.fn()
 const Commit = vi.fn()
 const InitRepo = vi.fn()
+const FileDiff = vi.fn()
 
 vi.mock('../../wailsjs/go/main/App', () => ({
   GitStatus: () => GitStatus(),
   GenerateCommitMessage: () => GenerateCommitMessage(),
   Commit: (msg: string) => Commit(msg),
   InitRepo: () => InitRepo(),
+  FileDiff: (p: string) => FileDiff(p),
 }))
 
 import DevToolsPanel from './DevToolsPanel.vue'
+import { useChatStore } from '../stores/chat'
 
 // TerminalPanel monta xterm (GUI, no corre headless); lo stubeamos para probar
 // el cableado de la tab sin instanciar un terminal real.
@@ -32,21 +35,46 @@ beforeEach(() => {
   GitStatus.mockResolvedValue({
     isRepo: true,
     staged: [{ path: 'a.go', status: 'M' }],
+    unstaged: [{ path: 'c.go', status: 'M' }],
     untracked: [{ path: 'b.go', status: '??' }],
   })
   GenerateCommitMessage.mockResolvedValue('feat: agregar panel')
   Commit.mockResolvedValue(undefined)
   InitRepo.mockResolvedValue(undefined)
+  FileDiff.mockResolvedValue('--- a/a.go\n+++ b/a.go\n@@ -1 +1 @@\n-x\n+y\n')
 })
 
 describe('DevToolsPanel', () => {
-  it('lista los cambios staged y untracked al montar', async () => {
+  it('lista los cambios staged, unstaged y untracked al montar', async () => {
     const wrapper = mountPanel()
     await flushPromises()
     expect(wrapper.findAll('[data-staged]')).toHaveLength(1)
     expect(wrapper.find('[data-staged]').text()).toContain('a.go')
+    expect(wrapper.findAll('[data-unstaged]')).toHaveLength(1)
+    expect(wrapper.find('[data-unstaged]').text()).toContain('c.go')
     expect(wrapper.findAll('[data-untracked]')).toHaveLength(1)
     expect(wrapper.find('[data-untracked]').text()).toContain('b.go')
+  })
+
+  it('al cambiar de workspace recarga el estado de git', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+    // El backend lee la carpeta vigente en vivo; al cambiarla el panel debe
+    // recargar para no seguir mostrando los cambios del proyecto anterior.
+    GitStatus.mockClear()
+    const chat = useChatStore()
+    chat.workspace = '/otra/carpeta'
+    await flushPromises()
+    expect(GitStatus).toHaveBeenCalled()
+    expect(wrapper.exists()).toBe(true)
+  })
+
+  it('al seleccionar un archivo de la lista abre su diff (FileDiff)', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+    await wrapper.find('[data-staged]').trigger('click')
+    await flushPromises()
+    expect(FileDiff).toHaveBeenCalledWith('a.go')
   })
 
   it('genera el mensaje y lo pone en el textarea', async () => {
