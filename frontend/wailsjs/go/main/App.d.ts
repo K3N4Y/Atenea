@@ -12,6 +12,8 @@ export function Commit(arg1:string):Promise<void>;
 
 export function DeleteSession(arg1:string):Promise<void>;
 
+export function FileDiff(arg1:string):Promise<string>;
+
 export function GenerateCommitMessage():Promise<string>;
 
 export function GitStatus():Promise<main.GitStatus>;

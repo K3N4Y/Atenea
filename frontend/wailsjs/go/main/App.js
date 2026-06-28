@@ -18,6 +18,10 @@ export function DeleteSession(arg1) {
   return window['go']['main']['App']['DeleteSession'](arg1);
 }
 
+export function FileDiff(arg1) {
+  return window['go']['main']['App']['FileDiff'](arg1);
+}
+
 export function GenerateCommitMessage() {
   return window['go']['main']['App']['GenerateCommitMessage']();
 }

@@ -38,6 +38,7 @@ export namespace main {
 	export class GitStatus {
 	    isRepo: boolean;
 	    staged: GitChange[];
+	    unstaged: GitChange[];
 	    untracked: GitChange[];
 	
 	    static createFrom(source: any = {}) {
@@ -48,6 +49,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.isRepo = source["isRepo"];
 	        this.staged = this.convertValues(source["staged"], GitChange);
+	        this.unstaged = this.convertValues(source["unstaged"], GitChange);
 	        this.untracked = this.convertValues(source["untracked"], GitChange);
 	    }
 	
