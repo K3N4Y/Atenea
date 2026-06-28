@@ -40,6 +40,88 @@ export function parseDiff(raw: string): DiffLine[] {
   return out
 }
 
+// Modelo side-by-side (estilo VSCode) derivado del MISMO diff unificado. Cada
+// fila tiene dos celdas (vieja | nueva); una celda 'empty' rellena cuando un lado
+// tiene mas lineas que el otro. Las filas de hunk (`hunk` != null) separan rangos.
+export type DiffCellKind = 'context' | 'add' | 'del' | 'empty'
+
+export interface DiffCell {
+  kind: DiffCellKind
+  text: string
+  num: number | null // numero de linea (1-based) o null en celdas vacias
+}
+
+export interface DiffRow {
+  left: DiffCell
+  right: DiffCell
+  hunk: string | null // texto del header @@ cuando la fila es un separador de hunk
+}
+
+function emptyCell(): DiffCell {
+  return { kind: 'empty', text: '', num: null }
+}
+
+// buildSideBySide arma las filas de la vista a dos columnas a partir del diff
+// unificado. Acumula los bloques de cambios (dels seguidos de adds) y al cerrarlos
+// (al llegar una linea de contexto, un nuevo hunk o el final) empareja del[i] con
+// add[i]; el lado mas corto queda con celdas vacias. Los numeros de linea salen
+// del header @@ -viejo +nuevo y avanzan por lado.
+export function buildSideBySide(raw: string): DiffRow[] {
+  if (!raw) return []
+  const lines = raw.split('\n')
+  if (lines.length && lines[lines.length - 1] === '') lines.pop()
+
+  const rows: DiffRow[] = []
+  let oldNum = 0
+  let newNum = 0
+  let inHunk = false
+  let dels: DiffCell[] = []
+  let adds: DiffCell[] = []
+
+  const flush = () => {
+    const n = Math.max(dels.length, adds.length)
+    for (let i = 0; i < n; i++) {
+      rows.push({
+        left: dels[i] ?? emptyCell(),
+        right: adds[i] ?? emptyCell(),
+        hunk: null,
+      })
+    }
+    dels = []
+    adds = []
+  }
+
+  for (const line of lines) {
+    if (line.startsWith('@@')) {
+      flush()
+      const m = /@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line)
+      oldNum = m ? parseInt(m[1], 10) : 1
+      newNum = m ? parseInt(m[2], 10) : 1
+      rows.push({ left: emptyCell(), right: emptyCell(), hunk: line })
+      inHunk = true
+      continue
+    }
+    if (!inHunk) continue // headers --- / +++ : el archivo va en la cabecera de la pantalla
+    const prefix = line[0]
+    const text = line.slice(1)
+    if (prefix === '+') {
+      adds.push({ kind: 'add', text, num: newNum++ })
+    } else if (prefix === '-') {
+      dels.push({ kind: 'del', text, num: oldNum++ })
+    } else {
+      // context: cierra el bloque de cambios pendiente y alinea ambos lados
+      flush()
+      rows.push({
+        left: { kind: 'context', text, num: oldNum++ },
+        right: { kind: 'context', text, num: newNum++ },
+        hunk: null,
+      })
+    }
+  }
+  flush()
+  return rows
+}
+
 // pathFromDiff saca la ruta del header "+++ b/<path>" (cae al "--- a/<path>" si
 // hiciera falta). El backend no pone fechas, asi que no hay sufijo de tab.
 export function pathFromDiff(raw: string): string {
