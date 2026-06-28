@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"atenea/internal/llm"
@@ -54,14 +55,95 @@ func TestGitStatus_SeparatesStagedAndUntracked(t *testing.T) {
 	}
 }
 
-// TestGitStatus_CleanRepoIsEmpty: sin cambios, ambas listas quedan vacias.
+// TestGitStatus_CapturesUnstagedWorktreeChanges: un archivo commiteado y luego
+// modificado SIN stage cae en Unstaged (columna del working tree del porcelain),
+// no se pierde. Es el bug que dejaba a Atenea mostrando menos cambios que VSCode.
+func TestGitStatus_CapturesUnstagedWorktreeChanges(t *testing.T) {
+	root := setupRepo(t)
+	writeRepoFile(t, root, "a.txt", "uno\n")
+	if _, err := runGit(root, "add", "a.txt"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if _, err := runGit(root, "commit", "-m", "base"); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	writeRepoFile(t, root, "a.txt", "UNO\n") // modificado sin add
+
+	st, err := gitStatus(root)
+	if err != nil {
+		t.Fatalf("gitStatus: %v", err)
+	}
+	if len(st.Staged) != 0 {
+		t.Fatalf("nada deberia estar staged: %+v", st.Staged)
+	}
+	if len(st.Unstaged) != 1 || st.Unstaged[0].Path != "a.txt" || st.Unstaged[0].Status != "M" {
+		t.Fatalf("unstaged: got %+v, want [a.txt M]", st.Unstaged)
+	}
+}
+
+// TestGitStatus_StagedThenModifiedAgainAppearsInBoth: un archivo con cambio en el
+// index y OTRO cambio encima sin stage (porcelain "MM") aparece en Staged y en
+// Unstaged a la vez, como en VSCode. Es la prueba que distingue el parseo de las
+// dos columnas de uno que solo mira una.
+func TestGitStatus_StagedThenModifiedAgainAppearsInBoth(t *testing.T) {
+	root := setupRepo(t)
+	writeRepoFile(t, root, "a.txt", "uno\n")
+	if _, err := runGit(root, "add", "a.txt"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if _, err := runGit(root, "commit", "-m", "base"); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	writeRepoFile(t, root, "a.txt", "DOS\n") // cambio staged
+	if _, err := runGit(root, "add", "a.txt"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	writeRepoFile(t, root, "a.txt", "TRES\n") // otro cambio encima, sin add
+
+	st, err := gitStatus(root)
+	if err != nil {
+		t.Fatalf("gitStatus: %v", err)
+	}
+	if len(st.Staged) != 1 || st.Staged[0].Path != "a.txt" {
+		t.Fatalf("staged: got %+v, want [a.txt]", st.Staged)
+	}
+	if len(st.Unstaged) != 1 || st.Unstaged[0].Path != "a.txt" {
+		t.Fatalf("unstaged: got %+v, want [a.txt]", st.Unstaged)
+	}
+}
+
+// TestGitStatus_DeletedUnstaged: un archivo trackeado borrado del working tree sin
+// stage (" D") va a Unstaged, no se pierde.
+func TestGitStatus_DeletedUnstaged(t *testing.T) {
+	root := setupRepo(t)
+	writeRepoFile(t, root, "a.txt", "uno\n")
+	if _, err := runGit(root, "add", "a.txt"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if _, err := runGit(root, "commit", "-m", "base"); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if err := os.Remove(filepath.Join(root, "a.txt")); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+
+	st, err := gitStatus(root)
+	if err != nil {
+		t.Fatalf("gitStatus: %v", err)
+	}
+	if len(st.Unstaged) != 1 || st.Unstaged[0].Status != "D" {
+		t.Fatalf("unstaged: got %+v, want [a.txt D]", st.Unstaged)
+	}
+}
+
+// TestGitStatus_CleanRepoIsEmpty: sin cambios, las tres listas quedan vacias.
 func TestGitStatus_CleanRepoIsEmpty(t *testing.T) {
 	root := setupRepo(t)
 	st, err := gitStatus(root)
 	if err != nil {
 		t.Fatalf("gitStatus: %v", err)
 	}
-	if len(st.Staged) != 0 || len(st.Untracked) != 0 {
+	if len(st.Staged) != 0 || len(st.Unstaged) != 0 || len(st.Untracked) != 0 {
 		t.Fatalf("repo limpio: got %+v", st)
 	}
 }
@@ -129,6 +211,95 @@ func TestGitCommit_RejectsEmptyMessage(t *testing.T) {
 	root := setupRepo(t)
 	if err := gitCommit(root, "  "); err == nil {
 		t.Fatal("gitCommit con mensaje vacio deberia fallar")
+	}
+}
+
+// TestGitFileDiff_StagedModification: para un archivo trackeado y modificado,
+// gitFileDiff devuelve el diff unificado con la linea vieja (-) y la nueva (+).
+func TestGitFileDiff_StagedModification(t *testing.T) {
+	root := setupRepo(t)
+	writeRepoFile(t, root, "a.txt", "uno\ndos\ntres\n")
+	if _, err := runGit(root, "add", "a.txt"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if _, err := runGit(root, "commit", "-m", "base"); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	// Cambio staged: "dos" -> "DOS".
+	writeRepoFile(t, root, "a.txt", "uno\nDOS\ntres\n")
+	if _, err := runGit(root, "add", "a.txt"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	diff, err := gitFileDiff(root, "a.txt")
+	if err != nil {
+		t.Fatalf("gitFileDiff: %v", err)
+	}
+	if !strings.Contains(diff, "-dos") || !strings.Contains(diff, "+DOS") {
+		t.Fatalf("diff deberia mostrar -dos/+DOS, got:\n%s", diff)
+	}
+	if !strings.Contains(diff, "a.txt") {
+		t.Fatalf("diff deberia nombrar el archivo, got:\n%s", diff)
+	}
+}
+
+// TestGitFileDiff_UntrackedNewFile: para un archivo sin trackear, gitFileDiff
+// sintetiza un diff con todas las lineas como adiciones (+) y cabecera
+// /dev/null -> b/<path>, asi el front lo renderiza igual que cualquier diff.
+func TestGitFileDiff_UntrackedNewFile(t *testing.T) {
+	root := setupRepo(t)
+	writeRepoFile(t, root, "nuevo.txt", "linea uno\nlinea dos\n")
+
+	diff, err := gitFileDiff(root, "nuevo.txt")
+	if err != nil {
+		t.Fatalf("gitFileDiff: %v", err)
+	}
+	if !strings.Contains(diff, "+++ b/nuevo.txt") {
+		t.Fatalf("diff de archivo nuevo deberia tener cabecera +++ b/nuevo.txt, got:\n%s", diff)
+	}
+	if !strings.Contains(diff, "+linea uno") || !strings.Contains(diff, "+linea dos") {
+		t.Fatalf("diff de archivo nuevo deberia tener las lineas como adiciones, got:\n%s", diff)
+	}
+}
+
+// TestGitFileDiff_UnstagedWorktreeModification: un archivo commiteado y luego
+// modificado SIN stage cae en la segunda rama (`git diff` del working tree).
+func TestGitFileDiff_UnstagedWorktreeModification(t *testing.T) {
+	root := setupRepo(t)
+	writeRepoFile(t, root, "a.txt", "uno\n")
+	if _, err := runGit(root, "add", "a.txt"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if _, err := runGit(root, "commit", "-m", "base"); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	writeRepoFile(t, root, "a.txt", "UNO\n") // sin add
+
+	diff, err := gitFileDiff(root, "a.txt")
+	if err != nil {
+		t.Fatalf("gitFileDiff: %v", err)
+	}
+	if !strings.Contains(diff, "-uno") || !strings.Contains(diff, "+UNO") {
+		t.Fatalf("diff del working tree deberia mostrar -uno/+UNO, got:\n%s", diff)
+	}
+}
+
+// TestGitFileDiff_EmptyUntrackedFile: un archivo nuevo vacio no rompe el
+// sintetizado: cabecera presente y hunk con 0 lineas, sin cuerpo de adiciones.
+func TestGitFileDiff_EmptyUntrackedFile(t *testing.T) {
+	root := setupRepo(t)
+	writeRepoFile(t, root, "vacio.txt", "")
+
+	diff, err := gitFileDiff(root, "vacio.txt")
+	if err != nil {
+		t.Fatalf("gitFileDiff: %v", err)
+	}
+	if !strings.Contains(diff, "+++ b/vacio.txt") {
+		t.Fatalf("diff de archivo vacio deberia tener cabecera, got:\n%s", diff)
+	}
+	// El hunk de 0 lineas es lo ultimo: no hay cuerpo de adiciones detras.
+	if !strings.HasSuffix(diff, "@@ -0,0 +1,0 @@\n") {
+		t.Fatalf("diff de archivo vacio deberia terminar en el hunk de 0 lineas, got:\n%s", diff)
 	}
 }
 

@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"atenea/internal/llm"
@@ -16,12 +18,16 @@ type GitChange struct {
 	Status string `json:"status"`
 }
 
-// GitStatus reparte los cambios en staged (en el index) y untracked, que es lo
-// que el panel de git muestra en el MVP. IsRepo es false cuando root no es un
-// repo git: el panel lo usa para ofrecer iniciar uno en vez de listar cambios.
+// GitStatus reparte los cambios en tres listas, igual que la vista de control de
+// fuentes de VSCode: Staged (en el index), Unstaged (modificados en el working
+// tree pero sin add) y Untracked (sin trackear). Un mismo archivo puede estar en
+// Staged y Unstaged a la vez (porcelain "MM": cambio en el index + cambio nuevo
+// encima sin stage). IsRepo es false cuando root no es un repo git: el panel lo
+// usa para ofrecer iniciar uno en vez de listar cambios.
 type GitStatus struct {
 	IsRepo    bool        `json:"isRepo"`
 	Staged    []GitChange `json:"staged"`
+	Unstaged  []GitChange `json:"unstaged"`
 	Untracked []GitChange `json:"untracked"`
 }
 
@@ -49,8 +55,11 @@ func runGit(root string, args ...string) (string, error) {
 	return stdout.String(), nil
 }
 
-// gitStatus parsea `git status --porcelain`: cada linea es "XY path", X = estado
-// en el index. "??" => untracked; X distinto de espacio => staged.
+// gitStatus parsea `git status --porcelain`: cada linea es "XY path", donde X es
+// el estado en el index (staged) e Y el del working tree (sin stage). "??" =>
+// untracked. Si X no es espacio el archivo va a Staged; si Y no es espacio va a
+// Unstaged; un "MM" cae en ambas. Antes solo se miraba X, asi que los archivos
+// modificados sin add (" M") se perdian y el panel mostraba menos que VSCode.
 // ponytail: en renames el path es "viejo -> nuevo" tal cual; suficiente para el MVP.
 func gitStatus(root string) (GitStatus, error) {
 	out, err := runGit(root, "status", "--porcelain")
@@ -67,13 +76,17 @@ func gitStatus(root string) (GitStatus, error) {
 		if len(line) < 4 {
 			continue
 		}
+		x, y := line[0], line[1]
 		path := strings.TrimSpace(line[3:])
-		if line[:2] == "??" {
+		if x == '?' && y == '?' {
 			st.Untracked = append(st.Untracked, GitChange{Path: path, Status: "??"})
 			continue
 		}
-		if line[0] != ' ' {
-			st.Staged = append(st.Staged, GitChange{Path: path, Status: string(line[0])})
+		if x != ' ' {
+			st.Staged = append(st.Staged, GitChange{Path: path, Status: string(x)})
+		}
+		if y != ' ' {
+			st.Unstaged = append(st.Unstaged, GitChange{Path: path, Status: string(y)})
 		}
 	}
 	return st, nil
@@ -84,6 +97,51 @@ func gitStatus(root string) (GitStatus, error) {
 func isGitRepo(root string) bool {
 	_, err := runGit(root, "rev-parse", "--is-inside-work-tree")
 	return err == nil
+}
+
+// gitFileDiff devuelve el diff unificado de un solo archivo, listo para
+// renderizar en la pantalla de diff. Prueba en orden: lo staged contra HEAD
+// (`diff --cached`, que es lo que el panel lista en "Staged"); si no hay nada
+// staged, el cambio en el working tree (`diff`); y si tampoco (archivo nuevo sin
+// trackear, que git diff ignora) sintetiza un diff con todo el contenido como
+// adiciones. Asi el front consume siempre el mismo formato sin saber el estado.
+func gitFileDiff(root, path string) (string, error) {
+	if out, err := runGit(root, "diff", "--cached", "--", path); err == nil && strings.TrimSpace(out) != "" {
+		return out, nil
+	}
+	if out, err := runGit(root, "diff", "--", path); err == nil && strings.TrimSpace(out) != "" {
+		return out, nil
+	}
+	return newFileDiff(root, path)
+}
+
+// newFileDiff arma un diff unificado para un archivo nuevo (sin trackear): toda
+// su contenido como adiciones, con cabecera /dev/null -> b/<path> y un unico
+// hunk @@ -0,0 +1,N @@. Es lo que `git diff --no-index` produciria, pero sin el
+// codigo de salida 1 que ese comando devuelve cuando hay diferencias.
+func newFileDiff(root, path string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(root, path))
+	if err != nil {
+		return "", err
+	}
+	content := string(data)
+	// Un archivo vacio son 0 lineas (strings.Split("", ...) daria [""], una de
+	// mas). Con contenido, el "" final que deja Split tras un \n terminal se quita.
+	var lines []string
+	if content != "" {
+		lines = strings.Split(content, "\n")
+		if strings.HasSuffix(content, "\n") {
+			lines = lines[:len(lines)-1]
+		}
+	}
+	var b strings.Builder
+	b.WriteString("--- /dev/null\n")
+	b.WriteString("+++ b/" + path + "\n")
+	fmt.Fprintf(&b, "@@ -0,0 +1,%d @@\n", len(lines))
+	for _, l := range lines {
+		b.WriteString("+" + l + "\n")
+	}
+	return b.String(), nil
 }
 
 // gitInit inicializa un repo git en root (`git init`), para el boton del panel
@@ -125,6 +183,10 @@ func commitMessageFromProvider(p llm.Provider, model, diff string) string {
 
 // GitStatus expone al frontend los cambios staged + untracked del workspace.
 func (a *App) GitStatus() (GitStatus, error) { return gitStatus(a.workspaceRoot()) }
+
+// FileDiff expone al frontend el diff unificado de un archivo del workspace,
+// para abrir la pantalla de diff desde el panel de git.
+func (a *App) FileDiff(path string) (string, error) { return gitFileDiff(a.workspaceRoot(), path) }
 
 // InitRepo inicializa un repo git en el proyecto (boton del panel cuando no hay
 // repo). Tras llamarlo el frontend recarga GitStatus.
