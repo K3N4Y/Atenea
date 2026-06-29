@@ -156,6 +156,11 @@ export interface SessionEvent {
   ToolName?: string
   Input?: unknown
   Diff?: string
+  // SessionID identifies the session that originated the event. For a subagent's
+  // surfaced permission request it is the CHILD session id (the parent channel
+  // carries it), so the UI resolves the gate with (childID, callID). Empty/absent
+  // for the parent's own events: they resolve with the active (parent) sessionID.
+  SessionID?: string
   Message?: { Role?: string; Text?: string }
   Usage?: {
     InputTokens: number
@@ -224,6 +229,11 @@ export const useChatStore = defineStore(
     let reasoningStartedAt = 0
     // Correlacion CallID -> item de tool para resolver Tool.Success/Failed.
     let toolsByCall = new Map<string, ToolItem>()
+    // CallID -> sessionID que debe resolver el gate de esa tool call. Para una tool
+    // del subagente es el id de la sesion HIJA (lo trae el evento surfaceado en el
+    // canal del padre); para las tools del propio chat queda sin entrada y se cae al
+    // sessionID activo. Asi approve/deny rutean ResolveToolPermission al gate correcto.
+    let resolveSessionByCall = new Map<string, string>()
     let seq = 0
     const unsubscribe: Array<() => void> = []
 
@@ -323,10 +333,30 @@ export const useChatStore = defineStore(
           break
         }
         case 'Tool.Permission.Requested': {
-          // Tool.Called already created the item; here it moves to 'pending' so the
-          // UI can offer Approve/Deny before execution (ask-before-run).
-          const item = ev.CallID ? toolsByCall.get(ev.CallID) : undefined
+          // For the parent's own tools, Tool.Called already created the item; here it
+          // moves to 'pending' so the UI can offer Approve/Deny before execution. For
+          // a SUBAGENT tool, the child's Tool.Called never reached this channel: the
+          // request is surfaced on the parent channel carrying the child SessionID, so
+          // create the pending item here and remember the child session for resolving.
+          const callID = ev.CallID ?? ''
+          let item = callID ? toolsByCall.get(callID) : undefined
+          if (!item && callID) {
+            item = pushItem({
+              kind: 'tool',
+              id: nextId(),
+              callID,
+              name: ev.ToolName ?? '',
+              input: ev.Input,
+              status: 'pending',
+              output: '',
+              error: null,
+              diff: '',
+            })
+            toolsByCall.set(callID, item)
+          }
           if (item) item.status = 'pending'
+          // A child's permission carries its own SessionID; route resolve there.
+          if (callID && ev.SessionID) resolveSessionByCall.set(callID, ev.SessionID)
           break
         }
         case 'Tool.Success': {
@@ -405,6 +435,7 @@ export const useChatStore = defineStore(
       streamingText = null
       streamingReasoning = null
       toolsByCall = new Map()
+      resolveSessionByCall = new Map()
       running.value = false
       errorText.value = null
       // Un lienzo nuevo/cargado arranca en modo normal sin overlay de plan.
@@ -624,7 +655,10 @@ export const useChatStore = defineStore(
     // moves it to 'running' awaiting Tool.Success/Failed; deny leaves it in
     // 'failed' (the backend's Tool.Failed confirms with its cause).
     function resolveTool(callID: string, approved: boolean): void {
-      ResolveToolPermission(sessionID.value, callID, approved)
+      // A subagent tool resolves against the CHILD session (the gate keys by
+      // (childID, callID)); a parent tool falls back to the active sessionID.
+      const target = resolveSessionByCall.get(callID) ?? sessionID.value
+      ResolveToolPermission(target, callID, approved)
       const item = toolsByCall.get(callID)
       if (item && item.status === 'pending') {
         item.status = approved ? 'running' : 'failed'

@@ -338,6 +338,87 @@ describe('chat store: tool permission (ask-before-run)', () => {
   })
 })
 
+describe('chat store: subagent tool permission (ask-before-run)', () => {
+  it('a subagent Tool.Permission.Requested (with child SessionID, no prior Tool.Called) creates a pending tool item', () => {
+    const store = useChatStore()
+
+    // The child's Tool.Called never reaches this channel; the surfaced permission
+    // request carries the child SessionID. The store must still show a pending item.
+    store.applyEvent({
+      Kind: 'Tool.Permission.Requested',
+      CallID: 'b1',
+      ToolName: 'bash',
+      SessionID: 'msg-1',
+    })
+
+    expect(store.items).toHaveLength(1)
+    const item = store.items[0]
+    expect(item.kind).toBe('tool')
+    if (item.kind === 'tool') {
+      expect(item.status).toBe('pending')
+      expect(item.name).toBe('bash')
+    }
+  })
+
+  it('approveTool on a subagent permission resolves with the CHILD SessionID, not the parent', () => {
+    const store = useChatStore()
+    const parent = store.sessionID
+
+    store.applyEvent({
+      Kind: 'Tool.Permission.Requested',
+      CallID: 'b1',
+      ToolName: 'bash',
+      SessionID: 'msg-1',
+    })
+    store.approveTool('b1')
+
+    expect(App.ResolveToolPermission).toHaveBeenCalledWith('msg-1', 'b1', true)
+    expect(App.ResolveToolPermission).not.toHaveBeenCalledWith(
+      parent,
+      'b1',
+      true,
+    )
+    const item = store.items[0]
+    if (item.kind === 'tool') {
+      expect(item.status).toBe('running')
+    }
+  })
+
+  it('denyTool on a subagent permission resolves with the CHILD SessionID', () => {
+    const store = useChatStore()
+
+    store.applyEvent({
+      Kind: 'Tool.Permission.Requested',
+      CallID: 'b1',
+      ToolName: 'bash',
+      SessionID: 'msg-1',
+    })
+    store.denyTool('b1')
+
+    expect(App.ResolveToolPermission).toHaveBeenCalledWith('msg-1', 'b1', false)
+  })
+
+  it('a parent (non-subagent) permission still resolves with the parent sessionID', () => {
+    const store = useChatStore()
+    const parent = store.sessionID
+
+    store.applyEvent({
+      Kind: 'Tool.Called',
+      CallID: 'c1',
+      ToolName: 'bash',
+      Input: { command: 'ls' },
+    })
+    store.applyEvent({
+      Kind: 'Tool.Permission.Requested',
+      CallID: 'c1',
+      ToolName: 'bash',
+    })
+    store.approveTool('c1')
+
+    expect(App.ResolveToolPermission).toHaveBeenCalledWith(parent, 'c1', true)
+  })
+})
+
 describe('chat store: historial de sesiones (sidebar)', () => {
   it('loadSessions trae la lista del backend y la expone en sessions', async () => {
     vi.mocked(App.ListSessions).mockResolvedValueOnce([
