@@ -46,15 +46,39 @@ type WebFetchTool struct {
 	maxSize int64
 }
 
+// maxWebFetchRedirects acota la cadena de redirects que el cliente sigue antes de
+// rendirse, igual que el default de net/http (10), para no quedar en un loop.
+const maxWebFetchRedirects = 10
+
 // NewWebFetchTool arma la tool con el provider para el destilado y los defaults de
 // red: un http.Client con timeout y el guard SSRF que veda loopback/privadas.
 func NewWebFetchTool(provider llm.Provider) *WebFetchTool {
-	return &WebFetchTool{
+	wf := &WebFetchTool{
 		provider: provider,
-		client:   &http.Client{Timeout: defaultWebFetchTimeout},
 		blockIP:  isPrivateOrLoopback,
 		maxSize:  maxWebFetchSize,
 	}
+	wf.setClient(&http.Client{Timeout: defaultWebFetchTimeout})
+	return wf
+}
+
+// setClient instala el http.Client y le fija el guard de redirects UNA vez, de modo
+// que fetch nunca mute el client compartido (eso causaba una data race cuando el
+// runner ejecuta dos web_fetch concurrentes sobre la misma instancia). El guard es
+// un closure que lee wf.checkSSRF en cada salto, asi que sigue siendo per-instance.
+// Los tests que reemplazan el client deben usar este helper para conservar el guard.
+func (wf *WebFetchTool) setClient(c *http.Client) {
+	// Re-validar SSRF en CADA salto de redirect: el checkSSRF previo solo cubre el
+	// host inicial, asi que sin esto una URL publica podria redirigir (302) a
+	// 169.254.169.254 / 127.0.0.1 y el cliente la alcanzaria (bypass / DNS-rebinding).
+	// Un CheckRedirect custom desactiva el cap interno de Go, asi que lo reimplementamos.
+	c.CheckRedirect = func(r *http.Request, via []*http.Request) error {
+		if len(via) >= maxWebFetchRedirects {
+			return fmt.Errorf("web_fetch: demasiados redirects (> %d)", maxWebFetchRedirects)
+		}
+		return wf.checkSSRF(r.Context(), r.URL.Hostname())
+	}
+	wf.client = c
 }
 
 func (*WebFetchTool) Name() string { return "web_fetch" }
@@ -179,6 +203,9 @@ func (wf *WebFetchTool) fetch(ctx context.Context, rawURL string) (body, content
 	req.Header.Set("Accept", webFetchAccept)
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 
+	// El guard de redirects (re-valida SSRF en cada salto y reimplementa el cap) se
+	// instala una sola vez en setClient, no aca: mutar wf.client por-fetch corre con
+	// http.Client.Do cuando el runner ejecuta dos web_fetch en paralelo (data race).
 	resp, err := wf.client.Do(req)
 	if err != nil {
 		return "", "", fmt.Errorf("web_fetch: %w", err)

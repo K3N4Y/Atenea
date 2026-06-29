@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"atenea/internal/llm"
@@ -36,6 +37,19 @@ func (r *recordingProvider) Stream(ctx context.Context, req llm.Request) (<-chan
 			}
 		}
 	}()
+	return out, nil
+}
+
+// stubProvider es un llm.Provider sin estado compartido: emite un unico TextDelta y
+// no captura nada. Es seguro para llamar desde varias goroutines a la vez, util para
+// tests concurrentes donde recordingProvider (que escribe r.got/r.calls) introduciria
+// su propia race ajena a lo que se quiere probar.
+type stubProvider struct{ text string }
+
+func (s stubProvider) Stream(ctx context.Context, _ llm.Request) (<-chan llm.Event, error) {
+	out := make(chan llm.Event, 1)
+	out <- llm.Event{Kind: llm.TextDelta, Text: s.text}
+	close(out)
 	return out, nil
 }
 
@@ -133,6 +147,105 @@ func TestWebFetch_BlocksPrivateHostsBeforeFetching(t *testing.T) {
 		if prov.calls != 0 {
 			t.Errorf("%s: el provider se llamo %d veces, no debia llamarse", target, prov.calls)
 		}
+	}
+}
+
+// Un redirect (302) hacia un host privado/loopback debe BLOQUEARSE: el cliente no
+// puede seguir el salto sin re-validar SSRF. El server publico (loopback del
+// httptest) responde 302 hacia 169.254.169.254 (endpoint de metadata de la nube);
+// el guard permite el loopback del test pero veda link-local, asi que el fetch
+// falla y el provider no se destila.
+func TestWebFetch_BlocksRedirectToPrivateHost(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://169.254.169.254/latest/meta-data/", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	prov := &recordingProvider{}
+	wf := NewWebFetchTool(prov)
+	wf.setClient(srv.Client())
+	// Permitir el loopback del httptest pero vedar el destino link-local del redirect.
+	wf.blockIP = func(ip net.IP) bool {
+		return ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
+	}
+
+	_, err := wf.Execute(context.Background(), webFetchInput(t, srv.URL, "leeme secretos"))
+	if err == nil {
+		t.Fatalf("esperaba que el redirect a host privado se bloqueara")
+	}
+	if !strings.Contains(err.Error(), "bloqueado") {
+		t.Errorf("error = %v, quiero que mencione bloqueado", err)
+	}
+	if prov.calls != 0 {
+		t.Errorf("el provider se llamo %d veces, no debia destilar", prov.calls)
+	}
+}
+
+// El runner ejecuta los tool calls de un mismo turno en concurrente (errgroup en
+// turn.go). El WebFetchTool es UNA sola instancia compartida, asi que dos web_fetch
+// simultaneos comparten wf.client. Este test corre dos Execute en paralelo sobre la
+// misma instancia: con -race detecta cualquier escritura a un campo compartido del
+// client (p.ej. mutar CheckRedirect por-fetch). No debe haber data race.
+func TestWebFetch_ConcurrentExecuteNoRace(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		io.WriteString(w, "contenido")
+	}))
+	defer srv.Close()
+
+	// El provider de este test es stateless (no captura el Request) para que la
+	// concurrencia exponga races en la PRODUCCION (wf.client), no en el doble de test.
+	wf := NewWebFetchTool(stubProvider{text: "ok"})
+	wf.setClient(srv.Client())
+	wf.blockIP = allowAllIPs
+
+	const goroutines = 8
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			if _, err := wf.Execute(context.Background(), webFetchInput(t, srv.URL, "que dice?")); err != nil {
+				t.Errorf("Execute error: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// Un redirect (302) hacia otro host publico permitido sigue funcionando: el cliente
+// sigue el salto, trae el cuerpo final y lo destila.
+func TestWebFetch_FollowsRedirectToAllowedHost(t *testing.T) {
+	final := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		io.WriteString(w, "destino final")
+	}))
+	defer final.Close()
+
+	redir := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, final.URL, http.StatusFound)
+	}))
+	defer redir.Close()
+
+	prov := &recordingProvider{script: []llm.Event{{Kind: llm.TextDelta, Text: "ok"}}}
+	wf := NewWebFetchTool(prov)
+	// El cliente del primer server confia por defecto solo en su propio cert; para
+	// seguir el redirect al segundo (TLS) agregamos su cert al pool de raices.
+	c := redir.Client()
+	c.Transport.(*http.Transport).TLSClientConfig.RootCAs.AddCert(final.Certificate())
+	wf.setClient(c)
+	wf.blockIP = allowAllIPs
+
+	res, err := wf.Execute(context.Background(), webFetchInput(t, redir.URL, "que dice?"))
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	if res.Output != "ok" {
+		t.Errorf("Output = %q, quiero la respuesta destilada del destino", res.Output)
+	}
+	user := prov.got.Messages[len(prov.got.Messages)-1].Text
+	if !strings.Contains(user, "destino final") {
+		t.Errorf("el destilado no recibio el cuerpo del destino: %q", user)
 	}
 }
 
