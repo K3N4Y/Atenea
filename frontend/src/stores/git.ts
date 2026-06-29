@@ -40,6 +40,7 @@ export const useGitStore = defineStore('git', () => {
 
   async function loadStatus() {
     if (canned.value) return
+    error.value = ''
     try {
       status.value = await GitStatus()
     } catch (e) {

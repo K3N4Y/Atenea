@@ -40,6 +40,18 @@ describe('git store', () => {
     expect(git.status?.staged).toHaveLength(1)
   })
 
+  it('loadStatus exitoso limpia un error previo', async () => {
+    GitStatus.mockRejectedValueOnce(new Error('git roto'))
+    const git = useGitStore()
+    await git.loadStatus()
+    expect(git.error).toContain('git roto')
+
+    // La siguiente carga tiene exito: el error debe quedar limpio.
+    GitStatus.mockResolvedValue({ isRepo: true, staged: [], untracked: [] })
+    await git.loadStatus()
+    expect(git.error).toBe('')
+  })
+
   it('initRepo inicializa el repo y recarga el estado', async () => {
     GitStatus.mockResolvedValueOnce({
       isRepo: false,
