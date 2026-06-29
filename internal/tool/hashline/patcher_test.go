@@ -4,17 +4,22 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 )
 
 // fakePatchFS es un Filesystem en memoria para el test: ReadFile lee de files y
-// WriteFile guarda en writes, sin tocar el disco.
+// WriteFile guarda en writes, sin tocar el disco. mu lo hace seguro para los tests
+// concurrentes; los tests secuenciales no contienden por el.
 type fakePatchFS struct {
+	mu     sync.Mutex
 	files  map[string][]byte
 	writes map[string][]byte
 }
 
 func (f *fakePatchFS) ReadFile(name string) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	data, ok := f.files[name]
 	if !ok {
 		return nil, fmt.Errorf("fakePatchFS: archivo inexistente %q", name)
@@ -23,6 +28,8 @@ func (f *fakePatchFS) ReadFile(name string) ([]byte, error) {
 }
 
 func (f *fakePatchFS) WriteFile(name string, data []byte, perm os.FileMode) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.writes[name] = data
 	return nil
 }
@@ -291,6 +298,62 @@ func TestPatcher_EditUnseenLineRejected(t *testing.T) {
 	if len(fs.writes) != 0 {
 		t.Fatalf("Apply: no debio escribir nada al rechazar una linea no vista, writes=%v", fs.writes)
 	}
+}
+
+// TestPatcher_ApplyConcurrentWithRecordSeenLinesNoRace afirma que Apply (que lee
+// snap.Seen via el patcher) y RecordSeenLines (que escribe en el mismo map) pueden
+// correr en paralelo sobre el mismo path/hash sin disparar el data race
+// "concurrent map read and map write". El runner asienta cada tool-call del turno
+// en su goroutine, asi que un read+edit o grep+edit del mismo archivo dispara esta
+// contienda. Debe correr limpio bajo -race.
+func TestPatcher_ApplyConcurrentWithRecordSeenLinesNoRace(t *testing.T) {
+	const path = "/work/foo.go"
+	original := "a\nb\nc\nd\n"
+
+	snaps := NewMemSnapshotStore()
+	hash := snaps.Record(path, original)
+	snaps.RecordSeenLines(path, hash, []int{1, 2, 3, 4})
+
+	fs := &fakePatchFS{
+		files:  map[string][]byte{path: []byte(original)},
+		writes: map[string][]byte{},
+	}
+	p := NewPatcher(fs, snaps)
+
+	const iterations = 500
+	const workers = 8
+	var wg sync.WaitGroup
+
+	// Lectores: Apply ancla el rango 1..4, asi que firstUnseenAnchoredLine itera
+	// snap.Seen FUERA del mutex. El resultado no importa (el fs no muta files): solo
+	// nos interesa que la lectura del map ocurra concurrentemente con la escritura.
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < iterations; i++ {
+				patch := Patch{Sections: []Section{{
+					Path:  path,
+					Hash:  hash,
+					Edits: []Edit{{Kind: Replace, Range: Range{Start: 1, End: 4}, Text: "X"}},
+				}}}
+				_, _ = p.Apply(patch)
+			}
+		}()
+	}
+
+	// Escritores: RecordSeenLines escribe en target.Seen del mismo snapshot.
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < iterations; i++ {
+				snaps.RecordSeenLines(path, hash, []int{i%4 + 1})
+			}
+		}()
+	}
+
+	wg.Wait()
 }
 
 // TestPatcher_RecordsChangedLineSeenForChainedEdit afirma que el header devuelto

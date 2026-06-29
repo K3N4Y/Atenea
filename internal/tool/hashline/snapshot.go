@@ -56,7 +56,9 @@ func (s *MemSnapshotStore) Record(path, fullText string) string {
 	return hash
 }
 
-// Head devuelve la version mas reciente del path, o nil.
+// Head devuelve una copia de la version mas reciente del path, o nil. La copia es
+// defensiva: Seen se clona bajo el mutex para que el lector (p.ej. el Patcher) no
+// itere el map vivo mientras RecordSeenLines lo escribe.
 func (s *MemSnapshotStore) Head(path string) *Snapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -65,20 +67,34 @@ func (s *MemSnapshotStore) Head(path string) *Snapshot {
 	if len(hist) == 0 {
 		return nil
 	}
-	return hist[0]
+	return copySnapshot(hist[0])
 }
 
-// ByHash busca en el historial del path la version de ese hash, o nil.
+// ByHash busca en el historial del path la version de ese hash y devuelve una copia
+// defensiva (con Seen clonado bajo el mutex), o nil. El Patcher itera snap.Seen
+// fuera del mutex, asi que no debe recibir el map vivo.
 func (s *MemSnapshotStore) ByHash(path, hash string) *Snapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	for _, snap := range s.history[path] {
 		if snap.Hash == hash {
-			return snap
+			return copySnapshot(snap)
 		}
 	}
 	return nil
+}
+
+// copySnapshot devuelve una copia del snapshot con Seen clonado, para que los
+// lectores no compartan el map vivo. Debe llamarse con el mutex tomado.
+func copySnapshot(snap *Snapshot) *Snapshot {
+	seen := make(map[int]struct{}, len(snap.Seen))
+	for line := range snap.Seen {
+		seen[line] = struct{}{}
+	}
+	cp := *snap
+	cp.Seen = seen
+	return &cp
 }
 
 // RecordSeenLines marca las lineas vistas en el snapshot por path+hash; si ningun

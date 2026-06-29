@@ -100,6 +100,58 @@ func TestMemSnapshotStore_ByHashFindsRecordedVersion(t *testing.T) {
 	}
 }
 
+// TestMemSnapshotStore_ByHashReturnsDefensiveSeenCopy afirma que ByHash devuelve
+// una copia de Seen, no el map vivo: una escritura posterior via RecordSeenLines no
+// debe aparecer en el snapshot devuelto antes. Asi el Patcher puede iterar Seen
+// fuera del mutex sin compartir el map con RecordSeenLines (evita el data race).
+func TestMemSnapshotStore_ByHashReturnsDefensiveSeenCopy(t *testing.T) {
+	s := NewMemSnapshotStore()
+	hash := s.Record("/abs/foo.go", "a\nb\nc\n")
+	s.RecordSeenLines("/abs/foo.go", hash, []int{1})
+
+	snap := s.ByHash("/abs/foo.go", hash)
+	if snap == nil {
+		t.Fatalf("ByHash: se esperaba un snapshot, se obtuvo nil")
+	}
+
+	// Mutacion posterior del store: no debe filtrarse a la copia ya entregada.
+	s.RecordSeenLines("/abs/foo.go", hash, []int{2})
+	if _, leaked := snap.Seen[2]; leaked {
+		t.Fatalf("ByHash: la copia comparte el map vivo; la linea 2 se filtro a un snapshot previo: %v", snap.Seen)
+	}
+	if _, ok := snap.Seen[1]; !ok {
+		t.Fatalf("ByHash: la copia debio conservar la linea 1 vista al momento de la copia: %v", snap.Seen)
+	}
+
+	// Y el store SI ve la linea 2 en una nueva consulta.
+	fresh := s.ByHash("/abs/foo.go", hash)
+	if _, ok := fresh.Seen[2]; !ok {
+		t.Fatalf("ByHash: una nueva copia debio incluir la linea 2 grabada despues: %v", fresh.Seen)
+	}
+}
+
+// TestMemSnapshotStore_HeadReturnsDefensiveSeenCopy afirma la misma propiedad para
+// Head: el caso de borde es que mutar el Seen del snapshot devuelto no afecte al
+// store, y viceversa.
+func TestMemSnapshotStore_HeadReturnsDefensiveSeenCopy(t *testing.T) {
+	s := NewMemSnapshotStore()
+	hash := s.Record("/abs/foo.go", "a\nb\n")
+	s.RecordSeenLines("/abs/foo.go", hash, []int{1})
+
+	snap := s.Head("/abs/foo.go")
+	if snap == nil {
+		t.Fatalf("Head: se esperaba un snapshot, se obtuvo nil")
+	}
+
+	// Mutar la copia no debe contaminar el store.
+	snap.Seen[99] = struct{}{}
+	if again := s.Head("/abs/foo.go"); again != nil {
+		if _, leaked := again.Seen[99]; leaked {
+			t.Fatalf("Head: mutar la copia contamino el store: %v", again.Seen)
+		}
+	}
+}
+
 // TestMemSnapshotStore_ConcurrentRecord afirma que Record es seguro bajo uso
 // concurrente: el runner asienta tools en paralelo. Lanza goroutines que graban
 // sobre el mismo path y sobre paths distintos; debe correr limpio bajo -race.
