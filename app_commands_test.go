@@ -80,6 +80,58 @@ func TestApp_ListCommandsReturnsRegisteredCommands(t *testing.T) {
 	}
 }
 
+// TestApp_ListCommandsConcurrentWithSetWorkspace: ListCommands y SetWorkspace
+// compiten por el puntero a.commands (wire lo reemplaza bajo a.mu). Bajo -race,
+// si ListCommands lee el campo directo en vez del accessor con lock, esto detona
+// una carrera lectura/escritura. Tambien verifica que ListCommands sigue
+// devolviendo una lista valida (no nil) mientras corre el swap.
+func TestApp_ListCommandsConcurrentWithSetWorkspace(t *testing.T) {
+	app := newApp(demoProvider(), func(string, ...interface{}) {})
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	// Escritor: alterna el workspace en bucle, reemplazando a.commands bajo a.mu.
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			dir := dirA
+			if i%2 == 1 {
+				dir = dirB
+			}
+			if err := app.SetWorkspace(dir); err != nil {
+				t.Errorf("SetWorkspace(%q): %v", dir, err)
+				return
+			}
+		}
+		close(done)
+	}()
+	// Lector: martillea ListCommands hasta que el escritor termina, para solapar
+	// con el swap del puntero.
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			cmds, err := app.ListCommands()
+			if err != nil {
+				t.Errorf("ListCommands: %v", err)
+				return
+			}
+			if cmds == nil {
+				t.Errorf("ListCommands devolvio nil")
+				return
+			}
+		}
+	}()
+	wg.Wait()
+}
+
 // TestApp_ListCommandsDiscoversSkillsFromClaudeDir: un slash-command se deriva de
 // las skills descubiertas, incluyendo el estandar <root>/.claude/skills (donde este
 // repo guarda su skill). Verificacion end-to-end: el menu del composer ve la skill.

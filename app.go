@@ -600,7 +600,7 @@ func (a *App) ListProjectFiles() ([]string, error) {
 // el menu del composer, ordenados por nombre. El frontend filtra/ordena en cliente
 // conforme el usuario escribe tras "/"; al enviar, el backend expande el comando.
 func (a *App) ListCommands() ([]command.Command, error) {
-	return a.commands.List(), nil
+	return a.currentCommands().List(), nil
 }
 
 // ResolveToolPermission delivers the user's decision on a gated tool call
