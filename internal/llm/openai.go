@@ -4,11 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/openai/openai-go/v2"
 	"github.com/openai/openai-go/v2/option"
 	"github.com/openai/openai-go/v2/packages/param"
 )
+
+// defaultRequestTimeout acota cada intento de request del cliente OpenAI. Sin el,
+// un SSE colgado deja la goroutine del Stream viva para siempre con el body abierto.
+const defaultRequestTimeout = 60 * time.Second
 
 // OpenAIProvider habla con un endpoint OpenAI-compatible (OpenAI/OpenRouter) via
 // streaming SSE. Traduce el turno del proveedor a llm.Event: abre con StepStarted,
@@ -39,11 +44,20 @@ type toolAccum struct {
 }
 
 // NewOpenAIProvider construye el provider apuntando al base URL dado, lo que
-// permite inyectar un httptest.Server en los tests y OpenRouter en produccion.
+// permite inyectar un httptest.Server en los tests y OpenRouter en produccion. El
+// cliente lleva un timeout por request (defaultRequestTimeout) para que un SSE
+// colgado no deje la goroutine del Stream viva para siempre con el body abierto.
 func NewOpenAIProvider(apiKey, baseURL, model string) *OpenAIProvider {
+	return newOpenAIProviderWithTimeout(apiKey, baseURL, model, defaultRequestTimeout)
+}
+
+// newOpenAIProviderWithTimeout es el constructor real, con el timeout por request
+// inyectable para que los tests verifiquen el corte sin esperar el default largo.
+func newOpenAIProviderWithTimeout(apiKey, baseURL, model string, timeout time.Duration) *OpenAIProvider {
 	client := openai.NewClient(
 		option.WithAPIKey(apiKey),
 		option.WithBaseURL(baseURL),
+		option.WithRequestTimeout(timeout),
 	)
 	return &OpenAIProvider{client: client, model: model}
 }

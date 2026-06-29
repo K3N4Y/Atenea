@@ -9,7 +9,51 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
+
+// TestNewOpenAIProviderWithTimeout_FailsFastWhenServerHangs cubre el bug del cliente
+// sin timeout: si el endpoint NO responde, el SSE queda colgado y la goroutine del
+// Stream vive para siempre con el body abierto. Con un timeout por request corto el
+// Stream debe RETORNAR por timeout (un StepFailed, sin StepEnded) dentro del limite
+// en vez de colgarse. El servidor de prueba bloquea hasta que el test lo libera, asi
+// no hay sleeps largos: el deadline lo pone el timeout del cliente, no el handler.
+func TestNewOpenAIProviderWithTimeout_FailsFastWhenServerHangs(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release // nunca responde hasta que el test termine
+	}))
+	defer server.Close()
+	defer close(release)
+
+	p := newOpenAIProviderWithTimeout("test-key", server.URL, "test-model", 50*time.Millisecond)
+
+	out, err := p.Stream(context.Background(), Request{})
+	if err != nil {
+		t.Fatalf("Stream devolvio error de arranque: %v", err)
+	}
+
+	done := make(chan []Event, 1)
+	go func() { done <- drain(out) }()
+
+	select {
+	case got := <-done:
+		failed := false
+		for _, ev := range got {
+			if ev.Kind == StepFailed {
+				failed = true
+			}
+			if ev.Kind == StepEnded {
+				t.Fatalf("con timeout no debe llegar StepEnded; eventos: %#v", got)
+			}
+		}
+		if !failed {
+			t.Fatalf("el Stream debio cerrar con StepFailed por timeout; eventos: %#v", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("el Stream se colgo: el cliente no tiene timeout por request")
+	}
+}
 
 // TestOpenAIProvider_StreamEmitsTextDelta cubre el comportamiento central del
 // provider real OpenAI-compatible: habla con un endpoint de chat completions via
