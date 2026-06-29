@@ -14,6 +14,14 @@ func WithSessionID(ctx context.Context, sessionID string) context.Context {
 	return context.WithValue(ctx, sessionIDKey{}, sessionID)
 }
 
+// SessionIDFrom lee el sessionID que anoto WithSessionID; "" si no hay. Lo usa el
+// TaskTool para conocer el sessionID del padre (el canal que atiende la UI) al
+// decorar el store del runner hijo.
+func SessionIDFrom(ctx context.Context) string {
+	sessionID, _ := ctx.Value(sessionIDKey{}).(string)
+	return sessionID
+}
+
 // SnapshotProvider entrega el store de snapshots que debe usar una tool.
 type SnapshotProvider interface {
 	Snapshots(ctx context.Context) hashline.SnapshotStore

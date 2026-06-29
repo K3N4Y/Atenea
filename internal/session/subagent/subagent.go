@@ -45,6 +45,27 @@ type TaskTool struct {
 	maxDepth int
 	// sem topa la concurrencia de subagentes (nil = sin tope).
 	sem chan struct{}
+
+	// gate y needsApproval propagan el ask-before-run del padre al runner hijo:
+	// antes de asentar una tool call para la que needsApproval devuelve true, el
+	// hijo pide aprobacion al gate (que bloquea hasta la decision del usuario).
+	// Ambos nil (default) = el hijo no gatea nada (compatibilidad con los tests
+	// que no cablean el gate). SE INYECTAN con SetPermissionGate desde app.go;
+	// SIN ellos un subagente "general" correria bash sin la confirmacion que el
+	// chat principal SI exige, evadiendo el gate. El gate es keyed por
+	// (sessionID, callID): el sessionID del hijo es su childID.
+	gate          session.PermissionGate
+	needsApproval func(call tool.Call) bool
+
+	// storeDecorator envuelve el store en memoria del runner hijo antes de correrlo.
+	// Recibe el sessionID del PADRE (el que esta atendiendo la UI) para que la
+	// decoracion pueda surfacing los eventos del hijo en su canal. nil (default en
+	// tests) = el hijo usa su MemoryStore aislado. SE INYECTA con SetStoreDecorator
+	// desde app.go con un EmittingStore que publica los eventos de permiso del hijo
+	// en el canal del padre; asi la UI ve el Tool.Permission.Requested del hijo y
+	// puede aprobar/denegar. Sin esto el hijo bloquea en gate.Ask pero la UI nunca
+	// ve la solicitud (el evento muere en el store aislado).
+	storeDecorator func(parentSessionID string, inner session.Store) session.Store
 }
 
 // NewTaskTool indexa las defs por nombre. Si dos comparten nombre gana la ultima
@@ -63,6 +84,28 @@ func NewTaskTool(defs []agent.Def, provider llm.Provider, children *tool.Registr
 
 // SetMaxDepth fija la profundidad maxima de anidamiento de subagentes.
 func (t *TaskTool) SetMaxDepth(n int) { t.maxDepth = n }
+
+// SetPermissionGate propaga el ask-before-run del padre al runner hijo: gate
+// resuelve la aprobacion del usuario y needsApproval decide que tool calls la
+// requieren (p.ej. solo "bash"). Si cualquiera es nil el hijo no gatea nada.
+// Mismo patron que runner.SetPermissionGate y que SetMaxDepth/SetMaxConcurrency
+// (config opcional via setter). Punto de entrada para app.go (paquete main); los
+// tests lo llaman directo. Es la pieza de seguridad: sin esta propagacion el
+// subagente correria bash sin la confirmacion que el chat principal exige.
+func (t *TaskTool) SetPermissionGate(gate session.PermissionGate, needsApproval func(call tool.Call) bool) {
+	t.gate = gate
+	t.needsApproval = needsApproval
+}
+
+// SetStoreDecorator inyecta el decorador del store del runner hijo. El decorador
+// recibe el sessionID del padre (capturado del ctx de Execute via tool.SessionIDFrom)
+// e inner (el MemoryStore del hijo). app.go pasa un EmittingStore que publica los
+// eventos de permiso del hijo en el canal del padre para que la UI los vea y pueda
+// aprobar/denegar. nil (default) deja el MemoryStore aislado del hijo (compatibilidad
+// con los tests). Mismo patron Set* que SetPermissionGate/SetMaxDepth.
+func (t *TaskTool) SetStoreDecorator(dec func(parentSessionID string, inner session.Store) session.Store) {
+	t.storeDecorator = dec
+}
 
 // SetMaxConcurrency fija el tope de subagentes simultaneos. n <= 0 deja sin tope.
 func (t *TaskTool) SetMaxConcurrency(n int) {
@@ -143,7 +186,15 @@ func (t *TaskTool) Execute(ctx context.Context, input json.RawMessage) (tool.Res
 	}
 	defer t.release()
 
-	store := session.NewMemoryStore()
+	var store session.Store = session.NewMemoryStore()
+	// Decora el store del hijo (en produccion, el EmittingStore) para que sus eventos
+	// de permiso lleguen al bus en el canal del padre; asi la UI ve el
+	// Tool.Permission.Requested del hijo y puede aprobar/denegar. parentSessionID sale
+	// del ctx de Execute (el runner padre lo anota via tool.WithSessionID). Sin
+	// decorator queda el MemoryStore aislado.
+	if t.storeDecorator != nil {
+		store = t.storeDecorator(tool.SessionIDFrom(ctx), store)
+	}
 	inbox := session.NewMemoryInbox()
 	childID := t.nextID()
 
@@ -163,6 +214,12 @@ func (t *TaskTool) Execute(ctx context.Context, input json.RawMessage) (tool.Res
 
 	r := runner.NewRunner(store, inbox, t.provider, t.children, perms, t.nextID)
 	r.SetSystemPrompt(func(string) string { return def.Prompt })
+	// Propaga el ask-before-run del padre: si el subagente invoca una tool gateada
+	// (bash), el runner hijo pide aprobacion igual que el chat principal en vez de
+	// correrla a ciegas. Sin gate cableado queda nil y el hijo no gatea (default).
+	if t.gate != nil && t.needsApproval != nil {
+		r.SetPermissionGate(t.gate, t.needsApproval)
+	}
 
 	if err := inbox.Admit(ctx, childID, session.Prompt{Text: in.Prompt}, session.DeliveryQueue); err != nil {
 		return tool.Result{}, err

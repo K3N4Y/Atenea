@@ -26,6 +26,18 @@ func (b *Bus) Publish(ev session.SessionEvent) {
 	b.emit("session:"+ev.SessionID, ev)
 }
 
+// PublishOn reenvia el evento a un canal de sesion explicito (session:<channel>),
+// sin derivarlo de ev.SessionID. Lo usa el surfacing del permiso de un subagente:
+// el evento del hijo (ev.SessionID = childID) se emite en el canal del PADRE para
+// que la UI, que ya escucha ese canal, vea la solicitud y resuelva con el childID
+// del payload.
+func (b *Bus) PublishOn(channel string, ev session.SessionEvent) {
+	if b.emit == nil {
+		return
+	}
+	b.emit("session:"+channel, ev)
+}
+
 // PublishError reenvia al canal session:<id>:error un error duro que corto una
 // corrida de Run. No es un SessionEvent durable: es el cierre observable de una
 // actividad que fallo.

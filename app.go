@@ -148,6 +148,22 @@ func (a *App) wire(root string) {
 	// La tool task levanta subagentes hijos. nextID propio (thread-safe) porque
 	// varios subagentes pueden correr en paralelo (cap de concurrencia interno).
 	taskTool := subagent.NewTaskTool(agentDefs, a.provider, childRegistry, newIDGen())
+	// Seguridad: propaga el ask-before-run al runner hijo con el MISMO gate y la
+	// MISMA needsApproval que el chat principal (solo "bash"). Sin esto el subagente
+	// "general" correria bash sin la confirmacion que el chat principal exige,
+	// evadiendo el gate. El gate es keyed por (sessionID, callID): el sessionID del
+	// hijo es su childID, asi ResolveToolPermission del hijo lo resuelve.
+	taskTool.SetPermissionGate(a.gate, func(c tool.Call) bool { return c.Name == "bash" })
+	// Surfacing del permiso del subagente en la UI: decora el store del runner hijo
+	// con ChildPermissionStore sobre el MISMO bus, asi los eventos de permiso del hijo
+	// (Tool.Permission.Requested y su resolucion) se publican en el canal del PADRE
+	// (el que ya escucha el frontend), conservando el SessionID del hijo en el payload.
+	// El frontend muestra Aprobar/Denegar y resuelve con (childID, callID) via
+	// ResolveToolPermission (el gate compartido ya keyea por ese par). Sin esto el hijo
+	// bloquea en gate.Ask pero la UI nunca ve la solicitud.
+	taskTool.SetStoreDecorator(func(parentSessionID string, inner session.Store) session.Store {
+		return event.NewChildPermissionStore(parentSessionID, inner, a.bus)
+	})
 	// present_plan se registra para que el runner pueda ejecutarla, pero NO entra
 	// en los Permissions normales: solo se anuncia en plan-mode (SetPlanMode).
 	registry := tool.NewRegistry(tool.NewOutputStore(outputLimit), tool.Echo{},
