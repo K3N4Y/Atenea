@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -654,7 +655,12 @@ func (a *App) start(sessionID string, afterRun func()) {
 		defer a.wg.Done()
 		defer a.clear(sessionID, h)
 		if err := r.Run(ctx, sessionID, false); err != nil {
-			a.bus.PublishError(sessionID, err)
+			// A deliberate cancellation (Stop, workspace change, follow-up) makes Run
+			// return context.Canceled/DeadlineExceeded: that is a clean shutdown, not
+			// a failure, so do NOT publish it as a red error in the UI.
+			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+				a.bus.PublishError(sessionID, err)
+			}
 		}
 		if afterRun != nil {
 			afterRun()

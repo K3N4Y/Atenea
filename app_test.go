@@ -765,8 +765,9 @@ func (p *blockingProvider) Stream(ctx context.Context, _ llm.Request) (<-chan ll
 }
 
 // TestApp_StopInterruptsInflightTurn: Stop cancela la corrida en vuelo; la
-// interrupcion viaja por el cableado como Step.Failed y el error duro con que Run
-// corta se reenvia por el canal de error. Correr con -race.
+// interrupcion viaja por el cableado como Step.Failed. La cancelacion es un cierre
+// limpio: NO se publica error en el canal de error (eso lo cubre tambien
+// TestApp_StopDoesNotPublishCancelError). Correr con -race.
 func TestApp_StopInterruptsInflightTurn(t *testing.T) {
 	rec := &recordingEmit{}
 	prov := &blockingProvider{started: make(chan struct{})}
@@ -796,8 +797,66 @@ func TestApp_StopInterruptsInflightTurn(t *testing.T) {
 		t.Error("falta Step.Failed: la interrupcion no viajo por el cableado")
 	}
 
+	if errs := rec.errorsOn("session:s1:error"); len(errs) != 0 {
+		t.Errorf("una cancelacion no debe publicar error; se reenvio %v", errs)
+	}
+}
+
+// TestApp_StopDoesNotPublishCancelError: una cancelacion deliberada (Stop) hace que
+// Run retorne context.Canceled. Eso es un cierre limpio, NO un fallo: el frontend no
+// debe pintar un error rojo. El canal de error NO debe recibir nada. Correr con -race.
+func TestApp_StopDoesNotPublishCancelError(t *testing.T) {
+	rec := &recordingEmit{}
+	prov := &blockingProvider{started: make(chan struct{})}
+	app := newApp(prov, rec.emit)
+
+	if err := app.SendPrompt("s1", "hola"); err != nil {
+		t.Fatalf("SendPrompt: %v", err)
+	}
+
+	select {
+	case <-prov.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("el turno no arranco a tiempo")
+	}
+
+	app.Stop("s1")
+	app.wait()
+
+	if errs := rec.errorsOn("session:s1:error"); len(errs) != 0 {
+		t.Errorf("una cancelacion no debe publicar error; se reenvio %v", errs)
+	}
+}
+
+// errProvider emite un StepFailed: el runner lo eleva como ProviderError, un error
+// duro REAL (no una cancelacion). Sirve para triangular que los errores reales si se
+// siguen reenviando por el canal de error.
+type errProvider struct{}
+
+var _ llm.Provider = errProvider{}
+
+func (errProvider) Stream(_ context.Context, _ llm.Request) (<-chan llm.Event, error) {
+	out := make(chan llm.Event, 2)
+	out <- llm.Event{Kind: llm.StepStarted}
+	out <- llm.Event{Kind: llm.StepFailed, Text: "boom del proveedor"}
+	close(out)
+	return out, nil
+}
+
+// TestApp_RealErrorIsPublished: un error duro REAL de Run (aqui un fallo del
+// proveedor) si debe reenviarse por el canal de error para que la UI lo muestre. La
+// excepcion del cierre limpio es SOLO para context.Canceled/DeadlineExceeded.
+func TestApp_RealErrorIsPublished(t *testing.T) {
+	rec := &recordingEmit{}
+	app := newApp(errProvider{}, rec.emit)
+
+	if err := app.SendPrompt("s1", "hola"); err != nil {
+		t.Fatalf("SendPrompt: %v", err)
+	}
+	app.wait()
+
 	if errs := rec.errorsOn("session:s1:error"); len(errs) == 0 {
-		t.Error("no se reenvio el error duro por session:s1:error")
+		t.Error("un error real del proveedor debe reenviarse por session:s1:error")
 	}
 }
 
@@ -930,6 +989,162 @@ func TestApp_ResolveToolPermissionWiredToGate(t *testing.T) {
 	}
 }
 
+// taskAwareProvider devuelve un guion distinto segun el system prompt del Request:
+// el turno PADRE (system del agente principal) pide la tool "task" para delegar en
+// el subagente "general"; el turno HIJO (system del subagente "general", que en el
+// wiring real es su Prompt fijo) pide una bash. Asi un mismo provider sirve al
+// runner padre y al runner hijo del subagente, que comparten el provider en app.go.
+// El segundo turno de cada uno cierra con texto para no agotar MaxSteps.
+type taskAwareProvider struct {
+	mu          sync.Mutex
+	sentinel    string // ruta que el bash del hijo intentaria crear (touch)
+	parentCalls int
+	childCalls  int
+}
+
+func (p *taskAwareProvider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Event, error) {
+	p.mu.Lock()
+	isChild := strings.Contains(req.System, "subagente de proposito general")
+	var script []llm.Event
+	if isChild {
+		if p.childCalls == 0 {
+			input, _ := json.Marshal(map[string]string{"command": "touch " + p.sentinel})
+			script = []llm.Event{
+				{Kind: llm.StepStarted},
+				{Kind: llm.ToolCall, CallID: "b1", ToolName: "bash", Input: json.RawMessage(input)},
+				{Kind: llm.StepEnded},
+			}
+		} else {
+			script = []llm.Event{
+				{Kind: llm.StepStarted},
+				{Kind: llm.TextStarted},
+				{Kind: llm.TextDelta, Text: "informe del hijo"},
+				{Kind: llm.TextEnded},
+				{Kind: llm.StepEnded},
+			}
+		}
+		p.childCalls++
+	} else {
+		if p.parentCalls == 0 {
+			script = []llm.Event{
+				{Kind: llm.StepStarted},
+				{Kind: llm.ToolCall, CallID: "t1", ToolName: "task", Input: json.RawMessage(`{"subagent_type":"general","prompt":"haz algo"}`)},
+				{Kind: llm.StepEnded},
+			}
+		} else {
+			script = []llm.Event{
+				{Kind: llm.StepStarted},
+				{Kind: llm.TextStarted},
+				{Kind: llm.TextDelta, Text: "listo"},
+				{Kind: llm.TextEnded},
+				{Kind: llm.StepEnded},
+			}
+		}
+		p.parentCalls++
+	}
+	p.mu.Unlock()
+	return llm.NewFakeProvider(script...).Stream(ctx, req)
+}
+
+// TestApp_SubagentBashIsGatedBySharedGate is the end-to-end security test for the
+// subagent gate propagation: the production wiring (wire) must give the TaskTool
+// the SAME app.gate and bash-needsApproval as the main chat, so a subagent that
+// invokes bash blocks on the shared gate instead of running it ungated. The parent
+// delegates to the "general" subagent, which calls bash; the test denies via the
+// shared gate keyed by the child's session id (the TaskTool's fresh id generator
+// yields msg-1) and asserts the bash command never ran (its sentinel file is
+// absent). Without SetPermissionGate on the TaskTool the child runs bash directly
+// and the sentinel appears: that is the security regression this guards. Run with
+// -race.
+func TestApp_SubagentBashIsGatedBySharedGate(t *testing.T) {
+	dir := t.TempDir()
+	sentinel := filepath.Join(dir, "pwned")
+
+	prov := &taskAwareProvider{sentinel: sentinel}
+	rec := &recordingEmit{}
+	app := newApp(prov, rec.emit)
+	if err := app.SetWorkspace(dir); err != nil {
+		t.Fatalf("SetWorkspace: %v", err)
+	}
+
+	if err := app.SendPrompt("s1", "delega en el subagente"); err != nil {
+		t.Fatalf("SendPrompt: %v", err)
+	}
+
+	// The child gate Ask blocks keyed by (childSessionID=msg-1, callID=b1). Deny it
+	// until the pending request is delivered, so the bash is never settled. The
+	// child session id is msg-1: wire gives the TaskTool a fresh id generator.
+	deadline := time.After(3 * time.Second)
+	for {
+		if app.gate.Resolve("msg-1", "b1", false) {
+			break // the deny reached a pending Ask: the subagent bash WAS gated
+		}
+		select {
+		case <-deadline:
+			t.Fatal("the subagent bash never blocked on the shared gate: it is not gated")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	app.wait()
+
+	if _, err := os.Stat(sentinel); err == nil {
+		t.Fatal("the subagent bash ran despite the denial: the gate is not propagated to the child")
+	}
+}
+
+// TestApp_SubagentPermissionRequestReachesBus is the end-to-end surfacing test:
+// when a subagent invokes bash, its Tool.Permission.Requested must reach the bus on
+// the PARENT channel (session:s1, the one the UI already listens on), carrying the
+// child session id (msg-1) in the payload so the UI resolves with (childID, callID).
+// The child session id is msg-1 (wire gives the TaskTool a fresh id generator).
+// Without SetStoreDecorator the child uses an isolated store and the event never
+// reaches the bus: the request stays invisible and the run hangs until Stop. Here a
+// deny via the shared gate keyed by (msg-1, b1) lets the child close. Run with -race.
+func TestApp_SubagentPermissionRequestReachesBus(t *testing.T) {
+	dir := t.TempDir()
+	sentinel := filepath.Join(dir, "pwned")
+
+	prov := &taskAwareProvider{sentinel: sentinel}
+	rec := &recordingEmit{}
+	app := newApp(prov, rec.emit)
+	if err := app.SetWorkspace(dir); err != nil {
+		t.Fatalf("SetWorkspace: %v", err)
+	}
+
+	if err := app.SendPrompt("s1", "delega en el subagente"); err != nil {
+		t.Fatalf("SendPrompt: %v", err)
+	}
+
+	// The child permission request must surface on the parent channel; deny it so the
+	// child closes instead of hanging. Poll until the gate has the pending Ask.
+	deadline := time.After(3 * time.Second)
+	for {
+		if app.gate.Resolve("msg-1", "b1", false) {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("the subagent bash never blocked on the shared gate")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	app.wait()
+
+	// The request surfaces on the PARENT channel (session:s1) with the child id in the
+	// payload's SessionID, so the UI shows Approve/Deny and resolves with (msg-1, b1).
+	var sawChildRequest bool
+	for _, ev := range rec.eventsOn("session:s1") {
+		if ev.Kind == session.KindToolPermissionRequested && ev.CallID == "b1" && ev.SessionID == "msg-1" {
+			sawChildRequest = true
+		}
+	}
+	if !sawChildRequest {
+		t.Fatal("missing Tool.Permission.Requested of the subagent on session:s1 with child SessionID: the UI cannot surface it")
+	}
+}
+
 // TestTitleFromProvider_AccumulatesStreamText: el helper de titulado abre un turno
 // aislado contra el provider y concatena los Text.Delta del stream en el titulo,
 // recortando espacios. Es la pieza que NewApp cablea como titler real.
@@ -944,6 +1159,46 @@ func TestTitleFromProvider_AccumulatesStreamText(t *testing.T) {
 	)
 	if got := titleFromProvider(prov, "modelo", "como configuro el proxy"); got != "Configurar el proxy" {
 		t.Fatalf("titleFromProvider: got %q, want %q", got, "Configurar el proxy")
+	}
+}
+
+// ctxRecorderProvider es un Provider doble que captura el ctx con el que el caller
+// invoca Stream, para verificar que los turnos aislados de titulo/commit lo acotan
+// con un deadline en vez de usar context.Background() crudo. Reproduce un guion fijo
+// (como FakeProvider) para que el helper igual produzca su texto.
+type ctxRecorderProvider struct {
+	gotCtx context.Context
+	script []llm.Event
+}
+
+func (p *ctxRecorderProvider) Stream(ctx context.Context, _ llm.Request) (<-chan llm.Event, error) {
+	p.gotCtx = ctx
+	out := make(chan llm.Event)
+	go func() {
+		defer close(out)
+		for _, ev := range p.script {
+			out <- ev
+		}
+	}()
+	return out, nil
+}
+
+// TestTitleFromProvider_BoundsContextWithDeadline: el turno aislado de titulado no
+// debe usar context.Background() crudo, sino acotarlo con un deadline para que un SSE
+// colgado no deje la goroutine viva para siempre. Verifica que el ctx con el que el
+// helper llama a Stream trae un Deadline configurado.
+func TestTitleFromProvider_BoundsContextWithDeadline(t *testing.T) {
+	prov := &ctxRecorderProvider{script: []llm.Event{
+		{Kind: llm.TextStarted},
+		{Kind: llm.TextDelta, Text: "Titulo"},
+		{Kind: llm.TextEnded},
+	}}
+	titleFromProvider(prov, "modelo", "hola")
+	if prov.gotCtx == nil {
+		t.Fatal("titleFromProvider no llamo a Stream")
+	}
+	if _, ok := prov.gotCtx.Deadline(); !ok {
+		t.Fatal("titleFromProvider debe acotar el ctx con un deadline, no usar context.Background()")
 	}
 }
 
