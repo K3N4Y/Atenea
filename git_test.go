@@ -316,3 +316,22 @@ func TestCommitMessageFromProvider_AccumulatesStreamText(t *testing.T) {
 		t.Fatalf("commitMessageFromProvider: got %q", got)
 	}
 }
+
+// TestCommitMessageFromProvider_BoundsContextWithDeadline: el turno aislado del
+// mensaje de commit no debe usar context.Background() crudo, sino acotarlo con un
+// deadline para que un SSE colgado no deje la goroutine viva para siempre. Verifica
+// que el ctx con el que el helper llama a Stream trae un Deadline configurado.
+func TestCommitMessageFromProvider_BoundsContextWithDeadline(t *testing.T) {
+	prov := &ctxRecorderProvider{script: []llm.Event{
+		{Kind: llm.TextStarted},
+		{Kind: llm.TextDelta, Text: "feat: algo"},
+		{Kind: llm.TextEnded},
+	}}
+	commitMessageFromProvider(prov, "modelo", "diff")
+	if prov.gotCtx == nil {
+		t.Fatal("commitMessageFromProvider no llamo a Stream")
+	}
+	if _, ok := prov.gotCtx.Deadline(); !ok {
+		t.Fatal("commitMessageFromProvider debe acotar el ctx con un deadline, no usar context.Background()")
+	}
+}

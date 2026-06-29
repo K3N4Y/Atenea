@@ -164,7 +164,9 @@ func gitCommit(root, message string) error {
 // commitMessageFromProvider abre un turno aislado (system de commit + el diff) y
 // concatena el texto del stream como mensaje. "" si el stream falla o no produce.
 func commitMessageFromProvider(p llm.Provider, model, diff string) string {
-	out, err := p.Stream(context.Background(), llm.Request{
+	ctx, cancel := context.WithTimeout(context.Background(), auxTurnTimeout)
+	defer cancel()
+	out, err := p.Stream(ctx, llm.Request{
 		Model:    model,
 		System:   commitSystemPrompt,
 		Messages: []llm.Message{{Role: "user", Text: diff}},

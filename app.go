@@ -414,6 +414,11 @@ func (a *App) expandCommand(text string) string {
 	return text
 }
 
+// auxTurnTimeout acota los turnos aislados auxiliares (titulo de sesion, mensaje de
+// commit). Sin deadline, un SSE colgado deja la goroutine viva para siempre con el
+// body abierto; estos turnos son cortos, asi que un limite acotado es seguro.
+const auxTurnTimeout = 30 * time.Second
+
 // titleSystemPrompt instruye al modelo a devolver SOLO un titulo corto del primer
 // mensaje, sin adornos. El recorte a 80 runes lo hace la proyeccion Sessions.
 const titleSystemPrompt = "Genera un titulo muy corto (maximo 6 palabras) para una conversacion que empieza con el mensaje del usuario. Responde SOLO con el titulo, en el idioma del mensaje, sin comillas, sin punto final y sin prefijos."
@@ -449,7 +454,9 @@ func (a *App) titleJob(sessionID, message string) func() {
 // el primer mensaje) y concatena el texto del stream como titulo, recortando
 // espacios. "" si el stream falla o no produce texto: el caller cae al fallback.
 func titleFromProvider(p llm.Provider, model, message string) string {
-	out, err := p.Stream(context.Background(), llm.Request{
+	ctx, cancel := context.WithTimeout(context.Background(), auxTurnTimeout)
+	defer cancel()
+	out, err := p.Stream(ctx, llm.Request{
 		Model:    model,
 		System:   titleSystemPrompt,
 		Messages: []llm.Message{{Role: "user", Text: message}},
