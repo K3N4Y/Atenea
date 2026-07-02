@@ -22,11 +22,15 @@ export function InitRepo():Promise<void>;
 
 export function ListCommands():Promise<Array<command.Command>>;
 
+export function ListModels(arg1:string):Promise<Array<string>>;
+
 export function ListProjectFiles():Promise<Array<string>>;
 
 export function ListSessions():Promise<Array<session.SessionSummary>>;
 
 export function Model():Promise<string>;
+
+export function ProviderConfig():Promise<main.ProviderConfig>;
 
 export function ResizePty(arg1:string,arg2:number,arg3:number):Promise<void>;
 
@@ -39,6 +43,8 @@ export function SendPlanPrompt(arg1:string,arg2:string):Promise<void>;
 export function SendPrompt(arg1:string,arg2:string):Promise<void>;
 
 export function SessionHistory(arg1:string):Promise<Array<session.SessionEvent>>;
+
+export function SetProvider(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function SetWorkspace(arg1:string):Promise<void>;
 

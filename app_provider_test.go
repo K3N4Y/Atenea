@@ -1,0 +1,154 @@
+package main
+
+import (
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"atenea/internal/llm"
+)
+
+// TestApp_LocalProviderUsesLocalSystemPrompt: al elegir un provider local, el turno
+// debe armarse con el system prompt EXCLUSIVO de locales (protocolo de tools por
+// function-calling), no con el default code-gen cuyo patron de salida ("skipped:")
+// hacia que el modelo narrara la tool call como texto en vez de ejecutarla. Se
+// verifica con un provider que graba el Request: su System debe hablar de
+// function-calling y NO traer el patron "skipped:".
+func TestApp_LocalProviderUsesLocalSystemPrompt(t *testing.T) {
+	rec := &recordingEmit{}
+	rebuilt := &requestRecordingProvider{FakeProvider: workspaceFake()}
+	app := newApp(demoProvider(), rec.emit)
+	app.newProvider = func(cfg ProviderConfig) llm.Provider { return rebuilt }
+
+	if err := app.SetProvider("local", "http://localhost:1234/v1", "qwen2.5-coder"); err != nil {
+		t.Fatalf("SetProvider: %v", err)
+	}
+	if err := app.SendPrompt("s1", "hola"); err != nil {
+		t.Fatalf("SendPrompt: %v", err)
+	}
+	app.wait()
+
+	sys := rebuilt.captured().System
+	if !strings.Contains(sys, "function-calling") {
+		t.Fatalf("el system prompt local debe instruir function-calling; got:\n%s", sys)
+	}
+	if strings.Contains(sys, "skipped:") {
+		t.Fatalf("el system prompt local no debe traer el patron 'skipped:' del default; got:\n%s", sys)
+	}
+}
+
+// TestApp_SetProviderUpdatesModelAndConfig: SetProvider fija un provider local y la
+// UI lo ve reflejado en Model() y ProviderConfig(), sin depender de variables de
+// entorno. Es el contrato que el selector del frontend usa al elegir LM Studio.
+func TestApp_SetProviderUpdatesModelAndConfig(t *testing.T) {
+	app := newApp(demoProvider(), func(string, ...interface{}) {})
+
+	if err := app.SetProvider("local", "http://localhost:1234/v1", "qwen2.5-coder"); err != nil {
+		t.Fatalf("SetProvider: %v", err)
+	}
+
+	if got := app.Model(); got != "qwen2.5-coder" {
+		t.Errorf("Model() = %q, want %q", got, "qwen2.5-coder")
+	}
+	cfg := app.ProviderConfig()
+	if cfg.Kind != "local" || cfg.BaseURL != "http://localhost:1234/v1" || cfg.Model != "qwen2.5-coder" {
+		t.Errorf("ProviderConfig() = %+v, want {local, http://localhost:1234/v1, qwen2.5-coder}", cfg)
+	}
+}
+
+// TestApp_SetProviderRebuildsActiveProvider: tras SetProvider los turnos pasan por el
+// provider reconstruido, no por el inyectado al crear la app. Se verifica con un
+// factory inyectado (a.newProvider) que devuelve un provider que graba el request: si
+// el turno lo atraviesa, captured() trae el system prompt del turno.
+func TestApp_SetProviderRebuildsActiveProvider(t *testing.T) {
+	rec := &recordingEmit{}
+	rebuilt := &requestRecordingProvider{FakeProvider: workspaceFake()}
+	var gotCfg ProviderConfig
+	app := newApp(demoProvider(), rec.emit)
+	app.newProvider = func(cfg ProviderConfig) llm.Provider {
+		gotCfg = cfg
+		return rebuilt
+	}
+
+	if err := app.SetProvider("local", "http://localhost:1234/v1", "qwen"); err != nil {
+		t.Fatalf("SetProvider: %v", err)
+	}
+	if gotCfg.Kind != "local" || gotCfg.Model != "qwen" {
+		t.Fatalf("el factory recibio %+v, want kind=local model=qwen", gotCfg)
+	}
+
+	if err := app.SendPrompt("s1", "hola"); err != nil {
+		t.Fatalf("SendPrompt: %v", err)
+	}
+	app.wait()
+
+	if rebuilt.captured().System == "" {
+		t.Fatal("el turno no paso por el provider reconstruido (captured vacio)")
+	}
+}
+
+// TestApp_SetProviderRejectsUnknownKind: un kind desconocido falla y no cambia el
+// estado vigente (ni provider ni config).
+func TestApp_SetProviderRejectsUnknownKind(t *testing.T) {
+	app := newApp(demoProvider(), func(string, ...interface{}) {})
+	before := app.ProviderConfig()
+
+	if err := app.SetProvider("bogus", "http://x/v1", "m"); err == nil {
+		t.Fatal("SetProvider con kind desconocido: se esperaba error")
+	}
+	if app.ProviderConfig() != before {
+		t.Fatalf("ProviderConfig cambio tras error: got %+v, want %+v", app.ProviderConfig(), before)
+	}
+}
+
+// TestApp_SetProviderRejectsLocalWithoutBaseURL: un provider local exige baseURL; sin
+// el no hay endpoint al que apuntar.
+func TestApp_SetProviderRejectsLocalWithoutBaseURL(t *testing.T) {
+	app := newApp(demoProvider(), func(string, ...interface{}) {})
+	if err := app.SetProvider("local", "", "qwen"); err == nil {
+		t.Fatal("SetProvider local sin baseURL: se esperaba error")
+	}
+}
+
+// TestApp_DoesNotAdvertiseEchoTool: echo es una tool de DEBUG; no debe anunciarse al
+// modelo en produccion. Un modelo (sobre todo uno local) cae en usarla ante cualquier
+// cosa (p. ej. responde "hola" llamando echo con el texto). Las tools reales (read,
+// etc.) siguen anunciandose.
+func TestApp_DoesNotAdvertiseEchoTool(t *testing.T) {
+	rec := &recordingEmit{}
+	prov := &requestRecordingProvider{FakeProvider: workspaceFake()}
+	app := newApp(prov, rec.emit)
+
+	if err := app.SendPrompt("s1", "hola"); err != nil {
+		t.Fatalf("SendPrompt: %v", err)
+	}
+	app.wait()
+
+	req := prov.captured()
+	if requestHasTool(req, "echo") {
+		t.Fatalf("Request.Tools no debe anunciar echo (tool de debug); tools = %+v", req.Tools)
+	}
+	if !requestHasTool(req, "read") {
+		t.Fatalf("Request.Tools deberia seguir anunciando read; tools = %+v", req.Tools)
+	}
+}
+
+// TestApp_ListModelsBindingDelegates: el binding ListModels devuelve los ids del
+// catalogo del endpoint OpenAI-compatible dado, para poblar el dropdown del selector.
+func TestApp_ListModelsBindingDelegates(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"object":"list","data":[{"id":"qwen"},{"id":"llama"}]}`)
+	}))
+	defer server.Close()
+	app := newApp(demoProvider(), func(string, ...interface{}) {})
+
+	models, err := app.ListModels(server.URL + "/v1")
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if len(models) != 2 || models[0] != "qwen" || models[1] != "llama" {
+		t.Fatalf("ListModels = %#v, want [qwen llama]", models)
+	}
+}

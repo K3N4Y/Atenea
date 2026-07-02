@@ -26,6 +26,11 @@ vi.mock('../../wailsjs/go/main/App', () => ({
   Workspace: vi.fn(() => Promise.resolve('/home/u/a')),
   SetWorkspace: vi.fn(() => Promise.resolve()),
   SelectWorkspace: vi.fn(() => Promise.resolve('')),
+  SetProvider: vi.fn(() => Promise.resolve()),
+  ProviderConfig: vi.fn(() =>
+    Promise.resolve({ kind: '', baseURL: '', model: '' }),
+  ),
+  ListModels: vi.fn(() => Promise.resolve([])),
 }))
 vi.mock('../../wailsjs/runtime/runtime', () => ({
   EventsOn: vi.fn(() => () => {}),
@@ -59,16 +64,44 @@ describe('chat store: persistencia de la carpeta entre reinicios', () => {
     expect(store.workspace).toBe('/home/u/kanban')
   })
 
-  it('persiste solo workspace en localStorage al cambiar de carpeta', async () => {
+  it('persiste workspace y la config del provider en localStorage', async () => {
     installPinia()
     const store = useChatStore()
 
     await store.pickWorkspace('/home/u/kanban')
+    await store.setProvider('local', 'http://localhost:1234/v1', 'qwen')
     await nextTick()
 
     const stored = JSON.parse(localStorage.getItem('chat') as string)
     expect(stored.workspace).toBe('/home/u/kanban')
-    // Solo workspace: ni el log ni los punteros de streaming van a localStorage.
-    expect(Object.keys(stored)).toEqual(['workspace'])
+    expect(stored.providerKind).toBe('local')
+    expect(stored.baseURL).toBe('http://localhost:1234/v1')
+    expect(stored.model).toBe('qwen')
+    // Solo carpeta + config del provider (sin secretos): ni el log ni los punteros
+    // de streaming ni availableModels van a localStorage.
+    expect(Object.keys(stored).sort()).toEqual([
+      'baseURL',
+      'model',
+      'providerKind',
+      'workspace',
+    ])
+  })
+
+  it('rehidrata la config del provider desde localStorage al iniciar', () => {
+    localStorage.setItem(
+      'chat',
+      JSON.stringify({
+        providerKind: 'local',
+        baseURL: 'http://localhost:1234/v1',
+        model: 'qwen',
+      }),
+    )
+    installPinia()
+
+    const store = useChatStore()
+
+    expect(store.providerKind).toBe('local')
+    expect(store.baseURL).toBe('http://localhost:1234/v1')
+    expect(store.model).toBe('qwen')
   })
 })

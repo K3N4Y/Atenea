@@ -22,6 +22,12 @@ vi.mock('../../wailsjs/go/main/App', () => ({
   Workspace: vi.fn(() => Promise.resolve('/home/u/a')),
   SetWorkspace: vi.fn(() => Promise.resolve()),
   SelectWorkspace: vi.fn(() => Promise.resolve('')),
+  Model: vi.fn(() => Promise.resolve('m')),
+  SetProvider: vi.fn(() => Promise.resolve()),
+  ProviderConfig: vi.fn(() =>
+    Promise.resolve({ kind: '', baseURL: '', model: '' }),
+  ),
+  ListModels: vi.fn(() => Promise.resolve([])),
 }))
 
 import { EventsOn } from '../../wailsjs/runtime/runtime'

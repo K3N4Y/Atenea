@@ -38,6 +38,10 @@ export function ListCommands() {
   return window['go']['main']['App']['ListCommands']();
 }
 
+export function ListModels(arg1) {
+  return window['go']['main']['App']['ListModels'](arg1);
+}
+
 export function ListProjectFiles() {
   return window['go']['main']['App']['ListProjectFiles']();
 }
@@ -48,6 +52,10 @@ export function ListSessions() {
 
 export function Model() {
   return window['go']['main']['App']['Model']();
+}
+
+export function ProviderConfig() {
+  return window['go']['main']['App']['ProviderConfig']();
 }
 
 export function ResizePty(arg1, arg2, arg3) {
@@ -72,6 +80,10 @@ export function SendPrompt(arg1, arg2) {
 
 export function SessionHistory(arg1) {
   return window['go']['main']['App']['SessionHistory'](arg1);
+}
+
+export function SetProvider(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetProvider'](arg1, arg2, arg3);
 }
 
 export function SetWorkspace(arg1) {

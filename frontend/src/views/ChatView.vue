@@ -54,8 +54,10 @@ onMounted(async () => {
   // chat nuevo vacio (identidad §2, Chat First): NO se auto-carga la ultima
   // sesion; la sidebar es como el usuario vuelve a una conversacion pasada.
   chat.loadSessions()
-  // Trae el modelo activo una vez para dimensionar la barra de contexto.
-  chat.loadModel()
+  // Re-aplica el provider/modelo elegido (persistido entre reinicios) y deja la
+  // barra de contexto dimensionada por ese modelo; cae al del backend si no hay
+  // ninguno o ya no aplica. Subsume loadModel: la config del provider trae el modelo.
+  chat.restoreProvider()
   // Re-aplica la ultima carpeta usada (persistida entre reinicios) y la deja
   // vigente; cae a la del backend si no hay ninguna o ya no existe. Se hace antes
   // de listar archivos y comandos, que dependen de la carpeta vigente.

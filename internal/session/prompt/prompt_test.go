@@ -327,3 +327,65 @@ func TestPromptsEmbedded_WiredAndDistinct(t *testing.T) {
 		t.Errorf("anthropicPrompt y defaultPrompt son iguales (ambos //go:embed apuntan al mismo .txt)")
 	}
 }
+
+// localEnv es un Env de prueba reutilizable para los casos del prompt local.
+func localEnv() Env {
+	return Env{
+		WorkingDir:   "/home/u/dev/atenea",
+		WorktreeRoot: "/home/u/dev/atenea",
+		IsGitRepo:    true,
+		Platform:     "linux",
+		Date:         "Mon Jun 22 2026",
+	}
+}
+
+// TestBuildLocal_UsesToolCallingPromptNotCodeGenPattern: los endpoints locales (LM
+// Studio, Ollama) reciben un prompt PROPIO, distinto del default. El default es la
+// persona "code-gen" cuyo patron de salida ("Code first" + "skipped: [X], add when
+// [Y]") hacia que un modelo local narrara la tool call como texto/JSON en vez de
+// ejecutarla (`{ "name": "bash", ... }` seguido de "skipped: ..."). El prompt local
+// debe: (1) instruir el uso de tools por la interfaz de function-calling, (2) NO
+// traer el patron "skipped:" del default, (3) elegirse sin mirar el id del modelo
+// (los ids locales son arbitrarios) y (4) compartir el bloque <env>.
+func TestBuildLocal_UsesToolCallingPromptNotCodeGenPattern(t *testing.T) {
+	got := BuildLocal(localEnv(), "", "")
+
+	if strings.Contains(got, localPrompt) == false {
+		t.Fatalf("BuildLocal no contiene el localPrompt base; got:\n%s", got)
+	}
+	if got == Build("qwen2.5-coder", localEnv(), "", "") {
+		t.Fatalf("BuildLocal devolvio el mismo prompt que el default; debe ser uno exclusivo")
+	}
+	if strings.Contains(got, "skipped:") {
+		t.Fatalf("el prompt local no debe traer el patron 'skipped:' del default (causa del bug)")
+	}
+	if !strings.Contains(strings.ToLower(got), "tool") {
+		t.Fatalf("el prompt local debe instruir el uso de tools (function-calling)")
+	}
+	if !strings.Contains(got, "<env>") {
+		t.Fatalf("BuildLocal debe incluir el bloque <env>")
+	}
+}
+
+// TestBuildLocalPlan_AppendsPlanInstructions: el modo plan sobre un provider local
+// usa el prompt local mas el contrato de plan, igual que BuildPlan sobre el default.
+func TestBuildLocalPlan_AppendsPlanInstructions(t *testing.T) {
+	got := BuildLocalPlan(localEnv(), "", "")
+	if !strings.Contains(got, BuildLocal(localEnv(), "", "")) {
+		t.Fatalf("BuildLocalPlan no contiene el BuildLocal base")
+	}
+	if !strings.Contains(got, planInstructions) {
+		t.Fatalf("BuildLocalPlan no anexa las instrucciones de plan")
+	}
+}
+
+// TestLocalPromptEmbedded_WiredAndDistinct: el //go:embed del prompt local debe
+// apuntar a un .txt no vacio y distinto del default y del de Anthropic.
+func TestLocalPromptEmbedded_WiredAndDistinct(t *testing.T) {
+	if strings.TrimSpace(localPrompt) == "" {
+		t.Errorf("localPrompt vacio (embed mal cableado o .txt vacio)")
+	}
+	if localPrompt == defaultPrompt || localPrompt == anthropicPrompt {
+		t.Errorf("localPrompt igual a otro prompt base (embed apunta al .txt equivocado)")
+	}
+}

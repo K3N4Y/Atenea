@@ -16,6 +16,14 @@ var anthropicPrompt string
 //go:embed default.txt
 var defaultPrompt string
 
+// Prompt base de los endpoints locales (LM Studio, Ollama). A diferencia del default
+// (persona code-gen), establece el loop agentico y el protocolo de tools por
+// function-calling, sin el patron de salida "code-first / skipped:" que hacia que un
+// modelo local narrara la tool call como texto en vez de ejecutarla.
+//
+//go:embed local.txt
+var localPrompt string
+
 // Bloque de instrucciones para el modo plan, embebido. Se agrega al final de
 // la salida normal de Build.
 //
@@ -41,15 +49,27 @@ func Select(modelID string) string {
 	return defaultPrompt
 }
 
-// Build concatena el prompt base, el bloque <env>, las instrucciones del repo y
-// el bloque de skills disponibles. instructions y skills se omiten si vienen
-// vacios. El separador entre piezas es "\n\n". El bloque de skills (metadatos de
-// las skills, ver internal/skill.Format) va al final, como en opencode.
+// Build concatena el prompt base (elegido por familia de modelo), el bloque <env>,
+// las instrucciones del repo y el bloque de skills disponibles. instructions y skills
+// se omiten si vienen vacios. El separador entre piezas es "\n\n". El bloque de skills
+// (metadatos de las skills, ver internal/skill.Format) va al final, como en opencode.
 func Build(modelID string, env Env, instructions, skills string) string {
-	parts := []string{
-		Select(modelID),
-		renderEnv(env),
-	}
+	return assemble(Select(modelID), env, instructions, skills)
+}
+
+// BuildLocal arma el prompt de un endpoint local (LM Studio, Ollama) sobre el prompt
+// base local en vez de elegir por familia de modelo: los ids locales son arbitrarios,
+// asi que la familia no sirve para enrutar. Mismo bloque <env>+instrucciones+skills
+// que Build.
+func BuildLocal(env Env, instructions, skills string) string {
+	return assemble(localPrompt, env, instructions, skills)
+}
+
+// assemble concatena el prompt base con el bloque <env>, las instrucciones del repo y
+// el bloque de skills, omitiendo los dos ultimos si vienen vacios. Lo comparten Build
+// (base por familia) y BuildLocal (base local).
+func assemble(base string, env Env, instructions, skills string) string {
+	parts := []string{base, renderEnv(env)}
 	if instructions != "" {
 		parts = append(parts, instructions)
 	}
@@ -63,6 +83,12 @@ func Build(modelID string, env Env, instructions, skills string) string {
 // del modo plan, separado por "\n\n".
 func BuildPlan(modelID string, env Env, instructions, skills string) string {
 	return Build(modelID, env, instructions, skills) + "\n\n" + planInstructions
+}
+
+// BuildLocalPlan es a BuildLocal lo que BuildPlan a Build: el prompt local mas el
+// contrato del modo plan.
+func BuildLocalPlan(env Env, instructions, skills string) string {
+	return BuildLocal(env, instructions, skills) + "\n\n" + planInstructions
 }
 
 // renderEnv arma el bloque <env> literal con dos espacios de indentacion.

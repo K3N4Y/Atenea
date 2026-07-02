@@ -17,7 +17,8 @@ const defaultRequestTimeout = 60 * time.Second
 
 // OpenAIProvider habla con un endpoint OpenAI-compatible (OpenAI/OpenRouter) via
 // streaming SSE. Traduce el turno del proveedor a llm.Event: abre con StepStarted,
-// envuelve el razonamiento incremental (delta.reasoning) entre
+// envuelve el razonamiento incremental (delta.reasoning de OpenRouter o
+// delta.reasoning_content de los locales: LM Studio, Ollama, vLLM) entre
 // ReasoningStarted/ReasoningEnded y el texto incremental (delta.content) entre
 // TextStarted/TextEnded, emitiendo un Delta por fragmento, y cierra con StepEnded
 // cargando el Usage. El razonamiento se cierra antes de abrir el texto. Las
@@ -31,9 +32,25 @@ const defaultRequestTimeout = 60 * time.Second
 type OpenAIProvider struct {
 	client openai.Client
 	model  string
+	// reasoning controla la inyeccion del campo top-level `reasoning` (extension de
+	// OpenRouter) en el request. Default true (OpenRouter); los endpoints locales
+	// OpenAI-compatible (LM Studio, Ollama) no entienden ese campo, asi que se apaga
+	// con WithoutOpenRouterReasoning.
+	reasoning bool
 }
 
 var _ Provider = (*OpenAIProvider)(nil)
+
+// Option ajusta un OpenAIProvider al construirlo. Mantiene el constructor estable
+// (apiKey, baseURL, model) y deja extender el comportamiento sin romper callers.
+type Option func(*OpenAIProvider)
+
+// WithoutOpenRouterReasoning apaga la inyeccion del campo `reasoning` de OpenRouter.
+// Se usa para apuntar el provider a un endpoint local OpenAI-compatible (LM Studio,
+// Ollama), que rechaza o ignora esa extension propia de OpenRouter.
+func WithoutOpenRouterReasoning() Option {
+	return func(p *OpenAIProvider) { p.reasoning = false }
+}
 
 // toolAccum acumula los fragmentos de una tool call del stream: el id y el nombre
 // llegan una vez y los argumentos se concatenan fragmento a fragmento.
@@ -47,19 +64,24 @@ type toolAccum struct {
 // permite inyectar un httptest.Server en los tests y OpenRouter en produccion. El
 // cliente lleva un timeout por request (defaultRequestTimeout) para que un SSE
 // colgado no deje la goroutine del Stream viva para siempre con el body abierto.
-func NewOpenAIProvider(apiKey, baseURL, model string) *OpenAIProvider {
-	return newOpenAIProviderWithTimeout(apiKey, baseURL, model, defaultRequestTimeout)
+func NewOpenAIProvider(apiKey, baseURL, model string, opts ...Option) *OpenAIProvider {
+	return newOpenAIProviderWithTimeout(apiKey, baseURL, model, defaultRequestTimeout, opts...)
 }
 
 // newOpenAIProviderWithTimeout es el constructor real, con el timeout por request
 // inyectable para que los tests verifiquen el corte sin esperar el default largo.
-func newOpenAIProviderWithTimeout(apiKey, baseURL, model string, timeout time.Duration) *OpenAIProvider {
+// reasoning arranca en true (OpenRouter) y las opts pueden apagarlo para locales.
+func newOpenAIProviderWithTimeout(apiKey, baseURL, model string, timeout time.Duration, opts ...Option) *OpenAIProvider {
 	client := openai.NewClient(
 		option.WithAPIKey(apiKey),
 		option.WithBaseURL(baseURL),
 		option.WithRequestTimeout(timeout),
 	)
-	return &OpenAIProvider{client: client, model: model}
+	p := &OpenAIProvider{client: client, model: model, reasoning: true}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p
 }
 
 // Stream abre un turno completo. Resuelve el modelo (req.Model con fallback al
@@ -92,10 +114,13 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request) (<-chan Event,
 		params.Tools = tools
 	}
 	// Pide razonamiento a OpenRouter: campo top-level `reasoning` (no tipado por el
-	// SDK) que habilita el delta.reasoning del modelo.
-	params.SetExtraFields(map[string]any{
-		"reasoning": map[string]any{"enabled": true},
-	})
+	// SDK) que habilita el delta.reasoning del modelo. Se omite en locales
+	// (WithoutOpenRouterReasoning) porque no entienden esa extension.
+	if p.reasoning {
+		params.SetExtraFields(map[string]any{
+			"reasoning": map[string]any{"enabled": true},
+		})
+	}
 
 	stream := p.client.Chat.Completions.NewStreaming(ctx, params)
 
@@ -261,19 +286,27 @@ func emit(ctx context.Context, out chan<- Event, ev Event) bool {
 	}
 }
 
-// reasoningText extrae el fragmento de razonamiento del campo extendido de
-// OpenRouter delta.reasoning, que el SDK no tipa y deja en ExtraFields como JSON
-// crudo. Devuelve "" si el campo no vino, es null o no es un string.
+// reasoningText extrae el fragmento de razonamiento del campo extendido de la delta,
+// que el SDK no tipa y deja en ExtraFields como JSON crudo. Acepta las dos
+// convenciones del ecosistema OpenAI-compatible: `reasoning` (extension de OpenRouter)
+// y `reasoning_content` (convencion de DeepSeek que adoptan LM Studio, Ollama, vLLM y
+// SGLang). Devuelve el primer campo presente con un string no vacio, o "" si ninguno
+// vino, es null o no es un string.
 func reasoningText(delta openai.ChatCompletionChunkChoiceDelta) string {
-	f, ok := delta.JSON.ExtraFields["reasoning"]
-	if !ok || f.Raw() == "" {
-		return ""
+	for _, key := range []string{"reasoning", "reasoning_content"} {
+		f, ok := delta.JSON.ExtraFields[key]
+		if !ok || f.Raw() == "" {
+			continue
+		}
+		var r string
+		if err := json.Unmarshal([]byte(f.Raw()), &r); err != nil {
+			continue
+		}
+		if r != "" {
+			return r
+		}
 	}
-	var r string
-	if err := json.Unmarshal([]byte(f.Raw()), &r); err != nil {
-		return ""
-	}
-	return r
+	return ""
 }
 
 // toOpenAIMessages proyecta el historial al formato del SDK segun el Role. El

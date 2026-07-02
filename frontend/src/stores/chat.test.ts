@@ -18,6 +18,11 @@ vi.mock('../../wailsjs/go/main/App', () => ({
   Workspace: vi.fn(() => Promise.resolve('/home/u/a')),
   SetWorkspace: vi.fn(() => Promise.resolve()),
   SelectWorkspace: vi.fn(() => Promise.resolve('/home/u/picked')),
+  SetProvider: vi.fn(() => Promise.resolve()),
+  ProviderConfig: vi.fn(() =>
+    Promise.resolve({ kind: '', baseURL: '', model: '' }),
+  ),
+  ListModels: vi.fn(() => Promise.resolve([])),
 }))
 vi.mock('../../wailsjs/runtime/runtime', () => ({
   EventsOn: vi.fn(() => () => {}),
@@ -1467,5 +1472,121 @@ describe('chat store: carpeta de trabajo (workspace)', () => {
     await store.restoreWorkspace()
     expect(App.SetWorkspace).toHaveBeenCalledWith('/home/u/borrada')
     expect(store.workspace).toBe('/home/u/a')
+  })
+})
+
+describe('chat store: provider (selector OpenRouter/local)', () => {
+  it('setProvider recablea el backend y refleja kind/baseURL/model', async () => {
+    const store = useChatStore()
+
+    await store.setProvider('local', 'http://localhost:1234/v1', 'qwen')
+
+    expect(App.SetProvider).toHaveBeenCalledWith(
+      'local',
+      'http://localhost:1234/v1',
+      'qwen',
+    )
+    expect(store.providerKind).toBe('local')
+    expect(store.baseURL).toBe('http://localhost:1234/v1')
+    expect(store.model).toBe('qwen')
+  })
+
+  it('setProvider propaga el error del backend (config invalida)', async () => {
+    vi.mocked(App.SetProvider).mockRejectedValueOnce(
+      new Error('baseURL invalido'),
+    )
+    const store = useChatStore()
+
+    await expect(
+      store.setProvider('local', 'no-es-url', 'qwen'),
+    ).rejects.toThrow('baseURL invalido')
+  })
+
+  it('loadProvider lee la config del backend a kind/baseURL/model', async () => {
+    vi.mocked(App.ProviderConfig).mockResolvedValueOnce({
+      kind: 'openrouter',
+      baseURL: 'https://openrouter.ai/api/v1',
+      model: 'openrouter/free',
+    })
+    const store = useChatStore()
+
+    await store.loadProvider()
+
+    expect(store.providerKind).toBe('openrouter')
+    expect(store.baseURL).toBe('https://openrouter.ai/api/v1')
+    expect(store.model).toBe('openrouter/free')
+  })
+
+  it('listModels devuelve y guarda el catalogo del endpoint', async () => {
+    vi.mocked(App.ListModels).mockResolvedValueOnce(['qwen', 'llama'])
+    const store = useChatStore()
+
+    const got = await store.listModels('http://localhost:1234/v1')
+
+    expect(App.ListModels).toHaveBeenCalledWith('http://localhost:1234/v1')
+    expect(got).toEqual(['qwen', 'llama'])
+    expect(store.availableModels).toEqual(['qwen', 'llama'])
+  })
+
+  it('listModels degrada a lista vacia si el endpoint no responde', async () => {
+    vi.mocked(App.ListModels).mockRejectedValueOnce(new Error('connrefused'))
+    const store = useChatStore()
+
+    const got = await store.listModels('http://localhost:9999/v1')
+
+    expect(got).toEqual([])
+    expect(store.availableModels).toEqual([])
+  })
+
+  it('restoreProvider re-aplica la config persistida via SetProvider', async () => {
+    const store = useChatStore()
+    store.providerKind = 'local'
+    store.baseURL = 'http://localhost:1234/v1'
+    store.model = 'qwen'
+
+    await store.restoreProvider()
+
+    expect(App.SetProvider).toHaveBeenCalledWith(
+      'local',
+      'http://localhost:1234/v1',
+      'qwen',
+    )
+  })
+
+  it('restoreProvider cae a loadProvider si no hay config persistida', async () => {
+    vi.mocked(App.ProviderConfig).mockResolvedValueOnce({
+      kind: 'openrouter',
+      baseURL: 'u',
+      model: 'm',
+    })
+    const store = useChatStore()
+    // providerKind vacio = nada persistido: no re-aplica, lee del backend.
+
+    await store.restoreProvider()
+
+    expect(App.SetProvider).not.toHaveBeenCalled()
+    expect(App.ProviderConfig).toHaveBeenCalled()
+    expect(store.providerKind).toBe('openrouter')
+  })
+
+  it('restoreProvider cae a loadProvider si la config persistida ya no aplica', async () => {
+    vi.mocked(App.SetProvider).mockRejectedValueOnce(
+      new Error('endpoint caido'),
+    )
+    vi.mocked(App.ProviderConfig).mockResolvedValueOnce({
+      kind: 'demo',
+      baseURL: '',
+      model: 'openrouter/free',
+    })
+    const store = useChatStore()
+    store.providerKind = 'local'
+    store.baseURL = 'http://localhost:1234/v1'
+    store.model = 'qwen'
+
+    await store.restoreProvider()
+
+    expect(App.SetProvider).toHaveBeenCalled()
+    expect(App.ProviderConfig).toHaveBeenCalled()
+    expect(store.providerKind).toBe('demo')
   })
 })

@@ -11,7 +11,14 @@ import {
 } from '@phosphor-icons/vue'
 import { mcpCatalog, mcpIcon } from '../lib/mcps'
 import McpCard from './McpCard.vue'
+import ProviderSettings from './ProviderSettings.vue'
+import { useChatStore } from '../stores/chat'
 import { prefersReducedMotion } from '../lib/motion'
+
+// El selector de modelo (pestania General) lee la config del provider vigente del
+// store y le delega los cambios: aplicar recablea el backend (setProvider) y cargar
+// modelos consulta el endpoint (listModels). El resto del panel es presentacional.
+const chat = useChatStore()
 
 gsap.registerPlugin(Flip)
 
@@ -147,10 +154,14 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 
       <div class="mx-auto w-full max-w-3xl px-8 py-10">
         <template v-if="active === 'general'">
-          <h2 class="text-lg tracking-tight">General</h2>
-          <p class="mt-3 text-sm opacity-50">
-            Preferencias generales coming soon.
-          </p>
+          <ProviderSettings
+            :providerKind="chat.providerKind"
+            :baseURL="chat.baseURL"
+            :model="chat.model"
+            :availableModels="chat.availableModels"
+            @apply="(k, b, m) => chat.setProvider(k, b, m)"
+            @list-models="(b) => chat.listModels(b)"
+          />
         </template>
 
         <template v-else-if="active === 'mcps'">

@@ -1,11 +1,48 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
+import { setActivePinia, createPinia } from 'pinia'
 import { Flip } from 'gsap/Flip'
+
+// La pestania General monta ProviderSettings, que lee del store; el store toca la
+// frontera Wails. Mockeamos los bindings y activamos un Pinia limpio por test para
+// montar el panel en aislamiento (mismo patron que chat.test.ts).
+vi.mock('../../wailsjs/go/main/App', () => ({
+  Model: vi.fn(() => Promise.resolve('m')),
+  ListSessions: vi.fn(() => Promise.resolve([])),
+  SessionHistory: vi.fn(() => Promise.resolve([])),
+  ListProjectFiles: vi.fn(() => Promise.resolve([])),
+  ListCommands: vi.fn(() => Promise.resolve([])),
+  Workspace: vi.fn(() => Promise.resolve('/home/u/a')),
+  SetWorkspace: vi.fn(() => Promise.resolve()),
+  SelectWorkspace: vi.fn(() => Promise.resolve('')),
+  SetProvider: vi.fn(() => Promise.resolve()),
+  ProviderConfig: vi.fn(() =>
+    Promise.resolve({ kind: '', baseURL: '', model: '' }),
+  ),
+  ListModels: vi.fn(() => Promise.resolve([])),
+  SendPrompt: vi.fn(() => Promise.resolve()),
+  SendPlanPrompt: vi.fn(() => Promise.resolve()),
+  AcceptPlan: vi.fn(() => Promise.resolve()),
+  Stop: vi.fn(),
+  ResolveToolPermission: vi.fn(),
+  DeleteSession: vi.fn(() => Promise.resolve()),
+}))
+vi.mock('../../wailsjs/runtime/runtime', () => ({
+  EventsOn: vi.fn(() => () => {}),
+}))
+
 import SettingsPanel from './SettingsPanel.vue'
 import McpCard from './McpCard.vue'
+import ProviderSettings from './ProviderSettings.vue'
+import * as App from '../../wailsjs/go/main/App'
 import { mcpCatalog } from '../lib/mcps'
+
+beforeEach(() => {
+  setActivePinia(createPinia())
+  vi.clearAllMocks()
+})
 
 function mcpsTabOf(wrapper: ReturnType<typeof mount>) {
   const tab = wrapper.findAll('[role="tab"]').find((t) => t.text() === 'MCPs')
@@ -159,5 +196,35 @@ describe('SettingsPanel', () => {
     const wrapper = mount(SettingsPanel)
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('renders the provider selector in the General tab (default)', () => {
+    const wrapper = mount(SettingsPanel)
+    expect(wrapper.findComponent(ProviderSettings).exists()).toBe(true)
+  })
+
+  it('delegates apply to the store (SetProvider) with the chosen config', async () => {
+    const wrapper = mount(SettingsPanel)
+
+    await wrapper.find('[data-provider-option="local"]').trigger('click')
+    await wrapper.find('[data-preset="lmstudio"]').trigger('click')
+    await wrapper.find('[data-model-input]').setValue('qwen')
+    await wrapper.find('[data-apply-provider]').trigger('click')
+
+    expect(App.SetProvider).toHaveBeenCalledWith(
+      'local',
+      'http://localhost:1234/v1',
+      'qwen',
+    )
+  })
+
+  it('delegates load-models to the store (ListModels) with the baseURL', async () => {
+    const wrapper = mount(SettingsPanel)
+
+    await wrapper.find('[data-provider-option="local"]').trigger('click')
+    await wrapper.find('[data-preset="lmstudio"]').trigger('click')
+    await wrapper.find('[data-list-models]').trigger('click')
+
+    expect(App.ListModels).toHaveBeenCalledWith('http://localhost:1234/v1')
   })
 })

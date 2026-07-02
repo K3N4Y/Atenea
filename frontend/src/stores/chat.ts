@@ -15,6 +15,9 @@ import {
   Workspace,
   SetWorkspace,
   SelectWorkspace,
+  SetProvider,
+  ProviderConfig,
+  ListModels,
 } from '../../wailsjs/go/main/App'
 import { EventsOn } from '../../wailsjs/runtime/runtime'
 import type { Command } from '../lib/command'
@@ -209,6 +212,16 @@ export const useChatStore = defineStore(
     // activo. La UI los combina para pintar la barra de contexto por modelo.
     const usage = ref<Usage | null>(null)
     const model = ref('')
+    // Provider activo (selector OpenRouter/local). La fuente de verdad es el backend
+    // (ProviderConfig/SetProvider); se persiste {providerKind, baseURL, model} en
+    // localStorage y se re-aplica al arrancar (restoreProvider), igual que workspace.
+    // No lleva secretos: la key de OpenRouter vive en el entorno y un endpoint local
+    // (LM Studio, Ollama) no necesita key.
+    const providerKind = ref('')
+    const baseURL = ref('')
+    // Catalogo de modelos del endpoint activo, poblado bajo demanda por listModels
+    // para el dropdown del selector. Estado vivo de UI: no se persiste.
+    const availableModels = ref<string[]>([])
     // Rutas del workspace para el @-menu de archivos del composer. La fuente de
     // verdad es el backend (ListProjectFiles); se cargan una vez al montar la vista
     // y el composer filtra/ordena en cliente conforme el usuario escribe tras '@'.
@@ -356,7 +369,8 @@ export const useChatStore = defineStore(
           }
           if (item) item.status = 'pending'
           // A child's permission carries its own SessionID; route resolve there.
-          if (callID && ev.SessionID) resolveSessionByCall.set(callID, ev.SessionID)
+          if (callID && ev.SessionID)
+            resolveSessionByCall.set(callID, ev.SessionID)
           break
         }
         case 'Tool.Success': {
@@ -531,6 +545,66 @@ export const useChatStore = defineStore(
       }
     }
 
+    // loadProvider trae la config del provider activo del backend (kind/baseURL/model)
+    // para que el selector muestre lo vigente. Espejo de loadModel/loadWorkspace; si
+    // el binding no esta disponible (arranque sin backend) deja el estado como este.
+    async function loadProvider(): Promise<void> {
+      try {
+        const cfg = await ProviderConfig()
+        providerKind.value = cfg.kind
+        baseURL.value = cfg.baseURL
+        model.value = cfg.model
+      } catch {
+        // backend ausente: conserva lo que haya (incluida la config rehidratada).
+      }
+    }
+
+    // restoreProvider fija el provider al montar la vista. El backend arranca con la
+    // config del entorno; si hay una config persistida de una corrida anterior
+    // (rehidratada de localStorage) la re-aplica con SetProvider, asi el modelo
+    // elegido (p. ej. LM Studio) sobrevive a los reinicios. Si esa config ya no aplica
+    // (SetProvider falla) o no habia ninguna, cae a la del backend (loadProvider).
+    // Espejo de restoreWorkspace.
+    async function restoreProvider(): Promise<void> {
+      if (providerKind.value) {
+        try {
+          await SetProvider(providerKind.value, baseURL.value, model.value)
+          return
+        } catch {
+          // la config persistida ya no aplica: cae a la vigente del backend.
+        }
+      }
+      await loadProvider()
+    }
+
+    // setProvider cambia el provider activo: lo recablea en el backend via SetProvider
+    // y refleja kind/baseURL/model en el store (que se persisten). Lo usa el selector
+    // del panel de ajustes al elegir OpenRouter o un endpoint local. Propaga el error
+    // del backend (config invalida) para que la UI lo muestre.
+    async function setProvider(
+      kind: string,
+      url: string,
+      m: string,
+    ): Promise<void> {
+      await SetProvider(kind, url, m)
+      providerKind.value = kind
+      baseURL.value = url
+      model.value = m
+    }
+
+    // listModels trae el catalogo de modelos de un endpoint OpenAI-compatible para el
+    // dropdown del selector (LM Studio, Ollama exponen GET baseURL/models). Lo guarda
+    // en availableModels y lo devuelve. Si el endpoint no responde, degrada a lista
+    // vacia: el dropdown queda sin opciones en vez de romper.
+    async function listModels(url: string): Promise<string[]> {
+      try {
+        availableModels.value = await ListModels(url)
+      } catch {
+        availableModels.value = []
+      }
+      return availableModels.value
+    }
+
     // loadProjectFiles trae el listado de archivos del workspace del backend para
     // el @-menu del composer. Idempotente: la vista la llama una vez al montar. Si
     // el binding falla (arranque sin backend) degrada a lista vacia: el menu queda
@@ -702,6 +776,9 @@ export const useChatStore = defineStore(
       todos,
       usage,
       model,
+      providerKind,
+      baseURL,
+      availableModels,
       projectFiles,
       commands,
       applyEvent,
@@ -714,6 +791,10 @@ export const useChatStore = defineStore(
       pickWorkspace,
       restoreWorkspace,
       loadModel,
+      loadProvider,
+      restoreProvider,
+      setProvider,
+      listModels,
       loadProjectFiles,
       loadCommands,
       loadSession,
@@ -731,11 +812,13 @@ export const useChatStore = defineStore(
     }
   },
   {
-    // Solo se persiste la carpeta de trabajo: asi un chat nuevo sigue en la ultima
-    // carpeta usada tras cerrar y reabrir la app (restoreWorkspace la re-aplica al
-    // backend). El resto del store es estado vivo (log, streaming, suscripcion) cuya
-    // fuente de verdad es el backend; no debe ir a localStorage.
-    persist: { pick: ['workspace'] },
+    // Se persiste la carpeta de trabajo y la config del provider (kind/baseURL/model):
+    // asi un chat nuevo sigue en la ultima carpeta y con el ultimo modelo elegido tras
+    // cerrar y reabrir la app (restoreWorkspace/restoreProvider los re-aplican al
+    // backend). No se guardan secretos (la key de OpenRouter vive en el entorno). El
+    // resto del store es estado vivo (log, streaming, suscripcion, availableModels)
+    // cuya fuente de verdad es el backend; no debe ir a localStorage.
+    persist: { pick: ['workspace', 'providerKind', 'baseURL', 'model'] },
   },
 )
 

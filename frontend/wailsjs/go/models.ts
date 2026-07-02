@@ -71,6 +71,22 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class ProviderConfig {
+	    kind: string;
+	    baseURL: string;
+	    model: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProviderConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.baseURL = source["baseURL"];
+	        this.model = source["model"];
+	    }
+	}
 
 }
 

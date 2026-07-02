@@ -195,6 +195,101 @@ func TestOpenAIProvider_StreamBracketsReasoningThenText(t *testing.T) {
 	}
 }
 
+// TestOpenAIProvider_StreamBracketsReasoningContent exige que el provider tambien
+// entienda el razonamiento de los endpoints locales OpenAI-compatible (LM Studio,
+// Ollama, vLLM, DeepSeek): estos NO mandan el campo `reasoning` de OpenRouter sino
+// `reasoning_content` (delta.reasoning_content), un string con el pensamiento
+// incremental. El bracketing debe ser identico al de OpenRouter: ReasoningStarted una
+// vez, un ReasoningDelta por fragmento, ReasoningEnded al empezar el texto, y luego el
+// texto. Tumba la impl actual, que solo lee la clave `reasoning` y descarta
+// `reasoning_content`, dejando el pensamiento sin ThinkingBlock (se ve la respuesta
+// cruda). El provider se construye como local (WithoutOpenRouterReasoning) para
+// reflejar el caso real, aunque el parseo de la respuesta es independiente de eso.
+func TestOpenAIProvider_StreamBracketsReasoningContent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"Pensando\"},\"finish_reason\":null}]}\n\n")
+		io.WriteString(w, "data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" local\"},\"finish_reason\":null}]}\n\n")
+		io.WriteString(w, "data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hola\"},\"finish_reason\":null}]}\n\n")
+		io.WriteString(w, "data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	p := NewOpenAIProvider("local", server.URL, "test-model", WithoutOpenRouterReasoning())
+
+	out, err := p.Stream(context.Background(), Request{})
+	if err != nil {
+		t.Fatalf("Stream devolvio error: %v", err)
+	}
+
+	got := drain(out)
+
+	wantKinds := []EventKind{
+		StepStarted,
+		ReasoningStarted, ReasoningDelta, ReasoningDelta, ReasoningEnded,
+		TextStarted, TextDelta, TextEnded,
+		StepEnded,
+	}
+	if len(got) != len(wantKinds) {
+		t.Fatalf("cantidad de eventos: got %d, want %d; eventos: %#v", len(got), len(wantKinds), got)
+	}
+	for i, want := range wantKinds {
+		if got[i].Kind != want {
+			t.Fatalf("evento[%d].Kind: got %v, want %v; secuencia: %#v", i, got[i].Kind, want, got)
+		}
+	}
+
+	if got[2].Text != "Pensando" {
+		t.Fatalf("primer ReasoningDelta.Text: got %q, want %q", got[2].Text, "Pensando")
+	}
+	if got[3].Text != " local" {
+		t.Fatalf("segundo ReasoningDelta.Text: got %q, want %q", got[3].Text, " local")
+	}
+	if got[6].Text != "Hola" {
+		t.Fatalf("TextDelta.Text: got %q, want %q", got[6].Text, "Hola")
+	}
+}
+
+// TestOpenAIProvider_StreamReasoningContentNotShadowedByEmptyReasoning triangula el
+// guard de reasoningText: un mismo delta trae `reasoning` como string vacio (lo manda
+// algun proxy/gateway) Y `reasoning_content` con el pensamiento real. La clave vacia
+// no debe eclipsar al campo bueno: el provider debe emitir el ReasoningDelta con el
+// texto de `reasoning_content`. Asegura que el "primer campo no vacio" gana, no el
+// "primer campo presente".
+func TestOpenAIProvider_StreamReasoningContentNotShadowedByEmptyReasoning(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning\":\"\",\"reasoning_content\":\"Pensando local\"},\"finish_reason\":null}]}\n\n")
+		io.WriteString(w, "data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hola\"},\"finish_reason\":null}]}\n\n")
+		io.WriteString(w, "data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	p := NewOpenAIProvider("local", server.URL, "test-model", WithoutOpenRouterReasoning())
+
+	out, err := p.Stream(context.Background(), Request{})
+	if err != nil {
+		t.Fatalf("Stream devolvio error: %v", err)
+	}
+
+	got := drain(out)
+
+	found := false
+	for _, ev := range got {
+		if ev.Kind == ReasoningDelta {
+			if ev.Text != "Pensando local" {
+				t.Fatalf("ReasoningDelta.Text: got %q, want %q", ev.Text, "Pensando local")
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no se emitio ReasoningDelta; el `reasoning` vacio eclipso a reasoning_content; eventos: %#v", got)
+	}
+}
+
 // TestOpenAIProvider_StreamRequestsReasoning exige que Stream pida el razonamiento a
 // OpenRouter: el body del POST debe llevar un campo top-level `reasoning` que sea un
 // objeto con `enabled == true`. Sin esto OpenRouter no emite delta.reasoning y el
@@ -234,6 +329,45 @@ func TestOpenAIProvider_StreamRequestsReasoning(t *testing.T) {
 	}
 	if reasoning["enabled"] != true {
 		t.Fatalf("reasoning.enabled: got %v, want true", reasoning["enabled"])
+	}
+}
+
+// TestOpenAIProvider_WithoutOpenRouterReasoning_OmitsReasoning exige que un provider
+// construido con la opcion WithoutOpenRouterReasoning NO mande el campo top-level
+// `reasoning` en el body del POST. El campo es una extension propia de OpenRouter;
+// los servidores locales OpenAI-compatible (LM Studio, Ollama) no la entienden. El
+// handler captura el body y el test verifica que la clave `reasoning` no este
+// presente. Es el espejo negativo de StreamRequestsReasoning y tumba la impl actual,
+// que inyecta el reasoning siempre, sin importar el constructor.
+func TestOpenAIProvider_WithoutOpenRouterReasoning_OmitsReasoning(t *testing.T) {
+	var body []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	p := NewOpenAIProvider("test-key", server.URL, "test-model", WithoutOpenRouterReasoning())
+
+	out, err := p.Stream(context.Background(), Request{})
+	if err != nil {
+		t.Fatalf("Stream devolvio error: %v", err)
+	}
+	drain(out)
+
+	if body == nil {
+		t.Fatalf("el handler no capturo el body del POST")
+	}
+
+	var sent map[string]any
+	if err := json.Unmarshal(body, &sent); err != nil {
+		t.Fatalf("no se pudo parsear el body enviado: %v; body: %s", err, body)
+	}
+
+	if _, ok := sent["reasoning"]; ok {
+		t.Fatalf("el body no debe llevar `reasoning` con WithoutOpenRouterReasoning; got: %s", body)
 	}
 }
 
