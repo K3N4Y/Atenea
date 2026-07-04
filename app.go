@@ -8,32 +8,24 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	goruntime "runtime"
-	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
-	"atenea/internal/agent"
 	"atenea/internal/command"
 	"atenea/internal/event"
 	"atenea/internal/llm"
 	"atenea/internal/session"
-	"atenea/internal/session/prompt"
 	"atenea/internal/session/runner"
-	"atenea/internal/session/subagent"
 	"atenea/internal/skill"
 	"atenea/internal/terminal"
 	"atenea/internal/tool"
-	"atenea/internal/tool/hashline"
+	"atenea/internal/wiring"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 const (
-	outputLimit = 32 * 1024
-
 	// openRouterBaseURL es el gateway OpenAI-compatible que se usa para pruebas.
 	openRouterBaseURL = "https://openrouter.ai/api/v1"
 	// defaultModel es el modelo por defecto en OpenRouter; override por OPENROUTER_MODEL.
@@ -103,10 +95,10 @@ type App struct {
 type runHandle struct{ cancel context.CancelFunc }
 
 // newAppWithStore arma la app sobre un store, un provider y la frontera (emit)
-// inyectados. El store se decora con EmittingStore (puente Store -> UI) y se le
-// pasa al Runner; el registry trae el builtin echo. Es el punto unico de ensamblado:
-// los tests lo llaman via newApp (MemoryStore + provider fake) y produccion via
-// NewApp (SQLiteStore + provider real).
+// inyectados. El store se decora con EmittingStore (puente Store -> UI) y el
+// cableado del agente (tools, skills, subagentes, runner) se delega en wire.
+// Es el punto unico de ensamblado: los tests lo llaman via newApp (MemoryStore +
+// provider fake) y produccion via NewApp (SQLiteStore + provider real).
 func newAppWithStore(store session.Store, provider llm.Provider, emit event.EmitFunc) *App {
 	a := &App{runs: map[string]*runHandle{}, modes: map[string]session.Mode{}}
 	a.provider = provider
@@ -137,12 +129,12 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 	return a
 }
 
-// wire arma (o re-arma) todo el cableado anclado a root: las file/exec tools, el
-// glob del @-menu, las skills y sus slash-commands, el catalogo de subagentes y un
-// runner nuevo con el system prompt apuntando a root. Lo construye fuera del lock y
-// publica los punteros mutables (root, glob, commands, runner) bajo mu en un swap
-// corto, asi un SetWorkspace en vivo no compite con las lecturas. Lo llama el
-// constructor (root = cwd) y SetWorkspace (root nuevo).
+// wire arma (o re-arma) todo el cableado anclado a root delegando en
+// wiring.Build (la unica fuente de verdad del ensamblado, compartida con el
+// engine headless de la TUI). Construye fuera del lock y publica los punteros
+// mutables (root, glob, commands, runner) bajo mu en un swap corto, asi un
+// SetWorkspace en vivo no compite con las lecturas. Lo llama el constructor
+// (root = cwd) y SetWorkspace (root nuevo).
 func (a *App) wire(root string) {
 	// El provider vigente se lee bajo mu (SetProvider puede cambiarlo): un snapshot
 	// para que el cableado nuevo (runner, taskTool, web_fetch) quede anclado a un
@@ -153,83 +145,24 @@ func (a *App) wire(root string) {
 	// del default. Se lee bajo mu, como el provider; SetProvider fija el kind ANTES de
 	// llamar wire.
 	local := a.currentProviderKind() == providerKindLocal
-	// El @-menu de archivos del composer lista el workspace via este glob
-	// (ListProjectFiles). Comparte la raiz con las file tools; reusa el searcher
-	// de ripgrep ya probado (respeta .gitignore, excluye .git).
-	glob := tool.NewGlobTool(root)
-	// Skills al estilo opencode (disclosure progresivo): se descubren bajo las rutas
-	// del proyecto Y las globales del home (skillDirs). Sus metadatos van en el system
-	// prompt (skill.Format), la tool skill carga el cuerpo bajo demanda, y de cada una
-	// se deriva un slash-command. Un fallo de descubrimiento no es fatal: sin skills.
-	skills, err := skill.Discover(skillDirs(root)...)
-	if err != nil {
-		log.Printf("atenea: no se pudieron descubrir las skills: %v", err)
-	}
-	skillsBlock := skill.Format(skills)
-	// Slash-commands del composer, derivados de las skills (un "/<name>" por skill).
-	commands := command.New(command.FromSkills(skills))
-	// Subagentes: catalogo = built-in (explore read-only, general full) mas los .md
-	// del workspace (.atenea/agents propio, .agents/agents estandar; el propio override
-	// al homonimo). Un fallo de descubrimiento no es fatal: quedan los built-in.
-	agentDefs, err := agent.Catalog(
-		filepath.Join(root, ".atenea", "agents"),
-		filepath.Join(root, ".agents", "agents"),
-	)
-	if err != nil {
-		log.Printf("atenea: no se pudieron descubrir los subagentes: %v", err)
-	}
-	// Registry de los subagentes: las mismas tools de archivo/busqueda/exec, acotadas
-	// por def.Tools de cada agente (un explore read-only solo recibe read/grep/glob).
-	// Sin la tool task: los subagentes no anidan en el wiring real.
-	childRegistry := tool.NewRegistry(tool.NewOutputStore(outputLimit),
-		tool.NewReadToolWithSnapshotProvider(root, a.snaps), tool.NewWriteToolWithSnapshotProvider(root, a.snaps),
-		tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, a.snaps),
-		tool.NewGlobTool(root), tool.NewGrepToolWithSnapshotProvider(root, a.snaps),
-		tool.NewBashTool(root))
-	// La tool task levanta subagentes hijos. nextID propio (thread-safe) porque
-	// varios subagentes pueden correr en paralelo (cap de concurrencia interno).
-	taskTool := subagent.NewTaskTool(agentDefs, provider, childRegistry, newIDGen())
-	// Seguridad: propaga el ask-before-run al runner hijo con el MISMO gate y la
-	// MISMA needsApproval que el chat principal (solo "bash"). Sin esto el subagente
-	// "general" correria bash sin la confirmacion que el chat principal exige,
-	// evadiendo el gate. El gate es keyed por (sessionID, callID): el sessionID del
-	// hijo es su childID, asi ResolveToolPermission del hijo lo resuelve.
-	taskTool.SetPermissionGate(a.gate, func(c tool.Call) bool { return c.Name == "bash" })
-	// Surfacing del permiso del subagente en la UI: decora el store del runner hijo
-	// con ChildPermissionStore sobre el MISMO bus, asi los eventos de permiso del hijo
-	// (Tool.Permission.Requested y su resolucion) se publican en el canal del PADRE
-	// (el que ya escucha el frontend), conservando el SessionID del hijo en el payload.
-	// El frontend muestra Aprobar/Denegar y resuelve con (childID, callID) via
-	// ResolveToolPermission (el gate compartido ya keyea por ese par). Sin esto el hijo
-	// bloquea en gate.Ask pero la UI nunca ve la solicitud.
-	taskTool.SetStoreDecorator(func(parentSessionID string, inner session.Store) session.Store {
-		return event.NewChildPermissionStore(parentSessionID, inner, a.bus)
+	built := wiring.Build(wiring.Config{
+		Root:     root,
+		Provider: provider,
+		Store:    a.store, // ya decorado con EmittingStore en newAppWithStore
+		Inbox:    a.inbox,
+		Gate:     a.gate,
+		Snaps:    a.snaps,
+		Bus:      a.bus,
+		Local:    local,
+		NextID:   wiring.NewIDGen(),
+		Mode:     a.modeFor,
 	})
-	// present_plan se registra para que el runner pueda ejecutarla, pero NO entra
-	// en los Permissions normales: solo se anuncia en plan-mode (SetPlanMode).
-	registry := tool.NewRegistry(tool.NewOutputStore(outputLimit),
-		tool.NewReadToolWithSnapshotProvider(root, a.snaps), tool.NewWriteToolWithSnapshotProvider(root, a.snaps),
-		tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, a.snaps),
-		tool.NewGlobTool(root), tool.NewGrepToolWithSnapshotProvider(root, a.snaps),
-		tool.NewBashTool(root), tool.NewPresentPlanTool(root), tool.NewSkillTool(skills), taskTool,
-		tool.NewWebFetchTool(provider), tool.TodoWriteTool{})
-	r := runner.NewRunner(a.store, a.inbox, provider, registry,
-		tool.Permissions{"read": true, "write": true, "edit": true, "glob": true, "grep": true, "bash": true, "skill": true, "task": true, "web_fetch": true, "todo_write": true},
-		newIDGen())
-	r.SetSystemPrompt(systemPromptBuilder(root, skillsBlock, local))
-	r.SetPermissionGate(a.gate, func(c tool.Call) bool { return c.Name == "bash" })
-	// Plan-mode: investigacion de solo lectura mas present_plan (sin write/edit/bash/
-	// echo). El hook de modo decide por sesion; SetMode/SetPlanMode toman efecto solo
-	// cuando modeFor reporta ModePlan.
-	r.SetMode(a.modeFor)
-	r.SetPlanMode(planSystemPromptBuilder(root, skillsBlock, local),
-		tool.Permissions{"read": true, "glob": true, "grep": true, "present_plan": true, "skill": true})
 
 	a.mu.Lock()
 	a.root = root
-	a.glob = glob
-	a.commands = commands
-	a.runner = r
+	a.glob = built.Glob
+	a.commands = built.Commands
+	a.runner = built.Runner
 	a.mu.Unlock()
 }
 
@@ -252,94 +185,6 @@ func (a *App) currentCommands() *command.Set {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.commands
-}
-
-// skillDirs returns the directories scanned for skills, project (workspace root)
-// first and then global (the user's home), so a project skill overrides a global one
-// with the same name (skill.Discover is first-wins). Under each base it looks at
-// .atenea/skills (atenea's own), .agents/skills (the tool-agnostic standard shared
-// across agents) and .claude/skills (Claude Code). Las skills globales viven asi en
-// ~/.agents/skills, ~/.claude/skills, etc. Si no se puede resolver el home, quedan
-// solo las del proyecto. Rutas identicas (p.ej. si el root ES el home) se deduplican
-// para no recorrer el mismo arbol dos veces.
-func skillDirs(root string) []string {
-	subdirs := []string{
-		filepath.Join(".atenea", "skills"),
-		filepath.Join(".agents", "skills"),
-		filepath.Join(".claude", "skills"),
-	}
-	bases := []string{root}
-	if home, herr := os.UserHomeDir(); herr != nil {
-		log.Printf("atenea: no se pudo resolver el home para skills globales: %v", herr)
-	} else if home != "" {
-		bases = append(bases, home)
-	}
-	var dirs []string
-	seen := map[string]bool{}
-	for _, base := range bases {
-		for _, sub := range subdirs {
-			dir := filepath.Join(base, sub)
-			if seen[dir] {
-				continue
-			}
-			seen[dir] = true
-			dirs = append(dirs, dir)
-		}
-	}
-	return dirs
-}
-
-// promptSetup anchors the shared system-prompt setup at root: it detects whether
-// root is a git repo and loads the repo instructions (AGENTS.md/CLAUDE.md) once,
-// then returns a per-call Env factory (date computed per call so it does not go
-// stale in a long session) plus the loaded instructions. Both the normal and the
-// plan-mode builders reuse it; they differ only in which pure prompt function
-// (prompt.Build vs prompt.BuildPlan) they call.
-func promptSetup(root string) (env func() prompt.Env, instructions string) {
-	_, gitErr := os.Stat(filepath.Join(root, ".git"))
-	isGit := gitErr == nil
-	instructions, err := prompt.LoadInstructions(root, root)
-	if err != nil {
-		log.Printf("atenea: no se pudieron cargar las instrucciones del repo: %v", err)
-	}
-	env = func() prompt.Env {
-		return prompt.Env{
-			WorkingDir:   root,
-			WorktreeRoot: root,
-			IsGitRepo:    isGit,
-			Platform:     goruntime.GOOS,
-			Date:         time.Now().Format("2006-01-02"),
-		}
-	}
-	return env, instructions
-}
-
-// systemPromptBuilder builds the normal-mode system prompt builder anchored at
-// root: per turn composes the base prompt + the <env> block with today's date + the
-// skills block (skills are discovered once at assembly and passed in formatted), over
-// the shared promptSetup. When local is true (LM Studio, Ollama) the base is the local
-// prompt (function-calling protocol); otherwise it is chosen by model family.
-func systemPromptBuilder(root, skills string, local bool) func(model string) string {
-	env, instructions := promptSetup(root)
-	return func(model string) string {
-		if local {
-			return prompt.BuildLocal(env(), instructions, skills)
-		}
-		return prompt.Build(model, env(), instructions, skills)
-	}
-}
-
-// planSystemPromptBuilder builds the plan-mode system prompt builder: same shape
-// as systemPromptBuilder but appends the plan-mode contract (present_plan) on top of
-// the base prompt, via BuildLocalPlan when local or BuildPlan otherwise.
-func planSystemPromptBuilder(root, skills string, local bool) func(model string) string {
-	env, instructions := promptSetup(root)
-	return func(model string) string {
-		if local {
-			return prompt.BuildLocalPlan(env(), instructions, skills)
-		}
-		return prompt.BuildPlan(model, env(), instructions, skills)
-	}
 }
 
 // newApp arma la app con un MemoryStore (no durable) y el provider/emit inyectados.
@@ -866,16 +711,6 @@ func (a *App) clear(sessionID string, h *runHandle) {
 // wait bloquea hasta que terminen las corridas en vuelo. Solo lo usan los tests
 // para ser deterministas sin sleep; la UI no lo llama.
 func (a *App) wait() { a.wg.Wait() }
-
-// newIDGen devuelve un generador de assistantMessageID real: un contador atomico
-// con prefijo, unico por proceso (suficiente con MemoryStore, que se reinicia con
-// la app). Un ID estable entre reinicios llega con el store persistente de M10.
-func newIDGen() func() string {
-	var n uint64
-	return func() string {
-		return "msg-" + strconv.FormatUint(atomic.AddUint64(&n, 1), 10)
-	}
-}
 
 // demoProvider arma un FakeProvider con un guion corto (texto + Step.Ended) para
 // que `wails dev` muestre streaming sin red. M10 lo cambia por el provider real.
