@@ -16,6 +16,7 @@ import (
 // fakeAgent implementa Agent y registra las llamadas para asertar sobre ellas.
 type fakeAgent struct {
 	sent     []struct{ sessionID, text string }
+	planSent []struct{ sessionID, text string }
 	resolved []struct {
 		sessionID, callID string
 		approved          bool
@@ -25,6 +26,11 @@ type fakeAgent struct {
 
 func (f *fakeAgent) SendPrompt(sessionID, text string) error {
 	f.sent = append(f.sent, struct{ sessionID, text string }{sessionID, text})
+	return nil
+}
+
+func (f *fakeAgent) SendPlanPrompt(sessionID, text string) error {
+	f.planSent = append(f.planSent, struct{ sessionID, text string }{sessionID, text})
 	return nil
 }
 
@@ -1121,6 +1127,90 @@ func TestModel_LongTypedPromptKeepsBoxSingleLine(t *testing.T) {
 	}
 	assertNoLineWiderThan(t, view, 24)
 	assertBoxLinesExactWidth(t, view, 24)
+}
+
+func TestModel_TabTogglesAgentModeToPlan(t *testing.T) {
+	// Tab alterna el modo del agente entre "build" y "plan" (estilo Claude
+	// Code): el pie del composer refleja el modo en vivo y Enter envia el
+	// prompt por el camino del modo activo (SendPlanPrompt en plan).
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil).WithStatus("build", "openrouter/free")
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyTab})
+
+	view := m.View()
+	if !strings.Contains(view, "plan · openrouter/free") {
+		t.Fatalf("View() = %q, tras Tab el pie del composer debe mostrar %q", view, "plan · openrouter/free")
+	}
+	if strings.Contains(view, "build ·") {
+		t.Fatalf("View() = %q, tras Tab el pie NO debe seguir mostrando %q", view, "build ·")
+	}
+
+	// En modo plan, Enter envia el prompt via SendPlanPrompt, no via SendPrompt.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("investiga x")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if len(fake.planSent) != 1 {
+		t.Fatalf("SendPlanPrompt fue llamado %d veces, Enter en modo plan debe enviar el prompt exactamente una vez por el camino de plan", len(fake.planSent))
+	}
+	if got := fake.planSent[0]; got.sessionID != "s1" || got.text != "investiga x" {
+		t.Fatalf("SendPlanPrompt(%q, %q), se esperaba SendPlanPrompt(%q, %q)", got.sessionID, got.text, "s1", "investiga x")
+	}
+	if len(fake.sent) != 0 {
+		t.Fatalf("SendPrompt fue llamado %d veces, en modo plan el prompt NO debe ir por el camino de build", len(fake.sent))
+	}
+}
+
+func TestModel_TabTogglesBackToBuild(t *testing.T) {
+	// TRIANGULATE: Tab ALTERNA el modo, no solo lo enciende. Dos Tab devuelven
+	// el pie del composer a build y Enter vuelve a enviar por SendPrompt (el
+	// camino normal), no por SendPlanPrompt.
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil).WithStatus("build", "m")
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyTab})
+
+	view := m.View()
+	if !strings.Contains(view, "build · m") {
+		t.Fatalf("View() = %q, tras Tab Tab el pie del composer debe volver a mostrar %q", view, "build · m")
+	}
+	if strings.Contains(view, "plan ·") {
+		t.Fatalf("View() = %q, tras Tab Tab el pie NO debe seguir mostrando %q", view, "plan ·")
+	}
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hazlo")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if len(fake.sent) != 1 {
+		t.Fatalf("SendPrompt fue llamado %d veces, de vuelta en build Enter debe enviar exactamente una vez por el camino normal", len(fake.sent))
+	}
+	if got := fake.sent[0]; got.sessionID != "s1" || got.text != "hazlo" {
+		t.Fatalf("SendPrompt(%q, %q), se esperaba SendPrompt(%q, %q)", got.sessionID, got.text, "s1", "hazlo")
+	}
+	if len(fake.planSent) != 0 {
+		t.Fatalf("SendPlanPrompt fue llamado %d veces, tras volver a build el prompt NO debe ir por el camino de plan", len(fake.planSent))
+	}
+}
+
+func TestModel_TabIsInertWhilePermissionPending(t *testing.T) {
+	// TRIANGULATE: con un permiso pendiente el teclado esta en modo aprobacion
+	// (solo y/n hacen algo): Tab NO debe alternar el modo del agente ni cambiar
+	// el pie del composer.
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil).WithStatus("build", "m")
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"ls"}`)})
+	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"ls"}`)})
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyTab})
+
+	view := m.View()
+	if !strings.Contains(view, "build · m") {
+		t.Fatalf("View() = %q, con permiso pendiente Tab NO debe cambiar el pie: debe seguir mostrando %q", view, "build · m")
+	}
+	if strings.Contains(view, "plan ·") {
+		t.Fatalf("View() = %q, con permiso pendiente Tab NO debe activar el modo plan", view)
+	}
 }
 
 func TestModel_EnterSendsTypedPromptViaAgent(t *testing.T) {

@@ -112,13 +112,18 @@ func (m Model) reservedLines() int {
 }
 
 // statusFooter es la linea de pie del composer con el agente activo y el
-// modelo de IA (formato "<agente> · <modelo>"). Sin status fijado devuelve ""
-// y la vista no agrega ninguna linea.
+// modelo de IA (formato "<agente> · <modelo>"). En modo plan el agente
+// mostrado es "plan" (el pie refleja en vivo el modo alternado con Tab). Sin
+// status fijado devuelve "" y la vista no agrega ninguna linea.
 func (m Model) statusFooter() string {
 	if m.agentName == "" && m.model == "" {
 		return ""
 	}
-	return m.agentName + " · " + m.model
+	agent := m.agentName
+	if m.planMode {
+		agent = "plan"
+	}
+	return agent + " · " + m.model
 }
 
 // resizeViewport recalcula el alto del viewport con el ultimo tamano anunciado

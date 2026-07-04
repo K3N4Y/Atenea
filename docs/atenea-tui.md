@@ -21,9 +21,12 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
   inbox/gate/snapshots en memoria, decora el store con `EmittingStore` sobre un
   `event.Bus` cuya `EmitFunc` puentea cada `session.SessionEvent` al canal de la
   TUI, y delega el cableado del runner en `wiring.Build` (la misma fuente de
-  verdad que la app). `SendPrompt` admite en el inbox y corre `Run` en una
-  goroutine cancelable por sesion (espejo de `App.start`); al terminar publica
-  `RunDoneMsg`. Satisface la interface `Agent` del Model.
+  verdad que la app). Guarda el modo por sesion (`modes` + `modeFor`, el hook
+  `Mode` de `wiring.Build` que el runner consulta cada turno): `SendPrompt`
+  fija modo normal y `SendPlanPrompt` fija plan-mode antes de encolar, espejo
+  de `App.SendPrompt`/`App.SendPlanPrompt`. Ambos admiten en el inbox y corren
+  `Run` en una goroutine cancelable por sesion (espejo de `App.start`); al
+  terminar publica `RunDoneMsg`. Satisface la interface `Agent` del Model.
 - `internal/tui/model.go` + `fold.go` + `view.go` — el Model de Bubble Tea.
   `fold.go` proyecta los `SessionEvent` durables a entradas de conversacion
   (texto assistant en streaming, mensajes user, tool calls con estado, permisos
@@ -45,14 +48,21 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
   `Tool.Success`/`Tool.Failed` del mismo `CallID` (no hay evento de resolucion).
   La tecla y/n resuelve via el gate con el `SessionID` del EVENTO (una solicitud
   surfaceada de un subagente se resuelve con el id del hijo).
-- Enter envia por `Agent.SendPrompt`; Ctrl+C corta y sale; Esc solo corta;
+- Enter envia por el camino del modo activo (`Agent.SendPrompt` en build,
+  `Agent.SendPlanPrompt` en plan); Ctrl+C corta y sale; Esc solo corta;
   `RunDoneMsg` apaga el indicador de trabajo.
+- Tab alterna el modo del agente build/plan: es pegajoso entre envios (cada
+  Enter rutea por el camino del modo activo, sin resetearlo) e inerte con un
+  permiso pendiente, y el pie del composer lo refleja en vivo. En plan-mode el
+  runner anuncia `present_plan` sin `bash`/`write`; el siguiente `SendPrompt`
+  devuelve la sesion a modo normal.
 - El viewport respeta el alto de la terminal, sigue la cola con eventos nuevos y
   sobrevive terminales minusculas (0x0/1 linea: dimensiones acotadas a >= 0;
   panic real de bubbles/viewport encontrado en el smoke E2E bajo pty).
 - La caja del composer mide el ancho de la terminal y nunca crece de 3 lineas
   (un prompt mas largo que el ancho scrollea horizontal dentro del input); el
-  pie muestra `<agente> · <modelo>` fijados una sola vez via `WithStatus`.
+  pie muestra `<agente> · <modelo>`: el modelo entra una sola vez via
+  `WithStatus` y el agente refleja el modo activo (build/plan).
 
 ## Correr
 
@@ -66,9 +76,11 @@ OPENROUTER_API_KEY=... ./build/bin/atenea-tui
 
 - Store en memoria: las sesiones de la TUI no persisten ni aparecen en la
   sidebar de la app (compartir el SQLite exige coordinar acceso concurrente).
-- Sin plan-mode ni forma de cambiar agente/modelo desde la TUI (tampoco
-  slash-commands ni @-menu en el composer): el pie muestra "build" y el modelo
-  del entorno, fijos por corrida.
+- Plan-mode ya se alterna con Tab, pero sigue pendiente cambiar el MODELO desde
+  la TUI (tampoco hay slash-commands ni @-menu en el composer): el pie muestra
+  el modelo del entorno, fijo por corrida. Tambien falta el flujo AcceptPlan
+  (aprobar un plan presentado y ejecutarlo promoviendo el prompt de
+  implementacion); hoy es manual: Tab a build y enviar.
 - El indicador de trabajo es estatico (sin animacion de spinner).
 - Un prompt nuevo mientras corre una actividad cancela la corrida anterior
   (mismo comportamiento que la app Wails hoy).

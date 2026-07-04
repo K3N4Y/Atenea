@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -26,6 +27,10 @@ type turnProvider struct {
 	mu    sync.Mutex
 	turns [][]llm.Event
 	next  int
+	// toolNames registra, por cada llamada a Stream, los nombres de las tools
+	// anunciadas en el Request: la evidencia observable del modo del turno
+	// (plan-mode anuncia present_plan y esconde bash/write).
+	toolNames [][]string
 }
 
 var _ llm.Provider = (*turnProvider)(nil)
@@ -34,8 +39,13 @@ func newTurnProvider(turns ...[]llm.Event) *turnProvider {
 	return &turnProvider{turns: turns}
 }
 
-func (p *turnProvider) Stream(ctx context.Context, _ llm.Request) (<-chan llm.Event, error) {
+func (p *turnProvider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Event, error) {
 	p.mu.Lock()
+	names := make([]string, len(req.Tools))
+	for i, def := range req.Tools {
+		names[i] = def.Name
+	}
+	p.toolNames = append(p.toolNames, names)
 	script := []llm.Event{{Kind: llm.StepEnded}}
 	if p.next < len(p.turns) {
 		script = p.turns[p.next]
@@ -55,6 +65,15 @@ func (p *turnProvider) Stream(ctx context.Context, _ llm.Request) (<-chan llm.Ev
 		}
 	}()
 	return out, nil
+}
+
+// requestedTools devuelve una copia de los nombres de tools anunciados en cada
+// llamada a Stream, en orden de llegada. Con mutex: el runner llama Stream
+// desde su propia goroutine.
+func (p *turnProvider) requestedTools() [][]string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([][]string(nil), p.toolNames...)
 }
 
 // nextMsg saca el siguiente mensaje del canal del engine, con timeout generoso
@@ -298,5 +317,62 @@ func TestEngine_StopUnblocksPendingPermission(t *testing.T) {
 	}
 	if done.Err != "" {
 		t.Errorf("RunDoneMsg.Err = %q, una cancelacion deliberada es cierre limpio (Err vacio)", done.Err)
+	}
+}
+
+func TestEngine_SendPlanPromptRunsInPlanMode(t *testing.T) {
+	// TRIANGULATE: SendPlanPrompt debe correr el turno en plan-mode REAL (como
+	// en la app Wails), no delegar en SendPrompt. La evidencia observable son
+	// las tools que el runner anuncia al modelo en el Request de cada turno:
+	// plan-mode anuncia present_plan y esconde bash/write; el modo es por envio,
+	// asi que un SendPrompt posterior en la MISMA sesion vuelve a anunciar bash.
+	textTurn := func(text string) []llm.Event {
+		return []llm.Event{
+			{Kind: llm.StepStarted},
+			{Kind: llm.TextStarted},
+			{Kind: llm.TextDelta, Text: text},
+			{Kind: llm.TextEnded},
+			{Kind: llm.StepEnded},
+		}
+	}
+	provider := newTurnProvider(textTurn("plan listo"), textTurn("hecho"))
+	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
+
+	// Envio en plan-mode: el turno debe anunciar las tools de planificacion.
+	if err := e.SendPlanPrompt("s1", "planea x"); err != nil {
+		t.Fatalf("SendPlanPrompt(s1, planea x) = %v, se esperaba nil", err)
+	}
+	if _, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil); done.Err != "" {
+		t.Fatalf("RunDoneMsg.Err = %q, se esperaba corrida limpia en plan-mode", done.Err)
+	}
+	calls := provider.requestedTools()
+	if len(calls) == 0 {
+		t.Fatalf("el provider no registro ninguna llamada a Stream tras la corrida de plan")
+	}
+	planTools := calls[len(calls)-1]
+	if !slices.Contains(planTools, "present_plan") {
+		t.Errorf("tools del turno de plan = %v, debe incluir %q: SendPlanPrompt debe correr en plan-mode real", planTools, "present_plan")
+	}
+	for _, forbidden := range []string{"bash", "write"} {
+		if slices.Contains(planTools, forbidden) {
+			t.Errorf("tools del turno de plan = %v, NO debe incluir %q: plan-mode es de solo lectura", planTools, forbidden)
+		}
+	}
+
+	// Envio normal posterior en la MISMA sesion: el modo es por envio (espejo
+	// de la app Wails) y el turno vuelve a anunciar las tools de build.
+	if err := e.SendPrompt("s1", "hazlo"); err != nil {
+		t.Fatalf("SendPrompt(s1, hazlo) = %v, se esperaba nil", err)
+	}
+	if _, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil); done.Err != "" {
+		t.Fatalf("RunDoneMsg.Err = %q, se esperaba corrida limpia en modo normal", done.Err)
+	}
+	calls = provider.requestedTools()
+	if len(calls) < 2 {
+		t.Fatalf("el provider registro %d llamadas a Stream, se esperaban al menos 2 (turno de plan + turno normal)", len(calls))
+	}
+	buildTools := calls[len(calls)-1]
+	if !slices.Contains(buildTools, "bash") {
+		t.Errorf("tools del turno normal = %v, debe incluir %q: el modo es por envio y SendPrompt vuelve a build", buildTools, "bash")
 	}
 }

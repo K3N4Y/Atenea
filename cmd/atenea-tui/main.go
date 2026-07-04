@@ -56,8 +56,9 @@ func main() {
 	// entre corridas si el store algun dia es durable.
 	sessionID := "tui-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 
-	// El agente es siempre "build": la TUI no tiene plan-mode (el engine arma el
-	// runner con Mode nil, modo normal fijo) ni forma de cambiar agente/modelo.
+	// "build" es el modo INICIAL del agente: Tab lo alterna a plan en vivo (el
+	// engine fija el modo por sesion via su hook Mode de wiring.Build). El
+	// modelo si queda fijo por corrida: no hay forma de cambiarlo desde la TUI.
 	m := tui.NewModel(engine, sessionID, engine.Events()).WithStatus("build", model)
 	// WithMouseCellMotion habilita el mouse tracking: sin el, la terminal nunca
 	// reporta la rueda a la app (en pantalla alternativa la traduce a flechas

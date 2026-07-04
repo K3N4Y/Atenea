@@ -23,6 +23,8 @@ type RunDoneMsg struct{ Err string }
 // Agent es la superficie del engine que la TUI necesita para operar la sesion.
 type Agent interface {
 	SendPrompt(sessionID, text string) error
+	// SendPlanPrompt envia el prompt por el camino de plan-mode.
+	SendPlanPrompt(sessionID, text string) error
 	ResolvePermission(sessionID, callID string, approved bool)
 	Stop(sessionID string)
 }
@@ -86,11 +88,18 @@ type Model struct {
 	width    int
 	height   int
 
-	// agentName y model son la info de solo lectura del pie del composer
-	// (agente activo y modelo de IA); entran una sola vez via WithStatus y no
-	// hay forma de cambiarlas desde el teclado.
+	// agentName y model alimentan el pie del composer (agente y modelo de IA);
+	// entran una sola vez via WithStatus. El modelo sigue fijo por corrida,
+	// pero el agente MOSTRADO cambia con Tab: en plan-mode el pie rinde "plan"
+	// en lugar de agentName (ver statusFooter y planMode).
 	agentName string
 	model     string
+
+	// planMode indica el modo del agente: Tab lo alterna entre build (false)
+	// y plan (true). Es pegajoso entre envios: cada Enter envia por el camino
+	// del modo activo (SendPrompt en build, SendPlanPrompt en plan) sin
+	// resetearlo.
+	planMode bool
 }
 
 // NewModel construye el Model raiz de la TUI.
@@ -102,8 +111,9 @@ func NewModel(agent Agent, sessionID string, events <-chan tea.Msg) Model {
 	return Model{agent: agent, sessionID: sessionID, events: events, input: input}
 }
 
-// WithStatus fija el agente activo y el modelo de IA a mostrar en el pie del
-// composer. Builder de valor: la info entra una sola vez al construir el Model.
+// WithStatus fija el agente base y el modelo de IA a mostrar en el pie del
+// composer. Builder de valor: la info entra una sola vez al construir el Model
+// (en plan-mode el pie muestra "plan" en lugar del agente base).
 func (m Model) WithStatus(agentName, model string) Model {
 	m.agentName = agentName
 	m.model = model
@@ -187,8 +197,9 @@ func (m Model) scrollViewport(msg tea.Msg) (Model, tea.Cmd) {
 // handleKey procesa el teclado en orden de prioridad: Ctrl+C detiene y sale
 // siempre; PgUp/PgDn son scroll del transcript (nunca escriben en el input ni
 // tocan el gate de permisos); un permiso pendiente pone el teclado en modo
-// aprobacion (solo y/n hacen algo); sin permiso pendiente Esc detiene la
-// corrida, Enter envia el prompt tecleado y el resto de teclas alimenta el input.
+// aprobacion (solo y/n hacen algo; Tab incluido queda inerte); sin permiso
+// pendiente Esc detiene la corrida, Enter envia el prompt tecleado, Tab alterna
+// el modo build/plan y el resto de teclas alimenta el input.
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		m.stopRun()
@@ -208,6 +219,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyEnter:
 		return m.submitPrompt(), nil
+	case tea.KeyTab:
+		// Tab alterna el modo del agente build/plan; nunca llega al textinput
+		// (no inserta el caracter de tabulacion en el prompt).
+		m.planMode = !m.planMode
+		return m, nil
 	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
@@ -235,7 +251,8 @@ func (m Model) resolvePermissionKey(msg tea.KeyMsg, perm entry) {
 	}
 }
 
-// submitPrompt envia el texto tecleado al Agent y marca la corrida en curso.
+// submitPrompt envia el texto tecleado al Agent por el camino del modo activo
+// (SendPrompt en build, SendPlanPrompt en plan) y marca la corrida en curso.
 // Con input vacio o agent nil (tests del fold) es no-op: no hay que enviar o
 // no hay a quien.
 func (m Model) submitPrompt() Model {
@@ -243,7 +260,11 @@ func (m Model) submitPrompt() Model {
 	if text == "" || m.agent == nil {
 		return m
 	}
-	m.agent.SendPrompt(m.sessionID, text)
+	if m.planMode {
+		m.agent.SendPlanPrompt(m.sessionID, text)
+	} else {
+		m.agent.SendPrompt(m.sessionID, text)
+	}
 	m.input.SetValue("")
 	m.working = true
 	// La linea de estado ocupa una linea bajo el transcript: recalcular el alto.

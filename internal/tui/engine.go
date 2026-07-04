@@ -34,8 +34,9 @@ type Engine struct {
 	gate   *session.MemoryPermissionGate
 	runner *runner.Runner
 
-	mu   sync.Mutex
-	runs map[string]*engineRun // sessionID -> corrida en vuelo (identidad por puntero)
+	mu    sync.Mutex
+	runs  map[string]*engineRun   // sessionID -> corrida en vuelo (identidad por puntero)
+	modes map[string]session.Mode // sessionID -> modo (normal/plan); guardado con mu como runs
 }
 
 // engineRun identifica una corrida en vuelo. Se compara por puntero porque
@@ -56,6 +57,7 @@ func NewEngine(cfg EngineConfig) *Engine {
 		inbox:  session.NewMemoryInbox(),
 		gate:   session.NewMemoryPermissionGate(),
 		runs:   map[string]*engineRun{},
+		modes:  map[string]session.Mode{},
 	}
 	// La frontera: donde la app Wails emite a runtime.EventsEmit, aqui el evento
 	// durable va al canal de la TUI. El send bloqueante es deliberado: la TUI
@@ -79,18 +81,53 @@ func NewEngine(cfg EngineConfig) *Engine {
 		Bus:      bus,
 		Local:    cfg.Local,
 		NextID:   wiring.NewIDGen(),
-		Mode:     nil, // la TUI no tiene plan-mode: siempre modo normal
+		Mode:     e.modeFor, // el runner consulta el modo por sesion al inicio de cada turno
 	})
 	e.runner = built.Runner
 	return e
 }
 
-// SendPrompt encola un prompt del usuario y dispara la corrida en una goroutine
-// con un ctx cancelable registrado por sesion (espejo de App.start): si habia
-// una corrida previa de la misma sesion, se cancela. Al terminar la corrida se
-// limpia el handle y se publica RunDoneMsg; una cancelacion deliberada (Stop,
-// follow-up) es un cierre limpio, no un error.
+// modeFor devuelve el modo de la sesion (normal/plan). Es el hook Mode de
+// wiring.Build: el runner lo consulta al inicio de cada turno. Guarda e.modes
+// con mu, igual que runs (espejo de App.modeFor).
+func (e *Engine) modeFor(sessionID string) session.Mode {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.modes[sessionID]
+}
+
+// setMode fija el modo de la sesion. Se llama SIEMPRE antes de send
+// (adquisiciones de lock separadas, nunca anidadas) porque send tambien toma
+// e.mu (espejo de App.setMode).
+func (e *Engine) setMode(sessionID string, m session.Mode) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.modes[sessionID] = m
+}
+
+// SendPrompt encola un prompt del usuario por el camino normal. Fija modo
+// normal primero: una sesion que estaba en plan-mode vuelve a las tools
+// normales al enviar (el modo es por envio, como en la app Wails).
 func (e *Engine) SendPrompt(sessionID, text string) error {
+	e.setMode(sessionID, session.ModeNormal)
+	return e.send(sessionID, text)
+}
+
+// SendPlanPrompt encola el prompt en plan-mode: investigacion de solo lectura
+// mas present_plan, con el contrato de plan-mode en el system prompt. Fija
+// ModePlan antes de arrancar (espejo de App.SendPlanPrompt).
+func (e *Engine) SendPlanPrompt(sessionID, text string) error {
+	e.setMode(sessionID, session.ModePlan)
+	return e.send(sessionID, text)
+}
+
+// send encola el prompt y dispara la corrida en una goroutine con un ctx
+// cancelable registrado por sesion (espejo de App.start): si habia una corrida
+// previa de la misma sesion, se cancela. Al terminar la corrida se limpia el
+// handle y se publica RunDoneMsg; una cancelacion deliberada (Stop, follow-up)
+// es un cierre limpio, no un error. Es el camino comun de SendPrompt y
+// SendPlanPrompt: el modo de la sesion ya quedo fijado antes de llamarlo.
+func (e *Engine) send(sessionID, text string) error {
 	if err := e.inbox.Admit(context.Background(), sessionID,
 		session.Prompt{Text: text}, session.DeliveryQueue); err != nil {
 		return err
