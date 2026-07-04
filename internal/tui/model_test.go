@@ -576,6 +576,156 @@ func TestModel_PgUpScrollsHistoryBack(t *testing.T) {
 	}
 }
 
+// Eventos de rueda del mouse compartidos por los tests de scroll.
+var (
+	wheelUp   = tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp}
+	wheelDown = tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown}
+)
+
+func TestModel_MouseWheelScrollsHistory(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
+
+	// Muchas mas entradas de las que caben: la vista arranca siguiendo la cola.
+	for i := 0; i < 30; i++ {
+		m = apply(t, m, EventMsg{Message: &session.Message{
+			ID:   fmt.Sprintf("u%02d", i),
+			Role: session.RoleUser,
+			Text: fmt.Sprintf("mensaje-%02d", i),
+		}})
+	}
+
+	// Dos ruedas arriba retroceden en el historial: la cola deja de verse.
+	m = apply(t, m, wheelUp)
+	m = apply(t, m, wheelUp)
+	view := m.View()
+	if strings.Contains(view, "mensaje-29") {
+		t.Fatalf("View() = %q, tras rueda arriba la cola %q NO debe seguir visible", view, "mensaje-29")
+	}
+	if !strings.Contains(view, "mensaje-") {
+		t.Fatalf("View() = %q, tras rueda arriba debe verse algun mensaje anterior del historial", view)
+	}
+	if got := m.input.Value(); got != "" {
+		t.Fatalf("input.Value() = %q, la rueda NO debe escribir en el textinput", got)
+	}
+
+	// Varias ruedas abajo devuelven la vista a la cola.
+	for i := 0; i < 5; i++ {
+		m = apply(t, m, wheelDown)
+	}
+	if got := m.View(); !strings.Contains(got, "mensaje-29") {
+		t.Fatalf("View() = %q, tras varias ruedas abajo la cola %q debe volver a verse", got, "mensaje-29")
+	}
+
+	// Con permiso pendiente la rueda sigue siendo scroll: no dispara el gate.
+	fake := &fakeAgent{}
+	m2 := NewModel(fake, "s1", nil)
+	m2 = apply(t, m2, tea.WindowSizeMsg{Width: 40, Height: 10})
+	m2 = apply(t, m2, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"ls"}`)})
+	m2 = apply(t, m2, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"ls"}`)})
+	m2 = apply(t, m2, wheelUp)
+	if len(fake.resolved) != 0 {
+		t.Fatalf("ResolvePermission fue llamado %d veces, la rueda NO debe disparar el gate de permisos", len(fake.resolved))
+	}
+	if got := m2.input.Value(); got != "" {
+		t.Fatalf("input.Value() = %q, la rueda con permiso pendiente NO debe escribir en el textinput", got)
+	}
+}
+
+func TestModel_MouseWheelSurvivesTinyOrUnsizedTerminal(t *testing.T) {
+	// TRIANGULATE: un fix pobre podria asumir un viewport ya dimensionado al
+	// reenviar la rueda. Sin WindowSizeMsg previo (ready == false) o con pty
+	// 0x0, un evento de rueda no debe paniquear y View() debe seguir
+	// devolviendo un string aunque sea degradado.
+	t.Run("sin WindowSizeMsg previo", func(t *testing.T) {
+		m := NewModel(nil, "s1", nil)
+
+		m = apply(t, m, wheelUp)
+		if got := m.View(); got == "" {
+			t.Fatalf("View() = %q, sin tamano de terminal conocido debe devolver un string aunque sea degradado", got)
+		}
+	})
+
+	t.Run("pty 0x0 con mensaje foldeado", func(t *testing.T) {
+		m := NewModel(nil, "s1", nil)
+
+		m = apply(t, m, tea.WindowSizeMsg{Width: 0, Height: 0})
+		m = apply(t, m, EventMsg{Message: &session.Message{ID: "u1", Role: session.RoleUser, Text: "hola"}})
+
+		m = apply(t, m, wheelUp)
+		if got := m.View(); got == "" {
+			t.Fatalf("View() = %q, con terminal 0x0 la rueda no debe tumbar la TUI y View debe devolver un string aunque sea degradado", got)
+		}
+	})
+}
+
+func TestModel_NewEventRefollowsTailWhileScrolledUp(t *testing.T) {
+	// TRIANGULATE: pin del comportamiento v1 documentado en Update: aunque el
+	// usuario haya scrolleado hacia atras con la rueda, cada evento nuevo
+	// re-sigue la cola via GotoBottom en syncViewport.
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
+
+	for i := 0; i < 30; i++ {
+		m = apply(t, m, EventMsg{Message: &session.Message{
+			ID:   fmt.Sprintf("u%02d", i),
+			Role: session.RoleUser,
+			Text: fmt.Sprintf("mensaje-%02d", i),
+		}})
+	}
+
+	// Dos ruedas arriba: la cola deja de verse (precondicion del caso).
+	m = apply(t, m, wheelUp)
+	m = apply(t, m, wheelUp)
+	if got := m.View(); strings.Contains(got, "mensaje-29") {
+		t.Fatalf("View() = %q, tras rueda arriba la cola %q NO debe seguir visible", got, "mensaje-29")
+	}
+
+	// Llega un evento nuevo: la vista vuelve a seguir la cola.
+	m = apply(t, m, EventMsg{Message: &session.Message{
+		ID:   "u30",
+		Role: session.RoleUser,
+		Text: "mensaje-30",
+	}})
+	if got := m.View(); !strings.Contains(got, "mensaje-30") {
+		t.Fatalf("View() = %q, un evento nuevo debe re-seguir la cola: %q debe estar visible aunque el usuario haya scrolleado hacia atras", got, "mensaje-30")
+	}
+}
+
+func TestModel_MouseClickIsInert(t *testing.T) {
+	// TRIANGULATE: con tea.WithMouseCellMotion la terminal manda TAMBIEN clicks
+	// y arrastres, no solo rueda. Un click izquierdo o un movimiento deben ser
+	// inertes: no resuelven el permiso pendiente, no escriben en el input y no
+	// cambian la vista.
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
+
+	for i := 0; i < 5; i++ {
+		m = apply(t, m, EventMsg{Message: &session.Message{
+			ID:   fmt.Sprintf("u%02d", i),
+			Role: session.RoleUser,
+			Text: fmt.Sprintf("mensaje-%02d", i),
+		}})
+	}
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"ls"}`)})
+	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"ls"}`)})
+
+	before := m.View()
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionMotion})
+
+	if len(fake.resolved) != 0 {
+		t.Fatalf("ResolvePermission fue llamado %d veces, un click NO debe disparar el gate de permisos", len(fake.resolved))
+	}
+	if got := m.input.Value(); got != "" {
+		t.Fatalf("input.Value() = %q, el click y el movimiento NO deben escribir en el textinput", got)
+	}
+	if got := m.View(); got != before {
+		t.Fatalf("View() cambio tras el click/movimiento:\nantes = %q\ndespues = %q, los eventos de mouse que no son rueda deben ser inertes", before, got)
+	}
+}
+
 func TestModel_WorkingIndicatorVisibleWhileRunning(t *testing.T) {
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)

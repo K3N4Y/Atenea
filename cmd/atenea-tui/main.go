@@ -53,7 +53,10 @@ func main() {
 	sessionID := "tui-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 
 	m := tui.NewModel(engine, sessionID, engine.Events())
-	if _, err := tea.NewProgram(m, tea.WithAltScreen()).Run(); err != nil {
+	// WithMouseCellMotion habilita el mouse tracking: sin el, la terminal nunca
+	// reporta la rueda a la app (en pantalla alternativa la traduce a flechas
+	// via "alternate scroll"); con la opcion llegan eventos de mouse reales.
+	if _, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "atenea-tui:", err)
 		os.Exit(1)
 	}

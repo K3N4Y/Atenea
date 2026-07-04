@@ -151,8 +151,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.resizeViewport(), nil
 	case tea.KeyMsg:
 		return m.handleKey(ev)
+	case tea.MouseMsg:
+		// La rueda scrollea el historial de a MouseWheelDelta lineas (espejo de
+		// PgUp/PgDn); el resto del mouse (clicks, movimiento) es inerte porque el
+		// viewport lo ignora.
+		return m.scrollViewport(ev)
 	}
 	return m, nil
+}
+
+// scrollViewport reenvia msg al viewport para paginar el historial (rueda o
+// PgUp/PgDn): nunca escribe en el input ni toca el gate de permisos; los
+// eventos nuevos re-siguen la cola via GotoBottom en syncViewport (v1).
+func (m Model) scrollViewport(msg tea.Msg) (Model, tea.Cmd) {
+	var cmd tea.Cmd
+	m.viewport, cmd = m.viewport.Update(msg)
+	return m, cmd
 }
 
 // handleKey procesa el teclado en orden de prioridad: Ctrl+C detiene y sale
@@ -166,11 +180,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	if msg.Type == tea.KeyPgUp || msg.Type == tea.KeyPgDown {
-		// El viewport pagina el historial; los eventos nuevos re-siguen la
-		// cola via GotoBottom en syncViewport (v1).
-		var cmd tea.Cmd
-		m.viewport, cmd = m.viewport.Update(msg)
-		return m, cmd
+		return m.scrollViewport(msg)
 	}
 	if perm, ok := m.pendingPermission(); ok {
 		m.resolvePermissionKey(msg, perm)
