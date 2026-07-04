@@ -132,13 +132,21 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string) (bool, er
 }
 
 // consume drena el stream del turno. Publica cada evento como SessionEvent durable
-// (orden total del log) y, por cada tool call LOCAL, lanza una goroutine que la
-// asienta y publica su resultado. El turno ESPERA a que todas asienten (g.Wait)
-// antes de decidir la continuacion. Una tool provider-executed solo se persiste
-// (Publish), no se asienta. El error de una tool se registra como Tool.Failed y NO
-// corta el turno; solo un fallo del store (de Publish/ToolSuccess/ToolFailed) lo
-// hace. Ademas del Tool.Failed durable, el error se escribe por r.logf (stderr en
-// `wails dev`): ni el log durable ni el mensaje al modelo son visibles para el dev.
+// (orden total del log) y acumula las tool calls LOCALES; recien cuando el stream
+// TERMINO (todos sus eventos publicados, incluido Step.Ended, que materializa el
+// Message assistant con los tool_calls) lanza las goroutines que asientan cada tool
+// y publican su resultado. Ese orden es un invariante del historial: el Message
+// role=tool de un resultado nunca puede preceder al Message assistant que declara
+// su tool_call (los providers rechazan con 400 un historial `user, tool, assistant`).
+// Diferir el settle no cambia nada para el modelo: el resultado de una tool solo
+// alimenta el turno SIGUIENTE, y el adapter emite los ToolCall al final del stream
+// de todos modos. Las tools siguen asentandose en paralelo ENTRE SI y el turno
+// ESPERA a que todas asienten (g.Wait) antes de decidir la continuacion. Una tool
+// provider-executed solo se persiste (Publish), no se asienta. El error de una tool
+// se registra como Tool.Failed y NO corta el turno; solo un fallo del store (de
+// Publish/ToolSuccess/ToolFailed) lo hace. Ademas del Tool.Failed durable, el error
+// se escribe por r.logf (stderr en `wails dev`): ni el log durable ni el mensaje al
+// modelo son visibles para el dev.
 func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Event,
 	pub *Publisher, settle tool.SettleFunc) (bool, error) {
 
@@ -146,6 +154,7 @@ func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Ev
 	cleanupCtx := context.WithoutCancel(ctx)
 	needsContinuation := false
 	var streamErr *ProviderError
+	var calls []llm.Event
 	for ev := range in {
 		if ev.Kind == llm.StepFailed {
 			streamErr = &ProviderError{Message: ev.Text}
@@ -155,38 +164,43 @@ func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Ev
 			return false, err
 		}
 		if ev.Kind == llm.ToolCall && !ev.ProviderExecuted {
-			ev := ev // capture for the goroutine
 			needsContinuation = true
-			g.Go(func() error {
-				call := tool.Call{ID: ev.CallID, Name: ev.ToolName, Input: ev.Input}
-				// Ask-before-run: if the tool is gated, ask for approval before
-				// settling. The request is persisted (the UI shows the prompt) and
-				// Ask blocks until the decision. Deny publishes Tool.Failed and does
-				// NOT run the tool.
-				if r.gate != nil && r.needsApproval != nil && r.needsApproval(call) {
-					if err := pub.ToolPermissionRequested(cleanupCtx, ev.CallID); err != nil {
-						return err
-					}
-					approved, askErr := r.gate.Ask(gctx, session.PermissionRequest{
-						SessionID: sessionID, CallID: ev.CallID, ToolName: ev.ToolName, Input: ev.Input,
-					})
-					if askErr != nil {
-						// ctx cancelled or other gate failure: leave the call unsettled;
-						// the turn close (FailUnresolvedTools) marks it Tool.Failed.
-						return nil
-					}
-					if !approved {
-						return pub.ToolFailed(cleanupCtx, ev.CallID, errPermissionDenied)
-					}
-				}
-				res, err := settle(tool.WithSessionID(gctx, sessionID), call)
-				if err != nil {
-					r.logf("atenea: tool %q (call %s) fallo: %v", ev.ToolName, ev.CallID, err)
-					return pub.ToolFailed(cleanupCtx, ev.CallID, err)
-				}
-				return pub.ToolSuccess(cleanupCtx, ev.CallID, res.Output, res.Diff)
-			})
+			calls = append(calls, ev)
 		}
+	}
+	// El stream termino: el Message assistant ya esta persistido. Recien ahora se
+	// asientan las tools, en paralelo entre si.
+	for _, ev := range calls {
+		ev := ev // capture for the goroutine
+		g.Go(func() error {
+			call := tool.Call{ID: ev.CallID, Name: ev.ToolName, Input: ev.Input}
+			// Ask-before-run: if the tool is gated, ask for approval before
+			// settling. The request is persisted (the UI shows the prompt) and
+			// Ask blocks until the decision. Deny publishes Tool.Failed and does
+			// NOT run the tool.
+			if r.gate != nil && r.needsApproval != nil && r.needsApproval(call) {
+				if err := pub.ToolPermissionRequested(cleanupCtx, ev.CallID); err != nil {
+					return err
+				}
+				approved, askErr := r.gate.Ask(gctx, session.PermissionRequest{
+					SessionID: sessionID, CallID: ev.CallID, ToolName: ev.ToolName, Input: ev.Input,
+				})
+				if askErr != nil {
+					// ctx cancelled or other gate failure: leave the call unsettled;
+					// the turn close (FailUnresolvedTools) marks it Tool.Failed.
+					return nil
+				}
+				if !approved {
+					return pub.ToolFailed(cleanupCtx, ev.CallID, errPermissionDenied)
+				}
+			}
+			res, err := settle(tool.WithSessionID(gctx, sessionID), call)
+			if err != nil {
+				r.logf("atenea: tool %q (call %s) fallo: %v", ev.ToolName, ev.CallID, err)
+				return pub.ToolFailed(cleanupCtx, ev.CallID, err)
+			}
+			return pub.ToolSuccess(cleanupCtx, ev.CallID, res.Output, res.Diff)
+		})
 	}
 	if err := g.Wait(); err != nil {
 		return false, err

@@ -263,6 +263,82 @@ func TestRunner_TwoToolCallsSettleConcurrentlyAndTurnWaits(t *testing.T) {
 	}
 }
 
+// TestRunner_MultiToolResultsFollowAssistantMessage triangula el invariante de
+// orden del historial con DOS tool calls locales que asientan al instante: en la
+// proyeccion (Messages) el Message assistant que declara AMBOS call ids debe
+// aparecer ANTES que los dos Message role=tool, y ambos resultados deben estar
+// presentes. Tumbaria un fix que solo difiera el settle de la PRIMERA call: el
+// settle inmediato de c2 (echo asienta al instante) publicaria su Tool.Success
+// antes del Step.Ended que materializa el assistant.
+func TestRunner_MultiToolResultsFollowAssistantMessage(t *testing.T) {
+	ctx := context.Background()
+	store := newRecordingStore()
+	seedUser(t, store, "s1")
+
+	fake := llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.ToolCall, CallID: "c1", ToolName: "echo", Input: json.RawMessage(`{"text":"uno"}`)},
+		llm.Event{Kind: llm.ToolCall, CallID: "c2", ToolName: "echo", Input: json.RawMessage(`{"text":"dos"}`)},
+		llm.Event{Kind: llm.StepEnded},
+	)
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	r := NewRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
+
+	cont, err := r.runTurn(ctx, "s1")
+	if err != nil {
+		t.Fatalf("runTurn error inesperado: %v", err)
+	}
+	if !cont {
+		t.Errorf("runTurn cont = false, quiero true (hubo tool calls locales)")
+	}
+
+	msgs, err := store.Messages(ctx, "s1", 0)
+	if err != nil {
+		t.Fatalf("Messages error inesperado: %v", err)
+	}
+
+	// Indice del assistant que declara ambos call ids y de cada Message role=tool.
+	asstIdx, c1Idx, c2Idx := -1, -1, -1
+	for i, m := range msgs {
+		switch {
+		case m.Role == session.RoleAssistant:
+			declared := make(map[string]bool)
+			for _, tc := range m.ToolCalls {
+				declared[tc.ID] = true
+			}
+			if declared["c1"] && declared["c2"] {
+				asstIdx = i
+			}
+		case m.Role == session.RoleTool && m.ToolCallID == "c1":
+			c1Idx = i
+		case m.Role == session.RoleTool && m.ToolCallID == "c2":
+			c2Idx = i
+		}
+	}
+	if asstIdx == -1 {
+		t.Fatalf("no hay Message assistant declarando c1 y c2; mensajes = %+v", msgs)
+	}
+	if c1Idx == -1 || c2Idx == -1 {
+		t.Fatalf("faltan resultados role=tool (c1 idx %d, c2 idx %d); mensajes = %+v", c1Idx, c2Idx, msgs)
+	}
+	// El assistant precede a AMBOS resultados: un fix que solo difiera la primera
+	// call dejaria el resultado de c2 antes del assistant.
+	if !(asstIdx < c1Idx) {
+		t.Errorf("assistant (idx %d) no precede al resultado de c1 (idx %d)", asstIdx, c1Idx)
+	}
+	if !(asstIdx < c2Idx) {
+		t.Errorf("assistant (idx %d) no precede al resultado de c2 (idx %d)", asstIdx, c2Idx)
+	}
+
+	// Ambos resultados presentes con su output.
+	if !hasToolMessage(msgs, "c1", "uno") {
+		t.Errorf("la proyeccion no contiene Message{ID:c1, Role:tool, Text:uno}; mensajes = %+v", msgs)
+	}
+	if !hasToolMessage(msgs, "c2", "dos") {
+		t.Errorf("la proyeccion no contiene Message{ID:c2, Role:tool, Text:dos}; mensajes = %+v", msgs)
+	}
+}
+
 // TestRunner_LocalToolFailureRecordsToolFailed guiona una tool call con input
 // invalido (Echo.Execute falla al parsear). El fallo es in-band: afirma cont ==
 // true, err == nil; que se persistio un Tool.Failed con Error no vacio y NO un

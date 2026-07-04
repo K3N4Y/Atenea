@@ -31,6 +31,14 @@ type turnProvider struct {
 	// anunciadas en el Request: la evidencia observable del modo del turno
 	// (plan-mode anuncia present_plan y esconde bash/write).
 	toolNames [][]string
+	// messages registra, por cada llamada a Stream, el historial proyectado que
+	// el runner envio al proveedor: la evidencia observable del orden en que los
+	// eventos se materializaron como Messages.
+	messages [][]llm.Message
+	// delayStepEnded, si es > 0, duerme ese lapso entre un ToolCall del guion y
+	// el StepEnded que lo sigue: espejo deterministico del ultimo chunk SSE que
+	// llega tarde por la red mientras la tool ya se esta asentando localmente.
+	delayStepEnded time.Duration
 }
 
 var _ llm.Provider = (*turnProvider)(nil)
@@ -46,21 +54,30 @@ func (p *turnProvider) Stream(ctx context.Context, req llm.Request) (<-chan llm.
 		names[i] = def.Name
 	}
 	p.toolNames = append(p.toolNames, names)
+	p.messages = append(p.messages, append([]llm.Message(nil), req.Messages...))
 	script := []llm.Event{{Kind: llm.StepEnded}}
 	if p.next < len(p.turns) {
 		script = p.turns[p.next]
 		p.next++
 	}
+	delay := p.delayStepEnded
 	p.mu.Unlock()
 
 	out := make(chan llm.Event)
 	go func() {
 		defer close(out)
+		sawToolCall := false
 		for _, ev := range script {
+			if ev.Kind == llm.StepEnded && sawToolCall && delay > 0 {
+				time.Sleep(delay)
+			}
 			select {
 			case <-ctx.Done():
 				return
 			case out <- ev:
+			}
+			if ev.Kind == llm.ToolCall {
+				sawToolCall = true
 			}
 		}
 	}()
@@ -74,6 +91,15 @@ func (p *turnProvider) requestedTools() [][]string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([][]string(nil), p.toolNames...)
+}
+
+// requestedMessages devuelve una copia del historial proyectado enviado en cada
+// llamada a Stream, en orden de llegada. Con mutex: el runner llama Stream
+// desde su propia goroutine.
+func (p *turnProvider) requestedMessages() [][]llm.Message {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([][]llm.Message(nil), p.messages...)
 }
 
 // nextMsg saca el siguiente mensaje del canal del engine, con timeout generoso
@@ -320,6 +346,66 @@ func TestEngine_StopUnblocksPendingPermission(t *testing.T) {
 	}
 }
 
+func TestEngine_AcceptPlanRunsImplementationInNormalMode(t *testing.T) {
+	// TRIANGULATE: AcceptPlan debe volver la sesion a modo normal y promover el
+	// prompt fijo de implementacion como prompt del usuario, arrancando la
+	// corrida (espejo de App.AcceptPlan). Evidencia observable: el Request del
+	// turno de AcceptPlan vuelve a anunciar bash (modo normal) y entre los
+	// eventos llega el Message user con el texto del prompt fijo.
+	textTurn := func(text string) []llm.Event {
+		return []llm.Event{
+			{Kind: llm.StepStarted},
+			{Kind: llm.TextStarted},
+			{Kind: llm.TextDelta, Text: text},
+			{Kind: llm.TextEnded},
+			{Kind: llm.StepEnded},
+		}
+	}
+	provider := newTurnProvider(textTurn("plan listo"), textTurn("implementado"))
+	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
+
+	// Corrida de plan previa: deja la sesion en plan-mode con el plan presentado.
+	if err := e.SendPlanPrompt("s1", "planea"); err != nil {
+		t.Fatalf("SendPlanPrompt(s1, planea) = %v, se esperaba nil", err)
+	}
+	if _, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil); done.Err != "" {
+		t.Fatalf("RunDoneMsg.Err = %q, se esperaba corrida limpia en plan-mode", done.Err)
+	}
+	planCalls := len(provider.requestedTools())
+
+	// El usuario acepta el plan: debe arrancar la corrida de implementacion.
+	if err := e.AcceptPlan("s1"); err != nil {
+		t.Fatalf("AcceptPlan(s1) = %v, se esperaba nil", err)
+	}
+	events, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil)
+	if done.Err != "" {
+		t.Fatalf("RunDoneMsg.Err = %q, se esperaba corrida limpia al ejecutar el plan", done.Err)
+	}
+
+	calls := provider.requestedTools()
+	if len(calls) <= planCalls {
+		t.Fatalf("el provider registro %d llamadas a Stream tras AcceptPlan (habia %d): aceptar el plan debe arrancar una corrida nueva", len(calls), planCalls)
+	}
+	acceptTools := calls[len(calls)-1]
+	if !slices.Contains(acceptTools, "bash") {
+		t.Errorf("tools del turno de AcceptPlan = %v, debe incluir %q: aceptar el plan vuelve la sesion a modo normal", acceptTools, "bash")
+	}
+
+	var prompt *session.Message
+	for _, ev := range events {
+		if ev.Message != nil && ev.Message.Role == session.RoleUser {
+			msg := *ev.Message
+			prompt = &msg
+		}
+	}
+	if prompt == nil {
+		t.Fatalf("no llego ningun Message user entre %d eventos: AcceptPlan debe promover el prompt fijo de implementacion", len(events))
+	}
+	if !strings.Contains(prompt.Text, "aprobado") {
+		t.Errorf("Message user promovido = %q, debe contener %q (el prompt fijo de implementacion)", prompt.Text, "aprobado")
+	}
+}
+
 func TestEngine_SendPlanPromptRunsInPlanMode(t *testing.T) {
 	// TRIANGULATE: SendPlanPrompt debe correr el turno en plan-mode REAL (como
 	// en la app Wails), no delegar en SendPrompt. La evidencia observable son
@@ -374,5 +460,83 @@ func TestEngine_SendPlanPromptRunsInPlanMode(t *testing.T) {
 	buildTools := calls[len(calls)-1]
 	if !slices.Contains(buildTools, "bash") {
 		t.Errorf("tools del turno normal = %v, debe incluir %q: el modo es por envio y SendPrompt vuelve a build", buildTools, "bash")
+	}
+}
+
+func TestEngine_ToolResultNeverPrecedesAssistantMessageInHistory(t *testing.T) {
+	// RED (bug real visto con OpenRouter/Cohere): cuando el modelo responde SOLO
+	// con una tool call que falla al instante (read con ruta absoluta: muere en
+	// la validacion de sandboxJoin, sin I/O), el Tool.Failed (que materializa el
+	// Message role=tool) puede persistirse ANTES que el Step.Ended (que
+	// materializa el Message assistant con los tool_calls), porque el runner
+	// asienta la tool en una goroutine concurrente mientras el StepEnded aun
+	// viaja por la red. El historial proyectado queda `user, tool, assistant` y
+	// el siguiente request al provider devuelve 400: "tool call id not found in
+	// previous tool calls". El delay del provider reproduce esa carrera de forma
+	// deterministica: el ultimo chunk SSE (StepEnded) llega ~100ms tarde.
+	provider := newTurnProvider(
+		[]llm.Event{
+			{Kind: llm.StepStarted},
+			{Kind: llm.ToolCall, CallID: "c1", ToolName: "read", Input: json.RawMessage(`{"path":"/etc/fuera"}`)},
+			{Kind: llm.StepEnded},
+		},
+		[]llm.Event{
+			{Kind: llm.StepStarted},
+			{Kind: llm.TextStarted},
+			{Kind: llm.TextDelta, Text: "no pude leerlo"},
+			{Kind: llm.TextEnded},
+			{Kind: llm.StepEnded},
+		},
+	)
+	provider.delayStepEnded = 100 * time.Millisecond
+	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
+
+	if err := e.SendPrompt("s1", "lee eso"); err != nil {
+		t.Fatalf("SendPrompt(s1, lee eso) = %v, se esperaba nil", err)
+	}
+	if _, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil); done.Err != "" {
+		t.Fatalf("RunDoneMsg.Err = %q, se esperaba corrida limpia (la tool fallida no es fallo de la corrida)", done.Err)
+	}
+
+	calls := provider.requestedMessages()
+	if len(calls) < 2 {
+		t.Fatalf("el provider registro %d llamadas a Stream, se esperaban al menos 2 (turno de la tool + turno de cierre)", len(calls))
+	}
+	history := calls[1] // el historial proyectado que ve el provider en el turno 2
+
+	// La secuencia de roles proyectada, para un mensaje de fallo legible.
+	roles := make([]string, len(history))
+	for i, m := range history {
+		roles[i] = m.Role
+		if m.Role == "assistant" && len(m.ToolCalls) > 0 {
+			roles[i] = "assistant(tool_calls)"
+		}
+		if m.Role == "tool" {
+			roles[i] = "tool(" + m.ToolCallID + ")"
+		}
+	}
+
+	assistantIdx, toolIdx := -1, -1
+	for i, m := range history {
+		if m.Role == "assistant" && assistantIdx < 0 {
+			for _, tc := range m.ToolCalls {
+				if tc.ID == "c1" {
+					assistantIdx = i
+				}
+			}
+		}
+		if m.Role == "tool" && m.ToolCallID == "c1" && toolIdx < 0 {
+			toolIdx = i
+		}
+	}
+
+	if assistantIdx < 0 {
+		t.Fatalf("el historial del turno 2 no tiene ningun Message assistant con la tool call c1; secuencia de roles proyectada: %v", roles)
+	}
+	if toolIdx < 0 {
+		t.Fatalf("el historial del turno 2 no tiene ningun Message role=tool con ToolCallID c1; secuencia de roles proyectada: %v", roles)
+	}
+	if toolIdx < assistantIdx {
+		t.Fatalf("el Message role=tool de c1 (indice %d) precede al Message assistant con sus tool_calls (indice %d); un provider real lo rechaza con 400 (tool call id not found in previous tool calls); secuencia de roles proyectada: %v", toolIdx, assistantIdx, roles)
 	}
 }
