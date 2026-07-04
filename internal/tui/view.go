@@ -7,8 +7,27 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// inputReservedLines es el alto reservado para la linea de input bajo el viewport.
-const inputReservedLines = 1
+// composerBoxLines es el alto de la caja del composer bajo el viewport: borde
+// superior, la linea de input y borde inferior. La caja nunca crece: un prompt
+// mas largo que el ancho scrollea horizontal dentro del textinput (ver
+// resizeViewport) en vez de envolver a mas lineas.
+const composerBoxLines = 3
+
+// composerBoxBorderWidth es el ancho que los dos bordes laterales de la caja
+// suman al contenido (Style.Width de lipgloss fija el ancho del CONTENIDO).
+const composerBoxBorderWidth = 2
+
+// composerBoxPadding es el padding horizontal de la caja del composer: una
+// celda de espacio entre cada borde lateral y el contenido, para que la linea
+// interior renda "│ ❯" (estilo Claude Code) en vez del prompt pegado al
+// borde. Style.Width de lipgloss INCLUYE el padding, asi que composerBox no
+// lo descuenta del ancho, pero resizeViewport si resta las 2*composerBoxPadding
+// celdas al fijar el ancho del textinput.
+const composerBoxPadding = 1
+
+// inputCursorWidth es la celda extra que bubbles/textinput rende siempre para
+// el cursor cuando tiene Width fijado (ademas del prompt y el texto visible).
+const inputCursorWidth = 1
 
 // workingIndicator es la linea de estado estable mostrada mientras hay una
 // corrida en curso (marcador estatico; la animacion es polish posterior).
@@ -32,6 +51,16 @@ var (
 	permissionStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
 	errorStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 	statusStyle      = lipgloss.NewStyle().Faint(true)
+
+	// composerBoxStyle es la caja de borde redondeado del composer (estilo
+	// Claude Code). Es la excepcion deliberada a la regla de arriba: agrega las
+	// dos lineas de borde que reservedLines ya descuenta (composerBoxLines) y
+	// el padding horizontal (composerBoxPadding) a cada lado del contenido. El
+	// borde queda sin color para que sus caracteres (╭/│/╰) sigan siendo
+	// contenido plano asertable por los tests.
+	composerBoxStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				Padding(0, composerBoxPadding)
 )
 
 // render produce la linea del bloque; los marcadores y el contenido son
@@ -68,13 +97,28 @@ func (m Model) renderTranscript() string {
 	return strings.Join(parts, "\n\n")
 }
 
-// reservedLines es el alto reservado bajo el transcript: la linea de input y,
-// con corrida en curso, la linea de estado del indicador de trabajo.
+// reservedLines es el alto reservado bajo el transcript: la caja del composer
+// (3 lineas), con corrida en curso la linea de estado del indicador de
+// trabajo, y con status fijado la linea de pie del composer (agente y modelo).
 func (m Model) reservedLines() int {
+	reserved := composerBoxLines
 	if m.working {
-		return inputReservedLines + 1
+		reserved++
 	}
-	return inputReservedLines
+	if m.statusFooter() != "" {
+		reserved++
+	}
+	return reserved
+}
+
+// statusFooter es la linea de pie del composer con el agente activo y el
+// modelo de IA (formato "<agente> · <modelo>"). Sin status fijado devuelve ""
+// y la vista no agrega ninguna linea.
+func (m Model) statusFooter() string {
+	if m.agentName == "" && m.model == "" {
+		return ""
+	}
+	return m.agentName + " · " + m.model
 }
 
 // resizeViewport recalcula el alto del viewport con el ultimo tamano anunciado
@@ -84,10 +128,19 @@ func (m Model) reservedLines() int {
 // minuscula), y un alto negativo hace paniquear a bubbles/viewport (slice out
 // of range en visibleLines al hacer GotoBottom); con 0 el corte queda vacio y
 // no paniquea. Sin tamano conocido (ready == false) es no-op.
+//
+// Tambien fija el ancho visible del textinput al interior de la caja del
+// composer: ancho de la terminal menos los bordes laterales, el padding
+// horizontal, el prompt y la celda del cursor que bubbles agrega siempre al
+// final. Con Width > 0 el textinput scrollea horizontal en vez de crecer, y la
+// caja se mantiene en 3 lineas. Acotado a >= 0: en terminales minusculas
+// Width 0 desactiva el scroll (textinput a ancho natural, vista degradada pero
+// sin panic).
 func (m Model) resizeViewport() Model {
 	if !m.ready {
 		return m
 	}
+	m.input.Width = max(m.width-composerBoxBorderWidth-2*composerBoxPadding-ansi.StringWidth(inputPrompt)-inputCursorWidth, 0)
 	m.viewport.Width = max(m.width, 0)
 	m.viewport.Height = max(m.height-m.reservedLines(), 0)
 	return m.syncViewport()
@@ -112,15 +165,36 @@ func (m Model) syncViewport() Model {
 	return m
 }
 
-// View renderiza la conversacion con el input de texto al final. Con corrida
-// en curso una linea de estado con el indicador de trabajo precede al input;
-// el alto sigue acotado porque reservedLines ya la descuenta del viewport.
+// View renderiza la conversacion con la caja del composer al final. Con
+// corrida en curso una linea de estado con el indicador de trabajo precede a
+// la caja; con status fijado una linea de pie tenue con el agente y el modelo
+// la sigue. El alto sigue acotado porque reservedLines ya las descuenta del
+// viewport.
 func (m Model) View() string {
 	status := ""
 	if m.working {
 		status = statusStyle.Render(workingIndicator) + "\n"
 	}
-	return m.transcriptView() + status + m.input.View()
+	footer := ""
+	if f := m.statusFooter(); f != "" {
+		footer = "\n" + statusStyle.Render(f)
+	}
+	return m.transcriptView() + status + m.composerBox() + footer
+}
+
+// composerBox envuelve la linea de input en la caja de borde redondeado del
+// composer. Con tamano de terminal conocido cada linea de la caja mide
+// exactamente el ancho de la terminal: el interior se fija a width - 2
+// (Style.Width de lipgloss INCLUYE el padding pero no el borde, que suma
+// composerBoxBorderWidth), acotado a >= 0 para terminales minusculas, donde
+// Width 0 de lipgloss significa "sin fijar" y la caja queda a ancho natural
+// (con su padding), igual que sin tamano conocido.
+func (m Model) composerBox() string {
+	style := composerBoxStyle
+	if m.ready {
+		style = style.Width(max(m.width-composerBoxBorderWidth, 0))
+	}
+	return style.Render(m.input.View())
 }
 
 // transcriptView devuelve el transcript con su separador hacia el resto de la

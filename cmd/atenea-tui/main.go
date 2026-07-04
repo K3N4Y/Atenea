@@ -42,9 +42,13 @@ func main() {
 		root = "."
 	}
 
+	// El provider y la etiqueta del modelo se resuelven UNA vez: el mismo valor
+	// alimenta al engine y al pie del composer (no duplicar la resolucion).
+	provider, model := providerFromEnv()
+
 	engine := tui.NewEngine(tui.EngineConfig{
 		Root:     root,
-		Provider: providerFromEnv(),
+		Provider: provider,
 		Store:    session.NewMemoryStore(),
 	})
 
@@ -52,7 +56,9 @@ func main() {
 	// entre corridas si el store algun dia es durable.
 	sessionID := "tui-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 
-	m := tui.NewModel(engine, sessionID, engine.Events())
+	// El agente es siempre "build": la TUI no tiene plan-mode (el engine arma el
+	// runner con Mode nil, modo normal fijo) ni forma de cambiar agente/modelo.
+	m := tui.NewModel(engine, sessionID, engine.Events()).WithStatus("build", model)
 	// WithMouseCellMotion habilita el mouse tracking: sin el, la terminal nunca
 	// reporta la rueda a la app (en pantalla alternativa la traduce a flechas
 	// via "alternate scroll"); con la opcion llegan eventos de mouse reales.
@@ -64,18 +70,20 @@ func main() {
 
 // providerFromEnv elige el provider igual que la config inicial de la app Wails:
 // OpenRouter si hay OPENROUTER_API_KEY (modelo por OPENROUTER_MODEL), y si no el
-// demo sin red para probar la TUI sin configurar nada.
-func providerFromEnv() llm.Provider {
+// demo sin red para probar la TUI sin configurar nada. Devuelve ademas la
+// etiqueta del modelo para el pie del composer: "demo" con el provider fake, o
+// el modelo real de OpenRouter.
+func providerFromEnv() (llm.Provider, string) {
 	key := os.Getenv("OPENROUTER_API_KEY")
 	if key == "" {
 		log.Print("atenea-tui: sin OPENROUTER_API_KEY; usando provider de demo (sin red)")
-		return demoProvider()
+		return demoProvider(), "demo"
 	}
 	model := os.Getenv("OPENROUTER_MODEL")
 	if model == "" {
 		model = defaultModel
 	}
-	return llm.NewOpenAIProvider(key, openRouterBaseURL, model)
+	return llm.NewOpenAIProvider(key, openRouterBaseURL, model), model
 }
 
 // demoProvider arma un FakeProvider con un guion corto (texto + Step.Ended) para

@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"atenea/internal/session"
 )
@@ -69,6 +70,28 @@ func assertNoLineWiderThan(t *testing.T, view string, width int) {
 		if w := lipgloss.Width(line); w > width {
 			t.Fatalf("View() = %q, la linea %q mide %d celdas visibles, ninguna linea debe exceder el ancho de la terminal (%d)", view, line, w, width)
 		}
+	}
+}
+
+// assertBoxLinesExactWidth falla si alguna linea de la caja del composer (las
+// que empiezan con un caracter de borde ╭/│/╰) no mide exactamente width
+// celdas visibles, o si la vista no contiene ninguna. Mide con
+// ansi.StringWidth para ignorar codigos ANSI.
+func assertBoxLinesExactWidth(t *testing.T, view string, width int) {
+	t.Helper()
+	found := false
+	for _, line := range strings.Split(view, "\n") {
+		for _, prefix := range []string{"╭", "│", "╰"} {
+			if strings.HasPrefix(line, prefix) {
+				found = true
+				if w := ansi.StringWidth(line); w != width {
+					t.Fatalf("View() = %q, la linea de la caja %q mide %d celdas visibles, cada linea de la caja debe medir exactamente el ancho de la terminal (%d)", view, line, w, width)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("View() = %q, no contiene ninguna linea de la caja del composer (bordes ╭/│/╰)", view)
 	}
 }
 
@@ -946,6 +969,158 @@ func TestModel_FollowsTailOfWrappedResponse(t *testing.T) {
 	if lines := strings.Count(view, "\n") + 1; lines > 10 {
 		t.Fatalf("View() tiene %d lineas, no debe exceder el alto de la terminal (10)", lines)
 	}
+}
+
+func TestModel_ComposerFooterShowsAgentAndModel(t *testing.T) {
+	// El composer debe mostrar, en una linea de pie tenue DEBAJO del input,
+	// el agente activo y el modelo en uso (estilo Claude Code). La info entra
+	// una sola vez al construir el Model via WithStatus; la TUI no la cambia.
+	m := NewModel(nil, "s1", nil).WithStatus("build", "openrouter/free")
+
+	// Sin tamano de terminal conocido (fallback sin viewport) el pie ya se ve.
+	view := m.View()
+	for _, want := range []string{"build", "openrouter/free"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("View() = %q, debe contener %q en el pie del composer (agente y modelo)", view, want)
+		}
+	}
+	if promptAt, footerAt := strings.Index(view, inputPrompt), strings.Index(view, "openrouter/free"); promptAt >= footerAt {
+		t.Fatalf("View() = %q, el pie (openrouter/free en %d) debe aparecer DESPUES del input (%q en %d)", view, footerAt, inputPrompt, promptAt)
+	}
+
+	// Con tamano de terminal conocido (viewport activo) el pie sigue visible.
+	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 20})
+	view = m.View()
+	for _, want := range []string{"build", "openrouter/free"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("View() = %q, tras WindowSizeMsg debe seguir conteniendo %q en el pie del composer", view, want)
+		}
+	}
+	if promptAt, footerAt := strings.Index(view, inputPrompt), strings.Index(view, "openrouter/free"); promptAt >= footerAt {
+		t.Fatalf("View() = %q, tras WindowSizeMsg el pie (openrouter/free en %d) debe aparecer DESPUES del input (%q en %d)", view, footerAt, inputPrompt, promptAt)
+	}
+}
+
+func TestModel_ComposerBoxWrapsInput(t *testing.T) {
+	// TRIANGULATE: el input vive SIEMPRE dentro de una caja de borde redondeado
+	// que abarca el ancho de la terminal (estilo Claude Code), este o no fijado
+	// el status del composer.
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 12})
+
+	view := m.View()
+	for _, want := range []string{"╭", "╰"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("View() = %q, el input debe renderizarse dentro de una caja de borde redondeado: falta %q", view, want)
+		}
+	}
+	assertBoxLinesExactWidth(t, view, 40)
+
+	// La caja tiene padding horizontal (estilo Claude Code): la linea interior
+	// arranca con "│ ❯" (borde, espacio, prompt), no con el prompt pegado al
+	// borde. Se mide sin ANSI porque el prompt va estilizado.
+	if plain := ansi.Strip(view); !strings.Contains(plain, "│ ❯") {
+		t.Fatalf("View() sin ANSI = %q, la linea interior de la caja debe tener padding horizontal: debe contener %q (borde, espacio, prompt), no el prompt pegado al borde", plain, "│ ❯")
+	}
+
+	topAt, inputAt, bottomAt := -1, -1, -1
+	for i, line := range strings.Split(view, "\n") {
+		switch {
+		case strings.HasPrefix(line, "╭"):
+			topAt = i
+		case strings.HasPrefix(line, "╰"):
+			bottomAt = i
+		case strings.Contains(line, inputPrompt):
+			inputAt = i
+		}
+	}
+	if topAt == -1 || inputAt == -1 || bottomAt == -1 || topAt >= inputAt || inputAt >= bottomAt {
+		t.Fatalf("View() = %q, la linea del input (%q en %d) debe quedar ENTRE el borde superior (╭ en %d) y el inferior (╰ en %d)", view, inputPrompt, inputAt, topAt, bottomAt)
+	}
+
+	// Con status fijado el pie queda DEBAJO del borde inferior de la caja.
+	m2 := NewModel(nil, "s1", nil).WithStatus("build", "openrouter/free")
+	m2 = apply(t, m2, tea.WindowSizeMsg{Width: 40, Height: 12})
+	view2 := m2.View()
+	bottomAt2 := strings.Index(view2, "╰")
+	footerAt := strings.Index(view2, "openrouter/free")
+	if bottomAt2 == -1 || footerAt == -1 || footerAt < bottomAt2 {
+		t.Fatalf("View() = %q, el pie de status (openrouter/free en %d) debe aparecer DESPUES del borde inferior de la caja (╰ en %d)", view2, footerAt, bottomAt2)
+	}
+}
+
+func TestModel_ComposerBoxFollowsResize(t *testing.T) {
+	// TRIANGULATE: una caja hardcodeada al primer ancho anunciado no sirve;
+	// tras redimensionar la terminal cada linea de la caja debe medir el ancho
+	// nuevo.
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 12})
+	assertBoxLinesExactWidth(t, m.View(), 40)
+
+	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 12})
+	assertBoxLinesExactWidth(t, m.View(), 60)
+}
+
+func TestModel_ViewFitsHeightWithBoxFooterAndIndicator(t *testing.T) {
+	// TRIANGULATE: con la caja (3 lineas), el pie de status y el indicador de
+	// trabajo encendidos a la vez, el alto sigue acotado al de la terminal y la
+	// vista sigue la cola del transcript.
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil).WithStatus("build", "openrouter/free")
+	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 12})
+
+	// Muchas mas entradas de las que caben en 12 lineas.
+	for i := 0; i < 30; i++ {
+		m = apply(t, m, EventMsg{Message: &session.Message{
+			ID:   fmt.Sprintf("u%02d", i),
+			Role: session.RoleUser,
+			Text: fmt.Sprintf("mensaje-%02d", i),
+		}})
+	}
+
+	// Enviar un prompt enciende working: aparece el indicador sobre la caja.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := m.View()
+	if lines := strings.Count(view, "\n") + 1; lines > 12 {
+		t.Fatalf("View() tiene %d lineas, caja + pie + indicador no deben romper el alto acotado (<= 12)", lines)
+	}
+	for _, want := range []string{"mensaje-29", "trabajando", "build", "openrouter/free"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("View() = %q, debe contener %q (cola del transcript, indicador de trabajo y pie de status)", view, want)
+		}
+	}
+	assertBoxLinesExactWidth(t, view, 40)
+}
+
+func TestModel_LongTypedPromptKeepsBoxSingleLine(t *testing.T) {
+	// TRIANGULATE: un prompt tecleado mas largo que el ancho de la terminal NO
+	// debe envolver la caja a mas lineas: el textinput scrollea horizontal y la
+	// caja se mantiene en 3 lineas (borde, UNA linea de input, borde).
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 24, Height: 10})
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(strings.Repeat("a", 80))})
+
+	view := m.View()
+	if lines := strings.Count(view, "\n") + 1; lines > 10 {
+		t.Fatalf("View() tiene %d lineas, un prompt largo no debe romper el alto acotado (<= 10)", lines)
+	}
+	if got := strings.Count(view, "❯"); got != 1 {
+		t.Fatalf("View() = %q, el prompt %q debe aparecer exactamente una vez (count=%d): el prompt largo no debe envolver la caja", view, "❯", got)
+	}
+	interior := 0
+	for _, line := range strings.Split(view, "\n") {
+		if strings.HasPrefix(line, "│") {
+			interior++
+		}
+	}
+	if interior != 1 {
+		t.Fatalf("View() = %q, la caja debe seguir siendo de 3 lineas con UNA sola linea interior (lineas │ = %d)", view, interior)
+	}
+	assertNoLineWiderThan(t, view, 24)
+	assertBoxLinesExactWidth(t, view, 24)
 }
 
 func TestModel_EnterSendsTypedPromptViaAgent(t *testing.T) {

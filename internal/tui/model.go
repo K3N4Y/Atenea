@@ -79,11 +79,18 @@ type Model struct {
 	// ready se activa con el primer tea.WindowSizeMsg (sin tamano conocido la
 	// vista usa el render completo como fallback). width/height guardan el
 	// ultimo tamano anunciado para recalcular el alto cuando cambian las
-	// lineas reservadas bajo el transcript (input + linea de estado).
+	// lineas reservadas bajo el transcript (caja del composer, indicador de
+	// trabajo y pie con agente/modelo).
 	viewport viewport.Model
 	ready    bool
 	width    int
 	height   int
+
+	// agentName y model son la info de solo lectura del pie del composer
+	// (agente activo y modelo de IA); entran una sola vez via WithStatus y no
+	// hay forma de cambiarlas desde el teclado.
+	agentName string
+	model     string
 }
 
 // NewModel construye el Model raiz de la TUI.
@@ -93,6 +100,14 @@ func NewModel(agent Agent, sessionID string, events <-chan tea.Msg) Model {
 	input.PromptStyle = accentStyle
 	input.Focus()
 	return Model{agent: agent, sessionID: sessionID, events: events, input: input}
+}
+
+// WithStatus fija el agente activo y el modelo de IA a mostrar en el pie del
+// composer. Builder de valor: la info entra una sola vez al construir el Model.
+func (m Model) WithStatus(agentName, model string) Model {
+	m.agentName = agentName
+	m.model = model
+	return m
 }
 
 // PendingPermission devuelve el CallID de la solicitud de aprobacion pendiente

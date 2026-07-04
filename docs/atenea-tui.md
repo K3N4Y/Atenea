@@ -29,7 +29,8 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
   (texto assistant en streaming, mensajes user, tool calls con estado, permisos
   pendientes, errores); `model.go` maneja teclado y la bomba de eventos del
   canal; `view.go` renderiza con viewport de alto acotado (sigue la cola,
-  PgUp/PgDn), linea de estado de trabajo, input y estilos lipgloss.
+  PgUp/PgDn), linea de estado de trabajo, la caja del composer con borde
+  redondeado y el pie con agente/modelo, todo con estilos lipgloss.
 - `internal/wiring` — el ensamblado compartido extraido de `app.go`: registry de
   tools, skills y slash-commands, catalogo de subagentes con el gate propagado,
   system prompts (normal/plan/local) y el runner configurado. `App.wire` y
@@ -49,6 +50,9 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
 - El viewport respeta el alto de la terminal, sigue la cola con eventos nuevos y
   sobrevive terminales minusculas (0x0/1 linea: dimensiones acotadas a >= 0;
   panic real de bubbles/viewport encontrado en el smoke E2E bajo pty).
+- La caja del composer mide el ancho de la terminal y nunca crece de 3 lineas
+  (un prompt mas largo que el ancho scrollea horizontal dentro del input); el
+  pie muestra `<agente> · <modelo>` fijados una sola vez via `WithStatus`.
 
 ## Correr
 
@@ -62,7 +66,9 @@ OPENROUTER_API_KEY=... ./build/bin/atenea-tui
 
 - Store en memoria: las sesiones de la TUI no persisten ni aparecen en la
   sidebar de la app (compartir el SQLite exige coordinar acceso concurrente).
-- Sin plan-mode, sin slash-commands ni @-menu en el composer de la TUI.
+- Sin plan-mode ni forma de cambiar agente/modelo desde la TUI (tampoco
+  slash-commands ni @-menu en el composer): el pie muestra "build" y el modelo
+  del entorno, fijos por corrida.
 - El indicador de trabajo es estatico (sin animacion de spinner).
 - Un prompt nuevo mientras corre una actividad cancela la corrida anterior
   (mismo comportamiento que la app Wails hoy).
