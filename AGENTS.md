@@ -4,8 +4,19 @@ How `atenea` is worked on. This is the default way of working for any agent
 (human or AI) touching this repo. It is based on the skill
 `.claude/skills/tdd-cycle-evidence/SKILL.md`: verifiable TDD with evidence.
 
-## Stack
+## Guidelines
+- when making a technical decisions, do not give much weight to development cost.
+instead, prefer Quality, simplicity, robutnes, scalability, and long term maintainability. 
+- when writing a commit mesagges, NEVER auto-add your agent name as co-author
+- when doing a bug fixes, always start with reproducing the bug in an E2E settings as closely aligned it how and end use this
+makes sure you find the real problem so your fix will actually solve it.
+- when end-to-end testing a product, be picky about the UI you see and be obsessed with the pixel perfection.
+if something clearly look off, even if it is not directly related to what you are doing, try to get it fixed along.
+- apply that same high standard to engineering excellence: lint, test failure, and test flakiness.
+if you see one, even if it is no caused by what you are working on right now, still get it fixed.
 
+
+## Stack
 - Backend: Go 1.23+ (tested with go1.26).
 - App: Wails v2.12 (Go + web frontend).
 - Frontend: under `frontend/` (npm).
@@ -13,47 +24,15 @@ How `atenea` is worked on. This is the default way of working for any agent
 
 ## Core rule: TDD with evidence
 
-To implement features, fix bugs, or change existing code, follow the cycle in
-order and **do not skip steps**:
+To implement features, fix bugs, or change existing code, follow the verifiable
+TDD cycle with evidence. Do not skip steps:
 
 `Safety net -> Understand -> RED -> GREEN -> TRIANGULATE -> REFACTOR -> Evidence`
 
-### 1. Safety net
-
-- If you modify existing files, run the relevant tests first.
-- If they fail, report the failure as preexisting and do not keep editing blind.
-- Record the command and the result before editing.
-
-### 2. Understand
-
-- Read the task, spec, acceptance scenarios, design, and existing patterns.
-- Identify the expected behavior before writing tests.
-- Follow the repo conventions for names, structure, helpers, and style.
-
-### 3. RED
-
-- Write a failing test first.
-- The test describes the expected behavior, not the implementation.
-- Do not write production code before the test.
-- Run the specific test and capture the expected failure.
-
-### 4. GREEN
-
-- Write the minimum code to pass the test.
-- Run the specific test, not the whole suite, unless it cannot be isolated.
-- Keep the change small and focused on the red case.
-
-### 5. TRIANGULATE
-
-- Add additional cases: happy path and edge case.
-- Use them to avoid false green from hardcoded code or weak tests.
-- Run the specific tests after each new case.
-
-### 6. REFACTOR
-
-- Clean up without changing behavior.
-- After each refactor, verify the tests still pass.
-- Separate refactors from functional changes when possible.
+The full cycle, the per-phase gates, and the `TDD Cycle Evidence` table live in
+the skill `.claude/skills/tdd-cycle-evidence/SKILL.md`. That skill is the source
+of truth: read it and follow it, and include the evidence table in the progress
+and the final response.
 
 ## Commands
 
@@ -95,21 +74,3 @@ wails build         # production build
 - The Wails boundary (`runtime.EventsEmit`) lives in `internal/event`; test
   the runner against a fake `EventBus`, not against Wails.
 - Docs in Spanish without accents, same as `docs/`.
-
-## Evidence
-
-In the progress and the final response, include the `TDD Cycle Evidence` table.
-It must show at least RED, GREEN, TRIANGULATE, and REFACTOR; add Safety net and
-Understand when they apply.
-
-| Phase | Evidence | Command or artifact | Result |
-| --- | --- | --- | --- |
-| Safety net | Existing tests checked | `go test ./...` | pass/fail/preexisting |
-| Understand | Relevant files and scenarios read | `<files>` | behavior identified |
-| RED | Failing test written first | `<test file>` and `go test -run ...` | expected failure |
-| GREEN | Minimal production code added | `<files>` and `go test -run ...` | specific test passed |
-| TRIANGULATE | Additional cases added | `<test file>` and `go test -run ...` | cases passed |
-| REFACTOR | Cleanup without behavior change | `<files>` and `go test ./...` | tests still passed |
-
-If a step does not apply, mark it `N/A` and explain why. If tests cannot be
-run, say so explicitly and show the blocker.
