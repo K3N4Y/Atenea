@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // inputReservedLines es el alto reservado para la linea de input bajo el viewport.
@@ -93,12 +94,20 @@ func (m Model) resizeViewport() Model {
 }
 
 // syncViewport vuelca el transcript al viewport y sigue la cola (auto-scroll
-// al fondo). Sin tamano conocido (ready == false) es no-op.
+// al fondo). El transcript se envuelve al ancho del viewport antes de
+// SetContent porque el viewport trunca horizontalmente cada linea (ansi.Cut),
+// no envuelve; pre-envolver ademas deja correcto el conteo de lineas que usa
+// GotoBottom. Con ancho <= 0 (terminal minuscula) no se envuelve. Sin tamano
+// conocido (ready == false) es no-op.
 func (m Model) syncViewport() Model {
 	if !m.ready {
 		return m
 	}
-	m.viewport.SetContent(m.renderTranscript())
+	transcript := m.renderTranscript()
+	if m.viewport.Width > 0 {
+		transcript = ansi.Wrap(transcript, m.viewport.Width, "")
+	}
+	m.viewport.SetContent(transcript)
 	m.viewport.GotoBottom()
 	return m
 }

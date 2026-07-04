@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"atenea/internal/session"
 )
@@ -58,6 +59,17 @@ func lineWith(t *testing.T, view, needle string) string {
 	}
 	t.Fatalf("View() = %q, no contiene ninguna linea con %q", view, needle)
 	return ""
+}
+
+// assertNoLineWiderThan falla si alguna linea de view excede width celdas
+// visibles (ancho de la terminal); mide con lipgloss.Width para ignorar ANSI.
+func assertNoLineWiderThan(t *testing.T, view string, width int) {
+	t.Helper()
+	for _, line := range strings.Split(view, "\n") {
+		if w := lipgloss.Width(line); w > width {
+			t.Fatalf("View() = %q, la linea %q mide %d celdas visibles, ninguna linea debe exceder el ancho de la terminal (%d)", view, line, w, width)
+		}
+	}
 }
 
 func TestModel_FoldsStreamingAssistantText(t *testing.T) {
@@ -692,6 +704,94 @@ func TestModel_RecoversAfterResizeFromTiny(t *testing.T) {
 	}
 	if strings.Contains(view, "mensaje-00") {
 		t.Fatalf("View() = %q, el alto debe seguir acotado: mensaje-00 no cabe en 10 lineas", view)
+	}
+	if lines := strings.Count(view, "\n") + 1; lines > 10 {
+		t.Fatalf("View() tiene %d lineas, no debe exceder el alto de la terminal (10)", lines)
+	}
+}
+
+func TestModel_WrapsLongAssistantTextToTerminalWidth(t *testing.T) {
+	// Bug real (reproducido E2E): en una terminal angosta la respuesta del
+	// assistant se ve como UNA sola linea truncada. El transcript se vuelca
+	// crudo al viewport de bubbles, que corta horizontalmente cada linea al
+	// ancho de la terminal (ansi.Cut) en vez de hacer word-wrap: el final del
+	// texto desaparece de la vista.
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
+
+	long := "esta es una respuesta larga del assistant que en una terminal angosta debe hacer wrap a varias lineas para leerse entera fin-de-respuesta"
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: long})
+
+	view := m.View()
+	if !strings.Contains(view, "fin-de-respuesta") {
+		t.Fatalf("View() = %q, el final del texto %q debe estar visible: el texto mas ancho que la terminal debe hacer wrap a varias lineas, no truncarse", view, "fin-de-respuesta")
+	}
+	assertNoLineWiderThan(t, view, 40)
+}
+
+func TestModel_RewrapsOnResize(t *testing.T) {
+	// TRIANGULATE: un fix pobre podria envolver el transcript UNA sola vez al
+	// primer ancho anunciado. Cuando la terminal se angosta, el texto debe
+	// re-envolverse al ancho nuevo, no quedar cortado al ancho viejo.
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
+
+	long := "esta respuesta larga del assistant debe re-envolverse cuando la terminal cambia de ancho fin-de-respuesta"
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: long})
+
+	// La terminal se angosta: el transcript debe re-envolverse a 24 celdas.
+	m = apply(t, m, tea.WindowSizeMsg{Width: 24, Height: 10})
+
+	view := m.View()
+	if !strings.Contains(view, "fin-de-respuesta") {
+		t.Fatalf("View() = %q, el final del texto %q debe seguir visible tras el resize: el transcript debe re-envolverse al ancho nuevo", view, "fin-de-respuesta")
+	}
+	assertNoLineWiderThan(t, view, 24)
+}
+
+func TestModel_WrapsUnbreakableLongToken(t *testing.T) {
+	// TRIANGULATE: una implementacion de solo word-wrap no parte tokens sin
+	// espacios mas largos que el ancho: una URL larga quedaria en una sola
+	// linea que el viewport trunca. El token debe partirse en varias lineas
+	// para leerse entero.
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
+
+	// Un solo token de 92 celdas sin espacios: cortado duro a 40 da lineas de
+	// 40 + 40 + 12, y el sufijo distintivo cae entero en la ultima linea.
+	url := "https://example.com/" + strings.Repeat("x", 60) + "sufijo-final"
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: url})
+
+	view := m.View()
+	if !strings.Contains(view, "sufijo-final") {
+		t.Fatalf("View() = %q, el final del token %q debe estar visible: un token sin espacios mas largo que el ancho debe partirse en varias lineas, no truncarse", view, "sufijo-final")
+	}
+	assertNoLineWiderThan(t, view, 40)
+}
+
+func TestModel_FollowsTailOfWrappedResponse(t *testing.T) {
+	// TRIANGULATE: GotoBottom cuenta lineas sobre el contenido ya cargado en el
+	// viewport. Si el transcript se envolviera DESPUES de SetContent, el conteo
+	// de lineas quedaria corto y la vista no seguiria la cola de una respuesta
+	// que envuelta ocupa mas lineas que el alto del viewport.
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
+
+	// ~500 celdas de palabras: envuelto a 40 ocupa ~14 lineas, mas que el alto
+	// del viewport (9). Token distintivo al inicio y otro al final.
+	long := "inicio-de-respuesta " + strings.Repeat("palabra ", 60) + "fin-de-respuesta"
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: long})
+
+	view := m.View()
+	if !strings.Contains(view, "fin-de-respuesta") {
+		t.Fatalf("View() = %q, la vista debe seguir la cola: el final %q de la respuesta envuelta debe estar visible", view, "fin-de-respuesta")
+	}
+	if strings.Contains(view, "inicio-de-respuesta") {
+		t.Fatalf("View() = %q, el inicio %q NO debe verse: la respuesta envuelta ocupa mas lineas que el viewport y la vista debe seguir la cola", view, "inicio-de-respuesta")
 	}
 	if lines := strings.Count(view, "\n") + 1; lines > 10 {
 		t.Fatalf("View() tiene %d lineas, no debe exceder el alto de la terminal (10)", lines)
