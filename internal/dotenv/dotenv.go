@@ -1,4 +1,7 @@
-package main
+// Package dotenv carga un archivo .env al entorno del proceso. Es la
+// conveniencia de desarrollo compartida por los binarios (app Wails y TUI):
+// deja OPENROUTER_API_KEY y demas a mano en dev sin exportarlas.
+package dotenv
 
 import (
 	"bufio"
@@ -7,12 +10,12 @@ import (
 	"strings"
 )
 
-// parseDotEnv lee pares KEY=VALUE de r y los devuelve en un mapa. Es el parser
+// parse lee pares KEY=VALUE de r y los devuelve en un mapa. Es el parser
 // minimo de un .env para cargar secretos de prueba sin una dependencia: ignora
 // lineas vacias y comentarios (#), recorta espacios y quita comillas envolventes
 // (dobles o simples). Corta solo en el primer '=', asi un valor con '=' se
 // conserva entero.
-func parseDotEnv(r io.Reader) map[string]string {
+func parse(r io.Reader) map[string]string {
 	out := map[string]string{}
 	sc := bufio.NewScanner(r)
 	for sc.Scan() {
@@ -44,17 +47,17 @@ func unquote(s string) string {
 	return s
 }
 
-// loadDotEnv carga el .env de path al entorno SIN pisar variables ya seteadas: las
-// env vars reales tienen prioridad sobre el archivo. La ausencia del archivo no es
-// error (corre en silencio). Es una conveniencia de desarrollo; en produccion las
-// claves siguen viniendo del entorno.
-func loadDotEnv(path string) {
+// Load carga el .env de path al entorno SIN pisar variables ya seteadas: las
+// env vars reales tienen prioridad sobre el archivo. La ausencia del archivo no
+// es error (corre en silencio). Es una conveniencia de desarrollo; en produccion
+// las claves siguen viniendo del entorno.
+func Load(path string) {
 	f, err := os.Open(path)
 	if err != nil {
 		return // no hay .env: no es error
 	}
 	defer f.Close()
-	for k, v := range parseDotEnv(f) {
+	for k, v := range parse(f) {
 		if _, ok := os.LookupEnv(k); !ok {
 			os.Setenv(k, v)
 		}

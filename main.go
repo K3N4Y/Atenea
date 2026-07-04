@@ -6,6 +6,8 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+
+	"atenea/internal/dotenv"
 )
 
 //go:embed all:frontend/dist
@@ -14,7 +16,7 @@ var assets embed.FS
 func main() {
 	// Cargar .env del cwd (si existe) antes de armar la app: deja OPENROUTER_API_KEY
 	// y demas a mano en dev sin exportarlas. Las env vars reales tienen prioridad.
-	loadDotEnv(".env")
+	dotenv.Load(".env")
 
 	// Create an instance of the app structure
 	app := NewApp()
