@@ -21,7 +21,8 @@ type fakeAgent struct {
 		sessionID, callID string
 		approved          bool
 	}
-	stopped []string
+	stopped  []string
+	accepted []string
 }
 
 func (f *fakeAgent) SendPrompt(sessionID, text string) error {
@@ -31,6 +32,11 @@ func (f *fakeAgent) SendPrompt(sessionID, text string) error {
 
 func (f *fakeAgent) SendPlanPrompt(sessionID, text string) error {
 	f.planSent = append(f.planSent, struct{ sessionID, text string }{sessionID, text})
+	return nil
+}
+
+func (f *fakeAgent) AcceptPlan(sessionID string) error {
+	f.accepted = append(f.accepted, sessionID)
 	return nil
 }
 
@@ -1210,6 +1216,139 @@ func TestModel_TabIsInertWhilePermissionPending(t *testing.T) {
 	}
 	if strings.Contains(view, "plan ·") {
 		t.Fatalf("View() = %q, con permiso pendiente Tab NO debe activar el modo plan", view)
+	}
+}
+
+func TestModel_PresentPlanOffersAcceptAndYExecutes(t *testing.T) {
+	// Cuando el agente presenta un plan (tool present_plan asentada con exito),
+	// la conversacion muestra una oferta de aprobacion pendiente; la tecla 'y'
+	// acepta el plan via Agent.AcceptPlan y retira la oferta.
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil).WithStatus("build", "m")
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "p1", ToolName: "present_plan"})
+	m = apply(t, m, EventMsg{Kind: session.KindToolSuccess, CallID: "p1"})
+
+	view := m.View()
+	planLine := lineWith(t, view, "[plan]")
+	if !strings.Contains(planLine, "(y ejecutar / n seguir en plan)") {
+		t.Fatalf("oferta de aprobacion = %q, debe contener %q", planLine, "(y ejecutar / n seguir en plan)")
+	}
+
+	// 'y' acepta el plan: UNA llamada a AcceptPlan con la sesion de la TUI.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+
+	if len(fake.accepted) != 1 {
+		t.Fatalf("AcceptPlan fue llamado %d veces, 'y' debe aceptar el plan exactamente una vez", len(fake.accepted))
+	}
+	if got := fake.accepted[0]; got != "s1" {
+		t.Fatalf("AcceptPlan(%q), se esperaba AcceptPlan(%q)", got, "s1")
+	}
+	if got := m.View(); strings.Contains(got, "[plan]") {
+		t.Fatalf("View() = %q, aceptar el plan debe retirar la oferta de aprobacion", got)
+	}
+	if len(fake.sent) != 0 {
+		t.Fatalf("SendPrompt fue llamado %d veces, aceptar el plan NO debe enviar un prompt por el camino de build", len(fake.sent))
+	}
+	if len(fake.planSent) != 0 {
+		t.Fatalf("SendPlanPrompt fue llamado %d veces, aceptar el plan NO debe enviar un prompt por el camino de plan", len(fake.planSent))
+	}
+}
+
+func TestModel_PlanApprovalNRejectsAndStaysInPlanMode(t *testing.T) {
+	// TRIANGULATE: 'n' descarta la oferta de aprobacion SIN tocar el modo ni
+	// aceptar nada: el pie sigue en plan y el proximo Enter sigue yendo por
+	// SendPlanPrompt. Una implementacion rota que apague planMode (o llame
+	// AcceptPlan) al rechazar debe caer aqui.
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil).WithStatus("build", "m")
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyTab}) // a plan-mode
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "p1", ToolName: "present_plan"})
+	m = apply(t, m, EventMsg{Kind: session.KindToolSuccess, CallID: "p1"})
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+
+	if got := m.View(); strings.Contains(got, "[plan]") {
+		t.Fatalf("View() = %q, 'n' debe retirar la oferta de aprobacion del plan", got)
+	}
+	if len(fake.accepted) != 0 {
+		t.Fatalf("AcceptPlan fue llamado %d veces, 'n' NO debe aceptar el plan", len(fake.accepted))
+	}
+	if got := m.View(); !strings.Contains(got, "plan · m") {
+		t.Fatalf("View() = %q, tras 'n' el pie debe seguir mostrando %q: rechazar la oferta no cambia el modo", got, "plan · m")
+	}
+
+	// El siguiente envio sigue yendo por el camino de plan: el modo no cambio.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("ajusta el plan")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(fake.planSent) != 1 {
+		t.Fatalf("SendPlanPrompt fue llamado %d veces, tras 'n' Enter debe seguir enviando por el camino de plan exactamente una vez", len(fake.planSent))
+	}
+	if got := fake.planSent[0]; got.sessionID != "s1" || got.text != "ajusta el plan" {
+		t.Fatalf("SendPlanPrompt(%q, %q), se esperaba SendPlanPrompt(%q, %q)", got.sessionID, got.text, "s1", "ajusta el plan")
+	}
+	if len(fake.sent) != 0 {
+		t.Fatalf("SendPrompt fue llamado %d veces, tras 'n' el prompt NO debe ir por el camino de build", len(fake.sent))
+	}
+}
+
+func TestModel_PlanApprovalCapturesKeyboard(t *testing.T) {
+	// TRIANGULATE: con la oferta de plan pendiente el teclado esta en modo
+	// aprobacion: las runas normales NO alimentan el input y Enter NO envia
+	// nada. 'y' despues acepta: el pie vuelve a build y la corrida queda
+	// trabajando hasta RunDoneMsg.
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil).WithStatus("build", "m")
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyTab}) // a plan-mode
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "p1", ToolName: "present_plan"})
+	m = apply(t, m, EventMsg{Kind: session.KindToolSuccess, CallID: "p1"})
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	if got := m.input.Value(); got != "" {
+		t.Fatalf("input.Value() = %q, las runas normales NO deben entrar al input mientras hay plan pendiente", got)
+	}
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(fake.sent) != 0 || len(fake.planSent) != 0 || len(fake.accepted) != 0 {
+		t.Fatalf("sent=%d planSent=%d accepted=%d, ni Enter ni las runas normales deben enviar o aceptar nada con plan pendiente", len(fake.sent), len(fake.planSent), len(fake.accepted))
+	}
+
+	// 'y' acepta: vuelve a build y la corrida queda en curso.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	if len(fake.accepted) != 1 || fake.accepted[0] != "s1" {
+		t.Fatalf("accepted = %v, 'y' debe llamar AcceptPlan(%q) exactamente una vez", fake.accepted, "s1")
+	}
+	view := m.View()
+	if !strings.Contains(view, "build · m") {
+		t.Fatalf("View() = %q, tras aceptar el plan el pie debe volver a %q", view, "build · m")
+	}
+	if strings.Contains(view, "plan ·") {
+		t.Fatalf("View() = %q, tras aceptar el plan el pie NO debe seguir mostrando %q", view, "plan ·")
+	}
+	if !strings.Contains(view, "trabajando") {
+		t.Fatalf("View() = %q, tras aceptar el plan la corrida queda en curso: debe verse el indicador %q", view, "trabajando")
+	}
+}
+
+func TestModel_PresentPlanFailedDoesNotOfferApproval(t *testing.T) {
+	// Punto fino: un present_plan asentado con Tool.Failed NO ofrece aprobacion
+	// y el teclado sigue normal (la runa va al input y 'y' no acepta nada).
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil).WithStatus("build", "m")
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "p1", ToolName: "present_plan"})
+	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "p1", Error: "plan invalido"})
+
+	if got := m.View(); strings.Contains(got, "[plan]") {
+		t.Fatalf("View() = %q, un present_plan fallido NO debe ofrecer la aprobacion del plan", got)
+	}
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	if len(fake.accepted) != 0 {
+		t.Fatalf("AcceptPlan fue llamado %d veces, sin oferta pendiente 'y' NO debe aceptar nada", len(fake.accepted))
+	}
+	if got := m.input.Value(); got != "y" {
+		t.Fatalf("input.Value() = %q, sin oferta pendiente la runa 'y' debe ir al input normal", got)
 	}
 }
 

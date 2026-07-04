@@ -50,7 +50,10 @@ func (m Model) foldEvent(ev EventMsg) Model {
 // settleTool asienta el desenlace del tool call con ese callID (ok o fallo) y
 // retira su solicitud de permiso pendiente: el contrato no trae un evento de
 // resolucion propio, el Tool.Success/Tool.Failed del mismo CallID la expresa.
+// Un present_plan asentado con exito agrega al final la oferta de aprobacion
+// del plan (y ejecutar / n seguir en plan).
 func (m Model) settleTool(callID string, status toolStatus, errMsg string) Model {
+	planPresented := false
 	kept := make([]entry, 0, len(m.entries))
 	for _, e := range m.entries {
 		if e.kind == entryPermission && e.callID == callID {
@@ -59,10 +62,16 @@ func (m Model) settleTool(callID string, status toolStatus, errMsg string) Model
 		if e.kind == entryTool && e.callID == callID {
 			e.status = status
 			e.err = errMsg
+			if e.tool == "present_plan" && status == toolOK {
+				planPresented = true
+			}
 		}
 		kept = append(kept, e)
 	}
 	m.entries = kept
+	if planPresented {
+		m.entries = append(m.entries, entry{kind: entryPlanApproval})
+	}
 	return m
 }
 
@@ -75,6 +84,31 @@ func (m Model) pendingPermission() (entry, bool) {
 		}
 	}
 	return entry{}, false
+}
+
+// hasPendingPlan indica si hay una oferta de aprobacion de plan pendiente.
+// A diferencia de pendingPermission no devuelve la entrada: la oferta no
+// carga datos (ni CallID ni SessionID), solo existe o no.
+func (m Model) hasPendingPlan() bool {
+	for _, e := range m.entries {
+		if e.kind == entryPlanApproval {
+			return true
+		}
+	}
+	return false
+}
+
+// removePendingPlan retira la oferta de aprobacion de plan de la conversacion.
+func (m Model) removePendingPlan() Model {
+	kept := make([]entry, 0, len(m.entries))
+	for _, e := range m.entries {
+		if e.kind == entryPlanApproval {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	m.entries = kept
+	return m
 }
 
 // appendError agrega un bloque de error al final de la conversacion; lo

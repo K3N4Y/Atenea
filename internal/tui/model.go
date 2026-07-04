@@ -25,6 +25,8 @@ type Agent interface {
 	SendPrompt(sessionID, text string) error
 	// SendPlanPrompt envia el prompt por el camino de plan-mode.
 	SendPlanPrompt(sessionID, text string) error
+	// AcceptPlan acepta el plan presentado: vuelve a modo normal y ejecuta.
+	AcceptPlan(sessionID string) error
 	ResolvePermission(sessionID, callID string, approved bool)
 	Stop(sessionID string)
 }
@@ -33,11 +35,12 @@ type Agent interface {
 type entryKind int
 
 const (
-	entryAssistant  entryKind = iota // texto del assistant (streaming o coalescido)
-	entryUser                        // mensaje del usuario
-	entryTool                        // tool call y su desenlace
-	entryPermission                  // solicitud de aprobacion pendiente (ask-before-run)
-	entryError                       // fallo duro del step (Step.Failed)
+	entryAssistant    entryKind = iota // texto del assistant (streaming o coalescido)
+	entryUser                          // mensaje del usuario
+	entryTool                          // tool call y su desenlace
+	entryPermission                    // solicitud de aprobacion pendiente (ask-before-run)
+	entryPlanApproval                  // oferta de aprobacion del plan presentado (present_plan)
+	entryError                         // fallo duro del step (Step.Failed)
 )
 
 // toolStatus es el estado observable de un tool call en la conversacion.
@@ -75,7 +78,7 @@ type Model struct {
 	events    <-chan tea.Msg
 	entries   []entry
 	input     textinput.Model
-	working   bool // true entre SendPrompt y RunDoneMsg
+	working   bool // true desde que arranca una corrida (Enter o aceptar el plan) hasta RunDoneMsg
 
 	// viewport acota el transcript al alto de la terminal siguiendo la cola;
 	// ready se activa con el primer tea.WindowSizeMsg (sin tamano conocido la
@@ -129,7 +132,8 @@ func (m Model) PendingPermission() (string, bool) {
 	return "", false
 }
 
-// Working indica si hay una corrida en curso (entre SendPrompt y RunDoneMsg).
+// Working indica si hay una corrida en curso (desde que arranca, por Enter o
+// por aceptar el plan, hasta RunDoneMsg).
 func (m Model) Working() bool {
 	return m.working
 }
@@ -197,9 +201,11 @@ func (m Model) scrollViewport(msg tea.Msg) (Model, tea.Cmd) {
 // handleKey procesa el teclado en orden de prioridad: Ctrl+C detiene y sale
 // siempre; PgUp/PgDn son scroll del transcript (nunca escriben en el input ni
 // tocan el gate de permisos); un permiso pendiente pone el teclado en modo
-// aprobacion (solo y/n hacen algo; Tab incluido queda inerte); sin permiso
-// pendiente Esc detiene la corrida, Enter envia el prompt tecleado, Tab alterna
-// el modo build/plan y el resto de teclas alimenta el input.
+// aprobacion (solo y/n hacen algo; Tab incluido queda inerte); tras el gate de
+// permisos, un plan pendiente pone el teclado en modo aprobacion de plan (y
+// acepta y ejecuta, n descarta la oferta); sin nada pendiente Esc detiene la
+// corrida, Enter envia el prompt tecleado, Tab alterna el modo build/plan y el
+// resto de teclas alimenta el input.
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		m.stopRun()
@@ -211,6 +217,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if perm, ok := m.pendingPermission(); ok {
 		m.resolvePermissionKey(msg, perm)
 		return m, nil
+	}
+	if m.hasPendingPlan() {
+		return m.resolvePlanKey(msg), nil
 	}
 	switch msg.Type {
 	case tea.KeyEsc:
@@ -249,6 +258,29 @@ func (m Model) resolvePermissionKey(msg tea.KeyMsg, perm entry) {
 	case "n":
 		m.agent.ResolvePermission(sessionID, perm.callID, false)
 	}
+}
+
+// resolvePlanKey atiende el teclado en modo aprobacion de plan: 'y' acepta el
+// plan via Agent.AcceptPlan (vuelve a modo build y la corrida sigue como
+// trabajando hasta RunDoneMsg), 'n' descarta la oferta y deja el plan-mode
+// como esta. El resto del teclado es no-op mientras se espera la decision.
+// Con agent nil (tests del fold) es no-op.
+func (m Model) resolvePlanKey(msg tea.KeyMsg) Model {
+	if msg.Type != tea.KeyRunes || m.agent == nil {
+		return m
+	}
+	switch string(msg.Runes) {
+	case "y":
+		m.agent.AcceptPlan(m.sessionID)
+		m = m.removePendingPlan()
+		m.planMode = false
+		m.working = true
+		// La linea de estado ocupa una linea bajo el transcript: recalcular el alto.
+		return m.resizeViewport()
+	case "n":
+		return m.removePendingPlan().syncViewport()
+	}
+	return m
 }
 
 // submitPrompt envia el texto tecleado al Agent por el camino del modo activo

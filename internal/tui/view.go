@@ -81,6 +81,8 @@ func (e entry) render() string {
 		}
 	case entryPermission:
 		return permissionStyle.Render("[permiso] " + e.tool + " " + e.input + " (aprobar/denegar)")
+	case entryPlanApproval:
+		return permissionStyle.Render("[plan] plan presentado (y ejecutar / n seguir en plan)")
 	case entryError:
 		return errorStyle.Render("[error] " + e.text)
 	default: // entryAssistant: texto plano sin marcador

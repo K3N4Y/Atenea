@@ -56,6 +56,13 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
   permiso pendiente, y el pie del composer lo refleja en vivo. En plan-mode el
   runner anuncia `present_plan` sin `bash`/`write`; el siguiente `SendPrompt`
   devuelve la sesion a modo normal.
+- Un `present_plan` exitoso agrega al final la oferta `[plan] plan presentado
+  (y ejecutar / n seguir en plan)`; con la oferta pendiente el teclado no
+  alimenta el input. `y` acepta via `Agent.AcceptPlan` (el Engine vuelve la
+  sesion a modo normal y promueve el prompt fijo de implementacion, espejo de
+  `App.AcceptPlan`), apaga el plan-mode y marca la corrida como trabajando;
+  `n` descarta la oferta y el modo queda como esta. Un `present_plan` fallido
+  no ofrece nada.
 - El viewport respeta el alto de la terminal, sigue la cola con eventos nuevos y
   sobrevive terminales minusculas (0x0/1 linea: dimensiones acotadas a >= 0;
   panic real de bubbles/viewport encontrado en el smoke E2E bajo pty).
@@ -76,11 +83,10 @@ OPENROUTER_API_KEY=... ./build/bin/atenea-tui
 
 - Store en memoria: las sesiones de la TUI no persisten ni aparecen en la
   sidebar de la app (compartir el SQLite exige coordinar acceso concurrente).
-- Plan-mode ya se alterna con Tab, pero sigue pendiente cambiar el MODELO desde
-  la TUI (tampoco hay slash-commands ni @-menu en el composer): el pie muestra
-  el modelo del entorno, fijo por corrida. Tambien falta el flujo AcceptPlan
-  (aprobar un plan presentado y ejecutarlo promoviendo el prompt de
-  implementacion); hoy es manual: Tab a build y enviar.
+- Plan-mode ya se alterna con Tab y el flujo AcceptPlan ya ejecuta el plan
+  aprobado, pero sigue pendiente cambiar el MODELO desde la TUI (tampoco hay
+  slash-commands ni @-menu en el composer): el pie muestra el modelo del
+  entorno, fijo por corrida.
 - El indicador de trabajo es estatico (sin animacion de spinner).
 - Un prompt nuevo mientras corre una actividad cancela la corrida anterior
   (mismo comportamiento que la app Wails hoy).

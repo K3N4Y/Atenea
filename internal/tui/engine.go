@@ -153,6 +153,17 @@ func (e *Engine) send(sessionID, text string) error {
 	return nil
 }
 
+// acceptPlanPrompt es el prompt fijo de implementacion del plan aprobado (espejo del const homonimo de app.go).
+const acceptPlanPrompt = "El plan fue aprobado. Implementalo ahora paso a paso siguiendo el plan."
+
+// AcceptPlan acepta y ejecuta el plan: vuelve la sesion a modo normal y
+// promueve el prompt fijo de implementacion como prompt del usuario,
+// arrancando la corrida (espejo de App.AcceptPlan).
+func (e *Engine) AcceptPlan(sessionID string) error {
+	e.setMode(sessionID, session.ModeNormal)
+	return e.send(sessionID, acceptPlanPrompt)
+}
+
 // ResolvePermission resuelve una solicitud de permiso pendiente (ask-before-run).
 func (e *Engine) ResolvePermission(sessionID, callID string, approved bool) {
 	e.gate.Resolve(sessionID, callID, approved)
