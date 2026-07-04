@@ -240,7 +240,9 @@ func TestGlobTool_RejectsPathOutsideRoot(t *testing.T) {
 	}
 }
 
-func TestGlobTool_RejectsAbsolutePath(t *testing.T) {
+// TestGlobTool_RejectsAbsolutePathOutsideRoot afirma que una ruta absoluta FUERA
+// del root se rechaza; las absolutas DENTRO del root si se aceptan (ver path_test.go).
+func TestGlobTool_RejectsAbsolutePathOutsideRoot(t *testing.T) {
 	searcher := &fakeGlobSearcher{}
 	gt := &GlobTool{Root: "/work", Searcher: searcher, DefaultLimit: defaultGlobLimit, MaxLimit: maxGlobLimit}
 

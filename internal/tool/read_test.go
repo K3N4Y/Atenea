@@ -50,6 +50,29 @@ func TestReadTool_WholeFileHasHashHeaderAndNumberedLines(t *testing.T) {
 	}
 }
 
+// TestReadTool_AcceptsAbsolutePathInsideRoot afirma que una ruta absoluta que
+// cae dentro del root devuelve el mismo contenido que su equivalente relativa
+// (solo cambia el display path del header, que refleja lo que pidio el modelo).
+func TestReadTool_AcceptsAbsolutePathInsideRoot(t *testing.T) {
+	contenido := "package main\n\nfunc main(){}\n"
+	rt := &ReadTool{
+		Root:      "/work",
+		FS:        fakeFS{"/work/foo.go": []byte(contenido)},
+		Snapshots: hashline.NewMemSnapshotStore(),
+		MaxLines:  2000,
+	}
+
+	res, err := rt.Execute(context.Background(), json.RawMessage(`{"path":"/work/foo.go"}`))
+	if err != nil {
+		t.Fatalf("Execute con ruta absoluta dentro del root: error inesperado: %v", err)
+	}
+
+	want := "[/work/foo.go#" + hashline.ComputeFileHash(contenido) + "]\n1:package main\n2:\n3:func main(){}"
+	if res.Output != want {
+		t.Fatalf("Execute: output\n  se esperaba %q\n  se obtuvo  %q", want, res.Output)
+	}
+}
+
 // TestReadTool_RecordsSnapshotAndSeenLines afirma que Execute graba el snapshot
 // del archivo completo y marca como vistas todas las lineas leidas, para que el
 // edit pueda anclar contra ellas despues.

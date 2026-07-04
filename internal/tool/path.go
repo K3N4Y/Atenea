@@ -8,14 +8,18 @@ import (
 )
 
 func sandboxJoin(root, rel, toolName string) (string, error) {
-	if filepath.IsAbs(rel) {
-		return "", fmt.Errorf("%s: ruta fuera del workspace: %s", toolName, rel)
-	}
 	rootAbs, err := filepath.Abs(root)
 	if err != nil {
 		rootAbs = filepath.Clean(root)
 	}
-	abs := filepath.Clean(filepath.Join(rootAbs, rel))
+	var abs string
+	if filepath.IsAbs(rel) {
+		// El modelo conoce el root por el system prompt y usa rutas absolutas de
+		// forma natural: se aceptan si (limpias) caen dentro del root.
+		abs = filepath.Clean(rel)
+	} else {
+		abs = filepath.Clean(filepath.Join(rootAbs, rel))
+	}
 	if !insideRoot(rootAbs, abs) {
 		return "", fmt.Errorf("%s: ruta fuera del workspace: %s", toolName, rel)
 	}

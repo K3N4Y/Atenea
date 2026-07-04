@@ -134,6 +134,22 @@ func TestWriteTool_RejectsPathOutsideRoot(t *testing.T) {
 	}
 }
 
+// TestWriteTool_AcceptsAbsolutePathInsideRoot afirma que las demas file tools que
+// comparten sandboxJoin tambien aceptan absolutas dentro del root: el write llega
+// al FS en la misma ruta abs que produciria la relativa equivalente.
+func TestWriteTool_AcceptsAbsolutePathInsideRoot(t *testing.T) {
+	snaps := hashline.NewMemSnapshotStore()
+	fs := newFakeWriteFS()
+	wt := &WriteTool{Root: "/work", FS: fs, Snapshots: snaps}
+
+	if _, err := wt.Execute(context.Background(), writeInput(t, "/work/sub/nuevo.md", "hola")); err != nil {
+		t.Fatalf("Execute con ruta absoluta dentro del root: error inesperado: %v", err)
+	}
+	if got, ok := fs.writes["/work/sub/nuevo.md"]; !ok || string(got) != "hola" {
+		t.Fatalf("WriteFile: se esperaba /work/sub/nuevo.md = %q, writes = %v", "hola", fs.writes)
+	}
+}
+
 // TestWriteTool_RejectsSymlinkParentOutsideRoot afirma que crear un archivo bajo
 // un directorio que es symlink hacia fuera del workspace no esta permitido.
 func TestWriteTool_RejectsSymlinkParentOutsideRoot(t *testing.T) {
