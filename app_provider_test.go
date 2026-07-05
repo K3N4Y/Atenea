@@ -89,6 +89,97 @@ func TestApp_SetProviderRebuildsActiveProvider(t *testing.T) {
 	}
 }
 
+// newAppRecordingProviderConfig arma una app sin emisor cuyo factory graba la config
+// que recibe y devuelve un fake sin red, para asertar con que config SetProvider
+// reconstruye el provider sin construir uno real.
+func newAppRecordingProviderConfig() (*App, *ProviderConfig) {
+	gotCfg := &ProviderConfig{}
+	app := newApp(demoProvider(), func(string, ...interface{}) {})
+	app.newProvider = func(cfg ProviderConfig) llm.Provider {
+		*gotCfg = cfg
+		return demoProvider()
+	}
+	return app, gotCfg
+}
+
+// TestApp_SetProviderOpenRouterIgnoresStaleBaseURL: la UI no ofrece configurar el
+// baseURL de OpenRouter, asi que cualquier baseURL entrante con kind openrouter es
+// estado viejo del form (p.ej. el endpoint local previo). Si el backend lo acepta,
+// las peticiones "openrouter" siguen yendo al endpoint local. SetProvider debe usar
+// SIEMPRE openRouterBaseURL para openrouter, ignorando lo que arrastre la UI.
+func TestApp_SetProviderOpenRouterIgnoresStaleBaseURL(t *testing.T) {
+	app, gotCfg := newAppRecordingProviderConfig()
+
+	// Secuencia de la UI: primero local, luego cambia a openrouter pero el form
+	// arrastra el baseURL local viejo.
+	if err := app.SetProvider("local", "http://localhost:1234/v1", "qwen2.5-coder"); err != nil {
+		t.Fatalf("SetProvider(local): %v", err)
+	}
+	if err := app.SetProvider("openrouter", "http://localhost:1234/v1", "qwen2.5-coder"); err != nil {
+		t.Fatalf("SetProvider(openrouter): %v", err)
+	}
+
+	if gotCfg.BaseURL != openRouterBaseURL {
+		t.Errorf("el factory recibio BaseURL = %q, want %q (openrouter debe ignorar el baseURL viejo de la UI)", gotCfg.BaseURL, openRouterBaseURL)
+	}
+	if got := app.ProviderConfig().BaseURL; got != openRouterBaseURL {
+		t.Errorf("ProviderConfig().BaseURL = %q, want %q", got, openRouterBaseURL)
+	}
+}
+
+// TestApp_SetProviderOpenRouterSanitizesPersistedConfigOnFirstCall: al arrancar,
+// restoreProvider re-aplica tal cual la config persistida en localStorage; si esa
+// config quedo corrupta (kind openrouter con el baseURL local de una sesion previa),
+// la PRIMERA llamada ya trae el baseURL viejo sin pasar antes por local. El backend
+// debe sanearla igual: una implementacion que solo resetee el baseURL "al detectar el
+// cambio de kind" (comparando contra la config previa, o arreglando solo el form de
+// la UI) dejaria esta config apuntando al endpoint local.
+func TestApp_SetProviderOpenRouterSanitizesPersistedConfigOnFirstCall(t *testing.T) {
+	app, gotCfg := newAppRecordingProviderConfig()
+
+	// Primera y unica llamada: la config corrupta persistida, sin local previo.
+	if err := app.SetProvider("openrouter", "http://localhost:1234/v1", "qwen2.5-coder"); err != nil {
+		t.Fatalf("SetProvider(openrouter): %v", err)
+	}
+
+	if gotCfg.BaseURL != openRouterBaseURL {
+		t.Errorf("el factory recibio BaseURL = %q, want %q (debe sanear la config persistida aunque sea la primera llamada)", gotCfg.BaseURL, openRouterBaseURL)
+	}
+	if got := app.ProviderConfig().BaseURL; got != openRouterBaseURL {
+		t.Errorf("ProviderConfig().BaseURL = %q, want %q", got, openRouterBaseURL)
+	}
+}
+
+// TestApp_SetProviderOpenRouterKeepsDefaultsAndUserModel: forzar el baseURL de
+// openrouter no debe degenerar en "forzar todo a defaults". Sin modelo, la config se
+// completa con defaultModel; con modelo explicito, el del usuario se respeta. Una
+// implementacion que pise el modelo junto con el baseURL rompe el segundo caso.
+func TestApp_SetProviderOpenRouterKeepsDefaultsAndUserModel(t *testing.T) {
+	t.Run("sin modelo completa con defaults", func(t *testing.T) {
+		app, _ := newAppRecordingProviderConfig()
+
+		if err := app.SetProvider("openrouter", "", ""); err != nil {
+			t.Fatalf(`SetProvider(openrouter, "", ""): %v`, err)
+		}
+		cfg := app.ProviderConfig()
+		if cfg.BaseURL != openRouterBaseURL || cfg.Model != defaultModel {
+			t.Errorf("ProviderConfig() = %+v, want {openrouter, %s, %s}", cfg, openRouterBaseURL, defaultModel)
+		}
+	})
+
+	t.Run("con modelo explicito lo respeta", func(t *testing.T) {
+		app, _ := newAppRecordingProviderConfig()
+
+		if err := app.SetProvider("openrouter", "", "mi/modelo"); err != nil {
+			t.Fatalf(`SetProvider(openrouter, "", "mi/modelo"): %v`, err)
+		}
+		cfg := app.ProviderConfig()
+		if cfg.BaseURL != openRouterBaseURL || cfg.Model != "mi/modelo" {
+			t.Errorf("ProviderConfig() = %+v, want {openrouter, %s, mi/modelo}", cfg, openRouterBaseURL)
+		}
+	})
+}
+
 // TestApp_SetProviderRejectsUnknownKind: un kind desconocido falla y no cambia el
 // estado vigente (ni provider ni config).
 func TestApp_SetProviderRejectsUnknownKind(t *testing.T) {

@@ -293,15 +293,16 @@ func buildProvider(cfg ProviderConfig) llm.Provider {
 }
 
 // normalizeProviderConfig valida y completa la config que pide la UI. openrouter
-// rellena baseURL/model con los defaults; local exige un baseURL http(s) y un modelo
-// (lo elige el usuario del catalogo). Un kind desconocido es un error. Mantener la
-// validacion aca (no en SetProvider) la hace testeable sin tocar el estado.
+// fuerza siempre su baseURL e ignora el entrante: la UI no lo ofrece configurar y
+// puede arrastrar el del local al cambiar de proveedor (tambien sanea configs viejas
+// persistidas que restoreProvider re-aplica al arrancar). local exige un baseURL
+// http(s) y un modelo (lo elige el usuario del catalogo). Un kind desconocido es un
+// error. Mantener la validacion aca (no en SetProvider) la hace testeable sin tocar
+// el estado.
 func normalizeProviderConfig(kind, baseURL, model string) (ProviderConfig, error) {
 	switch kind {
 	case providerKindOpenRouter:
-		if baseURL == "" {
-			baseURL = openRouterBaseURL
-		}
+		baseURL = openRouterBaseURL
 		if model == "" {
 			model = defaultModel
 		}
