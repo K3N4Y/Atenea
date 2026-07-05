@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"atenea/internal/command"
 	"atenea/internal/session"
 )
 
@@ -103,6 +104,21 @@ type Model struct {
 	// del modo activo (SendPrompt en build, SendPlanPrompt en plan) sin
 	// resetearlo.
 	planMode bool
+
+	// commands y listFiles son las fuentes del autocompletado del composer
+	// (entran via WithCompletions): los slash-commands del menu "/" y el
+	// listado de archivos del @-menu. menuItems y menuSelected son el estado
+	// del popup: refreshMenu los recomputa tras cada tecla que alimenta el
+	// input, y la vista rinde una linea por item encima de la caja del
+	// composer (reservedLines las descuenta del viewport). files/filesLoaded
+	// cachean el resultado de listFiles mientras el token "@" siga activo
+	// (loadFilesOnce/dropFileCache).
+	commands     []command.Command
+	listFiles    func() ([]string, error)
+	menuItems    []menuItem
+	menuSelected int
+	files        []string
+	filesLoaded  bool
 }
 
 // NewModel construye el Model raiz de la TUI.
@@ -120,6 +136,15 @@ func NewModel(agent Agent, sessionID string, events <-chan tea.Msg) Model {
 func (m Model) WithStatus(agentName, model string) Model {
 	m.agentName = agentName
 	m.model = model
+	return m
+}
+
+// WithCompletions fija las fuentes del autocompletado del composer: los
+// slash-commands del menu "/" y el listado de archivos del @-menu. Builder de
+// valor (espejo de WithStatus): la info entra una sola vez al construir el Model.
+func (m Model) WithCompletions(commands []command.Command, listFiles func() ([]string, error)) Model {
+	m.commands = commands
+	m.listFiles = listFiles
 	return m
 }
 
@@ -203,9 +228,12 @@ func (m Model) scrollViewport(msg tea.Msg) (Model, tea.Cmd) {
 // tocan el gate de permisos); un permiso pendiente pone el teclado en modo
 // aprobacion (solo y/n hacen algo; Tab incluido queda inerte); tras el gate de
 // permisos, un plan pendiente pone el teclado en modo aprobacion de plan (y
-// acepta y ejecuta, n descarta la oferta); sin nada pendiente Esc detiene la
-// corrida, Enter envia el prompt tecleado, Tab alterna el modo build/plan y el
-// resto de teclas alimenta el input.
+// acepta y ejecuta, n descarta la oferta); tras esos gates, el menu de
+// autocompletado abierto captura Up/Down (seleccion ciclica, sin tocar el
+// viewport ni el input), Tab/Enter (aplican la seleccion) y Esc (cierra el
+// popup); con menu cerrado y sin nada pendiente Esc detiene la corrida, Enter
+// envia el prompt tecleado, Tab alterna el modo build/plan y el resto de
+// teclas alimenta el input (y recomputa el popup).
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		m.stopRun()
@@ -220,6 +248,25 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.hasPendingPlan() {
 		return m.resolvePlanKey(msg), nil
+	}
+	if len(m.menuItems) > 0 {
+		switch msg.Type {
+		case tea.KeyUp:
+			m.menuSelected = (m.menuSelected - 1 + len(m.menuItems)) % len(m.menuItems)
+			return m, nil
+		case tea.KeyDown:
+			m.menuSelected = (m.menuSelected + 1) % len(m.menuItems)
+			return m, nil
+		case tea.KeyTab, tea.KeyEnter:
+			// Tab y Enter aplican la seleccion; ni alternan el modo build/plan
+			// ni envian el prompt (enviar exige un segundo Enter con menu cerrado).
+			return m.applySelection(), nil
+		case tea.KeyEsc:
+			// Esc cierra el popup sin detener la corrida ni tocar el input; la
+			// proxima tecla que alimente el input recomputa y puede reabrirlo.
+			return m.closeMenu(), nil
+		}
+		// El resto de teclas sigue alimentando el input (rama default de abajo).
 	}
 	switch msg.Type {
 	case tea.KeyEsc:
@@ -236,7 +283,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
-	return m, cmd
+	// La tecla pudo cambiar el texto o el caret: recomputar el popup de
+	// autocompletado desde el estado nuevo del input.
+	return m.refreshMenu(), cmd
 }
 
 // resolvePermissionKey atiende el teclado en modo aprobacion: 'y' aprueba y

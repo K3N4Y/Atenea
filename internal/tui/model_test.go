@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"atenea/internal/command"
 	"atenea/internal/session"
 )
 
@@ -1369,4 +1370,374 @@ func TestModel_EnterSendsTypedPromptViaAgent(t *testing.T) {
 	if !m.Working() {
 		t.Fatalf("Working() = false, el modelo debe quedar trabajando tras enviar el prompt hasta RunDoneMsg")
 	}
+}
+
+// menuCommands son los comandos compartidos por los tests del menu "/".
+var menuCommands = []command.Command{
+	{Name: "commit", Description: "genera un commit"},
+	{Name: "review", Description: "revisa el diff"},
+}
+
+// typeRunes alimenta el input runa por runa, como tecleos reales.
+func typeRunes(t *testing.T, m Model, s string) Model {
+	t.Helper()
+	for _, r := range s {
+		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
+		if r == ' ' {
+			msg.Type = tea.KeySpace // bubbletea reporta el espacio como KeySpace
+		}
+		m = apply(t, m, msg)
+	}
+	return m
+}
+
+// menuSelectedLine devuelve la linea del menu marcada con "❯ " (prefijo al
+// inicio de linea, sin ANSI), o "" si no hay ninguna. La linea del composer no
+// confunde: arranca con el borde "│", no con el marcador.
+func menuSelectedLine(view string) string {
+	for _, line := range strings.Split(view, "\n") {
+		if plain := ansi.Strip(line); strings.HasPrefix(plain, "❯ ") {
+			return plain
+		}
+	}
+	return ""
+}
+
+func TestModel_CommandMenuFiltersAsYouType(t *testing.T) {
+	// El menu se recomputa con cada tecla: teclear "/", "c", "o" filtra los
+	// candidatos con el ranking de filterCommands (prefijo del nombre primero):
+	// queda solo /commit y /review desaparece del popup.
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(menuCommands, nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = typeRunes(t, m, "/")
+	view := m.View()
+	lineWith(t, view, "/commit")
+	lineWith(t, view, "/review")
+
+	m = typeRunes(t, m, "co")
+	view = m.View()
+	commitLine := lineWith(t, view, "/commit")
+	if !strings.Contains(commitLine, "genera un commit") {
+		t.Fatalf("linea de /commit = %q, el item filtrado debe conservar su descripcion", commitLine)
+	}
+	if strings.Contains(view, "/review") {
+		t.Fatalf("View() = %q, tras teclear %q el menu NO debe seguir mostrando %q", view, "/co", "/review")
+	}
+	if got := menuSelectedLine(view); !strings.Contains(got, "/commit") {
+		t.Fatalf("linea seleccionada del menu = %q, el unico candidato /commit debe quedar seleccionado", got)
+	}
+}
+
+func TestModel_CommandMenuClosesOnSpace(t *testing.T) {
+	// El primer espacio cierra el menu: lo que sigue al nombre son los args del
+	// comando y el popup ya no debe tapar la conversacion.
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(menuCommands, nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = typeRunes(t, m, "/commit")
+	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/commit") {
+		t.Fatalf("linea seleccionada del menu = %q, con %q tecleado el menu debe estar abierto sobre /commit", got, "/commit")
+	}
+
+	m = typeRunes(t, m, " ")
+	if got := menuSelectedLine(m.View()); got != "" {
+		t.Fatalf("linea seleccionada del menu = %q, el espacio debe cerrar el menu (lo que sigue son los args)", got)
+	}
+}
+
+func TestModel_MenuKeysNavigateSelection(t *testing.T) {
+	// Con el menu abierto, Up/Down mueven el marcador "❯ " de forma ciclica y
+	// quedan capturados por el popup: no scrollean el viewport ni escriben en
+	// el input.
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(menuCommands, nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// Transcript mas largo que el viewport: la vista sigue la cola (mensaje-29).
+	for i := 0; i < 30; i++ {
+		m = apply(t, m, EventMsg{Message: &session.Message{
+			ID:   fmt.Sprintf("u%02d", i),
+			Role: session.RoleUser,
+			Text: fmt.Sprintf("mensaje-%02d", i),
+		}})
+	}
+
+	m = typeRunes(t, m, "/")
+	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/commit") {
+		t.Fatalf("linea seleccionada del menu = %q, el primer item /commit debe arrancar seleccionado", got)
+	}
+
+	// Down baja al segundo item.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/review") {
+		t.Fatalf("linea seleccionada del menu = %q, Down debe mover el marcador a /review", got)
+	}
+
+	// Up vuelve al primero.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/commit") {
+		t.Fatalf("linea seleccionada del menu = %q, Up debe devolver el marcador a /commit", got)
+	}
+
+	// La seleccion es ciclica: Up en el primero va al ultimo...
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/review") {
+		t.Fatalf("linea seleccionada del menu = %q, Up en el primer item debe ciclar al ultimo (/review)", got)
+	}
+	// ...y Down en el ultimo vuelve al primero.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/commit") {
+		t.Fatalf("linea seleccionada del menu = %q, Down en el ultimo item debe ciclar al primero (/commit)", got)
+	}
+
+	// Las flechas quedaron en el popup: ni scroll del viewport ni input.
+	view := m.View()
+	if !strings.Contains(view, "mensaje-29") {
+		t.Fatalf("View() = %q, con menu abierto Up/Down NO deben scrollear el viewport: la cola (mensaje-29) debe seguir visible", view)
+	}
+	if got := m.input.Value(); got != "/" {
+		t.Fatalf("input.Value() = %q, Up/Down con menu abierto NO deben escribir en el input", got)
+	}
+}
+
+func TestModel_TabAppliesSelectedCommand(t *testing.T) {
+	// Con el menu abierto, Tab aplica la seleccion (espejo de applyCommand en
+	// command.ts): reemplaza el token "/co" por "/commit " con el caret tras el
+	// espacio, listo para los args. El recomputo ve el espacio y cierra el
+	// menu. Tab con menu abierto NO alterna el plan-mode.
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil).WithStatus("build", "m").WithCompletions(menuCommands, nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = typeRunes(t, m, "/co")
+	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/commit") {
+		t.Fatalf("linea seleccionada del menu = %q, con %q tecleado /commit debe estar seleccionado", got, "/co")
+	}
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyTab})
+
+	if got := m.input.Value(); got != "/commit " {
+		t.Fatalf("input.Value() = %q, Tab debe reemplazar el token por %q (comando + espacio para los args)", got, "/commit ")
+	}
+	if got := m.input.Position(); got != len("/commit ") {
+		t.Fatalf("input.Position() = %d, el caret debe quedar tras el espacio (%d)", got, len("/commit "))
+	}
+	view := m.View()
+	if got := menuSelectedLine(view); got != "" {
+		t.Fatalf("linea seleccionada del menu = %q, aplicar el comando debe cerrar el menu (el recomputo ve el espacio)", got)
+	}
+	if !strings.Contains(view, "build · m") || strings.Contains(view, "plan ·") {
+		t.Fatalf("View() = %q, Tab con menu abierto NO debe alternar el plan-mode: el pie debe seguir mostrando %q", view, "build · m")
+	}
+}
+
+func TestModel_EnterAppliesSelectionInsteadOfSending(t *testing.T) {
+	// Con el menu abierto, Enter aplica la seleccion igual que Tab y NO envia
+	// nada; el segundo Enter (menu ya cerrado) si envia el texto tal cual.
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil).WithCompletions(menuCommands, nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = typeRunes(t, m, "/co")
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if len(fake.sent) != 0 {
+		t.Fatalf("SendPrompt fue llamado %d veces, Enter con menu abierto debe aplicar la seleccion, NO enviar", len(fake.sent))
+	}
+	if got := m.input.Value(); got != "/commit " {
+		t.Fatalf("input.Value() = %q, Enter con menu abierto debe aplicar la seleccion (%q)", got, "/commit ")
+	}
+	if got := menuSelectedLine(m.View()); got != "" {
+		t.Fatalf("linea seleccionada del menu = %q, aplicar la seleccion debe cerrar el menu", got)
+	}
+
+	// Menu cerrado: el segundo Enter envia el texto tal cual via SendPrompt.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(fake.sent) != 1 {
+		t.Fatalf("SendPrompt fue llamado %d veces, con el menu cerrado Enter debe enviar exactamente una vez", len(fake.sent))
+	}
+	if got := fake.sent[0]; got.sessionID != "s1" || got.text != "/commit " {
+		t.Fatalf("SendPrompt(%q, %q), se esperaba SendPrompt(%q, %q): el texto se envia tal cual", got.sessionID, got.text, "s1", "/commit ")
+	}
+}
+
+func TestModel_EscClosesMenuWithoutStopping(t *testing.T) {
+	// Con el menu abierto, Esc cierra el popup SIN detener la corrida y sin
+	// tocar el texto del input; teclear otra runa recomputa y reabre el menu.
+	// Con menu cerrado, Esc conserva su comportamiento actual (detiene).
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil).WithCompletions(menuCommands, nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = typeRunes(t, m, "/c")
+	if got := menuSelectedLine(m.View()); got == "" {
+		t.Fatalf("View() = %q, con %q tecleado el menu debe estar abierto", m.View(), "/c")
+	}
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if got := menuSelectedLine(m.View()); got != "" {
+		t.Fatalf("linea seleccionada del menu = %q, Esc debe cerrar el popup", got)
+	}
+	if len(fake.stopped) != 0 {
+		t.Fatalf("Stop fue llamado %d veces, Esc con menu abierto NO debe detener la corrida", len(fake.stopped))
+	}
+	if got := m.input.Value(); got != "/c" {
+		t.Fatalf("input.Value() = %q, Esc solo cierra el popup: el texto %q debe quedar intacto", got, "/c")
+	}
+
+	// Otra runa recomputa el menu desde el token aun vigente: se reabre.
+	m = typeRunes(t, m, "o")
+	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/commit") {
+		t.Fatalf("linea seleccionada del menu = %q, teclear otra runa debe reabrir el menu sobre /commit", got)
+	}
+
+	// Con menu cerrado Esc sigue deteniendo la corrida.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc}) // cierra el popup reabierto
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc}) // menu cerrado: detiene
+	if len(fake.stopped) != 1 || fake.stopped[0] != "s1" {
+		t.Fatalf("Stop = %v, con menu cerrado Esc debe detener la corrida (Stop(%q) una vez)", fake.stopped, "s1")
+	}
+}
+
+func TestModel_AtOpensFileMenu(t *testing.T) {
+	// Un "@" que inicia palabra abre el @-menu de archivos (espejo de
+	// detectMention/filterFiles en mention.ts): el label es la ruta, sin
+	// descripcion; el filtro rankea el basename (prefijo antes que subcadena)
+	// antes que el match en la ruta. listFiles se llama UNA vez al activarse el
+	// token y se cachea mientras siga activo.
+	calls := 0
+	listFiles := func() ([]string, error) {
+		calls++
+		return []string{"internal/tui/model.go", "app.go", "README.md"}, nil
+	}
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, listFiles)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = typeRunes(t, m, "hola @")
+	view := m.View()
+	for _, want := range []string{"internal/tui/model.go", "app.go", "README.md"} {
+		lineWith(t, view, want)
+	}
+	if got := menuSelectedLine(view); !strings.Contains(got, "internal/tui/model.go") {
+		t.Fatalf("linea seleccionada del menu = %q, el primer archivo del listado debe arrancar seleccionado", got)
+	}
+
+	// "mo" filtra por basename: solo model.go arranca con "mo".
+	m = typeRunes(t, m, "mo")
+	view = m.View()
+	lineWith(t, view, "internal/tui/model.go")
+	for _, drop := range []string{"app.go", "README.md"} {
+		if strings.Contains(view, drop) {
+			t.Fatalf("View() = %q, tras filtrar por %q el menu NO debe seguir mostrando %q", view, "mo", drop)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("listFiles fue llamado %d veces, debe llamarse UNA vez al activarse el token y cachearse mientras siga activo", calls)
+	}
+
+	// Con listFiles nil el menu simplemente no abre.
+	m2 := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, nil)
+	m2 = apply(t, m2, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m2 = typeRunes(t, m2, "hola @")
+	if got := menuSelectedLine(m2.View()); got != "" {
+		t.Fatalf("linea seleccionada del menu = %q, sin listFiles el @-menu no debe abrir", got)
+	}
+
+	// Con listFiles fallando el menu tampoco abre.
+	m3 := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+		return nil, fmt.Errorf("rg no disponible")
+	})
+	m3 = apply(t, m3, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m3 = typeRunes(t, m3, "hola @")
+	if got := menuSelectedLine(m3.View()); got != "" {
+		t.Fatalf("linea seleccionada del menu = %q, con listFiles fallando el @-menu no debe abrir", got)
+	}
+}
+
+func TestModel_AtInsideWordDoesNotOpenMenu(t *testing.T) {
+	// El "@" debe iniciar palabra (inicio del texto o precedido de espacio):
+	// un email como a@b NO dispara el @-menu (espejo de detectMention).
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+		return []string{"app.go"}, nil
+	})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = typeRunes(t, m, "a@b")
+	if got := menuSelectedLine(m.View()); got != "" {
+		t.Fatalf("linea seleccionada del menu = %q, un @ dentro de palabra (email) NO debe abrir el @-menu", got)
+	}
+}
+
+func TestModel_TabAppliesSelectedMention(t *testing.T) {
+	// Con el @-menu abierto, Tab reemplaza el token por "@<ruta> " conservando
+	// el texto alrededor (espejo de applyMention: text[:start] + "@<ruta> " +
+	// text[end:]) y deja el caret tras el espacio. El recomputo cierra el menu.
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+		return []string{"internal/tui/model.go", "app.go", "README.md"}, nil
+	})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = typeRunes(t, m, "hola @mo")
+	if got := menuSelectedLine(m.View()); !strings.Contains(got, "internal/tui/model.go") {
+		t.Fatalf("linea seleccionada del menu = %q, con %q tecleado model.go debe estar seleccionado", got, "@mo")
+	}
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyTab})
+
+	want := "hola @internal/tui/model.go "
+	if got := m.input.Value(); got != want {
+		t.Fatalf("input.Value() = %q, Tab debe reemplazar el token por la mencion conservando el texto alrededor (%q)", got, want)
+	}
+	if got := m.input.Position(); got != len([]rune(want)) {
+		t.Fatalf("input.Position() = %d, el caret debe quedar tras el espacio (%d)", got, len([]rune(want)))
+	}
+	if got := menuSelectedLine(m.View()); got != "" {
+		t.Fatalf("linea seleccionada del menu = %q, aplicar la mencion debe cerrar el menu", got)
+	}
+}
+
+func TestModel_SlashOpensCommandMenu(t *testing.T) {
+	// Con comandos configurados via WithCompletions, teclear "/" como primer
+	// caracter del composer abre un popup de menu encima de la caja: una linea
+	// por comando con "/<name>" y su descripcion. El primer item arranca
+	// seleccionado y se marca con el prefijo "❯ " (los no seleccionados llevan
+	// dos espacios de prefijo).
+	cmds := []command.Command{
+		{Name: "commit", Description: "genera un commit"},
+		{Name: "review", Description: "revisa el diff"},
+	}
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(cmds, nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+
+	view := m.View()
+	commitLine := lineWith(t, view, "/commit")
+	if !strings.Contains(commitLine, "genera un commit") {
+		t.Fatalf("linea de /commit = %q, el menu debe mostrar la descripcion %q junto al comando", commitLine, "genera un commit")
+	}
+	lineWith(t, view, "/review")
+	if plain := ansi.Strip(commitLine); !strings.HasPrefix(plain, "❯ ") {
+		t.Fatalf("linea de /commit sin ANSI = %q, el primer item del menu debe estar seleccionado con el prefijo %q", plain, "❯ ")
+	}
+}
+
+func TestModel_MenuLinesTruncateToTerminalWidth(t *testing.T) {
+	// Una linea del menu mas ancha que la terminal la envolveria el terminal a
+	// dos lineas reales, pero reservedLines solo descuenta UNA por item: el
+	// layout se rompe. El menu debe truncar cada linea al ancho de la terminal,
+	// como ya hace el resto de la vista (el transcript envuelve con ansi.Wrap,
+	// el textinput scrollea horizontal).
+	longPath := strings.Repeat("sub/", 30) + "archivo-de-nombre-largo.go"
+	listFiles := func() ([]string, error) {
+		return []string{longPath}, nil
+	}
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, listFiles)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 24})
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'@'}})
+
+	view := m.View()
+	lineWith(t, view, "sub/") // la linea del menu sigue presente, truncada
+	assertNoLineWiderThan(t, view, 40)
 }

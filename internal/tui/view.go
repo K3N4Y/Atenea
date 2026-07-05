@@ -100,10 +100,11 @@ func (m Model) renderTranscript() string {
 }
 
 // reservedLines es el alto reservado bajo el transcript: la caja del composer
-// (3 lineas), con corrida en curso la linea de estado del indicador de
-// trabajo, y con status fijado la linea de pie del composer (agente y modelo).
+// (3 lineas), con menu de autocompletado abierto una linea por item, con
+// corrida en curso la linea de estado del indicador de trabajo, y con status
+// fijado la linea de pie del composer (agente y modelo).
 func (m Model) reservedLines() int {
-	reserved := composerBoxLines
+	reserved := composerBoxLines + len(m.menuItems)
 	if m.working {
 		reserved++
 	}
@@ -172,11 +173,12 @@ func (m Model) syncViewport() Model {
 	return m
 }
 
-// View renderiza la conversacion con la caja del composer al final. Con
-// corrida en curso una linea de estado con el indicador de trabajo precede a
-// la caja; con status fijado una linea de pie tenue con el agente y el modelo
-// la sigue. El alto sigue acotado porque reservedLines ya las descuenta del
-// viewport.
+// View renderiza la conversacion con la caja del composer al final. Con menu
+// de autocompletado abierto sus lineas van entre el transcript y la caja
+// (antes de la linea de estado); con corrida en curso una linea de estado con
+// el indicador de trabajo precede a la caja; con status fijado una linea de
+// pie tenue con el agente y el modelo la sigue. El alto sigue acotado porque
+// reservedLines ya las descuenta del viewport.
 func (m Model) View() string {
 	status := ""
 	if m.working {
@@ -186,7 +188,40 @@ func (m Model) View() string {
 	if f := m.statusFooter(); f != "" {
 		footer = "\n" + statusStyle.Render(f)
 	}
-	return m.transcriptView() + status + m.composerBox() + footer
+	return m.transcriptView() + m.menuView() + status + m.composerBox() + footer
+}
+
+// menuView rinde el popup de autocompletado: una linea por item, con el
+// prefijo "❯ " (acento) para el seleccionado y dos espacios para el resto,
+// luego el label ("/<name>" o la ruta del archivo) y, tras dos espacios, la
+// descripcion en estilo tenue (los archivos no llevan: la linea termina en el
+// label, sin espacios colgantes). El label es contenido plano asertable; los
+// estilos solo envuelven segmentos. Sin menu abierto devuelve "" y la vista no
+// agrega lineas.
+//
+// Cada linea se trunca al ancho de la terminal: reservedLines descuenta UNA
+// linea por item, y una linea mas ancha la envolveria el terminal a dos lineas
+// reales, dejando corto el alto reservado y roto el layout. El tail "…" senala
+// que la ruta o descripcion sigue mas alla del corte. Sin tamano conocido
+// (ready == false) o con ancho <= 0 no se trunca, igual que el resto de la
+// vista degradada (syncViewport tampoco envuelve).
+func (m Model) menuView() string {
+	var b strings.Builder
+	for i, item := range m.menuItems {
+		prefix := "  "
+		if i == m.menuSelected {
+			prefix = accentStyle.Render("❯ ")
+		}
+		line := prefix + item.label
+		if item.description != "" {
+			line += "  " + statusStyle.Render(item.description)
+		}
+		if m.ready && m.width > 0 {
+			line = ansi.Truncate(line, m.width, "…")
+		}
+		b.WriteString(line + "\n")
+	}
+	return b.String()
 }
 
 // composerBox envuelve la linea de input en la caja de borde redondeado del
