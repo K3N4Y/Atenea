@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"atenea/internal/command"
 	"atenea/internal/event"
 	"atenea/internal/llm"
 	"atenea/internal/session"
@@ -33,6 +34,13 @@ type Engine struct {
 	inbox  session.Inbox
 	gate   *session.MemoryPermissionGate
 	runner *runner.Runner
+
+	// commands y glob alimentan el autocompletado del composer (espejo de
+	// App.ListCommands/App.ListProjectFiles): los slash-commands derivados de
+	// las skills y el glob del @-menu de archivos. Inmutables tras NewEngine:
+	// se leen sin mu.
+	commands *command.Set
+	glob     *tool.GlobTool
 
 	mu    sync.Mutex
 	runs  map[string]*engineRun   // sessionID -> corrida en vuelo (identidad por puntero)
@@ -84,7 +92,26 @@ func NewEngine(cfg EngineConfig) *Engine {
 		Mode:     e.modeFor, // el runner consulta el modo por sesion al inicio de cada turno
 	})
 	e.runner = built.Runner
+	e.commands = built.Commands
+	e.glob = built.Glob
 	return e
+}
+
+// Commands lista los slash-commands disponibles (nombre + descripcion) para el
+// menu "/" del composer, ordenados por nombre (espejo de App.ListCommands).
+func (e *Engine) Commands() []command.Command {
+	return e.commands.List()
+}
+
+// ProjectFiles lista los archivos del workspace (rutas relativas a la raiz,
+// respetando .gitignore y excluyendo .git) para el @-menu de archivos del
+// composer, acotado por el limite del glob (espejo de App.ListProjectFiles).
+func (e *Engine) ProjectFiles() ([]string, error) {
+	files, _, err := e.glob.Files(context.Background(), "", ".", e.glob.MaxLimit)
+	if err != nil {
+		return nil, err
+	}
+	return files, nil
 }
 
 // modeFor devuelve el modo de la sesion (normal/plan). Es el hook Mode de
@@ -121,15 +148,26 @@ func (e *Engine) SendPlanPrompt(sessionID, text string) error {
 	return e.send(sessionID, text)
 }
 
-// send encola el prompt y dispara la corrida en una goroutine con un ctx
-// cancelable registrado por sesion (espejo de App.start): si habia una corrida
-// previa de la misma sesion, se cancela. Al terminar la corrida se limpia el
-// handle y se publica RunDoneMsg; una cancelacion deliberada (Stop, follow-up)
-// es un cierre limpio, no un error. Es el camino comun de SendPrompt y
-// SendPlanPrompt: el modo de la sesion ya quedo fijado antes de llamarlo.
+// expandCommand resuelve un slash-command ("/name args") al prompt expandido
+// segun el registro; el texto que no es un comando registrado pasa sin cambios
+// (espejo de App.expandCommand).
+func (e *Engine) expandCommand(text string) string {
+	if expanded, ok := e.commands.Resolve(text); ok {
+		return expanded
+	}
+	return text
+}
+
+// send expande el prompt si es un slash-command, lo encola y dispara la
+// corrida en una goroutine con un ctx cancelable registrado por sesion (espejo
+// de App.start): si habia una corrida previa de la misma sesion, se cancela.
+// Al terminar la corrida se limpia el handle y se publica RunDoneMsg; una
+// cancelacion deliberada (Stop, follow-up) es un cierre limpio, no un error.
+// Es el camino comun de SendPrompt y SendPlanPrompt: el modo de la sesion ya
+// quedo fijado antes de llamarlo.
 func (e *Engine) send(sessionID, text string) error {
 	if err := e.inbox.Admit(context.Background(), sessionID,
-		session.Prompt{Text: text}, session.DeliveryQueue); err != nil {
+		session.Prompt{Text: e.expandCommand(text)}, session.DeliveryQueue); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithCancel(context.Background())

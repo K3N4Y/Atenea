@@ -59,7 +59,11 @@ func main() {
 	// "build" es el modo INICIAL del agente: Tab lo alterna a plan en vivo (el
 	// engine fija el modo por sesion via su hook Mode de wiring.Build). El
 	// modelo si queda fijo por corrida: no hay forma de cambiarlo desde la TUI.
-	m := tui.NewModel(engine, sessionID, engine.Events()).WithStatus("build", model)
+	// El autocompletado del composer sale del engine: los slash-commands de las
+	// skills para el menu "/" y el listado del workspace para el @-menu.
+	m := tui.NewModel(engine, sessionID, engine.Events()).
+		WithStatus("build", model).
+		WithCompletions(engine.Commands(), engine.ProjectFiles)
 	// WithMouseCellMotion habilita el mouse tracking: sin el, la terminal nunca
 	// reporta la rueda a la app (en pantalla alternativa la traduce a flechas
 	// via "alternate scroll"); con la opcion llegan eventos de mouse reales.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -200,6 +201,123 @@ func lastEvent(events []session.SessionEvent, kind session.EventKind, callID str
 		}
 	}
 	return found
+}
+
+// writeSkill crea <root>/.atenea/skills/<name>/SKILL.md con el frontmatter
+// name/description (mismo formato que los tests de internal/skill): la fuente
+// de la que el wiring deriva los slash-commands del composer.
+func writeSkill(t *testing.T, root, name, desc string) {
+	t.Helper()
+	dir := filepath.Join(root, ".atenea", "skills", name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	front := "---\nname: " + name + "\ndescription: " + desc + "\n---\ncuerpo de " + name + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(front), 0o644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+}
+
+func TestEngine_ExposesCommandsFromSkills(t *testing.T) {
+	// El Engine expone los slash-commands derivados de las skills descubiertas
+	// (espejo de App.ListCommands): la TUI los cablea al menu "/" del composer.
+	// Se asierta CONTENCION, no igualdad: el wiring tambien descubre las skills
+	// globales del home del usuario.
+	root := t.TempDir()
+	writeSkill(t, root, "saluda", "saluda con estilo")
+
+	e := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore()})
+
+	cmds := e.Commands()
+	for _, c := range cmds {
+		if c.Name == "saluda" {
+			if c.Description != "saluda con estilo" {
+				t.Fatalf("Commands() dio saluda con Description = %q, quiero %q", c.Description, "saluda con estilo")
+			}
+			return
+		}
+	}
+	t.Fatalf("Commands() = %v, debe contener el comando %q derivado de la skill del proyecto", cmds, "saluda")
+}
+
+func TestEngine_ProjectFilesListsWorkspace(t *testing.T) {
+	// El Engine lista los archivos del workspace (rutas relativas a la raiz)
+	// para el @-menu del composer (espejo de App.ListProjectFiles). El glob
+	// real usa ripgrep: sin rg instalado el caso se salta.
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skipf("rg unavailable: %v", err)
+	}
+	root := t.TempDir()
+	for _, f := range []string{"a.go", filepath.Join("sub", "b.txt")} {
+		path := filepath.Join(root, f)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte("contenido"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	e := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore()})
+
+	files, err := e.ProjectFiles()
+	if err != nil {
+		t.Fatalf("ProjectFiles() = %v, se esperaba nil", err)
+	}
+	for _, want := range []string{"a.go", filepath.Join("sub", "b.txt")} {
+		if !slices.Contains(files, want) {
+			t.Fatalf("ProjectFiles() = %v, debe contener la ruta relativa %q", files, want)
+		}
+	}
+}
+
+func TestEngine_SendPromptExpandsSlashCommand(t *testing.T) {
+	// SendPrompt expande un slash-command antes de encolarlo (espejo de
+	// App.expandCommand): el Message user promovido lleva el prompt EXPANDIDO
+	// de la plantilla de la skill, no el literal "/saluda ...". Un prompt que
+	// no es comando pasa sin cambios. Cubre tambien SendPlanPrompt: ambos
+	// comparten el camino comun de send.
+	root := t.TempDir()
+	writeSkill(t, root, "saluda", "saluda con estilo")
+	fake := llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.TextStarted},
+		llm.Event{Kind: llm.TextDelta, Text: "hola"},
+		llm.Event{Kind: llm.TextEnded},
+		llm.Event{Kind: llm.StepEnded},
+	)
+	e := NewEngine(EngineConfig{Root: root, Provider: fake, Store: session.NewMemoryStore()})
+
+	// lastUserPrompt corre una corrida completa y devuelve el ultimo Message
+	// user promovido entre sus eventos.
+	lastUserPrompt := func(sessionID, text string) string {
+		t.Helper()
+		if err := e.SendPrompt(sessionID, text); err != nil {
+			t.Fatalf("SendPrompt(%s, %s) = %v, se esperaba nil", sessionID, text, err)
+		}
+		events, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil)
+		if done.Err != "" {
+			t.Fatalf("RunDoneMsg.Err = %q, se esperaba corrida limpia", done.Err)
+		}
+		prompt := ""
+		for _, ev := range events {
+			if ev.Message != nil && ev.Message.Role == session.RoleUser {
+				prompt = ev.Message.Text
+			}
+		}
+		return prompt
+	}
+
+	// La plantilla de FromSkills es `Usa la skill %q.\n\n$ARGUMENTS`.
+	want := "Usa la skill \"saluda\".\n\nhola mundo"
+	if got := lastUserPrompt("s1", "/saluda hola mundo"); got != want {
+		t.Fatalf("Message user promovido = %q, quiero el prompt expandido %q, no el literal del comando", got, want)
+	}
+
+	// Un prompt que no es comando pasa sin transformar.
+	if got := lastUserPrompt("s2", "hola normal"); got != "hola normal" {
+		t.Fatalf("Message user promovido = %q, un prompt que no es comando debe pasar sin cambios (%q)", got, "hola normal")
+	}
 }
 
 func TestEngine_StreamsSessionEventsAndSignalsRunDone(t *testing.T) {
