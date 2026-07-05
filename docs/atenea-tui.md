@@ -29,13 +29,17 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
   de `App.SendPrompt`/`App.SendPlanPrompt`. Ambos admiten en el inbox y corren
   `Run` en una goroutine cancelable por sesion (espejo de `App.start`); al
   terminar publica `RunDoneMsg`. Satisface la interface `Agent` del Model.
-- `internal/tui/model.go` + `fold.go` + `view.go` — el Model de Bubble Tea.
-  `fold.go` proyecta los `SessionEvent` durables a entradas de conversacion
-  (texto assistant en streaming, mensajes user, tool calls con estado, permisos
-  pendientes, errores); `model.go` maneja teclado y la bomba de eventos del
-  canal; `view.go` renderiza con viewport de alto acotado (sigue la cola,
-  PgUp/PgDn), linea de estado de trabajo, la caja del composer con borde
-  redondeado y el pie con agente/modelo, todo con estilos lipgloss.
+- `internal/tui/model.go` + `fold.go` + `view.go` + `reveal.go` — el Model de
+  Bubble Tea. `fold.go` proyecta los `SessionEvent` durables a entradas de
+  conversacion (texto assistant en streaming, bloques de pensamiento
+  colapsables, mensajes user, tool calls con estado, permisos pendientes,
+  errores); `model.go` maneja teclado y la bomba de eventos del canal;
+  `view.go` renderiza con viewport de alto acotado (sigue la cola, PgUp/PgDn),
+  linea de estado de trabajo, la caja del composer con borde redondeado y el
+  pie con agente/modelo, todo con estilos lipgloss; `reveal.go` es el smooth
+  streaming del texto que llega por deltas, assistant y pensamiento (paridad
+  con `frontend/src/lib/reveal.ts`): la vista revela un prefijo por runas que
+  avanza con un loop de ticks, con catch-up proporcional al backlog.
 - `internal/wiring` — el ensamblado compartido extraido de `app.go`: registry de
   tools, skills y slash-commands, catalogo de subagentes con el gate propagado,
   system prompts (normal/plan/local) y el runner configurado. `App.wire` y
@@ -44,8 +48,14 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
 ## Contratos que la TUI fija con tests
 
 - El fold es puro: los deltas de texto acumulan en un bloque vivo y `Step.Ended`
-  cierra sin duplicar contra el Message coalescido; reasoning y tool-input no
-  son transcript.
+  cierra sin duplicar contra el Message coalescido; tool-input no es transcript.
+- El reasoning folda a un bloque de pensamiento propio (paridad con el
+  ThinkingBlock del escritorio): mientras fluye muestra la cabecera
+  `[pensando]` y las ultimas 4 lineas no vacias del texto revelado (ventana
+  deslizante, con el mismo smooth reveal del assistant); cerrado y drenado
+  colapsa a la linea `[penso <duracion>]`. `Text.Started` y `Step.Ended`
+  cierran defensivamente un pensamiento que siga en vivo (el runner puede no
+  emitir `Reasoning.Ended`).
 - `Tool.Permission.Requested` muestra la solicitud y se limpia con el
   `Tool.Success`/`Tool.Failed` del mismo `CallID` (no hay evento de resolucion).
   La tecla y/n resuelve via el gate con el `SessionID` del EVENTO (una solicitud
@@ -104,6 +114,5 @@ OPENROUTER_API_KEY=... ./build/bin/atenea-tui
   aprobado y el composer ya autocompleta slash-commands y @-archivos, pero
   sigue pendiente cambiar el MODELO desde la TUI: el pie muestra el modelo del
   entorno, fijo por corrida.
-- El indicador de trabajo es estatico (sin animacion de spinner).
 - Un prompt nuevo mientras corre una actividad cancela la corrida anterior
   (mismo comportamiento que la app Wails hoy).

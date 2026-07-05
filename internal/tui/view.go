@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/glamour/styles"
@@ -100,6 +101,8 @@ func (e entry) render(width int) string {
 	switch e.kind {
 	case entryUser:
 		return accentStyle.Render("> ") + userTextStyle.Render(e.text)
+	case entryReasoning:
+		return e.renderThinking()
 	case entryTool:
 		return e.renderTool()
 	case entryPermission:
@@ -109,15 +112,64 @@ func (e entry) render(width int) string {
 	case entryError:
 		return errorStyle.Render("[error] " + e.text)
 	default: // entryAssistant: texto plano sin marcador
-		// Solo los bloques CERRADOS se rinden como markdown: el streaming en
-		// vivo queda plano porque el markdown parcial de un stream flickea
-		// (un ** o un guion a medio llegar cambia de sentido con cada delta)
-		// y los tests de streaming asertan el texto plano tal cual llega.
-		if !e.live {
+		// Solo los bloques asentados (settled) se rinden como markdown: el
+		// streaming en vivo queda plano porque el markdown parcial de un
+		// stream flickea (un ** o un guion a medio llegar cambia de sentido
+		// con cada delta), y mientras el reveal no drene el backlog se sigue
+		// mostrando el prefijo plano.
+		if e.settled() {
 			return renderMarkdown(e.text, width)
 		}
-		return e.text
+		return e.revealedText()
 	}
+}
+
+// thinkingPreviewLines es el tope de lineas del preview del pensamiento en
+// curso: una ventana deslizante con las ULTIMAS lineas no vacias del texto
+// revelado (paridad con el ThinkingBlock del escritorio).
+const thinkingPreviewLines = 4
+
+// renderThinking rinde el bloque de pensamiento (paridad con el ThinkingBlock
+// del escritorio). Mientras esta en vivo o queda backlog por revelar: la
+// cabecera "[pensando]" y debajo solo las ultimas thinkingPreviewLines lineas
+// no vacias del texto revelado, todo en estilo tenue con cada linea como UN
+// segmento (contenido plano asertable); nunca markdown, es un vistazo al
+// pensamiento y no una respuesta. Asentado (cerrado y drenado) colapsa a una
+// unica linea de resumen "[penso <duracion>]".
+func (e entry) renderThinking() string {
+	if e.settled() {
+		return statusStyle.Render("[penso " + formatThinkingDuration(e.duration) + "]")
+	}
+	lines := []string{statusStyle.Render("[pensando]")}
+	for _, line := range lastNonEmptyLines(e.revealedText(), thinkingPreviewLines) {
+		lines = append(lines, statusStyle.Render(line))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// lastNonEmptyLines devuelve las ultimas limit lineas no vacias (ignorando las
+// de solo whitespace) del texto: la ventana deslizante del preview.
+func lastNonEmptyLines(text string, limit int) []string {
+	var kept []string
+	for _, line := range strings.Split(text, "\n") {
+		if strings.TrimSpace(line) != "" {
+			kept = append(kept, line)
+		}
+	}
+	if len(kept) > limit {
+		kept = kept[len(kept)-limit:]
+	}
+	return kept
+}
+
+// formatThinkingDuration rinde la duracion del pensamiento legible y corta:
+// "<1s" para menos de un segundo, si no la duracion redondeada a segundos
+// (p.ej. "12s", "1m5s").
+func formatThinkingDuration(d time.Duration) string {
+	if d < time.Second {
+		return "<1s"
+	}
+	return d.Round(time.Second).String()
 }
 
 // renderTool rinde el bloque de una tool call: el header con nombre y resumen

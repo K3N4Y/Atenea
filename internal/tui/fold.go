@@ -1,6 +1,11 @@
 package tui
 
-import "atenea/internal/session"
+import (
+	"time"
+	"unicode/utf8"
+
+	"atenea/internal/session"
+)
 
 // foldEvent aplica un evento durable a las entradas de la conversacion.
 func (m Model) foldEvent(ev EventMsg) Model {
@@ -8,17 +13,34 @@ func (m Model) foldEvent(ev EventMsg) Model {
 	case session.KindTextStarted:
 		m = m.openAssistantBlock()
 	case session.KindTextDelta:
-		if !m.liveOpen() {
+		// Apertura defensiva: el delta puede llegar sin Text.Started.
+		if !m.assistantOpen() {
 			m = m.openAssistantBlock()
 		}
 		m.lastEntry().text += ev.Text
-	case session.KindStepEnded:
-		if m.liveOpen() {
+	case session.KindReasoningStarted:
+		m = m.openReasoningBlock()
+	case session.KindReasoningDelta:
+		// Apertura defensiva: el delta puede llegar sin Reasoning.Started.
+		if !m.reasoningOpen() {
+			m = m.openReasoningBlock()
+		}
+		m.lastEntry().text += ev.Text
+	case session.KindReasoningEnded:
+		if m.reasoningOpen() {
 			last := m.lastEntry()
-			// El bloque en vivo ya tiene el texto streameado: el Message
-			// coalescido solo rellena si el streaming no trajo nada.
-			if last.text == "" && ev.Message != nil {
-				last.text = ev.Message.Text
+			last.fillCoalesced(ev.Text)
+			last.closeThinking()
+		}
+	case session.KindStepEnded:
+		// El fin del step cierra tambien un pensamiento que siga en vivo
+		// (cierre defensivo: el step puede morir pensando, por cancelacion o
+		// error del proveedor, sin Reasoning.Ended de por medio).
+		m = m.closeThinkingBlocks()
+		if m.assistantOpen() {
+			last := m.lastEntry()
+			if ev.Message != nil {
+				last.fillCoalesced(ev.Message.Text)
 			}
 			last.live = false
 		}
@@ -125,9 +147,54 @@ func (m Model) appendError(text string) Model {
 	return m
 }
 
-// openAssistantBlock abre un bloque assistant en vivo al final de la conversacion.
+// openAssistantBlock abre un bloque assistant en vivo al final de la
+// conversacion. Antes cierra cualquier pensamiento que siga en vivo: que
+// arranque la respuesta implica que el pensamiento termino, aunque el runner
+// no haya emitido Reasoning.Ended (cierre defensivo).
 func (m Model) openAssistantBlock() Model {
+	m = m.closeThinkingBlocks()
 	m.entries = append(m.entries, entry{kind: entryAssistant, live: true})
+	return m
+}
+
+// openReasoningBlock abre un bloque de pensamiento en vivo al final de la
+// conversacion, capturando el instante de apertura para computar la duracion
+// que muestra el resumen colapsado.
+func (m Model) openReasoningBlock() Model {
+	m.entries = append(m.entries, entry{kind: entryReasoning, live: true, startedAt: time.Now()})
+	return m
+}
+
+// fillCoalesced rellena el bloque en vivo con el texto coalescido que trae su
+// evento de cierre (el Message de Step.Ended, el Text de Reasoning.Ended) SOLO
+// si el streaming no trajo nada, y lo revela completo de inmediato: el reveal
+// suaviza el ritmo de los deltas, no el de un texto que ya llego entero.
+func (e *entry) fillCoalesced(text string) {
+	if e.text != "" || text == "" {
+		return
+	}
+	e.text = text
+	e.revealed = utf8.RuneCountInString(text)
+}
+
+// closeThinking cierra el bloque de pensamiento: apaga live y fija la duracion
+// desde el instante de apertura. Con el backlog ya drenado la vista colapsa el
+// bloque a la linea de resumen (ver renderThinking).
+func (e *entry) closeThinking() {
+	e.live = false
+	e.duration = time.Since(e.startedAt)
+}
+
+// closeThinkingBlocks cierra cualquier bloque de pensamiento que siga en vivo.
+// Es el cierre defensivo: el runner podria no emitir Reasoning.Ended, y tanto
+// abrir un bloque assistant como cerrar el step implican que el pensamiento
+// termino.
+func (m Model) closeThinkingBlocks() Model {
+	for i := range m.entries {
+		if m.entries[i].kind == entryReasoning && m.entries[i].live {
+			m.entries[i].closeThinking()
+		}
+	}
 	return m
 }
 
@@ -136,11 +203,19 @@ func (m Model) lastEntry() *entry {
 	return &m.entries[len(m.entries)-1]
 }
 
-// liveOpen indica si la ultima entrada es un bloque assistant en vivo sin cerrar.
-func (m Model) liveOpen() bool {
+// lastLiveIs indica si la ultima entrada es un bloque del kind dado que sigue
+// en vivo: el fold solo acumula deltas sobre la cola de la conversacion.
+func (m Model) lastLiveIs(kind entryKind) bool {
 	if len(m.entries) == 0 {
 		return false
 	}
 	last := m.lastEntry()
-	return last.kind == entryAssistant && last.live
+	return last.kind == kind && last.live
 }
+
+// assistantOpen indica si la ultima entrada es un bloque assistant en vivo sin cerrar.
+func (m Model) assistantOpen() bool { return m.lastLiveIs(entryAssistant) }
+
+// reasoningOpen indica si la ultima entrada es un bloque de pensamiento en
+// vivo sin cerrar (espejo de assistantOpen para entryReasoning).
+func (m Model) reasoningOpen() bool { return m.lastLiveIs(entryReasoning) }

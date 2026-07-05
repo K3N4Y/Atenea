@@ -2,11 +2,14 @@
 // El Model folda los SessionEvents durables al estado de la conversacion.
 //
 // El paquete se organiza por responsabilidad: model.go (tipos, estado y
-// teclado), fold.go (fold de eventos a entradas) y view.go (render, estilos
-// y viewport).
+// teclado), fold.go (fold de eventos a entradas), view.go (render, estilos
+// y viewport) y reveal.go (smooth streaming del texto del assistant y del
+// bloque de pensamiento).
 package tui
 
 import (
+	"time"
+
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -38,6 +41,7 @@ type entryKind int
 
 const (
 	entryAssistant    entryKind = iota // texto del assistant (streaming o coalescido)
+	entryReasoning                     // bloque de pensamiento del assistant (colapsable)
 	entryUser                          // mensaje del usuario
 	entryTool                          // tool call y su desenlace
 	entryPermission                    // solicitud de aprobacion pendiente (ask-before-run)
@@ -59,6 +63,19 @@ type entry struct {
 	kind entryKind
 	text string
 	live bool // true mientras el streaming del bloque sigue abierto
+
+	// revealed es cuantas runas de text ya revelo el smooth streaming (la
+	// vista muestra solo ese prefijo mientras quede backlog; ver reveal.go).
+	// Solo participa en las entradas cuyo texto llega por streaming (assistant
+	// y pensamiento); el resto se rinde completo sin mirar este campo.
+	revealed int
+
+	// Campos del bloque de pensamiento (kind == entryReasoning): startedAt es
+	// el instante en que Reasoning.Started abrio el bloque y duration la que
+	// tomo pensar, computada al cerrarlo; el resumen colapsado "[penso <dur>]"
+	// la rinde legible (ver renderThinking).
+	startedAt time.Time
+	duration  time.Duration
 
 	// Campos de tool call y de permiso (kind == entryTool / entryPermission):
 	callID string
@@ -97,6 +114,14 @@ type Model struct {
 	// spinner.Tick como cmd) y muere solo cuando working se apaga: el caso
 	// spinner.TickMsg de Update corta el reagendado con !working.
 	spinner spinner.Model
+
+	// revealing indica si el loop de ticks del reveal (smooth streaming) esta
+	// corriendo. Espejo del loop del spinner: nace cuando un EventMsg deja
+	// backlog sin loop activo, se rearma en cada tick mientras quede backlog
+	// y muere (cmd nil) cuando se agota; un delta posterior lo reinicia. El
+	// flag evita duplicar cadenas de ticks cuando llegan varios deltas antes
+	// del proximo tick.
+	revealing bool
 
 	// viewport acota el transcript al alto de la terminal siguiendo la cola;
 	// ready se activa con el primer tea.WindowSizeMsg (sin tamano conocido la
@@ -222,7 +247,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch ev := msg.(type) {
 	case EventMsg:
 		m = m.foldEvent(ev)
-		return m.syncViewport(), waitForEvent(m.events)
+		pump := waitForEvent(m.events)
+		// Un evento que deja texto sin revelar arranca el loop de ticks del
+		// reveal si no hay uno corriendo (ver revealing); el tick viaja
+		// batcheado con la bomba de eventos.
+		if !m.revealing && m.hasBacklog() {
+			m.revealing = true
+			return m.syncViewport(), tea.Batch(pump, revealTick())
+		}
+		return m.syncViewport(), pump
 	case RunDoneMsg:
 		m.working = false
 		if ev.Err != "" {
@@ -230,6 +263,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Al apagar working la linea de estado desaparece: recalcular el alto.
 		return m.resizeViewport(), waitForEvent(m.events)
+	case revealTickMsg:
+		// El loop de reveal muere solo: con el backlog agotado el tick no se
+		// reagenda (cmd nil) y un delta posterior lo reinicia. Siempre se
+		// re-sincroniza el viewport para que el texto recien revelado se vea.
+		m = m.advanceReveal()
+		if !m.hasBacklog() {
+			m.revealing = false
+			return m.syncViewport(), nil
+		}
+		m.revealing = true
+		return m.syncViewport(), revealTick()
 	case spinner.TickMsg:
 		// El loop de animacion muere solo: cuando RunDoneMsg apago working, el
 		// tick pendiente llega aqui y no se reagenda (cmd nil).

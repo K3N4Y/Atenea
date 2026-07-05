@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -63,6 +64,22 @@ func apply(t *testing.T, m Model, msg tea.Msg) Model {
 	return next
 }
 
+// drainReveal aplica ticks de reveal hasta agotar el backlog del smooth
+// streaming: los tests cuya asercion presupone el texto ya revelado lo usan
+// para no depender del ritmo de la animacion. El tope de iteraciones evita
+// colgar el test si el reveal dejara de avanzar.
+func drainReveal(t *testing.T, m Model) Model {
+	t.Helper()
+	for i := 0; i < 1000; i++ {
+		if !m.hasBacklog() {
+			return m
+		}
+		m = apply(t, m, revealTickMsg{})
+	}
+	t.Fatalf("el backlog del reveal no se agoto tras 1000 ticks")
+	return m
+}
+
 // lineWith devuelve la primera linea de view que contiene needle, o falla.
 func lineWith(t *testing.T, view, needle string) string {
 	t.Helper()
@@ -113,11 +130,13 @@ func TestModel_FoldsStreamingAssistantText(t *testing.T) {
 
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "Hola "})
+	m = drainReveal(t, m)
 	if got := m.View(); !strings.Contains(got, "Hola ") {
 		t.Fatalf("View() = %q, debe contener %q tras el primer delta", got, "Hola ")
 	}
 
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "mundo"})
+	m = drainReveal(t, m)
 	if got := m.View(); !strings.Contains(got, "Hola mundo") {
 		t.Fatalf("View() = %q, debe contener %q tras acumular deltas", got, "Hola mundo")
 	}
@@ -147,6 +166,7 @@ func TestModel_RendersClosedAssistantAsMarkdown(t *testing.T) {
 		Kind:    session.KindStepEnded,
 		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: text},
 	})
+	m = drainReveal(t, m)
 
 	view := m.View()
 	if !strings.Contains(view, "fuerte") {
@@ -180,6 +200,7 @@ func TestModel_LiveAssistantStaysPlainUntilClosed(t *testing.T) {
 	text := "esto es **fuerte** en vivo"
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
+	m = drainReveal(t, m)
 
 	view := m.View()
 	if !strings.Contains(view, "**fuerte**") {
@@ -218,6 +239,7 @@ func TestModel_ClosedMarkdownWrapsToTerminalWidth(t *testing.T) {
 		Kind:    session.KindStepEnded,
 		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: text},
 	})
+	m = drainReveal(t, m)
 
 	view := m.View()
 	if !strings.Contains(view, "fin-markdown") {
@@ -266,6 +288,7 @@ func TestModel_RendersUserMessages(t *testing.T) {
 	m = apply(t, m, EventMsg{Message: &session.Message{ID: "u1", Role: session.RoleUser, Text: "hola atenea"}})
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "hola humano"})
+	m = drainReveal(t, m)
 
 	view := m.View()
 	userLine := lineWith(t, view, "hola atenea")
@@ -484,16 +507,18 @@ func TestModel_ShowsStepFailedError(t *testing.T) {
 	}
 }
 
-func TestModel_ReasoningAndToolInputDeltasAreNotTranscript(t *testing.T) {
+func TestModel_ToolInputDeltasAreNotTranscript(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
-	// Reasoning: sus deltas y su texto final NO son transcript.
+	// Reasoning: el bloque de pensamiento se muestra mientras fluye, pero al
+	// cerrarse colapsa al resumen "[penso ...]": drenado el reveal, su texto
+	// NO queda como texto plano del transcript.
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "pienso en secreto"})
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: "pienso en secreto"})
 
 	// Tool input: los fragmentos crudos viajan en Text y el JSON completo en
-	// Input; ninguno es texto de conversacion.
+	// Input; ninguno es texto de conversacion, NUNCA.
 	m = apply(t, m, EventMsg{Kind: session.KindToolInputStarted, CallID: "c1"})
 	m = apply(t, m, EventMsg{Kind: session.KindToolInputDelta, CallID: "c1", Text: `{"cmd":"ls`})
 	m = apply(t, m, EventMsg{Kind: session.KindToolInputEnded, CallID: "c1", Input: json.RawMessage(`{"cmd":"ls"}`)})
@@ -501,6 +526,7 @@ func TestModel_ReasoningAndToolInputDeltasAreNotTranscript(t *testing.T) {
 	// El texto normal del assistant si es transcript: contrasta con lo anterior.
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "respuesta visible"})
+	m = drainReveal(t, m)
 
 	view := m.View()
 	for _, leak := range []string{"pienso en secreto", `{"cmd":"ls`} {
@@ -510,6 +536,254 @@ func TestModel_ReasoningAndToolInputDeltasAreNotTranscript(t *testing.T) {
 	}
 	if !strings.Contains(view, "respuesta visible") {
 		t.Fatalf("View() = %q, el texto del assistant si debe verse", view)
+	}
+}
+
+// Paridad con el ThinkingBlock del escritorio: el reasoning se muestra como un
+// bloque colapsable del transcript. Mientras fluye, la vista lleva la cabecera
+// "[pensando]" y debajo SOLO las ultimas 4 lineas no vacias del texto revelado
+// (ventana deslizante); Reasoning.Ended, con el backlog ya drenado, colapsa el
+// bloque a una unica linea de resumen con el prefijo "[penso " (duracion
+// legible), y la cabecera y el preview desaparecen.
+func TestModel_ShowsReasoningAsCollapsibleThinkingBlock(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+
+	text := "razon-1\nrazon-2\nrazon-3\nrazon-4\nrazon-5\nrazon-6"
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: text})
+	m = drainReveal(t, m)
+
+	view := m.View()
+	if !strings.Contains(view, "[pensando]") {
+		t.Fatalf("View() = %q, el reasoning en curso debe mostrar la cabecera %q", view, "[pensando]")
+	}
+	for _, want := range []string{"razon-3", "razon-4", "razon-5", "razon-6"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("View() = %q, el preview debe mostrar %q (las ultimas 4 lineas no vacias del texto revelado)", view, want)
+		}
+	}
+	for _, gone := range []string{"razon-1", "razon-2"} {
+		if strings.Contains(view, gone) {
+			t.Fatalf("View() = %q, %q ya salio de la ventana deslizante: solo se muestran las ultimas 4 lineas no vacias", view, gone)
+		}
+	}
+
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: text})
+	m = drainReveal(t, m)
+
+	view = m.View()
+	if !strings.Contains(view, "[penso ") {
+		t.Fatalf("View() = %q, el reasoning terminado debe colapsar a una linea de resumen con el prefijo %q", view, "[penso ")
+	}
+	if strings.Contains(view, "[pensando]") {
+		t.Fatalf("View() = %q, la cabecera %q debe desaparecer al colapsar el bloque", view, "[pensando]")
+	}
+	if strings.Contains(view, "razon-6") {
+		t.Fatalf("View() = %q, las lineas del preview deben desaparecer al colapsar el bloque", view)
+	}
+}
+
+func TestModel_ThinkingRevealsProgressivelyLikeAssistant(t *testing.T) {
+	// TRIANGULATE: un fold que appendea el delta del pensamiento y lo revela
+	// de golpe (revealed = total) pasa el test principal, que drena antes de
+	// asertar. El pensamiento participa del mismo reveal suave que el texto
+	// del assistant: sin ticks no se ve nada, cada tick avanza un prefijo y
+	// solo al drenar se ve el final.
+	m := NewModel(nil, "s1", nil)
+
+	// Dos lineas largas (300+ runas) para que el token final quede dentro de
+	// la ventana de 4 lineas del preview una vez drenado.
+	text := "inicio-marca " + strings.Repeat("a", 150) + "\n" + strings.Repeat("b", 150) + " token-final"
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: text})
+
+	view := m.View()
+	if strings.Contains(view, "token-final") {
+		t.Fatalf("View() = %q, %q NO debe verse sin ticks de reveal: el delta del pensamiento se revela progresivamente, no de golpe", view, "token-final")
+	}
+	if strings.Contains(view, "inicio-marca") {
+		t.Fatalf("View() = %q, %q NO debe verse sin ticks de reveal: tambien el prefijo espera su tick", view, "inicio-marca")
+	}
+
+	m = apply(t, m, revealTickMsg{})
+	view = m.View()
+	if !strings.Contains(view, "inicio-marca") {
+		t.Fatalf("View() = %q, tras UN tick debe verse el prefijo %q del pensamiento", view, "inicio-marca")
+	}
+	if strings.Contains(view, "token-final") {
+		t.Fatalf("View() = %q, tras UN tick el final %q aun NO debe verse: un tick revela un paso, no todo el backlog", view, "token-final")
+	}
+
+	m = drainReveal(t, m)
+	if view := m.View(); !strings.Contains(view, "token-final") {
+		t.Fatalf("View() = %q, con el backlog drenado el final %q debe verse en la ventana del preview", view, "token-final")
+	}
+}
+
+func TestModel_ThinkingPreviewSkipsBlankLines(t *testing.T) {
+	// TRIANGULATE: una ventana que corta las ultimas 4 lineas CRUDAS (sin
+	// filtrar vacias) muestra blancos y pierde contenido: de
+	// "r1\n\nr2\n\nr3\n\nr4\n\nr5" mostraria ["", "r4", "", "r5"]. La ventana
+	// filtra primero las vacias y recien ahi corta: r2..r5 pegadas a la
+	// cabecera, sin blancos intercalados.
+	m := NewModel(nil, "s1", nil)
+
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "r1\n\nr2\n\nr3\n\nr4\n\nr5"})
+	m = drainReveal(t, m)
+
+	view := m.View()
+	if !strings.Contains(view, "[pensando]\nr2\nr3\nr4\nr5") {
+		t.Fatalf("View() = %q, el preview debe ser exactamente las ultimas 4 lineas NO vacias pegadas a la cabecera (%q): ni blancos intercalados ni lineas de contenido perdidas", view, "[pensando]\nr2\nr3\nr4\nr5")
+	}
+	if strings.Contains(view, "r1") {
+		t.Fatalf("View() = %q, %q ya salio de la ventana de 4 lineas no vacias", view, "r1")
+	}
+}
+
+func TestModel_TextStartedClosesLiveThinking(t *testing.T) {
+	// TRIANGULATE: si el runner nunca emite Reasoning.Ended, un fold ingenuo
+	// deja la cabecera "[pensando]" viva para siempre mientras la respuesta
+	// streamea debajo. Que arranque el texto implica que el pensamiento
+	// termino: Text.Started lo cierra defensivamente.
+	m := NewModel(nil, "s1", nil)
+
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "sopeso opciones"})
+	m = drainReveal(t, m)
+
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "respuesta"})
+	m = drainReveal(t, m)
+
+	view := m.View()
+	if strings.Contains(view, "[pensando]") {
+		t.Fatalf("View() = %q, Text.Started debe cerrar el pensamiento en vivo: la cabecera %q no puede sobrevivir al arranque de la respuesta", view, "[pensando]")
+	}
+	if !strings.Contains(view, "[penso ") {
+		t.Fatalf("View() = %q, el pensamiento cerrado defensivamente debe colapsar al resumen %q", view, "[penso ")
+	}
+	if !strings.Contains(view, "respuesta") {
+		t.Fatalf("View() = %q, la respuesta %q debe verse tras el pensamiento colapsado", view, "respuesta")
+	}
+}
+
+func TestModel_StepEndedClosesLiveThinking(t *testing.T) {
+	// TRIANGULATE: un step puede morir pensando (cancelacion, error del
+	// proveedor) sin Reasoning.Ended ni Text.Started de por medio. Step.Ended
+	// cierra el pensamiento defensivamente igual que Text.Started; sin ese
+	// cierre la cabecera "[pensando]" quedaria viva para siempre.
+	m := NewModel(nil, "s1", nil)
+
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "pienso y el step muere"})
+	m = drainReveal(t, m)
+
+	m = apply(t, m, EventMsg{Kind: session.KindStepEnded})
+
+	view := m.View()
+	if strings.Contains(view, "[pensando]") {
+		t.Fatalf("View() = %q, Step.Ended debe cerrar el pensamiento en vivo: la cabecera %q no puede sobrevivir al fin del step", view, "[pensando]")
+	}
+	if !strings.Contains(view, "[penso ") {
+		t.Fatalf("View() = %q, el pensamiento cerrado por el fin del step debe colapsar al resumen %q", view, "[penso ")
+	}
+}
+
+func TestModel_ReasoningEndedTextCollapsesWithoutAnimation(t *testing.T) {
+	// TRIANGULATE: cuando Reasoning.Ended trae el texto completo sin deltas
+	// previos (proveedor que no streamea el pensamiento), el relleno NO se
+	// anima: se revela completo y colapsado en el mismo fold, sin ticks de por
+	// medio. Un fold que solo asigna el texto sin marcarlo revelado dejaria el
+	// bloque "escribiendose" despues de cerrado.
+	m := NewModel(nil, "s1", nil)
+
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: "relleno-final-sin-stream"})
+
+	view := m.View()
+	if !strings.Contains(view, "[penso ") {
+		t.Fatalf("View() = %q, sin deltas previos el Ended con texto debe colapsar de inmediato al resumen %q, sin ticks de por medio", view, "[penso ")
+	}
+	if strings.Contains(view, "[pensando]") {
+		t.Fatalf("View() = %q, la cabecera %q no debe verse tras el Ended: el texto de relleno no se anima", view, "[pensando]")
+	}
+	if strings.Contains(view, "relleno-final-sin-stream") {
+		t.Fatalf("View() = %q, el texto de relleno del Ended jamas debe verse plano, ni siquiera antes de drenar", view)
+	}
+
+	m = drainReveal(t, m)
+	if view := m.View(); strings.Contains(view, "relleno-final-sin-stream") {
+		t.Fatalf("View() = %q, el texto de relleno tampoco debe aparecer tras drenar: no quedo backlog que animar", view)
+	}
+}
+
+func TestModel_TwoThinkingBlocksInSameRunStaySeparate(t *testing.T) {
+	// TRIANGULATE: un fold que reusa el bloque de pensamiento anterior en vez
+	// de abrir uno nuevo mezclaria las lineas del primero en el preview del
+	// segundo y colapsaria ambos en UNA sola linea de resumen. Cada
+	// Reasoning.Started abre un bloque propio.
+	m := NewModel(nil, "s1", nil)
+
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "primero-a\nprimero-b"})
+	m = drainReveal(t, m)
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: "primero-a\nprimero-b"})
+	m = drainReveal(t, m)
+
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "segundo-a\nsegundo-b"})
+	m = drainReveal(t, m)
+
+	view := m.View()
+	if !strings.Contains(view, "segundo-a") || !strings.Contains(view, "segundo-b") {
+		t.Fatalf("View() = %q, el preview del segundo pensamiento debe mostrar sus lineas", view)
+	}
+	if strings.Contains(view, "primero-a") || strings.Contains(view, "primero-b") {
+		t.Fatalf("View() = %q, el preview del segundo pensamiento NO debe mezclar lineas del primero (ya colapsado)", view)
+	}
+
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: "segundo-a\nsegundo-b"})
+	m = drainReveal(t, m)
+
+	view = m.View()
+	if count := strings.Count(view, "[penso "); count < 2 {
+		t.Fatalf("View() = %q, dos pensamientos en la misma corrida deben colapsar a DOS resumenes %q (count=%d)", view, "[penso ", count)
+	}
+}
+
+func TestModel_ThinkingCollapseWaitsForRevealDrain(t *testing.T) {
+	// TRIANGULATE: un colapso instantaneo al recibir Ended con backlog
+	// pendiente cortaria la animacion a mitad de frase. Paridad con el done
+	// del escritorio: el bloque se sigue "escribiendo" hasta drenar el reveal
+	// y recien ahi colapsa al resumen.
+	m := NewModel(nil, "s1", nil)
+
+	text := "inicio-fluye " + strings.Repeat("c", 150) + "\n" + strings.Repeat("d", 150) + " final-tardio"
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: text})
+	// Un tick para que haya un prefijo visible que asertar antes del Ended.
+	m = apply(t, m, revealTickMsg{})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: text})
+
+	view := m.View()
+	if !strings.Contains(view, "[pensando]") {
+		t.Fatalf("View() = %q, con backlog pendiente el Ended NO colapsa todavia: la cabecera %q debe seguir mientras se drena", view, "[pensando]")
+	}
+	if !strings.Contains(view, "inicio-fluye") {
+		t.Fatalf("View() = %q, el prefijo ya revelado %q debe seguir visible mientras el pensamiento termina de escribirse", view, "inicio-fluye")
+	}
+	if strings.Contains(view, "[penso ") {
+		t.Fatalf("View() = %q, el resumen %q no debe aparecer hasta drenar el backlog del reveal", view, "[penso ")
+	}
+
+	m = drainReveal(t, m)
+	view = m.View()
+	if !strings.Contains(view, "[penso ") {
+		t.Fatalf("View() = %q, con el backlog drenado el pensamiento cerrado debe colapsar al resumen %q", view, "[penso ")
+	}
+	if strings.Contains(view, "[pensando]") {
+		t.Fatalf("View() = %q, la cabecera %q debe desaparecer al colapsar", view, "[pensando]")
 	}
 }
 
@@ -528,6 +802,7 @@ func TestModel_SecondTurnOpensNewBlock(t *testing.T) {
 	// Segundo turno: el nuevo streaming abre un bloque NUEVO.
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "Segunda respuesta"})
+	m = drainReveal(t, m)
 
 	view := m.View()
 	if strings.Contains(view, "Primera respuestaSegunda respuesta") {
@@ -1146,6 +1421,7 @@ func TestModel_WrapsLongAssistantTextToTerminalWidth(t *testing.T) {
 	long := "esta es una respuesta larga del assistant que en una terminal angosta debe hacer wrap a varias lineas para leerse entera fin-de-respuesta"
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: long})
+	m = drainReveal(t, m)
 
 	view := m.View()
 	if !strings.Contains(view, "fin-de-respuesta") {
@@ -1164,6 +1440,7 @@ func TestModel_RewrapsOnResize(t *testing.T) {
 	long := "esta respuesta larga del assistant debe re-envolverse cuando la terminal cambia de ancho fin-de-respuesta"
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: long})
+	m = drainReveal(t, m)
 
 	// La terminal se angosta: el transcript debe re-envolverse a 24 celdas.
 	m = apply(t, m, tea.WindowSizeMsg{Width: 24, Height: 10})
@@ -1188,6 +1465,7 @@ func TestModel_WrapsUnbreakableLongToken(t *testing.T) {
 	url := "https://example.com/" + strings.Repeat("x", 60) + "sufijo-final"
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: url})
+	m = drainReveal(t, m)
 
 	view := m.View()
 	if !strings.Contains(view, "sufijo-final") {
@@ -1209,6 +1487,7 @@ func TestModel_FollowsTailOfWrappedResponse(t *testing.T) {
 	long := "inicio-de-respuesta " + strings.Repeat("palabra ", 60) + "fin-de-respuesta"
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: long})
+	m = drainReveal(t, m)
 
 	view := m.View()
 	if !strings.Contains(view, "fin-de-respuesta") {
@@ -2295,5 +2574,286 @@ func TestModel_EmptySubmitDoesNotPolluteHistory(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
 	if got := m.input.Value(); got != "unico" {
 		t.Fatalf("input.Value() = %q, en el tope del historial la flecha arriba se queda en %q: el submit vacio no debe haberse apilado", got, "unico")
+	}
+}
+
+// Contrato del smooth streaming (paridad con el frontend de escritorio,
+// frontend/src/lib/reveal.ts): los deltas del assistant se ACUMULAN en la
+// entrada pero la vista NO los muestra completos de inmediato. Un loop de
+// ticks de reveal (revealTickMsg, analogo al spinner.TickMsg) avanza el texto
+// revelado: en cada tick se revelan ~max(base, ceil(backlog/8)) runas, con
+// base ~6-7 runas por tick (el ritmo del escritorio: 1 char cada 5ms a ticks
+// de ~33ms). Con suficientes ticks el texto completo queda visible.
+func TestModel_SmoothRevealsAssistantTextOnTicks(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+
+	text := strings.Repeat("palabra ", 40) + "final-del-texto"
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
+
+	// (a) El delta NO aparece completo de golpe: la cola del texto todavia no
+	// esta revelada justo despues de acumular el delta.
+	if got := m.View(); strings.Contains(got, "final-del-texto") {
+		t.Fatalf("View() = %q, NO debe contener %q inmediatamente tras el delta: el texto se revela progresivamente con los ticks de reveal, no aparece completo de golpe", got, "final-del-texto")
+	}
+
+	// (b) Un tick de reveal avanza el texto visible: un prefijo ya se ve, pero
+	// la cola todavia no (revelado progresivo, no todo de golpe).
+	m = apply(t, m, revealTickMsg{})
+	view := m.View()
+	if !strings.Contains(view, "palabra") {
+		t.Fatalf("View() = %q, debe contener %q tras un tick de reveal: cada tick revela un tramo del texto acumulado", view, "palabra")
+	}
+	if strings.Contains(view, "final-del-texto") {
+		t.Fatalf("View() = %q, NO debe contener %q tras UN solo tick: un tick revela ~max(base, ceil(backlog/8)) runas, no el texto entero", view, "final-del-texto")
+	}
+
+	// (c) Con suficientes ticks el texto completo queda visible.
+	for i := 0; i < 200; i++ {
+		m = apply(t, m, revealTickMsg{})
+		if strings.Contains(m.View(), "final-del-texto") {
+			break
+		}
+	}
+	if got := m.View(); !strings.Contains(got, "final-del-texto") {
+		t.Fatalf("View() = %q, debe contener %q tras suficientes ticks de reveal: el loop de reveal termina mostrando el texto completo", got, "final-del-texto")
+	}
+}
+
+// TRIANGULATE: el catch-up acota la latencia. Con paso constante puro (~7
+// runas por tick) un delta de ~4000 runas tardaria ~570 ticks (~19 segundos a
+// 33ms) en drenarse: el texto visible quedaria eternamente por detras de un
+// modelo rapido. El paso proporcional al backlog (ceil(backlog/8)) debe dejar
+// el texto completo visible en una cantidad acotada de ticks.
+func TestModel_RevealCatchUpDrainsHugeDeltaInBoundedTicks(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+
+	// ~4011 runas en un solo delta (modelo rapido volcando texto de golpe).
+	text := strings.Repeat("palabra ", 500) + "fin-catchup"
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
+
+	// El primer tick no lo revela todo: el catch-up acelera el ritmo, no lo
+	// convierte en un reveal instantaneo (eso mataria la animacion).
+	m = apply(t, m, revealTickMsg{})
+	if got := m.View(); strings.Contains(got, "fin-catchup") {
+		t.Fatalf("View() = %q, NO debe contener %q tras UN solo tick de un delta de ~4000 runas: el catch-up acota la latencia sin volverse un reveal instantaneo", got, "fin-catchup")
+	}
+
+	// A lo sumo 64 ticks en total (~2 segundos a 33ms) dejan visible el texto
+	// completo: el paso proporcional drena geometricamente el backlog.
+	for i := 0; i < 63 && m.hasBacklog(); i++ {
+		m = apply(t, m, revealTickMsg{})
+	}
+	if got := m.View(); !strings.Contains(got, "fin-catchup") {
+		t.Fatalf("View() = %q, debe contener %q tras 64 ticks: el catch-up proporcional al backlog debe drenar un delta enorme en una cantidad acotada de ticks (un paso constante puro tardaria ~570)", got, "fin-catchup")
+	}
+}
+
+// TRIANGULATE: el swap a markdown espera a que el reveal drene. Una
+// implementacion pobre rendiria markdown apenas el bloque se cierra (StepEnded)
+// aunque quede backlog: el texto completo flashearia de golpe a mitad de la
+// animacion. Cerrado el turno con backlog pendiente la vista debe seguir
+// mostrando el prefijo PLANO (sin la cola y con los ** crudos); recien al
+// drenar se rinde el markdown.
+func TestModel_RevealMarkdownSwapWaitsForDrain(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// ~502 runas: el primer tick revela ~63 (los ** iniciales incluidos) y
+	// deja mucha cola sin revelar.
+	text := "**fuerte** " + strings.Repeat("relleno ", 60) + "fin-drenado"
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
+
+	// Un tick antes del cierre: el prefijo con los marcadores crudos ya se ve.
+	m = apply(t, m, revealTickMsg{})
+	if got := m.View(); !strings.Contains(got, "**fuerte**") {
+		t.Fatalf("View() = %q, debe contener el marcador crudo %q tras el primer tick: el streaming en vivo se muestra plano", got, "**fuerte**")
+	}
+
+	// El turno se cierra con backlog pendiente.
+	m = apply(t, m, EventMsg{
+		Kind:    session.KindStepEnded,
+		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: text},
+	})
+
+	view := m.View()
+	if strings.Contains(view, "fin-drenado") {
+		t.Fatalf("View() = %q, NO debe contener %q inmediatamente tras StepEnded: cerrar el turno no debe revelar de golpe la cola pendiente, el reveal sigue su ritmo de ticks", view, "fin-drenado")
+	}
+	if !strings.Contains(view, "**") {
+		t.Fatalf("View() = %q, debe seguir mostrando los %q crudos tras StepEnded: mientras quede backlog el prefijo se rinde PLANO, saltar a markdown a mitad de la animacion flashearia el texto completo", view, "**")
+	}
+
+	// Drenado el backlog, el bloque cerrado se rinde como markdown.
+	m = drainReveal(t, m)
+	view = m.View()
+	if strings.Contains(view, "**") {
+		t.Fatalf("View() = %q, NO debe contener %q tras drenar: con el bloque cerrado y drenado el enfasis markdown se rinde, no se muestra crudo", view, "**")
+	}
+	if !strings.Contains(view, "fuerte") {
+		t.Fatalf("View() = %q, debe contener %q: rendir el markdown no debe perder el contenido", view, "fuerte")
+	}
+	if !strings.Contains(view, "fin-drenado") {
+		t.Fatalf("View() = %q, debe contener %q: drenar el backlog debe terminar mostrando el texto completo rendido", view, "fin-drenado")
+	}
+}
+
+// TRIANGULATE: el corte del reveal es por runas, nunca por bytes. Una
+// implementacion que corte el prefijo con e.text[:n] parte los caracteres
+// multibyte a la mitad: la vista intermedia queda con UTF-8 invalido o con el
+// caracter de reemplazo U+FFFD. Tras cada tick intermedio la vista debe ser
+// UTF-8 valido y sin U+FFFD; al drenar, el texto multibyte completo intacto.
+func TestModel_RevealCutsByRunesNotBytes(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+
+	// ~256 runas con acentos ausentes pero kanji y emoji de 3-4 bytes: casi
+	// cualquier corte por bytes cae a mitad de un caracter.
+	text := strings.Repeat("cancion nunca japon 日本語テキスト 🚀🚀🚀 ", 8)
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
+
+	ticks := 0
+	for m.hasBacklog() {
+		ticks++
+		if ticks > 1000 {
+			t.Fatalf("el backlog del reveal no se agoto tras 1000 ticks")
+		}
+		m = apply(t, m, revealTickMsg{})
+		view := m.View()
+		if !utf8.ValidString(view) {
+			t.Fatalf("View() = %q tras el tick %d, no es UTF-8 valido: el corte del reveal debe ser por runas, un corte por bytes parte los caracteres multibyte", view, ticks)
+		}
+		if strings.ContainsRune(view, '�') {
+			t.Fatalf("View() = %q tras el tick %d, contiene el caracter de reemplazo U+FFFD: un caracter multibyte quedo partido por un corte por bytes", view, ticks)
+		}
+	}
+	// El drenado debe haber pasado por cortes intermedios: un reveal
+	// instantaneo pasaria las aserciones de arriba sin ejercitar nada.
+	if ticks < 2 {
+		t.Fatalf("el backlog (%d runas) se dreno en %d tick(s), debe drenar en varios ticks para ejercitar los cortes intermedios", utf8.RuneCountInString(text), ticks)
+	}
+	if got := m.View(); !strings.Contains(got, text) {
+		t.Fatalf("View() = %q, debe contener el texto multibyte completo %q tras drenar: revelar por runas no debe perder ni corromper ningun caracter", got, text)
+	}
+}
+
+// TRIANGULATE (espejo del ciclo de vida del spinner): el loop de ticks del
+// reveal nace con el primer delta que deja backlog, no se duplica con deltas
+// siguientes, se rearma mientras quede backlog, muere al drenarse y renace con
+// un delta nuevo. Con canal de eventos nil la bomba es nil y el cmd devuelto
+// por Update es SOLO el tick del reveal: cada transicion es asertable directa.
+func TestModel_RevealTickLoopLifecycle(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+
+	// 200 runas por delta: ningun tick individual drena el backlog completo.
+	delta := strings.Repeat("palabra ", 25)
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+
+	// a) El primer delta con backlog arranca el loop: el cmd produce el tick.
+	updated, cmd := m.Update(EventMsg{Kind: session.KindTextDelta, Text: delta})
+	m, ok := updated.(Model)
+	if !ok {
+		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+	}
+	if cmd == nil {
+		t.Fatalf("Update(delta) devolvio cmd nil, el primer delta con backlog debe devolver el cmd que arranca el loop de reveal: sin cmd nadie produce ticks y el texto queda congelado")
+	}
+	msg := cmd()
+	if _, ok := msg.(revealTickMsg); !ok {
+		t.Fatalf("cmd() = %T, el cmd del arranque del loop debe producir un revealTickMsg", msg)
+	}
+
+	// b) Un segundo delta con el loop ya corriendo NO duplica la cadena de
+	// ticks: dos cadenas doblarian el ritmo del reveal.
+	updated, cmd = m.Update(EventMsg{Kind: session.KindTextDelta, Text: delta})
+	m, ok = updated.(Model)
+	if !ok {
+		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+	}
+	if cmd != nil {
+		t.Fatalf("Update(delta) con el loop de reveal corriendo devolvio cmd no nil, un segundo delta NO debe arrancar otra cadena de ticks: cadenas duplicadas aceleran el reveal con cada delta")
+	}
+
+	// c) Un tick con backlog restante se rearma: el cmd produce el proximo tick.
+	updated, cmd = m.Update(revealTickMsg{})
+	m, ok = updated.(Model)
+	if !ok {
+		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+	}
+	if cmd == nil {
+		t.Fatalf("Update(tick) con backlog restante devolvio cmd nil, el loop debe reagendar el proximo tick mientras quede texto sin revelar")
+	}
+	msg = cmd()
+	if _, ok := msg.(revealTickMsg); !ok {
+		t.Fatalf("cmd() = %T, el cmd del rearme del loop debe producir el proximo revealTickMsg", msg)
+	}
+
+	// d) Con el backlog drenado el siguiente tick no se reagenda: el loop muere.
+	m = drainReveal(t, m)
+	updated, cmd = m.Update(revealTickMsg{})
+	m, ok = updated.(Model)
+	if !ok {
+		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+	}
+	if cmd != nil {
+		t.Fatalf("Update(tick) sin backlog devolvio cmd no nil, el loop de reveal debe morir al drenarse: sin este corte la TUI queda despertando cada 33ms para siempre")
+	}
+
+	// e) Un delta nuevo tras el drenado reenciende el loop.
+	updated, cmd = m.Update(EventMsg{Kind: session.KindTextDelta, Text: delta})
+	if _, ok = updated.(Model); !ok {
+		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+	}
+	if cmd == nil {
+		t.Fatalf("Update(delta) tras drenar devolvio cmd nil, un delta nuevo debe reencender el loop de reveal: un loop de un solo uso deja el texto congelado en el segundo turno de streaming")
+	}
+	msg = cmd()
+	if _, ok := msg.(revealTickMsg); !ok {
+		t.Fatalf("cmd() = %T, el cmd del reencendido del loop debe producir un revealTickMsg", msg)
+	}
+}
+
+// TRIANGULATE: el loop de reveal NO esta atado a working como el del spinner.
+// Una implementacion que copie el corte del caso spinner.TickMsg (!working =>
+// cmd nil) deja el texto congelado a medio revelar cuando la corrida termina
+// antes de drenar el backlog: los ticks posteriores a RunDoneMsg deben seguir
+// revelando hasta drenar.
+func TestModel_RevealSurvivesRunDone(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+
+	// Corrida real en curso: working encendido via Enter con texto.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	text := strings.Repeat("palabra ", 40) + "fin-tras-run-done"
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
+
+	// La corrida termina con backlog pendiente: working se apaga pero la cola
+	// del texto sigue sin revelar.
+	m = apply(t, m, RunDoneMsg{})
+	if m.Working() {
+		t.Fatalf("Working() = true, RunDoneMsg debe apagar el estado de trabajo")
+	}
+	if got := m.View(); strings.Contains(got, "fin-tras-run-done") {
+		t.Fatalf("View() = %q, RunDoneMsg NO debe revelar la cola de golpe: el reveal sigue su ritmo de ticks tambien al terminar la corrida", got)
+	}
+
+	// El tick posterior al fin de la corrida sigue avanzando y reagendando.
+	updated, cmd := m.Update(revealTickMsg{})
+	m, ok := updated.(Model)
+	if !ok {
+		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+	}
+	if cmd == nil {
+		t.Fatalf("Update(tick) tras RunDoneMsg devolvio cmd nil con backlog pendiente, el loop de reveal no debe morir con working: debe seguir drenando el texto restante")
+	}
+
+	m = drainReveal(t, m)
+	if got := m.View(); !strings.Contains(got, "fin-tras-run-done") {
+		t.Fatalf("View() = %q, debe contener %q tras drenar: los ticks posteriores a RunDoneMsg deben terminar mostrando el texto completo", got, "fin-tras-run-done")
 	}
 }
