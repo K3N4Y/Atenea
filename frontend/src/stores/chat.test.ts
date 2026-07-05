@@ -450,6 +450,25 @@ describe('chat store: historial de sesiones (sidebar)', () => {
     expect(App.ListSessions).toHaveBeenCalled()
   })
 
+  it('un evento sessions:changed refresca la sidebar (re-pide ListSessions)', async () => {
+    const store = useChatStore()
+    store.subscribe()
+    vi.mocked(App.ListSessions).mockClear()
+
+    // subscribe() debe registrar tambien el canal global sessions:changed (lo
+    // emite el backend cuando OTRO proceso, como la TUI, escribe la DB).
+    const call = vi
+      .mocked(EventsOn)
+      .mock.calls.find(([channel]) => channel === 'sessions:changed')
+    expect(call).toBeDefined()
+
+    const handler = call![1] as () => void
+    handler()
+    await Promise.resolve()
+
+    expect(App.ListSessions).toHaveBeenCalled()
+  })
+
   it('loadSession fija el sessionID activo y reproduce el historial via applyEvent', async () => {
     vi.mocked(App.SessionHistory).mockResolvedValueOnce([
       { Message: { Role: 'user', Text: 'hola' } },
@@ -795,13 +814,15 @@ describe('chat store: acciones sobre los bindings', () => {
     const secondSessionID = store.sessionID
 
     expect(secondSessionID).not.toBe(firstSessionID)
+    // Cada subscribe() registra 3 canales (sesion, error y el global
+    // sessions:changed), asi que el segundo subscribe arranca en la llamada 4.
     expect(EventsOn).toHaveBeenNthCalledWith(
-      3,
+      4,
       `session:${secondSessionID}`,
       expect.any(Function),
     )
     expect(EventsOn).toHaveBeenNthCalledWith(
-      4,
+      5,
       `session:${secondSessionID}:error`,
       expect.any(Function),
     )

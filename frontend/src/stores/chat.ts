@@ -756,6 +756,9 @@ export const useChatStore = defineStore(
         EventsOn(`session:${sessionID.value}:error`, (msg: string) =>
           applyError(msg),
         ),
+        // El backend lo emite cuando OTRO proceso (la TUI) escribio sesiones en
+        // el SQLite compartido; re-pedir ListSessions refresca la sidebar.
+        EventsOn('sessions:changed', () => void loadSessions()),
       )
     }
 
