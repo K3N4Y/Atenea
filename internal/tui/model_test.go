@@ -131,6 +131,133 @@ func TestModel_FoldsStreamingAssistantText(t *testing.T) {
 	}
 }
 
+// Contrato de render del assistant: mientras el bloque esta vivo (solo
+// TextStarted/TextDelta, sin StepEnded) el texto se muestra plano tal cual
+// llega; al cerrarse el turno (StepEnded pone live = false) el texto se rinde
+// como markdown: los marcadores crudos (** y "- ") desaparecen y el contenido
+// queda formateado (enfasis aplicado, listas con bullets).
+func TestModel_RendersClosedAssistantAsMarkdown(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	text := "Hola **fuerte** dicho.\n\n- item uno\n- item dos"
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
+	m = apply(t, m, EventMsg{
+		Kind:    session.KindStepEnded,
+		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: text},
+	})
+
+	view := m.View()
+	if !strings.Contains(view, "fuerte") {
+		t.Fatalf("View() = %q, debe contener %q: rendir markdown no debe perder el contenido", view, "fuerte")
+	}
+	if strings.Contains(view, "**") {
+		t.Fatalf("View() = %q, NO debe contener %q: con el bloque cerrado el enfasis markdown se rinde, no se muestra crudo", view, "**")
+	}
+	if strings.Contains(view, "- item uno") {
+		t.Fatalf("View() = %q, NO debe contener %q: con el bloque cerrado el guion crudo de lista se rinde como bullet", view, "- item uno")
+	}
+	if !strings.Contains(view, "item uno") {
+		t.Fatalf("View() = %q, debe contener %q: rendir la lista no debe perder sus items", view, "item uno")
+	}
+	if !strings.Contains(view, "item dos") {
+		t.Fatalf("View() = %q, debe contener %q: rendir la lista no debe perder sus items", view, "item dos")
+	}
+	if !strings.Contains(view, "•") {
+		t.Fatalf("View() = %q, debe contener %q: los items de lista markdown se rinden con bullet", view, "•")
+	}
+}
+
+func TestModel_LiveAssistantStaysPlainUntilClosed(t *testing.T) {
+	// TRIANGULATE: una implementacion pobre rendiria markdown SIEMPRE, tambien
+	// sobre el bloque en vivo: el markdown parcial de un stream flickea (un **
+	// a medio llegar cambia de sentido con cada delta). Mientras el bloque esta
+	// vivo el texto debe verse plano tal cual llega; solo al cerrarse se rinde.
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	text := "esto es **fuerte** en vivo"
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
+
+	view := m.View()
+	if !strings.Contains(view, "**fuerte**") {
+		t.Fatalf("View() = %q, debe contener el marcador crudo %q mientras el bloque esta vivo: el streaming se muestra plano, no se rinde markdown parcial", view, "**fuerte**")
+	}
+
+	m = apply(t, m, EventMsg{
+		Kind:    session.KindStepEnded,
+		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: text},
+	})
+
+	view = m.View()
+	if strings.Contains(view, "**") {
+		t.Fatalf("View() = %q, NO debe contener %q tras cerrar el bloque: al cerrarse el turno el enfasis markdown se rinde, no se muestra crudo", view, "**")
+	}
+	if !strings.Contains(view, "fuerte") {
+		t.Fatalf("View() = %q, debe contener %q: rendir el markdown no debe perder el contenido", view, "fuerte")
+	}
+}
+
+func TestModel_ClosedMarkdownWrapsToTerminalWidth(t *testing.T) {
+	// TRIANGULATE: un renderMarkdown que ignora el ancho (WithWordWrap(0)
+	// siempre), o que pasa el ancho completo sin descontar el margen del
+	// documento de glamour, produce lineas mas anchas que la terminal. El
+	// envolvimiento de emergencia del viewport (ansi.Wrap en syncViewport) las
+	// re-parte y deja palabras huerfanas sin margen en la columna 0. El markdown
+	// cerrado debe envolverse al ancho de la terminal por el propio renderer:
+	// todo el texto visible y cada linea envuelta conservando su margen.
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 30, Height: 12})
+
+	text := "este parrafo largo con **enfasis** debe envolverse al ancho angosto de la terminal para poder leerse entero hasta el token fin-markdown"
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
+	m = apply(t, m, EventMsg{
+		Kind:    session.KindStepEnded,
+		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: text},
+	})
+
+	view := m.View()
+	if !strings.Contains(view, "fin-markdown") {
+		t.Fatalf("View() = %q, el final del texto %q debe estar visible: el markdown cerrado debe envolverse al ancho de la terminal, no truncarse", view, "fin-markdown")
+	}
+	assertNoLineWiderThan(t, view, 30)
+	for _, token := range []string{"enfasis", "fin-markdown"} {
+		line := ansi.Strip(lineWith(t, view, token))
+		if !strings.HasPrefix(line, "  ") {
+			t.Fatalf("linea con %q = %q, debe conservar el margen del render markdown: una linea rendida mas ancha que la terminal la re-parte el envolvimiento de emergencia del viewport y deja el resto huerfano en la columna 0", token, line)
+		}
+	}
+}
+
+func TestModel_StepEndedMessageRendersAsMarkdown(t *testing.T) {
+	// TRIANGULATE: una implementacion pobre solo rendiria markdown si hubo
+	// deltas de streaming. Cuando el bloque vivo quedo vacio y es el Message
+	// coalescido del StepEnded quien rellena el texto (ver foldEvent,
+	// KindStepEnded), ese texto tambien debe rendirse como markdown al cerrar.
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+	m = apply(t, m, EventMsg{
+		Kind:    session.KindStepEnded,
+		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: "- solo item"},
+	})
+
+	view := m.View()
+	if strings.Contains(view, "- solo item") {
+		t.Fatalf("View() = %q, NO debe contener %q: el guion crudo de lista se rinde como bullet aunque el texto llegue por el Message del StepEnded sin deltas previos", view, "- solo item")
+	}
+	if !strings.Contains(view, "solo item") {
+		t.Fatalf("View() = %q, debe contener %q: rendir la lista no debe perder el item", view, "solo item")
+	}
+	if !strings.Contains(view, "•") {
+		t.Fatalf("View() = %q, debe contener %q: el item de lista markdown se rinde con bullet", view, "•")
+	}
+}
+
 func TestModel_RendersUserMessages(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 

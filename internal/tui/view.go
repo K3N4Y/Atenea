@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 
+	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -65,8 +67,10 @@ var (
 
 // render produce la linea del bloque; los marcadores y el contenido son
 // estables para que los tests puedan asertar sobre ellos, los estilos solo
-// los envuelven.
-func (e entry) render() string {
+// los envuelven. width es el ancho util del viewport (0 = sin envolver): solo
+// lo usa el render markdown del assistant cerrado, el resto de bloques deja
+// el envolvimiento a syncViewport.
+func (e entry) render(width int) string {
 	switch e.kind {
 	case entryUser:
 		return accentStyle.Render("> ") + userTextStyle.Render(e.text)
@@ -86,15 +90,104 @@ func (e entry) render() string {
 	case entryError:
 		return errorStyle.Render("[error] " + e.text)
 	default: // entryAssistant: texto plano sin marcador
+		// Solo los bloques CERRADOS se rinden como markdown: el streaming en
+		// vivo queda plano porque el markdown parcial de un stream flickea
+		// (un ** o un guion a medio llegar cambia de sentido con cada delta)
+		// y los tests de streaming asertan el texto plano tal cual llega.
+		if !e.live {
+			return renderMarkdown(e.text, width)
+		}
 		return e.text
 	}
 }
 
+// markdownDocMargin es el margen izquierdo del documento del estilo "dark" de
+// glamour. glamour pade cada linea rendida a WordWrap + este margen:
+// renderMarkdown lo descuenta del ancho pedido para que ninguna linea exceda
+// el ancho util del viewport. Se lee del propio estilo (no un 2 a mano) para
+// seguir cualquier cambio del estilo o de la libreria.
+var markdownDocMargin = func() int {
+	if m := styles.DarkStyleConfig.Document.Margin; m != nil {
+		return int(*m)
+	}
+	return 0
+}()
+
+// markdownRendererCache memoiza el ultimo TermRenderer construido, clavado al
+// ancho de envolvimiento con el que se creo. renderTranscript corre en cada
+// Update (cada delta del streaming) y rinde cada bloque assistant cerrado:
+// construir un renderer de glamour por bloque en cada render es O(bloques)
+// construcciones por tecla y lag visible en conversaciones largas. Un solo
+// slot alcanza porque el ancho solo cambia con un resize de la terminal. Sin
+// lock a proposito: la TUI es una sola instancia y Bubble Tea corre
+// Update/View en una sola goroutine, asi que el cache nunca se accede
+// concurrentemente.
+var markdownRendererCache struct {
+	wrap     int
+	renderer *glamour.TermRenderer
+}
+
+// markdownRenderer devuelve el renderer de glamour para el ancho de
+// envolvimiento dado (ya descontado el margen del documento), reusando el
+// cacheado mientras el ancho no cambie. Reusar el renderer es seguro: cada
+// Render de glamour convierte sobre un buffer nuevo, sin estado entre
+// llamadas. El perfil de COLOR sigue al de lipgloss, igual que el resto de
+// estilos de la vista: sin TTY (tests) es Ascii y el contenido rendido queda
+// como texto plano contiguo asertable (glamour con colores parte cada palabra
+// en su propio segmento ANSI); en terminal real colorea.
+func markdownRenderer(wrap int) (*glamour.TermRenderer, error) {
+	if markdownRendererCache.renderer != nil && markdownRendererCache.wrap == wrap {
+		return markdownRendererCache.renderer, nil
+	}
+	r, err := glamour.NewTermRenderer(
+		glamour.WithStandardStyle("dark"),
+		glamour.WithWordWrap(wrap),
+		glamour.WithColorProfile(lipgloss.ColorProfile()),
+	)
+	if err != nil {
+		return nil, err
+	}
+	markdownRendererCache.wrap = wrap
+	markdownRendererCache.renderer = r
+	return r, nil
+}
+
+// renderMarkdown rinde texto markdown al ancho dado (0 = sin envolver) con el
+// estilo fijo "dark": deterministico, sin detectar el fondo de la terminal.
+// El envolvimiento se pide al ancho MENOS el margen del documento del estilo:
+// glamour pade cada linea a WordWrap + margen, y una linea mas ancha que el
+// viewport la re-parte el envolvimiento de emergencia de syncViewport dejando
+// palabras huerfanas sin margen en la columna 0.
+// Ante cualquier error se devuelve el texto tal cual: mejor markdown crudo
+// que perder contenido. Los saltos de linea de borde se recortan porque
+// renderTranscript ya separa los bloques con "\n\n".
+func renderMarkdown(text string, width int) string {
+	wrap := width
+	if wrap > 0 {
+		wrap = max(wrap-markdownDocMargin, 0)
+	}
+	r, err := markdownRenderer(wrap)
+	if err != nil {
+		return text
+	}
+	out, err := r.Render(text)
+	if err != nil {
+		return text
+	}
+	return strings.Trim(out, "\n")
+}
+
 // renderTranscript une los bloques de la conversacion, un parrafo por entrada.
+// Pasa el ancho util del viewport (0 sin tamano conocido = sin envolver) para
+// que el render markdown envuelva al mismo ancho que luego usa syncViewport.
 func (m Model) renderTranscript() string {
+	width := 0
+	if m.ready {
+		width = m.viewport.Width
+	}
 	parts := make([]string, len(m.entries))
 	for i, e := range m.entries {
-		parts[i] = e.render()
+		parts[i] = e.render(width)
 	}
 	return strings.Join(parts, "\n\n")
 }
