@@ -2154,3 +2154,146 @@ func TestModel_SecondRunRestartsSpinner(t *testing.T) {
 		t.Fatalf("linea de estado tras el tick = %q, identica a la previa: el tick de la segunda corrida debe avanzar el frame del spinner", after)
 	}
 }
+
+// Contrato del historial de prompts: cada prompt ENVIADO (Enter con texto,
+// camino build o plan) se guarda en un historial en memoria de la sesion de
+// TUI, en orden de envio. Con el menu de autocompletado CERRADO y sin
+// permiso/plan pendientes, la flecha ARRIBA recorre el historial hacia atras
+// (el mas reciente primero) poniendo cada prompt en el input; en el tope, otra
+// flecha arriba se queda ahi (no cicla ni se vacia). La flecha ABAJO deshace
+// hacia adelante y, pasado el mas reciente, deja el input como estaba antes de
+// empezar a navegar. Sin historial, la flecha arriba no hace nada.
+func TestModel_UpArrowRecallsPromptHistory(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// Dos prompts enviados: quedan en el historial en orden de envio.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("primero")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("segundo")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.input.Value(); got != "segundo" {
+		t.Fatalf("input.Value() = %q, la flecha arriba debe recuperar el ultimo prompt enviado (%q)", got, "segundo")
+	}
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.input.Value(); got != "primero" {
+		t.Fatalf("input.Value() = %q, la segunda flecha arriba debe retroceder al prompt anterior (%q)", got, "primero")
+	}
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.input.Value(); got != "primero" {
+		t.Fatalf("input.Value() = %q, en el tope del historial otra flecha arriba se queda en %q: no cicla ni se vacia", got, "primero")
+	}
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.input.Value(); got != "segundo" {
+		t.Fatalf("input.Value() = %q, la flecha abajo debe deshacer hacia adelante y volver al prompt mas reciente (%q)", got, "segundo")
+	}
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.input.Value(); got != "" {
+		t.Fatalf("input.Value() = %q, pasado el mas reciente la flecha abajo debe dejar el input como estaba antes de empezar a navegar (vacio tras el Enter)", got)
+	}
+}
+
+// TRIANGULATE: al salir de la navegacion hacia adelante el input debe volver
+// al texto que habia ANTES de empezar a navegar. Tumba una implementacion que
+// restaura siempre "" en lugar del borrador tecleado sin enviar.
+func TestModel_HistoryPreservesDraftOnNavigation(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("primero")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	// Un borrador tecleado sin enviar: navegar el historial no debe perderlo.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("borrador")})
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.input.Value(); got != "primero" {
+		t.Fatalf("input.Value() = %q, la flecha arriba debe recuperar el prompt enviado (%q)", got, "primero")
+	}
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.input.Value(); got != "borrador" {
+		t.Fatalf("input.Value() = %q, al salir de la navegacion la flecha abajo debe restaurar el borrador tecleado (%q), no perderlo ni dejar el input vacio", got, "borrador")
+	}
+}
+
+// TRIANGULATE: con el menu de autocompletado abierto, Up/Down pertenecen a la
+// seleccion del popup, no al historial de prompts. Tumba un handler de
+// historial colocado ANTES del gate del menu en handleKey.
+func TestModel_MenuOpenKeepsUpDownForSelection(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil).WithCompletions(menuCommands, nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// Hay historial: sin el gate del menu, la flecha arriba lo recuperaria.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("primero")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	m = typeRunes(t, m, "/")
+	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/commit") {
+		t.Fatalf("linea seleccionada del menu = %q, con %q tecleado el menu debe estar abierto sobre /commit", got, "/")
+	}
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.input.Value(); got != "/" {
+		t.Fatalf("input.Value() = %q, con menu abierto la flecha arriba NO debe tocar el input: la seleccion del menu es quien navega", got)
+	}
+	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/review") {
+		t.Fatalf("linea seleccionada del menu = %q, con menu abierto la flecha arriba debe mover la seleccion (ciclica al ultimo, /review)", got)
+	}
+}
+
+// TRIANGULATE: los prompts enviados en plan-mode (camino SendPlanPrompt)
+// tambien se apilan en el historial. Tumba una implementacion que apila solo
+// en el camino SendPrompt.
+func TestModel_HistoryRecordsPlanPrompts(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// Tab pasa a plan-mode: Enter envia por SendPlanPrompt.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("plan-uno")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(fake.planSent) != 1 {
+		t.Fatalf("SendPlanPrompt fue llamado %d veces, Enter en plan-mode debe enviar el prompt exactamente una vez por el camino de plan", len(fake.planSent))
+	}
+	m = apply(t, m, RunDoneMsg{})
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.input.Value(); got != "plan-uno" {
+		t.Fatalf("input.Value() = %q, la flecha arriba debe recuperar el prompt de plan enviado (%q): los prompts de plan tambien se apilan en el historial", got, "plan-uno")
+	}
+}
+
+// TRIANGULATE: Enter con input vacio no envia (cubierto aparte) y tampoco debe
+// apilar nada. Tumba una implementacion que apila todos los submits y deja un
+// "" colandose en el historial.
+func TestModel_EmptySubmitDoesNotPolluteHistory(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("unico")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	// Enter con input vacio: no envia y no debe tocar el historial.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.input.Value(); got != "unico" {
+		t.Fatalf("input.Value() = %q, la primera flecha arriba debe recuperar el unico prompt enviado (%q), sin un submit vacio colado en el historial", got, "unico")
+	}
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.input.Value(); got != "unico" {
+		t.Fatalf("input.Value() = %q, en el tope del historial la flecha arriba se queda en %q: el submit vacio no debe haberse apilado", got, "unico")
+	}
+}

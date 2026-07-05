@@ -136,6 +136,18 @@ type Model struct {
 	menuSelected int
 	files        []string
 	filesLoaded  bool
+
+	// history guarda cada prompt enviado (Enter con texto, camino build o
+	// plan) en orden de envio; las flechas Arriba/Abajo lo recorren con el
+	// menu cerrado y sin permiso/plan pendientes (ver recallHistory). histIdx
+	// es el cursor de esa navegacion con el sentinela histIdx == len(history)
+	// que significa "no navegando" (coherente con el zero value: 0 == len(nil)).
+	// draft preserva el texto que habia en el input al empezar a navegar: se
+	// restaura cuando la flecha abajo pasa del prompt mas reciente. Enviar un
+	// prompt resetea la navegacion (la proxima flecha arriba empieza del final).
+	history []string
+	histIdx int
+	draft   string
 }
 
 // NewModel construye el Model raiz de la TUI.
@@ -261,8 +273,9 @@ func (m Model) scrollViewport(msg tea.Msg) (Model, tea.Cmd) {
 // autocompletado abierto captura Up/Down (seleccion ciclica, sin tocar el
 // viewport ni el input), Tab/Enter (aplican la seleccion) y Esc (cierra el
 // popup); con menu cerrado y sin nada pendiente Esc detiene la corrida, Enter
-// envia el prompt tecleado, Tab alterna el modo build/plan y el resto de
-// teclas alimenta el input (y recomputa el popup).
+// envia el prompt tecleado, Tab alterna el modo build/plan, Up/Down navegan el
+// historial de prompts enviados (ver recallHistory) y el resto de teclas
+// alimenta el input (y recomputa el popup).
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		m.stopRun()
@@ -309,6 +322,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// (no inserta el caracter de tabulacion en el prompt).
 		m.planMode = !m.planMode
 		return m, nil
+	case tea.KeyUp:
+		if next, ok := m.recallHistory(-1); ok {
+			return next, nil
+		}
+		// Sin paso aplicable la tecla sigue al textinput (que la ignora).
+	case tea.KeyDown:
+		if next, ok := m.recallHistory(1); ok {
+			return next, nil
+		}
+		// Sin paso aplicable la tecla sigue al textinput (que la ignora).
 	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
@@ -381,9 +404,47 @@ func (m Model) submitPrompt() (Model, tea.Cmd) {
 		m.agent.SendPrompt(m.sessionID, text)
 	}
 	m.input.SetValue("")
+	// El prompt enviado se apila en el historial y la navegacion se resetea:
+	// la proxima flecha arriba empieza desde el final (el sentinela
+	// histIdx == len(history) significa "no navegando").
+	m.history = append(m.history, text)
+	m.histIdx = len(m.history)
+	m.draft = ""
 	m.working = true
 	// La linea de estado ocupa una linea bajo el transcript: recalcular el alto.
 	return m.resizeViewport(), m.spinner.Tick
+}
+
+// recallHistory mueve un paso la navegacion del historial de prompts: dir < 0
+// retrocede (el mas reciente primero) y dir > 0 avanza. Al salir del estado
+// "no navegando" (histIdx == len(history)) preserva en draft el texto actual
+// del input; avanzar mas alla del prompt mas reciente lo restaura. El prompt
+// recuperado entra al input con el cursor al final. Devuelve ok=false cuando
+// el paso no aplica (sin historial, en el tope hacia atras o sin navegacion
+// activa hacia adelante): la tecla sigue entonces el camino normal del input.
+func (m Model) recallHistory(dir int) (Model, bool) {
+	if dir < 0 {
+		if m.histIdx == 0 {
+			return m, false
+		}
+		if m.histIdx == len(m.history) {
+			m.draft = m.input.Value()
+		}
+		m.histIdx--
+		m.input.SetValue(m.history[m.histIdx])
+	} else {
+		if m.histIdx >= len(m.history) {
+			return m, false
+		}
+		m.histIdx++
+		if m.histIdx == len(m.history) {
+			m.input.SetValue(m.draft)
+		} else {
+			m.input.SetValue(m.history[m.histIdx])
+		}
+	}
+	m.input.CursorEnd()
+	return m, true
 }
 
 // stopRun detiene la corrida en curso; con agent nil (tests del fold) es no-op.
