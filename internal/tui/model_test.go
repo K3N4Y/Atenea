@@ -1979,3 +1979,178 @@ func TestModel_MenuLinesTruncateToTerminalWidth(t *testing.T) {
 	lineWith(t, view, "sub/") // la linea del menu sigue presente, truncada
 	assertNoLineWiderThan(t, view, 40)
 }
+
+// Contrato del indicador animado: mientras hay una corrida en curso la linea
+// de estado muestra un glifo de spinner seguido de " trabajando"; el prefijo
+// estatico "... " desaparece. Arrancar la corrida (Enter con texto) devuelve
+// un tea.Cmd no nil que bombea la animacion: ejecutarlo produce un mensaje
+// que, aplicado a Update, avanza el glifo del spinner (la linea de estado
+// cambia) y devuelve a su vez el siguiente cmd del loop.
+func TestModel_WorkingIndicatorAnimatesOnTicks(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// El usuario teclea "hola" y pulsa Enter; el cmd del Enter se conserva
+	// (el helper apply lo descarta y aqui es el corazon del contrato).
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, ok := updated.(Model)
+	if !ok {
+		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+	}
+
+	// a) Arrancar la corrida debe devolver el cmd que bombea la animacion:
+	// sin cmd nadie produce ticks y el spinner queda congelado.
+	if cmd == nil {
+		t.Fatalf("Update(Enter) devolvio cmd nil, arrancar la corrida debe devolver el cmd que bombea la animacion: sin cmd el spinner queda congelado")
+	}
+
+	// b) La linea de estado conserva "trabajando" pero sin el marcador
+	// estatico viejo "... trabajando": ahora el prefijo es el glifo animado.
+	view := m.View()
+	if !strings.Contains(view, "trabajando") {
+		t.Fatalf("View() = %q, con corrida en curso debe verse la linea de estado con %q", view, "trabajando")
+	}
+	if strings.Contains(view, "... trabajando") {
+		t.Fatalf("View() = %q, NO debe contener el marcador estatico %q: el prefijo fijo se reemplaza por el glifo del spinner", view, "... trabajando")
+	}
+
+	// c) Ejecutar el cmd produce el mensaje de tick; aplicarlo a Update debe
+	// avanzar el glifo del spinner: la linea de estado cambia.
+	before := lineWith(t, view, "trabajando")
+	msg := cmd()
+	if msg == nil {
+		t.Fatalf("cmd() = nil, el cmd de la animacion debe producir un mensaje aplicable a Update")
+	}
+	updated, tickCmd := m.Update(msg)
+	m, ok = updated.(Model)
+	if !ok {
+		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+	}
+	after := lineWith(t, m.View(), "trabajando")
+	if after == before {
+		t.Fatalf("linea de estado tras el tick = %q, identica a la previa: el tick debe avanzar el frame del spinner, una linea identica significa animacion congelada", after)
+	}
+
+	// d) El loop sigue: el Update del tick debe agendar el proximo tick.
+	if tickCmd == nil {
+		t.Fatalf("Update(tick) devolvio cmd nil, el loop de animacion debe agendar el proximo tick")
+	}
+}
+
+// TRIANGULATE: el loop de ticks debe morir cuando la corrida termina. Un case
+// de tick que siempre re-agenda sin mirar working deja la TUI despertando para
+// siempre: un tick viejo que llega DESPUES de RunDoneMsg no debe re-agendar el
+// loop (cmd nil) ni revivir la linea de estado.
+func TestModel_SpinnerTickDiesAfterRunDone(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// Arranca la corrida y queda un tick en vuelo (el cmd ya produjo su msg).
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, ok := updated.(Model)
+	if !ok {
+		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+	}
+	if cmd == nil {
+		t.Fatalf("Update(Enter) devolvio cmd nil, arrancar la corrida debe devolver el cmd que bombea la animacion")
+	}
+	msg := cmd()
+
+	// La corrida termina; recien entonces llega el tick viejo.
+	m = apply(t, m, RunDoneMsg{})
+	updated, tickCmd := m.Update(msg)
+	m, ok = updated.(Model)
+	if !ok {
+		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+	}
+
+	if tickCmd != nil {
+		t.Fatalf("Update(tick) tras RunDoneMsg devolvio cmd no nil, el loop de animacion NO debe re-agendarse cuando la corrida termino: sin este corte la TUI queda despertando para siempre")
+	}
+	if got := m.View(); strings.Contains(got, "trabajando") {
+		t.Fatalf("View() = %q, tras RunDoneMsg el tick viejo NO debe revivir la linea de estado %q", got, "trabajando")
+	}
+}
+
+// TRIANGULATE: el camino del plan tambien anima. Una implementacion pobre que
+// cablee el tick solo en el camino Enter deja el spinner congelado cuando la
+// corrida arranca aceptando un plan con 'y': aceptar el plan debe devolver el
+// cmd que bombea la animacion y su tick debe avanzar el glifo.
+func TestModel_AcceptPlanStartsSpinner(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// El agente presenta un plan asentado (present_plan llamada y exitosa).
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "p1", ToolName: "present_plan"})
+	m = apply(t, m, EventMsg{Kind: session.KindToolSuccess, CallID: "p1"})
+
+	// 'y' acepta el plan: arranca la corrida y debe bombear el spinner.
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	m, ok := updated.(Model)
+	if !ok {
+		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+	}
+	if cmd == nil {
+		t.Fatalf("Update('y') devolvio cmd nil, aceptar el plan arranca la corrida y debe devolver el cmd que bombea la animacion: sin cmd el spinner queda congelado en el camino del plan")
+	}
+
+	before := lineWith(t, m.View(), "trabajando")
+	msg := cmd()
+	if msg == nil {
+		t.Fatalf("cmd() = nil, el cmd de la animacion debe producir un mensaje aplicable a Update")
+	}
+	m = apply(t, m, msg)
+	after := lineWith(t, m.View(), "trabajando")
+	if after == before {
+		t.Fatalf("linea de estado tras el tick = %q, identica a la previa: el tick del camino del plan debe avanzar el frame del spinner", after)
+	}
+}
+
+// TRIANGULATE: la animacion no es de un solo uso. Una implementacion pobre con
+// estado del loop que no se reinicia (arranca solo en la primera corrida) deja
+// el spinner muerto en la segunda: tras RunDoneMsg, un nuevo Enter debe volver
+// a devolver el cmd de la animacion y su tick debe avanzar el glifo.
+func TestModel_SecondRunRestartsSpinner(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// Primera corrida: Enter arranca el loop y RunDoneMsg lo apaga.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
+	updated, cmd1 := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, ok := updated.(Model)
+	if !ok {
+		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+	}
+	if cmd1 == nil {
+		t.Fatalf("Update(Enter) devolvio cmd nil, arrancar la primera corrida debe devolver el cmd que bombea la animacion")
+	}
+	m = apply(t, m, RunDoneMsg{})
+
+	// Segunda corrida: el loop debe renacer con el nuevo Enter.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("otra vez")})
+	updated, cmd2 := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, ok = updated.(Model)
+	if !ok {
+		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+	}
+	if cmd2 == nil {
+		t.Fatalf("Update(Enter) de la segunda corrida devolvio cmd nil, cada corrida debe reencender la animacion: un loop de un solo uso deja el spinner muerto en la segunda corrida")
+	}
+
+	before := lineWith(t, m.View(), "trabajando")
+	msg := cmd2()
+	if msg == nil {
+		t.Fatalf("cmd() = nil, el cmd de la animacion de la segunda corrida debe producir un mensaje aplicable a Update")
+	}
+	m = apply(t, m, msg)
+	after := lineWith(t, m.View(), "trabajando")
+	if after == before {
+		t.Fatalf("linea de estado tras el tick = %q, identica a la previa: el tick de la segunda corrida debe avanzar el frame del spinner", after)
+	}
+}

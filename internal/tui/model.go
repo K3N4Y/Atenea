@@ -7,6 +7,7 @@
 package tui
 
 import (
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -91,6 +92,12 @@ type Model struct {
 	input     textinput.Model
 	working   bool // true desde que arranca una corrida (Enter o aceptar el plan) hasta RunDoneMsg
 
+	// spinner anima el glifo del indicador de trabajo. Su loop de ticks nace
+	// donde la corrida arranca (submitPrompt y resolvePlanKey devuelven
+	// spinner.Tick como cmd) y muere solo cuando working se apaga: el caso
+	// spinner.TickMsg de Update corta el reagendado con !working.
+	spinner spinner.Model
+
 	// viewport acota el transcript al alto de la terminal siguiendo la cola;
 	// ready se activa con el primer tea.WindowSizeMsg (sin tamano conocido la
 	// vista usa el render completo como fallback). width/height guardan el
@@ -137,7 +144,10 @@ func NewModel(agent Agent, sessionID string, events <-chan tea.Msg) Model {
 	input.Prompt = inputPrompt
 	input.PromptStyle = accentStyle
 	input.Focus()
-	return Model{agent: agent, sessionID: sessionID, events: events, input: input}
+	// El spinner comparte el estilo tenue de la linea de estado: el glifo es
+	// parte del indicador de trabajo, no un protagonista aparte.
+	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(statusStyle))
+	return Model{agent: agent, sessionID: sessionID, events: events, input: input, spinner: sp}
 }
 
 // WithStatus fija el agente base y el modelo de IA a mostrar en el pie del
@@ -208,6 +218,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Al apagar working la linea de estado desaparece: recalcular el alto.
 		return m.resizeViewport(), waitForEvent(m.events)
+	case spinner.TickMsg:
+		// El loop de animacion muere solo: cuando RunDoneMsg apago working, el
+		// tick pendiente llega aqui y no se reagenda (cmd nil).
+		if !m.working {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(ev)
+		return m, cmd
 	case tea.WindowSizeMsg:
 		m.ready = true
 		m.width = ev.Width
@@ -257,7 +276,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.hasPendingPlan() {
-		return m.resolvePlanKey(msg), nil
+		return m.resolvePlanKey(msg)
 	}
 	if len(m.menuItems) > 0 {
 		switch msg.Type {
@@ -284,7 +303,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.stopRun()
 		return m, nil
 	case tea.KeyEnter:
-		return m.submitPrompt(), nil
+		return m.submitPrompt()
 	case tea.KeyTab:
 		// Tab alterna el modo del agente build/plan; nunca llega al textinput
 		// (no inserta el caracter de tabulacion en el prompt).
@@ -323,10 +342,12 @@ func (m Model) resolvePermissionKey(msg tea.KeyMsg, perm entry) {
 // plan via Agent.AcceptPlan (vuelve a modo build y la corrida sigue como
 // trabajando hasta RunDoneMsg), 'n' descarta la oferta y deja el plan-mode
 // como esta. El resto del teclado es no-op mientras se espera la decision.
-// Con agent nil (tests del fold) es no-op.
-func (m Model) resolvePlanKey(msg tea.KeyMsg) Model {
+// Con agent nil (tests del fold) es no-op. Aceptar el plan arranca la corrida
+// (working = true): ahi nace el cmd spinner.Tick que bombea la animacion del
+// indicador de trabajo (el spinner solo se bombea mientras hay corrida).
+func (m Model) resolvePlanKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	if msg.Type != tea.KeyRunes || m.agent == nil {
-		return m
+		return m, nil
 	}
 	switch string(msg.Runes) {
 	case "y":
@@ -335,21 +356,24 @@ func (m Model) resolvePlanKey(msg tea.KeyMsg) Model {
 		m.planMode = false
 		m.working = true
 		// La linea de estado ocupa una linea bajo el transcript: recalcular el alto.
-		return m.resizeViewport()
+		return m.resizeViewport(), m.spinner.Tick
 	case "n":
-		return m.removePendingPlan().syncViewport()
+		return m.removePendingPlan().syncViewport(), nil
 	}
-	return m
+	return m, nil
 }
 
 // submitPrompt envia el texto tecleado al Agent por el camino del modo activo
 // (SendPrompt en build, SendPlanPrompt en plan) y marca la corrida en curso.
 // Con input vacio o agent nil (tests del fold) es no-op: no hay que enviar o
-// no hay a quien.
-func (m Model) submitPrompt() Model {
+// no hay a quien. Arrancar la corrida devuelve el cmd spinner.Tick que bombea
+// la animacion del indicador de trabajo: el cmd nace aqui porque el spinner
+// solo se bombea mientras hay corrida (el caso spinner.TickMsg de Update corta
+// el loop cuando working se apaga).
+func (m Model) submitPrompt() (Model, tea.Cmd) {
 	text := m.input.Value()
 	if text == "" || m.agent == nil {
-		return m
+		return m, nil
 	}
 	if m.planMode {
 		m.agent.SendPlanPrompt(m.sessionID, text)
@@ -359,7 +383,7 @@ func (m Model) submitPrompt() Model {
 	m.input.SetValue("")
 	m.working = true
 	// La linea de estado ocupa una linea bajo el transcript: recalcular el alto.
-	return m.resizeViewport()
+	return m.resizeViewport(), m.spinner.Tick
 }
 
 // stopRun detiene la corrida en curso; con agent nil (tests del fold) es no-op.

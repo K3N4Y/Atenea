@@ -34,10 +34,6 @@ const composerBoxPadding = 1
 // el cursor cuando tiene Width fijado (ademas del prompt y el texto visible).
 const inputCursorWidth = 1
 
-// workingIndicator es la linea de estado estable mostrada mientras hay una
-// corrida en curso (marcador estatico; la animacion es polish posterior).
-const workingIndicator = "... trabajando"
-
 // inputPrompt es el caracter de prompt de la linea de input; distingue a
 // simple vista donde se teclea frente al marcador "> " del historial.
 const inputPrompt = "❯ "
@@ -417,7 +413,11 @@ func (m Model) syncViewport() Model {
 func (m Model) View() string {
 	status := ""
 	if m.working {
-		status = statusStyle.Render(workingIndicator) + "\n"
+		// La linea de estado es "<glifo> trabajando": el glifo animado del
+		// spinner (ya estilizado por su propio Style) seguido del texto en
+		// estilo tenue, con " trabajando" como UN segmento para que el
+		// contenido plano siga siendo asertable por los tests.
+		status = m.spinner.View() + statusStyle.Render(" trabajando") + "\n"
 	}
 	footer := ""
 	if f := m.statusFooter(); f != "" {
