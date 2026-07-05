@@ -25,11 +25,12 @@ func (m Model) foldEvent(ev EventMsg) Model {
 	case session.KindToolCalled:
 		m.entries = append(m.entries, entry{
 			kind: entryTool, callID: ev.CallID, tool: ev.ToolName, status: toolRunning,
+			input: string(ev.Input),
 		})
 	case session.KindToolSuccess:
-		m = m.settleTool(ev.CallID, toolOK, "")
+		m = m.settleTool(ev.CallID, toolOK, "", ev.Text, ev.Diff)
 	case session.KindToolFailed:
-		m = m.settleTool(ev.CallID, toolFailed, ev.Error)
+		m = m.settleTool(ev.CallID, toolFailed, ev.Error, "", "")
 	case session.KindToolPermissionRequested:
 		m.entries = append(m.entries, entry{
 			kind: entryPermission, callID: ev.CallID, tool: ev.ToolName,
@@ -50,9 +51,13 @@ func (m Model) foldEvent(ev EventMsg) Model {
 // settleTool asienta el desenlace del tool call con ese callID (ok o fallo) y
 // retira su solicitud de permiso pendiente: el contrato no trae un evento de
 // resolucion propio, el Tool.Success/Tool.Failed del mismo CallID la expresa.
+// output es el resultado de Tool.Success (ev.Text) y queda en la entrada para
+// el preview del transcript; Tool.Failed pasa "" (su detalle viaja en errMsg).
+// diff es el diff unificado de Tool.Success de edit/write (ev.Diff): cuando no
+// esta vacio la vista lo muestra en lugar del preview del output.
 // Un present_plan asentado con exito agrega al final la oferta de aprobacion
 // del plan (y ejecutar / n seguir en plan).
-func (m Model) settleTool(callID string, status toolStatus, errMsg string) Model {
+func (m Model) settleTool(callID string, status toolStatus, errMsg, output, diff string) Model {
 	planPresented := false
 	kept := make([]entry, 0, len(m.entries))
 	for _, e := range m.entries {
@@ -62,6 +67,8 @@ func (m Model) settleTool(callID string, status toolStatus, errMsg string) Model
 		if e.kind == entryTool && e.callID == callID {
 			e.status = status
 			e.err = errMsg
+			e.output = output
+			e.diff = diff
 			if e.tool == "present_plan" && status == toolOK {
 				planPresented = true
 			}

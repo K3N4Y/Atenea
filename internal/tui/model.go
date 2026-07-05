@@ -64,7 +64,17 @@ type entry struct {
 	tool   string
 	status toolStatus
 	err    string // mensaje de Tool.Failed
-	input  string // JSON crudo de la solicitud de permiso
+	// input es el JSON crudo del Input de la tool: lo llena la solicitud de
+	// permiso (se rinde tal cual en la linea [permiso]) y tambien Tool.Called,
+	// donde alimenta el resumen del header (`bash(ls)`) via summarizeToolInput.
+	input string
+	// output es el resultado de Tool.Success (ev.Text): alimenta el preview de
+	// hasta 4 lineas bajo el header (ver renderOutputPreview).
+	output string
+	// diff es el diff unificado que Tool.Success de edit/write trae en ev.Diff:
+	// cuando existe, el detalle bajo el header muestra el diff en lugar del
+	// preview del output (ver renderDiffPreview).
+	diff string
 	// sessionID es la sesion duena de la solicitud de permiso. Un subagente
 	// (sesion hija) surfacea su evento por el bus del padre conservando el
 	// SessionID del hijo: la resolucion debe ir a ESA sesion. Vacio en eventos

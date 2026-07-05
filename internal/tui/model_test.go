@@ -282,36 +282,147 @@ func TestModel_RendersToolCallLifecycle(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"ls"}`)})
-	if got := m.View(); !strings.Contains(got, "[tool] bash: ejecutando") {
-		t.Fatalf("View() = %q, Tool.Called debe mostrar el ToolName con estado de ejecucion %q", got, "[tool] bash: ejecutando")
+	if got := m.View(); !strings.Contains(got, "[tool] bash(ls): ejecutando") {
+		t.Fatalf("View() = %q, Tool.Called debe mostrar el ToolName con el resumen del Input y estado de ejecucion %q", got, "[tool] bash(ls): ejecutando")
 	}
 
 	m = apply(t, m, EventMsg{
 		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash", Text: "archivo.txt",
 		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "archivo.txt", ToolCallID: "c1"},
 	})
-	if got := m.View(); !strings.Contains(got, "[tool] bash: ok") {
-		t.Fatalf("View() = %q, Tool.Success debe asentar la tool como %q", got, "[tool] bash: ok")
+	if got := m.View(); !strings.Contains(got, "[tool] bash(ls): ok") {
+		t.Fatalf("View() = %q, Tool.Success debe asentar la tool como %q", got, "[tool] bash(ls): ok")
 	}
 	if got := m.View(); strings.Contains(got, "ejecutando") {
 		t.Fatalf("View() = %q, la tool asentada no debe seguir mostrandose como en ejecucion", got)
 	}
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "edit", Input: json.RawMessage(`{"path":"a.go"}`)})
-	if got := m.View(); !strings.Contains(got, "[tool] edit: ejecutando") {
-		t.Fatalf("View() = %q, el segundo tool call debe mostrarse en ejecucion", got)
+	if got := m.View(); !strings.Contains(got, "[tool] edit(a.go): ejecutando") {
+		t.Fatalf("View() = %q, el segundo tool call debe mostrarse en ejecucion con el resumen del Input %q", got, "[tool] edit(a.go): ejecutando")
 	}
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "c2", ToolName: "edit", Error: "permiso denegado"})
 	got := m.View()
-	if !strings.Contains(got, "[tool] edit: error: permiso denegado") {
-		t.Fatalf("View() = %q, Tool.Failed debe mostrar el Error de la tool", got)
+	if !strings.Contains(got, "[tool] edit(a.go): error: permiso denegado") {
+		t.Fatalf("View() = %q, Tool.Failed debe mostrar el Error de la tool con el resumen del Input", got)
 	}
-	if !strings.Contains(got, "[tool] bash: ok") {
+	if !strings.Contains(got, "[tool] bash(ls): ok") {
 		t.Fatalf("View() = %q, el fallo de c2 no debe tocar el estado ok de c1", got)
 	}
 	if strings.Contains(got, "ejecutando") {
 		t.Fatalf("View() = %q, no debe quedar ninguna tool en ejecucion", got)
+	}
+}
+
+// Contrato del detalle de tool calls: el header lleva el resumen del Input
+// (`[tool] <name>(<resumen>): <estado>`; con un solo campo string el resumen
+// es su valor) y Tool.Success trae el output en ev.Text, que se muestra bajo
+// el header con cada linea prefijada `  │ ` hasta 4 lineas; con mas lineas
+// aparece una marca final `  … +N lineas`. Con 3 lineas de output caben todas:
+// no debe aparecer ninguna marca de truncado.
+func TestModel_ToolSuccessShowsOutputPreview(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"ls -la"}`)})
+	m = apply(t, m, EventMsg{
+		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash", Text: "uno\ndos\ntres",
+		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "uno\ndos\ntres", ToolCallID: "c1"},
+	})
+
+	view := m.View()
+	if !strings.Contains(view, "bash(ls -la)") {
+		t.Fatalf("View() = %q, el header debe llevar el resumen del Input %q: con un solo campo string el resumen es su valor", view, "bash(ls -la)")
+	}
+	for _, want := range []string{"│ uno", "│ dos", "│ tres"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("View() = %q, debe contener %q: cada linea del output de Tool.Success se muestra bajo el header prefijada con la barra", view, want)
+		}
+	}
+	if strings.Contains(view, "lineas") {
+		t.Fatalf("View() = %q, NO debe contener la marca de truncado %q: 3 lineas de output caben en el tope de 4 y se muestran completas", view, "lineas")
+	}
+}
+
+// Contrato del diff en Tool.Success: cuando el evento trae Diff (edit/write),
+// el detalle bajo el header muestra EL DIFF en lugar del preview del output:
+// cada linea del diff indentada con dos espacios, las lineas `+` en verde, las
+// `-` en rojo y el resto tenue (cada linea un segmento contiguo estilizado).
+func TestModel_ToolSuccessShowsEditDiff(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "edit", Input: json.RawMessage(`{"path":"a.go"}`)})
+	m = apply(t, m, EventMsg{
+		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "edit", Text: "ok",
+		Diff:    "--- a/a.go\n+++ b/a.go\n@@ -1 +1 @@\n-viejo\n+nuevo",
+		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "ok", ToolCallID: "c1"},
+	})
+
+	view := m.View()
+	for _, want := range []string{"  -viejo", "  +nuevo"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("View() = %q, debe contener %q: con Diff en Tool.Success cada linea del diff se muestra bajo el header indentada con dos espacios", view, want)
+		}
+	}
+	if strings.Contains(view, "│ ok") {
+		t.Fatalf("View() = %q, NO debe contener %q: el diff desplaza al preview del output", view, "│ ok")
+	}
+}
+
+// TRIANGULATE: tumba un preview del output sin tope, que volcaria las 6 lineas
+// enteras al transcript en vez de cortar en 4 y resumir el resto en la marca.
+func TestModel_ToolOutputPreviewTruncatesLongOutput(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"cat f"}`)})
+	m = apply(t, m, EventMsg{
+		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash", Text: "l1\nl2\nl3\nl4\nl5\nl6",
+		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "l1\nl2\nl3\nl4\nl5\nl6", ToolCallID: "c1"},
+	})
+
+	view := m.View()
+	for _, want := range []string{"│ l1", "│ l2", "│ l3", "│ l4"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("View() = %q, debe contener %q: las primeras 4 lineas del output se muestran bajo el header", view, want)
+		}
+	}
+	if !strings.Contains(view, "+2 lineas") {
+		t.Fatalf("View() = %q, debe contener la marca %q: las 2 lineas que exceden el tope se resumen", view, "+2 lineas")
+	}
+	for _, banned := range []string{"│ l5", "│ l6"} {
+		if strings.Contains(view, banned) {
+			t.Fatalf("View() = %q, NO debe contener %q: el preview corta en el tope de 4 lineas", view, banned)
+		}
+	}
+}
+
+// TRIANGULATE: tumba un resumen del Input que vuelque el input entero sin
+// truncar, o que con varios campos elija un campo suelto en vez del JSON
+// compacto completo.
+func TestModel_ToolInputSummaryCompactsMultiField(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 200, Height: 24})
+
+	// Dos campos: el resumen es el JSON compacto, no el valor de un campo suelto.
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "edit", Input: json.RawMessage(`{"path":"a.go","texto":"x"}`)})
+	view := m.View()
+	if want := `edit({"path":"a.go","texto":"x"})`; !strings.Contains(view, want) {
+		t.Fatalf("View() = %q, el header debe contener %q: con varios campos el resumen es el JSON compacto", view, want)
+	}
+
+	// Un solo campo string mas largo que el tope de 48 celdas: el resumen se
+	// trunca con la elipsis y la cola del input no aparece.
+	long := strings.Repeat("x", 60) + "-cola-final"
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "bash", Input: json.RawMessage(`{"command":"` + long + `"}`)})
+	view = m.View()
+	if !strings.Contains(view, "…") {
+		t.Fatalf("View() = %q, debe contener la elipsis %q: un input mas largo que el tope se trunca en el header", view, "…")
+	}
+	if strings.Contains(view, "cola-final") {
+		t.Fatalf("View() = %q, NO debe contener %q: la cola de un input largo queda fuera del resumen truncado", view, "cola-final")
 	}
 }
 
