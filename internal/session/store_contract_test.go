@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -589,6 +590,23 @@ func TestSQLiteStore_Contract(t *testing.T) {
 		s, err := NewSQLiteStore(":memory:")
 		if err != nil {
 			t.Fatalf("NewSQLiteStore: %v", err)
+		}
+		t.Cleanup(func() { s.Close() })
+		return s
+	})
+}
+
+// TestSQLiteStore_FileBacked_Contract corre el mismo contrato contra un
+// SQLiteStore respaldado por ARCHIVO: el DSN de archivo agrega pragmas
+// (journal_mode WAL, busy_timeout) que ":memory:" no ejercita, y ninguno debe
+// alterar el comportamiento del contrato (ErrSessionNotFound, orden por Seq,
+// proyecciones, delete, appends concurrentes). Cada subtest recibe su propio
+// archivo en un tempdir: el t del factory es el del subtest.
+func TestSQLiteStore_FileBacked_Contract(t *testing.T) {
+	testStoreContract(t, func(t *testing.T) Store {
+		s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "atenea.db"))
+		if err != nil {
+			t.Fatalf("NewSQLiteStore (archivo): %v", err)
 		}
 		t.Cleanup(func() { s.Close() })
 		return s
