@@ -131,6 +131,133 @@ func TestModel_FoldsStreamingAssistantText(t *testing.T) {
 	}
 }
 
+// Contrato de render del assistant: mientras el bloque esta vivo (solo
+// TextStarted/TextDelta, sin StepEnded) el texto se muestra plano tal cual
+// llega; al cerrarse el turno (StepEnded pone live = false) el texto se rinde
+// como markdown: los marcadores crudos (** y "- ") desaparecen y el contenido
+// queda formateado (enfasis aplicado, listas con bullets).
+func TestModel_RendersClosedAssistantAsMarkdown(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	text := "Hola **fuerte** dicho.\n\n- item uno\n- item dos"
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
+	m = apply(t, m, EventMsg{
+		Kind:    session.KindStepEnded,
+		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: text},
+	})
+
+	view := m.View()
+	if !strings.Contains(view, "fuerte") {
+		t.Fatalf("View() = %q, debe contener %q: rendir markdown no debe perder el contenido", view, "fuerte")
+	}
+	if strings.Contains(view, "**") {
+		t.Fatalf("View() = %q, NO debe contener %q: con el bloque cerrado el enfasis markdown se rinde, no se muestra crudo", view, "**")
+	}
+	if strings.Contains(view, "- item uno") {
+		t.Fatalf("View() = %q, NO debe contener %q: con el bloque cerrado el guion crudo de lista se rinde como bullet", view, "- item uno")
+	}
+	if !strings.Contains(view, "item uno") {
+		t.Fatalf("View() = %q, debe contener %q: rendir la lista no debe perder sus items", view, "item uno")
+	}
+	if !strings.Contains(view, "item dos") {
+		t.Fatalf("View() = %q, debe contener %q: rendir la lista no debe perder sus items", view, "item dos")
+	}
+	if !strings.Contains(view, "•") {
+		t.Fatalf("View() = %q, debe contener %q: los items de lista markdown se rinden con bullet", view, "•")
+	}
+}
+
+func TestModel_LiveAssistantStaysPlainUntilClosed(t *testing.T) {
+	// TRIANGULATE: una implementacion pobre rendiria markdown SIEMPRE, tambien
+	// sobre el bloque en vivo: el markdown parcial de un stream flickea (un **
+	// a medio llegar cambia de sentido con cada delta). Mientras el bloque esta
+	// vivo el texto debe verse plano tal cual llega; solo al cerrarse se rinde.
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	text := "esto es **fuerte** en vivo"
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
+
+	view := m.View()
+	if !strings.Contains(view, "**fuerte**") {
+		t.Fatalf("View() = %q, debe contener el marcador crudo %q mientras el bloque esta vivo: el streaming se muestra plano, no se rinde markdown parcial", view, "**fuerte**")
+	}
+
+	m = apply(t, m, EventMsg{
+		Kind:    session.KindStepEnded,
+		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: text},
+	})
+
+	view = m.View()
+	if strings.Contains(view, "**") {
+		t.Fatalf("View() = %q, NO debe contener %q tras cerrar el bloque: al cerrarse el turno el enfasis markdown se rinde, no se muestra crudo", view, "**")
+	}
+	if !strings.Contains(view, "fuerte") {
+		t.Fatalf("View() = %q, debe contener %q: rendir el markdown no debe perder el contenido", view, "fuerte")
+	}
+}
+
+func TestModel_ClosedMarkdownWrapsToTerminalWidth(t *testing.T) {
+	// TRIANGULATE: un renderMarkdown que ignora el ancho (WithWordWrap(0)
+	// siempre), o que pasa el ancho completo sin descontar el margen del
+	// documento de glamour, produce lineas mas anchas que la terminal. El
+	// envolvimiento de emergencia del viewport (ansi.Wrap en syncViewport) las
+	// re-parte y deja palabras huerfanas sin margen en la columna 0. El markdown
+	// cerrado debe envolverse al ancho de la terminal por el propio renderer:
+	// todo el texto visible y cada linea envuelta conservando su margen.
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 30, Height: 12})
+
+	text := "este parrafo largo con **enfasis** debe envolverse al ancho angosto de la terminal para poder leerse entero hasta el token fin-markdown"
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
+	m = apply(t, m, EventMsg{
+		Kind:    session.KindStepEnded,
+		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: text},
+	})
+
+	view := m.View()
+	if !strings.Contains(view, "fin-markdown") {
+		t.Fatalf("View() = %q, el final del texto %q debe estar visible: el markdown cerrado debe envolverse al ancho de la terminal, no truncarse", view, "fin-markdown")
+	}
+	assertNoLineWiderThan(t, view, 30)
+	for _, token := range []string{"enfasis", "fin-markdown"} {
+		line := ansi.Strip(lineWith(t, view, token))
+		if !strings.HasPrefix(line, "  ") {
+			t.Fatalf("linea con %q = %q, debe conservar el margen del render markdown: una linea rendida mas ancha que la terminal la re-parte el envolvimiento de emergencia del viewport y deja el resto huerfano en la columna 0", token, line)
+		}
+	}
+}
+
+func TestModel_StepEndedMessageRendersAsMarkdown(t *testing.T) {
+	// TRIANGULATE: una implementacion pobre solo rendiria markdown si hubo
+	// deltas de streaming. Cuando el bloque vivo quedo vacio y es el Message
+	// coalescido del StepEnded quien rellena el texto (ver foldEvent,
+	// KindStepEnded), ese texto tambien debe rendirse como markdown al cerrar.
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+	m = apply(t, m, EventMsg{
+		Kind:    session.KindStepEnded,
+		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: "- solo item"},
+	})
+
+	view := m.View()
+	if strings.Contains(view, "- solo item") {
+		t.Fatalf("View() = %q, NO debe contener %q: el guion crudo de lista se rinde como bullet aunque el texto llegue por el Message del StepEnded sin deltas previos", view, "- solo item")
+	}
+	if !strings.Contains(view, "solo item") {
+		t.Fatalf("View() = %q, debe contener %q: rendir la lista no debe perder el item", view, "solo item")
+	}
+	if !strings.Contains(view, "•") {
+		t.Fatalf("View() = %q, debe contener %q: el item de lista markdown se rinde con bullet", view, "•")
+	}
+}
+
 func TestModel_RendersUserMessages(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
@@ -155,36 +282,147 @@ func TestModel_RendersToolCallLifecycle(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"ls"}`)})
-	if got := m.View(); !strings.Contains(got, "[tool] bash: ejecutando") {
-		t.Fatalf("View() = %q, Tool.Called debe mostrar el ToolName con estado de ejecucion %q", got, "[tool] bash: ejecutando")
+	if got := m.View(); !strings.Contains(got, "[tool] bash(ls): ejecutando") {
+		t.Fatalf("View() = %q, Tool.Called debe mostrar el ToolName con el resumen del Input y estado de ejecucion %q", got, "[tool] bash(ls): ejecutando")
 	}
 
 	m = apply(t, m, EventMsg{
 		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash", Text: "archivo.txt",
 		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "archivo.txt", ToolCallID: "c1"},
 	})
-	if got := m.View(); !strings.Contains(got, "[tool] bash: ok") {
-		t.Fatalf("View() = %q, Tool.Success debe asentar la tool como %q", got, "[tool] bash: ok")
+	if got := m.View(); !strings.Contains(got, "[tool] bash(ls): ok") {
+		t.Fatalf("View() = %q, Tool.Success debe asentar la tool como %q", got, "[tool] bash(ls): ok")
 	}
 	if got := m.View(); strings.Contains(got, "ejecutando") {
 		t.Fatalf("View() = %q, la tool asentada no debe seguir mostrandose como en ejecucion", got)
 	}
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "edit", Input: json.RawMessage(`{"path":"a.go"}`)})
-	if got := m.View(); !strings.Contains(got, "[tool] edit: ejecutando") {
-		t.Fatalf("View() = %q, el segundo tool call debe mostrarse en ejecucion", got)
+	if got := m.View(); !strings.Contains(got, "[tool] edit(a.go): ejecutando") {
+		t.Fatalf("View() = %q, el segundo tool call debe mostrarse en ejecucion con el resumen del Input %q", got, "[tool] edit(a.go): ejecutando")
 	}
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "c2", ToolName: "edit", Error: "permiso denegado"})
 	got := m.View()
-	if !strings.Contains(got, "[tool] edit: error: permiso denegado") {
-		t.Fatalf("View() = %q, Tool.Failed debe mostrar el Error de la tool", got)
+	if !strings.Contains(got, "[tool] edit(a.go): error: permiso denegado") {
+		t.Fatalf("View() = %q, Tool.Failed debe mostrar el Error de la tool con el resumen del Input", got)
 	}
-	if !strings.Contains(got, "[tool] bash: ok") {
+	if !strings.Contains(got, "[tool] bash(ls): ok") {
 		t.Fatalf("View() = %q, el fallo de c2 no debe tocar el estado ok de c1", got)
 	}
 	if strings.Contains(got, "ejecutando") {
 		t.Fatalf("View() = %q, no debe quedar ninguna tool en ejecucion", got)
+	}
+}
+
+// Contrato del detalle de tool calls: el header lleva el resumen del Input
+// (`[tool] <name>(<resumen>): <estado>`; con un solo campo string el resumen
+// es su valor) y Tool.Success trae el output en ev.Text, que se muestra bajo
+// el header con cada linea prefijada `  │ ` hasta 4 lineas; con mas lineas
+// aparece una marca final `  … +N lineas`. Con 3 lineas de output caben todas:
+// no debe aparecer ninguna marca de truncado.
+func TestModel_ToolSuccessShowsOutputPreview(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"ls -la"}`)})
+	m = apply(t, m, EventMsg{
+		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash", Text: "uno\ndos\ntres",
+		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "uno\ndos\ntres", ToolCallID: "c1"},
+	})
+
+	view := m.View()
+	if !strings.Contains(view, "bash(ls -la)") {
+		t.Fatalf("View() = %q, el header debe llevar el resumen del Input %q: con un solo campo string el resumen es su valor", view, "bash(ls -la)")
+	}
+	for _, want := range []string{"│ uno", "│ dos", "│ tres"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("View() = %q, debe contener %q: cada linea del output de Tool.Success se muestra bajo el header prefijada con la barra", view, want)
+		}
+	}
+	if strings.Contains(view, "lineas") {
+		t.Fatalf("View() = %q, NO debe contener la marca de truncado %q: 3 lineas de output caben en el tope de 4 y se muestran completas", view, "lineas")
+	}
+}
+
+// Contrato del diff en Tool.Success: cuando el evento trae Diff (edit/write),
+// el detalle bajo el header muestra EL DIFF en lugar del preview del output:
+// cada linea del diff indentada con dos espacios, las lineas `+` en verde, las
+// `-` en rojo y el resto tenue (cada linea un segmento contiguo estilizado).
+func TestModel_ToolSuccessShowsEditDiff(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "edit", Input: json.RawMessage(`{"path":"a.go"}`)})
+	m = apply(t, m, EventMsg{
+		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "edit", Text: "ok",
+		Diff:    "--- a/a.go\n+++ b/a.go\n@@ -1 +1 @@\n-viejo\n+nuevo",
+		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "ok", ToolCallID: "c1"},
+	})
+
+	view := m.View()
+	for _, want := range []string{"  -viejo", "  +nuevo"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("View() = %q, debe contener %q: con Diff en Tool.Success cada linea del diff se muestra bajo el header indentada con dos espacios", view, want)
+		}
+	}
+	if strings.Contains(view, "│ ok") {
+		t.Fatalf("View() = %q, NO debe contener %q: el diff desplaza al preview del output", view, "│ ok")
+	}
+}
+
+// TRIANGULATE: tumba un preview del output sin tope, que volcaria las 6 lineas
+// enteras al transcript en vez de cortar en 4 y resumir el resto en la marca.
+func TestModel_ToolOutputPreviewTruncatesLongOutput(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"cat f"}`)})
+	m = apply(t, m, EventMsg{
+		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash", Text: "l1\nl2\nl3\nl4\nl5\nl6",
+		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "l1\nl2\nl3\nl4\nl5\nl6", ToolCallID: "c1"},
+	})
+
+	view := m.View()
+	for _, want := range []string{"│ l1", "│ l2", "│ l3", "│ l4"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("View() = %q, debe contener %q: las primeras 4 lineas del output se muestran bajo el header", view, want)
+		}
+	}
+	if !strings.Contains(view, "+2 lineas") {
+		t.Fatalf("View() = %q, debe contener la marca %q: las 2 lineas que exceden el tope se resumen", view, "+2 lineas")
+	}
+	for _, banned := range []string{"│ l5", "│ l6"} {
+		if strings.Contains(view, banned) {
+			t.Fatalf("View() = %q, NO debe contener %q: el preview corta en el tope de 4 lineas", view, banned)
+		}
+	}
+}
+
+// TRIANGULATE: tumba un resumen del Input que vuelque el input entero sin
+// truncar, o que con varios campos elija un campo suelto en vez del JSON
+// compacto completo.
+func TestModel_ToolInputSummaryCompactsMultiField(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 200, Height: 24})
+
+	// Dos campos: el resumen es el JSON compacto, no el valor de un campo suelto.
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "edit", Input: json.RawMessage(`{"path":"a.go","texto":"x"}`)})
+	view := m.View()
+	if want := `edit({"path":"a.go","texto":"x"})`; !strings.Contains(view, want) {
+		t.Fatalf("View() = %q, el header debe contener %q: con varios campos el resumen es el JSON compacto", view, want)
+	}
+
+	// Un solo campo string mas largo que el tope de 48 celdas: el resumen se
+	// trunca con la elipsis y la cola del input no aparece.
+	long := strings.Repeat("x", 60) + "-cola-final"
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "bash", Input: json.RawMessage(`{"command":"` + long + `"}`)})
+	view = m.View()
+	if !strings.Contains(view, "…") {
+		t.Fatalf("View() = %q, debe contener la elipsis %q: un input mas largo que el tope se trunca en el header", view, "…")
+	}
+	if strings.Contains(view, "cola-final") {
+		t.Fatalf("View() = %q, NO debe contener %q: la cola de un input largo queda fuera del resumen truncado", view, "cola-final")
 	}
 }
 
@@ -1740,4 +1978,322 @@ func TestModel_MenuLinesTruncateToTerminalWidth(t *testing.T) {
 	view := m.View()
 	lineWith(t, view, "sub/") // la linea del menu sigue presente, truncada
 	assertNoLineWiderThan(t, view, 40)
+}
+
+// Contrato del indicador animado: mientras hay una corrida en curso la linea
+// de estado muestra un glifo de spinner seguido de " trabajando"; el prefijo
+// estatico "... " desaparece. Arrancar la corrida (Enter con texto) devuelve
+// un tea.Cmd no nil que bombea la animacion: ejecutarlo produce un mensaje
+// que, aplicado a Update, avanza el glifo del spinner (la linea de estado
+// cambia) y devuelve a su vez el siguiente cmd del loop.
+func TestModel_WorkingIndicatorAnimatesOnTicks(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// El usuario teclea "hola" y pulsa Enter; el cmd del Enter se conserva
+	// (el helper apply lo descarta y aqui es el corazon del contrato).
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, ok := updated.(Model)
+	if !ok {
+		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+	}
+
+	// a) Arrancar la corrida debe devolver el cmd que bombea la animacion:
+	// sin cmd nadie produce ticks y el spinner queda congelado.
+	if cmd == nil {
+		t.Fatalf("Update(Enter) devolvio cmd nil, arrancar la corrida debe devolver el cmd que bombea la animacion: sin cmd el spinner queda congelado")
+	}
+
+	// b) La linea de estado conserva "trabajando" pero sin el marcador
+	// estatico viejo "... trabajando": ahora el prefijo es el glifo animado.
+	view := m.View()
+	if !strings.Contains(view, "trabajando") {
+		t.Fatalf("View() = %q, con corrida en curso debe verse la linea de estado con %q", view, "trabajando")
+	}
+	if strings.Contains(view, "... trabajando") {
+		t.Fatalf("View() = %q, NO debe contener el marcador estatico %q: el prefijo fijo se reemplaza por el glifo del spinner", view, "... trabajando")
+	}
+
+	// c) Ejecutar el cmd produce el mensaje de tick; aplicarlo a Update debe
+	// avanzar el glifo del spinner: la linea de estado cambia.
+	before := lineWith(t, view, "trabajando")
+	msg := cmd()
+	if msg == nil {
+		t.Fatalf("cmd() = nil, el cmd de la animacion debe producir un mensaje aplicable a Update")
+	}
+	updated, tickCmd := m.Update(msg)
+	m, ok = updated.(Model)
+	if !ok {
+		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+	}
+	after := lineWith(t, m.View(), "trabajando")
+	if after == before {
+		t.Fatalf("linea de estado tras el tick = %q, identica a la previa: el tick debe avanzar el frame del spinner, una linea identica significa animacion congelada", after)
+	}
+
+	// d) El loop sigue: el Update del tick debe agendar el proximo tick.
+	if tickCmd == nil {
+		t.Fatalf("Update(tick) devolvio cmd nil, el loop de animacion debe agendar el proximo tick")
+	}
+}
+
+// TRIANGULATE: el loop de ticks debe morir cuando la corrida termina. Un case
+// de tick que siempre re-agenda sin mirar working deja la TUI despertando para
+// siempre: un tick viejo que llega DESPUES de RunDoneMsg no debe re-agendar el
+// loop (cmd nil) ni revivir la linea de estado.
+func TestModel_SpinnerTickDiesAfterRunDone(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// Arranca la corrida y queda un tick en vuelo (el cmd ya produjo su msg).
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, ok := updated.(Model)
+	if !ok {
+		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+	}
+	if cmd == nil {
+		t.Fatalf("Update(Enter) devolvio cmd nil, arrancar la corrida debe devolver el cmd que bombea la animacion")
+	}
+	msg := cmd()
+
+	// La corrida termina; recien entonces llega el tick viejo.
+	m = apply(t, m, RunDoneMsg{})
+	updated, tickCmd := m.Update(msg)
+	m, ok = updated.(Model)
+	if !ok {
+		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+	}
+
+	if tickCmd != nil {
+		t.Fatalf("Update(tick) tras RunDoneMsg devolvio cmd no nil, el loop de animacion NO debe re-agendarse cuando la corrida termino: sin este corte la TUI queda despertando para siempre")
+	}
+	if got := m.View(); strings.Contains(got, "trabajando") {
+		t.Fatalf("View() = %q, tras RunDoneMsg el tick viejo NO debe revivir la linea de estado %q", got, "trabajando")
+	}
+}
+
+// TRIANGULATE: el camino del plan tambien anima. Una implementacion pobre que
+// cablee el tick solo en el camino Enter deja el spinner congelado cuando la
+// corrida arranca aceptando un plan con 'y': aceptar el plan debe devolver el
+// cmd que bombea la animacion y su tick debe avanzar el glifo.
+func TestModel_AcceptPlanStartsSpinner(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// El agente presenta un plan asentado (present_plan llamada y exitosa).
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "p1", ToolName: "present_plan"})
+	m = apply(t, m, EventMsg{Kind: session.KindToolSuccess, CallID: "p1"})
+
+	// 'y' acepta el plan: arranca la corrida y debe bombear el spinner.
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	m, ok := updated.(Model)
+	if !ok {
+		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+	}
+	if cmd == nil {
+		t.Fatalf("Update('y') devolvio cmd nil, aceptar el plan arranca la corrida y debe devolver el cmd que bombea la animacion: sin cmd el spinner queda congelado en el camino del plan")
+	}
+
+	before := lineWith(t, m.View(), "trabajando")
+	msg := cmd()
+	if msg == nil {
+		t.Fatalf("cmd() = nil, el cmd de la animacion debe producir un mensaje aplicable a Update")
+	}
+	m = apply(t, m, msg)
+	after := lineWith(t, m.View(), "trabajando")
+	if after == before {
+		t.Fatalf("linea de estado tras el tick = %q, identica a la previa: el tick del camino del plan debe avanzar el frame del spinner", after)
+	}
+}
+
+// TRIANGULATE: la animacion no es de un solo uso. Una implementacion pobre con
+// estado del loop que no se reinicia (arranca solo en la primera corrida) deja
+// el spinner muerto en la segunda: tras RunDoneMsg, un nuevo Enter debe volver
+// a devolver el cmd de la animacion y su tick debe avanzar el glifo.
+func TestModel_SecondRunRestartsSpinner(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// Primera corrida: Enter arranca el loop y RunDoneMsg lo apaga.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
+	updated, cmd1 := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, ok := updated.(Model)
+	if !ok {
+		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+	}
+	if cmd1 == nil {
+		t.Fatalf("Update(Enter) devolvio cmd nil, arrancar la primera corrida debe devolver el cmd que bombea la animacion")
+	}
+	m = apply(t, m, RunDoneMsg{})
+
+	// Segunda corrida: el loop debe renacer con el nuevo Enter.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("otra vez")})
+	updated, cmd2 := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, ok = updated.(Model)
+	if !ok {
+		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+	}
+	if cmd2 == nil {
+		t.Fatalf("Update(Enter) de la segunda corrida devolvio cmd nil, cada corrida debe reencender la animacion: un loop de un solo uso deja el spinner muerto en la segunda corrida")
+	}
+
+	before := lineWith(t, m.View(), "trabajando")
+	msg := cmd2()
+	if msg == nil {
+		t.Fatalf("cmd() = nil, el cmd de la animacion de la segunda corrida debe producir un mensaje aplicable a Update")
+	}
+	m = apply(t, m, msg)
+	after := lineWith(t, m.View(), "trabajando")
+	if after == before {
+		t.Fatalf("linea de estado tras el tick = %q, identica a la previa: el tick de la segunda corrida debe avanzar el frame del spinner", after)
+	}
+}
+
+// Contrato del historial de prompts: cada prompt ENVIADO (Enter con texto,
+// camino build o plan) se guarda en un historial en memoria de la sesion de
+// TUI, en orden de envio. Con el menu de autocompletado CERRADO y sin
+// permiso/plan pendientes, la flecha ARRIBA recorre el historial hacia atras
+// (el mas reciente primero) poniendo cada prompt en el input; en el tope, otra
+// flecha arriba se queda ahi (no cicla ni se vacia). La flecha ABAJO deshace
+// hacia adelante y, pasado el mas reciente, deja el input como estaba antes de
+// empezar a navegar. Sin historial, la flecha arriba no hace nada.
+func TestModel_UpArrowRecallsPromptHistory(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// Dos prompts enviados: quedan en el historial en orden de envio.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("primero")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("segundo")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.input.Value(); got != "segundo" {
+		t.Fatalf("input.Value() = %q, la flecha arriba debe recuperar el ultimo prompt enviado (%q)", got, "segundo")
+	}
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.input.Value(); got != "primero" {
+		t.Fatalf("input.Value() = %q, la segunda flecha arriba debe retroceder al prompt anterior (%q)", got, "primero")
+	}
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.input.Value(); got != "primero" {
+		t.Fatalf("input.Value() = %q, en el tope del historial otra flecha arriba se queda en %q: no cicla ni se vacia", got, "primero")
+	}
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.input.Value(); got != "segundo" {
+		t.Fatalf("input.Value() = %q, la flecha abajo debe deshacer hacia adelante y volver al prompt mas reciente (%q)", got, "segundo")
+	}
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.input.Value(); got != "" {
+		t.Fatalf("input.Value() = %q, pasado el mas reciente la flecha abajo debe dejar el input como estaba antes de empezar a navegar (vacio tras el Enter)", got)
+	}
+}
+
+// TRIANGULATE: al salir de la navegacion hacia adelante el input debe volver
+// al texto que habia ANTES de empezar a navegar. Tumba una implementacion que
+// restaura siempre "" en lugar del borrador tecleado sin enviar.
+func TestModel_HistoryPreservesDraftOnNavigation(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("primero")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	// Un borrador tecleado sin enviar: navegar el historial no debe perderlo.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("borrador")})
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.input.Value(); got != "primero" {
+		t.Fatalf("input.Value() = %q, la flecha arriba debe recuperar el prompt enviado (%q)", got, "primero")
+	}
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.input.Value(); got != "borrador" {
+		t.Fatalf("input.Value() = %q, al salir de la navegacion la flecha abajo debe restaurar el borrador tecleado (%q), no perderlo ni dejar el input vacio", got, "borrador")
+	}
+}
+
+// TRIANGULATE: con el menu de autocompletado abierto, Up/Down pertenecen a la
+// seleccion del popup, no al historial de prompts. Tumba un handler de
+// historial colocado ANTES del gate del menu en handleKey.
+func TestModel_MenuOpenKeepsUpDownForSelection(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil).WithCompletions(menuCommands, nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// Hay historial: sin el gate del menu, la flecha arriba lo recuperaria.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("primero")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	m = typeRunes(t, m, "/")
+	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/commit") {
+		t.Fatalf("linea seleccionada del menu = %q, con %q tecleado el menu debe estar abierto sobre /commit", got, "/")
+	}
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.input.Value(); got != "/" {
+		t.Fatalf("input.Value() = %q, con menu abierto la flecha arriba NO debe tocar el input: la seleccion del menu es quien navega", got)
+	}
+	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/review") {
+		t.Fatalf("linea seleccionada del menu = %q, con menu abierto la flecha arriba debe mover la seleccion (ciclica al ultimo, /review)", got)
+	}
+}
+
+// TRIANGULATE: los prompts enviados en plan-mode (camino SendPlanPrompt)
+// tambien se apilan en el historial. Tumba una implementacion que apila solo
+// en el camino SendPrompt.
+func TestModel_HistoryRecordsPlanPrompts(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// Tab pasa a plan-mode: Enter envia por SendPlanPrompt.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("plan-uno")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(fake.planSent) != 1 {
+		t.Fatalf("SendPlanPrompt fue llamado %d veces, Enter en plan-mode debe enviar el prompt exactamente una vez por el camino de plan", len(fake.planSent))
+	}
+	m = apply(t, m, RunDoneMsg{})
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.input.Value(); got != "plan-uno" {
+		t.Fatalf("input.Value() = %q, la flecha arriba debe recuperar el prompt de plan enviado (%q): los prompts de plan tambien se apilan en el historial", got, "plan-uno")
+	}
+}
+
+// TRIANGULATE: Enter con input vacio no envia (cubierto aparte) y tampoco debe
+// apilar nada. Tumba una implementacion que apila todos los submits y deja un
+// "" colandose en el historial.
+func TestModel_EmptySubmitDoesNotPolluteHistory(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("unico")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	// Enter con input vacio: no envia y no debe tocar el historial.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.input.Value(); got != "unico" {
+		t.Fatalf("input.Value() = %q, la primera flecha arriba debe recuperar el unico prompt enviado (%q), sin un submit vacio colado en el historial", got, "unico")
+	}
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.input.Value(); got != "unico" {
+		t.Fatalf("input.Value() = %q, en el tope del historial la flecha arriba se queda en %q: el submit vacio no debe haberse apilado", got, "unico")
+	}
 }

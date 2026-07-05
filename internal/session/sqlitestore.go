@@ -44,8 +44,18 @@ type SQLiteStore struct {
 var _ Store = (*SQLiteStore)(nil)
 
 // NewSQLiteStore abre (o crea) la base en dsn y asegura el esquema. dsn puede ser
-// ":memory:" o una ruta de archivo.
+// ":memory:" o una ruta de archivo. Para archivo construye un DSN URI del driver
+// modernc con pragmas POR CONEXION: journal_mode(WAL) permite lectores y un
+// escritor de procesos distintos (la TUI y la app Wails comparten el .db) y
+// busy_timeout(5000) hace que un escritor espere el write-lock en vez de fallar
+// con SQLITE_BUSY. Van via DSN y no con db.Exec post-open porque database/sql
+// recicla conexiones del pool: un Exec unico perderia el busy_timeout en las
+// conexiones nuevas; via DSN cada conexion lo aplica al abrirse. ":memory:"
+// queda como esta (WAL no aplica a memoria y el pool esta clavado en 1 conexion).
 func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
+	if dsn != ":memory:" && !strings.HasPrefix(dsn, "file:") {
+		dsn = "file:" + dsn + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
@@ -77,20 +87,28 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 // Close cierra la base subyacente.
 func (s *SQLiteStore) Close() error { return s.db.Close() }
 
+// DataVersion expone PRAGMA data_version: cambia cuando OTRA conexion
+// (tipicamente otro proceso: la TUI) modifica la base, y NO cambia por las
+// escrituras propias porque el pool esta clavado en 1 conexion ("propia
+// conexion" == "propio store"). Por eso sirve como senal barata para detectar
+// escrituras externas sin auto-dispararse por los appends propios.
+func (s *SQLiteStore) DataVersion(ctx context.Context) (int64, error) {
+	var v int64
+	if err := s.db.QueryRowContext(ctx, `PRAGMA data_version`).Scan(&v); err != nil {
+		return 0, err
+	}
+	return v, nil
+}
+
 // AppendEvent agrega ev al log de sessionID, le asigna el siguiente Seq monotonico
-// y lo devuelve. El mutex serializa la lectura del MAX(seq) y el INSERT para que
-// el Seq sea consistente bajo concurrencia.
+// y lo devuelve. El calculo del Seq y el INSERT son UN SOLO statement (subquery
+// MAX(seq)+1 con RETURNING): corre en su propia transaccion de escritura de
+// SQLite, asi dos procesos sobre el mismo archivo quedan serializados por el
+// write-lock (con busy_timeout esperan en vez de fallar) y no puede haber UNIQUE
+// constraint por Seqs raceados. El mutex sigue serializando dentro del proceso.
 func (s *SQLiteStore) AppendEvent(ctx context.Context, sessionID string, ev SessionEvent) (Seq, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	var maxSeq sql.NullInt64
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT MAX(seq) FROM events WHERE session_id = ?`, sessionID,
-	).Scan(&maxSeq); err != nil {
-		return 0, err
-	}
-	seq := maxSeq.Int64 + 1
 
 	hasMessage := 0
 	var msgID, role, text, toolCallID sql.NullString
@@ -123,13 +141,15 @@ func (s *SQLiteStore) AppendEvent(ctx context.Context, sessionID string, ev Sess
 	// Tool.Input.Delta), independiente de la columna text (que es Message.Text).
 	// Sin esto la rehidratacion pierde el razonamiento y la respuesta del asistente,
 	// que viajan en ev.Text y no en un Message.
-	if _, err := s.db.ExecContext(ctx,
+	var seq int64
+	if err := s.db.QueryRowContext(ctx,
 		`INSERT INTO events
 		   (session_id, seq, kind, has_message, msg_id, role, text, call_id, tool_name, input, usage, error, tool_calls, tool_call_id, ev_text, diff)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		sessionID, seq, string(ev.Kind), hasMessage, msgID, role, text,
+		 VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM events WHERE session_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 RETURNING seq`,
+		sessionID, sessionID, string(ev.Kind), hasMessage, msgID, role, text,
 		ev.CallID, ev.ToolName, []byte(ev.Input), usage, ev.Error, toolCalls, toolCallID, ev.Text, ev.Diff,
-	); err != nil {
+	).Scan(&seq); err != nil {
 		return 0, err
 	}
 	return Seq(seq), nil

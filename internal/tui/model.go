@@ -7,6 +7,7 @@
 package tui
 
 import (
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -64,7 +65,17 @@ type entry struct {
 	tool   string
 	status toolStatus
 	err    string // mensaje de Tool.Failed
-	input  string // JSON crudo de la solicitud de permiso
+	// input es el JSON crudo del Input de la tool: lo llena la solicitud de
+	// permiso (se rinde tal cual en la linea [permiso]) y tambien Tool.Called,
+	// donde alimenta el resumen del header (`bash(ls)`) via summarizeToolInput.
+	input string
+	// output es el resultado de Tool.Success (ev.Text): alimenta el preview de
+	// hasta 4 lineas bajo el header (ver renderOutputPreview).
+	output string
+	// diff es el diff unificado que Tool.Success de edit/write trae en ev.Diff:
+	// cuando existe, el detalle bajo el header muestra el diff en lugar del
+	// preview del output (ver renderDiffPreview).
+	diff string
 	// sessionID es la sesion duena de la solicitud de permiso. Un subagente
 	// (sesion hija) surfacea su evento por el bus del padre conservando el
 	// SessionID del hijo: la resolucion debe ir a ESA sesion. Vacio en eventos
@@ -80,6 +91,12 @@ type Model struct {
 	entries   []entry
 	input     textinput.Model
 	working   bool // true desde que arranca una corrida (Enter o aceptar el plan) hasta RunDoneMsg
+
+	// spinner anima el glifo del indicador de trabajo. Su loop de ticks nace
+	// donde la corrida arranca (submitPrompt y resolvePlanKey devuelven
+	// spinner.Tick como cmd) y muere solo cuando working se apaga: el caso
+	// spinner.TickMsg de Update corta el reagendado con !working.
+	spinner spinner.Model
 
 	// viewport acota el transcript al alto de la terminal siguiendo la cola;
 	// ready se activa con el primer tea.WindowSizeMsg (sin tamano conocido la
@@ -119,6 +136,18 @@ type Model struct {
 	menuSelected int
 	files        []string
 	filesLoaded  bool
+
+	// history guarda cada prompt enviado (Enter con texto, camino build o
+	// plan) en orden de envio; las flechas Arriba/Abajo lo recorren con el
+	// menu cerrado y sin permiso/plan pendientes (ver recallHistory). histIdx
+	// es el cursor de esa navegacion con el sentinela histIdx == len(history)
+	// que significa "no navegando" (coherente con el zero value: 0 == len(nil)).
+	// draft preserva el texto que habia en el input al empezar a navegar: se
+	// restaura cuando la flecha abajo pasa del prompt mas reciente. Enviar un
+	// prompt resetea la navegacion (la proxima flecha arriba empieza del final).
+	history []string
+	histIdx int
+	draft   string
 }
 
 // NewModel construye el Model raiz de la TUI.
@@ -127,7 +156,10 @@ func NewModel(agent Agent, sessionID string, events <-chan tea.Msg) Model {
 	input.Prompt = inputPrompt
 	input.PromptStyle = accentStyle
 	input.Focus()
-	return Model{agent: agent, sessionID: sessionID, events: events, input: input}
+	// El spinner comparte el estilo tenue de la linea de estado: el glifo es
+	// parte del indicador de trabajo, no un protagonista aparte.
+	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(statusStyle))
+	return Model{agent: agent, sessionID: sessionID, events: events, input: input, spinner: sp}
 }
 
 // WithStatus fija el agente base y el modelo de IA a mostrar en el pie del
@@ -198,6 +230,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Al apagar working la linea de estado desaparece: recalcular el alto.
 		return m.resizeViewport(), waitForEvent(m.events)
+	case spinner.TickMsg:
+		// El loop de animacion muere solo: cuando RunDoneMsg apago working, el
+		// tick pendiente llega aqui y no se reagenda (cmd nil).
+		if !m.working {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(ev)
+		return m, cmd
 	case tea.WindowSizeMsg:
 		m.ready = true
 		m.width = ev.Width
@@ -232,8 +273,9 @@ func (m Model) scrollViewport(msg tea.Msg) (Model, tea.Cmd) {
 // autocompletado abierto captura Up/Down (seleccion ciclica, sin tocar el
 // viewport ni el input), Tab/Enter (aplican la seleccion) y Esc (cierra el
 // popup); con menu cerrado y sin nada pendiente Esc detiene la corrida, Enter
-// envia el prompt tecleado, Tab alterna el modo build/plan y el resto de
-// teclas alimenta el input (y recomputa el popup).
+// envia el prompt tecleado, Tab alterna el modo build/plan, Up/Down navegan el
+// historial de prompts enviados (ver recallHistory) y el resto de teclas
+// alimenta el input (y recomputa el popup).
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		m.stopRun()
@@ -247,7 +289,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.hasPendingPlan() {
-		return m.resolvePlanKey(msg), nil
+		return m.resolvePlanKey(msg)
 	}
 	if len(m.menuItems) > 0 {
 		switch msg.Type {
@@ -274,12 +316,22 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.stopRun()
 		return m, nil
 	case tea.KeyEnter:
-		return m.submitPrompt(), nil
+		return m.submitPrompt()
 	case tea.KeyTab:
 		// Tab alterna el modo del agente build/plan; nunca llega al textinput
 		// (no inserta el caracter de tabulacion en el prompt).
 		m.planMode = !m.planMode
 		return m, nil
+	case tea.KeyUp:
+		if next, ok := m.recallHistory(-1); ok {
+			return next, nil
+		}
+		// Sin paso aplicable la tecla sigue al textinput (que la ignora).
+	case tea.KeyDown:
+		if next, ok := m.recallHistory(1); ok {
+			return next, nil
+		}
+		// Sin paso aplicable la tecla sigue al textinput (que la ignora).
 	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
@@ -313,10 +365,12 @@ func (m Model) resolvePermissionKey(msg tea.KeyMsg, perm entry) {
 // plan via Agent.AcceptPlan (vuelve a modo build y la corrida sigue como
 // trabajando hasta RunDoneMsg), 'n' descarta la oferta y deja el plan-mode
 // como esta. El resto del teclado es no-op mientras se espera la decision.
-// Con agent nil (tests del fold) es no-op.
-func (m Model) resolvePlanKey(msg tea.KeyMsg) Model {
+// Con agent nil (tests del fold) es no-op. Aceptar el plan arranca la corrida
+// (working = true): ahi nace el cmd spinner.Tick que bombea la animacion del
+// indicador de trabajo (el spinner solo se bombea mientras hay corrida).
+func (m Model) resolvePlanKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	if msg.Type != tea.KeyRunes || m.agent == nil {
-		return m
+		return m, nil
 	}
 	switch string(msg.Runes) {
 	case "y":
@@ -325,21 +379,24 @@ func (m Model) resolvePlanKey(msg tea.KeyMsg) Model {
 		m.planMode = false
 		m.working = true
 		// La linea de estado ocupa una linea bajo el transcript: recalcular el alto.
-		return m.resizeViewport()
+		return m.resizeViewport(), m.spinner.Tick
 	case "n":
-		return m.removePendingPlan().syncViewport()
+		return m.removePendingPlan().syncViewport(), nil
 	}
-	return m
+	return m, nil
 }
 
 // submitPrompt envia el texto tecleado al Agent por el camino del modo activo
 // (SendPrompt en build, SendPlanPrompt en plan) y marca la corrida en curso.
 // Con input vacio o agent nil (tests del fold) es no-op: no hay que enviar o
-// no hay a quien.
-func (m Model) submitPrompt() Model {
+// no hay a quien. Arrancar la corrida devuelve el cmd spinner.Tick que bombea
+// la animacion del indicador de trabajo: el cmd nace aqui porque el spinner
+// solo se bombea mientras hay corrida (el caso spinner.TickMsg de Update corta
+// el loop cuando working se apaga).
+func (m Model) submitPrompt() (Model, tea.Cmd) {
 	text := m.input.Value()
 	if text == "" || m.agent == nil {
-		return m
+		return m, nil
 	}
 	if m.planMode {
 		m.agent.SendPlanPrompt(m.sessionID, text)
@@ -347,9 +404,47 @@ func (m Model) submitPrompt() Model {
 		m.agent.SendPrompt(m.sessionID, text)
 	}
 	m.input.SetValue("")
+	// El prompt enviado se apila en el historial y la navegacion se resetea:
+	// la proxima flecha arriba empieza desde el final (el sentinela
+	// histIdx == len(history) significa "no navegando").
+	m.history = append(m.history, text)
+	m.histIdx = len(m.history)
+	m.draft = ""
 	m.working = true
 	// La linea de estado ocupa una linea bajo el transcript: recalcular el alto.
-	return m.resizeViewport()
+	return m.resizeViewport(), m.spinner.Tick
+}
+
+// recallHistory mueve un paso la navegacion del historial de prompts: dir < 0
+// retrocede (el mas reciente primero) y dir > 0 avanza. Al salir del estado
+// "no navegando" (histIdx == len(history)) preserva en draft el texto actual
+// del input; avanzar mas alla del prompt mas reciente lo restaura. El prompt
+// recuperado entra al input con el cursor al final. Devuelve ok=false cuando
+// el paso no aplica (sin historial, en el tope hacia atras o sin navegacion
+// activa hacia adelante): la tecla sigue entonces el camino normal del input.
+func (m Model) recallHistory(dir int) (Model, bool) {
+	if dir < 0 {
+		if m.histIdx == 0 {
+			return m, false
+		}
+		if m.histIdx == len(m.history) {
+			m.draft = m.input.Value()
+		}
+		m.histIdx--
+		m.input.SetValue(m.history[m.histIdx])
+	} else {
+		if m.histIdx >= len(m.history) {
+			return m, false
+		}
+		m.histIdx++
+		if m.histIdx == len(m.history) {
+			m.input.SetValue(m.draft)
+		} else {
+			m.input.SetValue(m.history[m.histIdx])
+		}
+	}
+	m.input.CursorEnd()
+	return m, true
 }
 
 // stopRun detiene la corrida en curso; con agent nil (tests del fold) es no-op.

@@ -1,8 +1,13 @@
 package tui
 
 import (
+	"bytes"
+	"encoding/json"
+	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -29,13 +34,33 @@ const composerBoxPadding = 1
 // el cursor cuando tiene Width fijado (ademas del prompt y el texto visible).
 const inputCursorWidth = 1
 
-// workingIndicator es la linea de estado estable mostrada mientras hay una
-// corrida en curso (marcador estatico; la animacion es polish posterior).
-const workingIndicator = "... trabajando"
-
 // inputPrompt es el caracter de prompt de la linea de input; distingue a
 // simple vista donde se teclea frente al marcador "> " del historial.
 const inputPrompt = "❯ "
+
+// toolInputSummaryWidth es el ancho maximo (en celdas) del resumen del Input
+// en el header de la tool: suficiente para leer QUE corrio de un vistazo sin
+// que un input largo desborde la linea del header.
+const toolInputSummaryWidth = 48
+
+// toolOutputPreviewLines es el tope de lineas del preview del output de una
+// tool exitosa: acota el detalle para no inundar el transcript; el resto se
+// resume en la marca "  … +N lineas".
+const toolOutputPreviewLines = 4
+
+// toolOutputPrefix marca cada linea del preview del output bajo el header de
+// la tool (dos espacios + U+2502 + espacio), estilo bloque citado.
+const toolOutputPrefix = "  │ "
+
+// toolDiffPreviewLines es el tope de lineas del diff mostrado bajo el header
+// de una tool exitosa de edit/write: mas generoso que el preview del output
+// (el diff ES el resultado que se quiere revisar) pero acotado igual; el resto
+// se resume en la misma marca "  … +N lineas".
+const toolDiffPreviewLines = 16
+
+// toolDiffPrefix indenta cada linea del diff bajo el header de la tool (dos
+// espacios, sin barra: los marcadores +/- del propio diff llevan la vista).
+const toolDiffPrefix = "  "
 
 // Estilos de presentacion. Solo envuelven lineas o segmentos ya renderizados,
 // sin margenes ni padding, para no alterar el conteo de lineas de la vista.
@@ -48,6 +73,9 @@ var (
 	toolRunningStyle = lipgloss.NewStyle().Faint(true)
 	toolOKStyle      = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("2"))
 	toolFailedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	toolOutputStyle  = lipgloss.NewStyle().Faint(true)                     // preview del output de la tool (detalle, no protagonista)
+	diffAddStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("2")) // lineas agregadas del diff (+)
+	diffDelStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("1")) // lineas quitadas del diff (-)
 	permissionStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
 	errorStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 	statusStyle      = lipgloss.NewStyle().Faint(true)
@@ -65,20 +93,15 @@ var (
 
 // render produce la linea del bloque; los marcadores y el contenido son
 // estables para que los tests puedan asertar sobre ellos, los estilos solo
-// los envuelven.
-func (e entry) render() string {
+// los envuelven. width es el ancho util del viewport (0 = sin envolver): solo
+// lo usa el render markdown del assistant cerrado, el resto de bloques deja
+// el envolvimiento a syncViewport.
+func (e entry) render(width int) string {
 	switch e.kind {
 	case entryUser:
 		return accentStyle.Render("> ") + userTextStyle.Render(e.text)
 	case entryTool:
-		switch e.status {
-		case toolOK:
-			return toolOKStyle.Render("[tool] " + e.tool + ": ok")
-		case toolFailed:
-			return toolFailedStyle.Render("[tool] " + e.tool + ": error: " + e.err)
-		default:
-			return toolRunningStyle.Render("[tool] " + e.tool + ": ejecutando")
-		}
+		return e.renderTool()
 	case entryPermission:
 		return permissionStyle.Render("[permiso] " + e.tool + " " + e.input + " (aprobar/denegar)")
 	case entryPlanApproval:
@@ -86,15 +109,223 @@ func (e entry) render() string {
 	case entryError:
 		return errorStyle.Render("[error] " + e.text)
 	default: // entryAssistant: texto plano sin marcador
+		// Solo los bloques CERRADOS se rinden como markdown: el streaming en
+		// vivo queda plano porque el markdown parcial de un stream flickea
+		// (un ** o un guion a medio llegar cambia de sentido con cada delta)
+		// y los tests de streaming asertan el texto plano tal cual llega.
+		if !e.live {
+			return renderMarkdown(e.text, width)
+		}
 		return e.text
 	}
 }
 
+// renderTool rinde el bloque de una tool call: el header con nombre y resumen
+// del Input, el estado, y en exito el detalle (diff u output) debajo.
+func (e entry) renderTool() string {
+	// El header lleva el resumen del Input entre parens (`bash(ls)`) para
+	// decir QUE corrio la tool de un vistazo; sin resumen queda el nombre
+	// pelado, como antes.
+	head := "[tool] " + e.tool
+	if summary := summarizeToolInput(e.input); summary != "" {
+		head += "(" + summary + ")"
+	}
+	switch e.status {
+	case toolOK:
+		out := toolOKStyle.Render(head + ": ok")
+		// Con diff (edit/write) el detalle es el diff, no el output: el
+		// output de esas tools es un "ok" sin informacion frente al cambio.
+		detail := renderDiffPreview(e.diff)
+		if detail == "" {
+			detail = renderOutputPreview(e.output)
+		}
+		if detail != "" {
+			out += "\n" + detail
+		}
+		return out
+	case toolFailed:
+		return toolFailedStyle.Render(head + ": error: " + e.err)
+	default:
+		return toolRunningStyle.Render(head + ": ejecutando")
+	}
+}
+
+// summarizeToolInput resume el JSON del Input de la tool para el header del
+// transcript. Con un objeto de EXACTAMENTE un campo con valor string, el
+// resumen es ese valor pelado (el caso comun: `{"command":"ls -la"}` se lee
+// mejor como `ls -la` que como JSON); en cualquier otro caso es el JSON
+// compacto. Sin Input, con JSON invalido o con objeto vacio devuelve "" y el
+// header queda sin parens. Los saltos de linea colapsan a espacio y el
+// resultado se trunca a toolInputSummaryWidth celdas: el resumen es una
+// pista de una linea, no el input completo.
+func summarizeToolInput(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &fields); err != nil || len(fields) == 0 {
+		return ""
+	}
+	summary := ""
+	if len(fields) == 1 {
+		for _, v := range fields {
+			var s string
+			if err := json.Unmarshal(v, &s); err == nil {
+				summary = s
+			}
+		}
+	}
+	if summary == "" {
+		var buf bytes.Buffer
+		if err := json.Compact(&buf, []byte(raw)); err != nil {
+			return ""
+		}
+		summary = buf.String()
+	}
+	summary = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(summary)
+	return ansi.Truncate(summary, toolInputSummaryWidth, "…")
+}
+
+// renderCappedLines es el esqueleto comun de los previews de detalle de una
+// tool: parte el texto en lineas, rinde cada una con renderLine (UN segmento
+// contiguo por linea, siguiendo la convencion de los estilos de arriba) hasta
+// maxLines lineas y, con mas, cierra con la marca "  … +N lineas" (N =
+// ocultas) que acota el detalle para no inundar el transcript. Texto vacio o
+// solo whitespace devuelve "" (sin preview).
+func renderCappedLines(text string, maxLines int, renderLine func(line string) string) string {
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	shown := lines
+	if len(shown) > maxLines {
+		shown = shown[:maxLines]
+	}
+	rendered := make([]string, 0, len(shown)+1)
+	for _, line := range shown {
+		rendered = append(rendered, renderLine(line))
+	}
+	if hidden := len(lines) - len(shown); hidden > 0 {
+		rendered = append(rendered, toolOutputStyle.Render("  … +"+strconv.Itoa(hidden)+" lineas"))
+	}
+	return strings.Join(rendered, "\n")
+}
+
+// renderOutputPreview rinde el output de una tool exitosa como bloque citado
+// bajo el header: cada linea prefijada con toolOutputPrefix y en estilo tenue,
+// hasta toolOutputPreviewLines lineas (mas alla, la marca de renderCappedLines).
+func renderOutputPreview(output string) string {
+	return renderCappedLines(output, toolOutputPreviewLines, func(line string) string {
+		return toolOutputStyle.Render(toolOutputPrefix + line)
+	})
+}
+
+// renderDiffPreview rinde el diff unificado de Tool.Success (edit/write) bajo
+// el header: cada linea indentada con toolDiffPrefix, las lineas "+" en verde,
+// las "-" en rojo y el resto tenue, hasta toolDiffPreviewLines lineas (mas
+// generoso que el preview del output: el diff ES el resultado que se quiere
+// revisar). Diff vacio o solo whitespace devuelve "" (sin detalle, la vista
+// cae al output).
+func renderDiffPreview(diff string) string {
+	return renderCappedLines(diff, toolDiffPreviewLines, func(line string) string {
+		style := toolOutputStyle
+		switch {
+		case strings.HasPrefix(line, "+"):
+			style = diffAddStyle
+		case strings.HasPrefix(line, "-"):
+			style = diffDelStyle
+		}
+		return style.Render(toolDiffPrefix + line)
+	})
+}
+
+// markdownDocMargin es el margen izquierdo del documento del estilo "dark" de
+// glamour. glamour pade cada linea rendida a WordWrap + este margen:
+// renderMarkdown lo descuenta del ancho pedido para que ninguna linea exceda
+// el ancho util del viewport. Se lee del propio estilo (no un 2 a mano) para
+// seguir cualquier cambio del estilo o de la libreria.
+var markdownDocMargin = func() int {
+	if m := styles.DarkStyleConfig.Document.Margin; m != nil {
+		return int(*m)
+	}
+	return 0
+}()
+
+// markdownRendererCache memoiza el ultimo TermRenderer construido, clavado al
+// ancho de envolvimiento con el que se creo. renderTranscript corre en cada
+// Update (cada delta del streaming) y rinde cada bloque assistant cerrado:
+// construir un renderer de glamour por bloque en cada render es O(bloques)
+// construcciones por tecla y lag visible en conversaciones largas. Un solo
+// slot alcanza porque el ancho solo cambia con un resize de la terminal. Sin
+// lock a proposito: la TUI es una sola instancia y Bubble Tea corre
+// Update/View en una sola goroutine, asi que el cache nunca se accede
+// concurrentemente.
+var markdownRendererCache struct {
+	wrap     int
+	renderer *glamour.TermRenderer
+}
+
+// markdownRenderer devuelve el renderer de glamour para el ancho de
+// envolvimiento dado (ya descontado el margen del documento), reusando el
+// cacheado mientras el ancho no cambie. Reusar el renderer es seguro: cada
+// Render de glamour convierte sobre un buffer nuevo, sin estado entre
+// llamadas. El perfil de COLOR sigue al de lipgloss, igual que el resto de
+// estilos de la vista: sin TTY (tests) es Ascii y el contenido rendido queda
+// como texto plano contiguo asertable (glamour con colores parte cada palabra
+// en su propio segmento ANSI); en terminal real colorea.
+func markdownRenderer(wrap int) (*glamour.TermRenderer, error) {
+	if markdownRendererCache.renderer != nil && markdownRendererCache.wrap == wrap {
+		return markdownRendererCache.renderer, nil
+	}
+	r, err := glamour.NewTermRenderer(
+		glamour.WithStandardStyle("dark"),
+		glamour.WithWordWrap(wrap),
+		glamour.WithColorProfile(lipgloss.ColorProfile()),
+	)
+	if err != nil {
+		return nil, err
+	}
+	markdownRendererCache.wrap = wrap
+	markdownRendererCache.renderer = r
+	return r, nil
+}
+
+// renderMarkdown rinde texto markdown al ancho dado (0 = sin envolver) con el
+// estilo fijo "dark": deterministico, sin detectar el fondo de la terminal.
+// El envolvimiento se pide al ancho MENOS el margen del documento del estilo:
+// glamour pade cada linea a WordWrap + margen, y una linea mas ancha que el
+// viewport la re-parte el envolvimiento de emergencia de syncViewport dejando
+// palabras huerfanas sin margen en la columna 0.
+// Ante cualquier error se devuelve el texto tal cual: mejor markdown crudo
+// que perder contenido. Los saltos de linea de borde se recortan porque
+// renderTranscript ya separa los bloques con "\n\n".
+func renderMarkdown(text string, width int) string {
+	wrap := width
+	if wrap > 0 {
+		wrap = max(wrap-markdownDocMargin, 0)
+	}
+	r, err := markdownRenderer(wrap)
+	if err != nil {
+		return text
+	}
+	out, err := r.Render(text)
+	if err != nil {
+		return text
+	}
+	return strings.Trim(out, "\n")
+}
+
 // renderTranscript une los bloques de la conversacion, un parrafo por entrada.
+// Pasa el ancho util del viewport (0 sin tamano conocido = sin envolver) para
+// que el render markdown envuelva al mismo ancho que luego usa syncViewport.
 func (m Model) renderTranscript() string {
+	width := 0
+	if m.ready {
+		width = m.viewport.Width
+	}
 	parts := make([]string, len(m.entries))
 	for i, e := range m.entries {
-		parts[i] = e.render()
+		parts[i] = e.render(width)
 	}
 	return strings.Join(parts, "\n\n")
 }
@@ -182,7 +413,11 @@ func (m Model) syncViewport() Model {
 func (m Model) View() string {
 	status := ""
 	if m.working {
-		status = statusStyle.Render(workingIndicator) + "\n"
+		// La linea de estado es "<glifo> trabajando": el glifo animado del
+		// spinner (ya estilizado por su propio Style) seguido del texto en
+		// estilo tenue, con " trabajando" como UN segmento para que el
+		// contenido plano siga siendo asertable por los tests.
+		status = m.spinner.View() + statusStyle.Render(" trabajando") + "\n"
 	}
 	footer := ""
 	if f := m.statusFooter(); f != "" {

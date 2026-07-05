@@ -69,6 +69,13 @@ type App struct {
 	snaps    *tool.SessionSnapshots        // read-state por sesion; sobrevive a los cambios de workspace (se crea una vez)
 	root     string                        // raiz del workspace; mutable via SetWorkspace, leida con mu (workspaceRoot)
 
+	// versioner es el store crudo si sabe exponer su data_version (SQLite sobre
+	// archivo); startup lanza con el un watcher que emite "sessions:changed"
+	// cuando OTRO proceso (la TUI) escribe la base compartida. nil (MemoryStore)
+	// = sin watcher. watchInterval es el periodo de sondeo; los tests lo acortan.
+	versioner     event.DataVersioner
+	watchInterval time.Duration
+
 	// providerCfg es la config del provider activo (kind/baseURL/model) que la UI
 	// elige y lee; mutable via SetProvider bajo mu. newProvider construye el provider
 	// real desde una config; es inyectable para que los tests verifiquen el
@@ -102,6 +109,13 @@ type runHandle struct{ cancel context.CancelFunc }
 func newAppWithStore(store session.Store, provider llm.Provider, emit event.EmitFunc) *App {
 	a := &App{runs: map[string]*runHandle{}, modes: map[string]session.Mode{}}
 	a.provider = provider
+	// El watcher del data_version se ancla al store CRUDO (antes de decorarlo):
+	// solo el SQLiteStore sobre archivo sabe exponerlo; un MemoryStore no, y la
+	// app queda sin watcher (no hay otro proceso posible sobre memoria).
+	a.watchInterval = 1 * time.Second
+	if v, ok := store.(event.DataVersioner); ok {
+		a.versioner = v
+	}
 	// newProvider arma el provider real desde una config; SetProvider lo usa para
 	// reconstruir en vivo. Los tests lo sobreescriben con un fake.
 	a.newProvider = buildProvider
@@ -224,34 +238,17 @@ func NewApp() *App {
 	return a
 }
 
-// openStore abre el SQLiteStore durable en el directorio de datos de la app. Si
-// falla (disco/permiso), cae a un MemoryStore para que la app igual abra (sin
-// persistencia). El cierre del store se delega al ciclo de vida del proceso.
+// openStore abre el SQLite COMPARTIDO con la TUI via session.OpenDefault (la
+// fuente unica de la ruta y la apertura: ambos procesos ven las mismas
+// sesiones). Si falla (disco/permiso), OpenDefault ya devolvio el fallback en
+// memoria usable: la app abre igual, solo que sin persistencia. El cierre del
+// store se delega al ciclo de vida del proceso.
 func openStore() session.Store {
-	store, err := session.NewSQLiteStore(dbPath())
+	store, err := session.OpenDefault()
 	if err != nil {
 		log.Printf("atenea: no se pudo abrir SQLite (%v); usando store en memoria", err)
-		return session.NewMemoryStore()
 	}
 	return store
-}
-
-// dbPath resuelve la ruta de la DB: ATENEA_DB si esta seteada (util en dev), si no
-// <UserConfigDir>/atenea/atenea.db (creando el directorio). Cae a "atenea.db" en el
-// cwd si no hay directorio de config.
-func dbPath() string {
-	if p := os.Getenv("ATENEA_DB"); p != "" {
-		return p
-	}
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "atenea.db"
-	}
-	appDir := filepath.Join(dir, "atenea")
-	if err := os.MkdirAll(appDir, 0o755); err != nil {
-		return "atenea.db"
-	}
-	return filepath.Join(appDir, "atenea.db")
 }
 
 // resolveModel resuelve el modelo por defecto desde el entorno: OPENROUTER_MODEL si
@@ -398,8 +395,19 @@ func (a *App) currentModel() string {
 	return resolveModel()
 }
 
-// startup guarda el ctx de Wails (lo usa la EmitFunc real).
-func (a *App) startup(ctx context.Context) { a.ctx = ctx }
+// startup guarda el ctx de Wails (lo usa la EmitFunc real) y, si el store
+// expone su data_version, lanza el watcher que emite "sessions:changed" cuando
+// OTRO proceso (la TUI) escribe sesiones nuevas/actualizadas en el SQLite
+// compartido; la sidebar re-pide ListSessions al recibirlo. El ctx de Wails se
+// cancela al cerrar la app, lo que apaga el watcher.
+func (a *App) startup(ctx context.Context) {
+	a.ctx = ctx
+	if a.versioner != nil {
+		go event.WatchStore(ctx, a.versioner, a.watchInterval, func() {
+			a.emit("sessions:changed")
+		})
+	}
+}
 
 // acceptPlanPrompt es el prompt fijo que AcceptPlan promueve para ejecutar el
 // plan aprobado: vuelve a modo normal e instruye al agente a implementarlo.
