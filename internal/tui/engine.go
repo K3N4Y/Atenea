@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"log"
 	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -42,6 +43,13 @@ type Engine struct {
 	commands *command.Set
 	glob     *tool.GlobTool
 
+	// root y store espejan a.workspaceRoot()/a.store en la app Wails: la raiz
+	// del workspace y el store DECORADO con EmittingStore (el mismo que recibe
+	// wiring.Build). send los usa para grabar Session.Cwd en el primer prompt
+	// de cada sesion. Inmutables tras NewEngine: se leen sin mu.
+	root  string
+	store session.Store
+
 	mu    sync.Mutex
 	runs  map[string]*engineRun   // sessionID -> corrida en vuelo (identidad por puntero)
 	modes map[string]session.Mode // sessionID -> modo (normal/plan); guardado con mu como runs
@@ -79,10 +87,12 @@ func NewEngine(cfg EngineConfig) *Engine {
 		}
 	}
 	bus := event.NewBus(emit)
+	e.root = cfg.Root
+	e.store = event.NewEmittingStore(cfg.Store, bus)
 	built := wiring.Build(wiring.Config{
 		Root:     cfg.Root,
 		Provider: cfg.Provider,
-		Store:    event.NewEmittingStore(cfg.Store, bus),
+		Store:    e.store,
 		Inbox:    e.inbox,
 		Gate:     e.gate,
 		Snaps:    tool.NewSessionSnapshots(),
@@ -166,6 +176,18 @@ func (e *Engine) expandCommand(text string) string {
 // Es el camino comun de SendPrompt y SendPlanPrompt: el modo de la sesion ya
 // quedo fijado antes de llamarlo.
 func (e *Engine) send(sessionID, text string) error {
+	// La PRIMERA vez que se manda un prompt a la sesion (LoadSession aun da
+	// error) se graba la carpeta de trabajo como Session.Cwd, ANTES de admitir
+	// el prompt para que quede de primero en el log: la sidebar de la app Wails
+	// agrupa los chats por esa carpeta (espejo de App.captureCwd). Idempotente:
+	// en la sesion ya existente no hace nada. Un fallo al grabar no corta el
+	// envio: la carpeta solo afecta la sidebar.
+	if _, err := e.store.LoadSession(context.Background(), sessionID); err != nil {
+		if _, err := e.store.AppendEvent(context.Background(), sessionID,
+			session.SessionEvent{Kind: session.KindSessionCwd, Text: e.root}); err != nil {
+			log.Printf("atenea-tui: no se pudo guardar la carpeta de %s: %v", sessionID, err)
+		}
+	}
 	if err := e.inbox.Admit(context.Background(), sessionID,
 		session.Prompt{Text: e.expandCommand(text)}, session.DeliveryQueue); err != nil {
 		return err

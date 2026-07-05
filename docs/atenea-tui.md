@@ -15,8 +15,10 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
 - `cmd/atenea-tui/main.go` — la frontera delgada (equivalente al `main.go` de
   Wails): carga `.env`, elige el provider desde el entorno (`OPENROUTER_API_KEY`
   presente = OpenRouter con `OPENROUTER_MODEL`; ausente = demo sin red), desvia
-  el log estandar a un archivo temporal (no pintar sobre la pantalla alternativa)
-  y corre `tea.NewProgram` con alt-screen. Sin logica testeable propia.
+  el log estandar a un archivo temporal (no pintar sobre la pantalla alternativa),
+  abre el SQLite COMPARTIDO con la app via `session.OpenDefault` (fallback en
+  memoria si falla, con `Close` al salir) y corre `tea.NewProgram` con
+  alt-screen. Sin logica testeable propia.
 - `internal/tui/engine.go` — el ensamblado headless del agente. Arma
   inbox/gate/snapshots en memoria, decora el store con `EmittingStore` sobre un
   `event.Bus` cuya `EmitFunc` puentea cada `session.SessionEvent` al canal de la
@@ -71,6 +73,23 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
   pie muestra `<agente> · <modelo>`: el modelo entra una sola vez via
   `WithStatus` y el agente refleja el modo activo (build/plan).
 
+## Persistencia compartida con la app
+
+La TUI abre el MISMO SQLite que la app Wails via `session.OpenDefault`: la
+ruta la resuelve `session.DefaultDBPath` (`ATENEA_DB` si esta seteada; si no
+`<config>/atenea/atenea.db`). Los pragmas WAL + busy_timeout (por conexion,
+via DSN) permiten los dos procesos a la vez sobre el mismo archivo: lectores
+concurrentes y un escritor que espera el write-lock en vez de fallar con
+SQLITE_BUSY; el Seq por sesion se asigna en un INSERT atomico (subquery
+MAX(seq)+1 con RETURNING), asi dos procesos no racean la secuencia. Cada
+sesion de la TUI graba `Session.Cwd` en su primer prompt y aparece en la
+sidebar de la app agrupada por esa carpeta. La app se refresca sola: un
+watcher sondea el `PRAGMA data_version` del store (cambia solo con escrituras
+de OTRA conexion) y emite `sessions:changed`, y el frontend re-pide
+`ListSessions` al recibirlo. Si abrir el SQLite falla, `OpenDefault` devuelve
+un store en memoria usable junto al error: la TUI sigue funcionando, solo que
+sin persistir.
+
 ## Correr
 
 ```bash
@@ -81,11 +100,9 @@ OPENROUTER_API_KEY=... ./build/bin/atenea-tui
 
 ## Pendientes conocidos (v1)
 
-- Store en memoria: las sesiones de la TUI no persisten ni aparecen en la
-  sidebar de la app (compartir el SQLite exige coordinar acceso concurrente).
-- Plan-mode ya se alterna con Tab y el flujo AcceptPlan ya ejecuta el plan
-  aprobado, pero sigue pendiente cambiar el MODELO desde la TUI (tampoco hay
-  slash-commands ni @-menu en el composer): el pie muestra el modelo del
+- Plan-mode ya se alterna con Tab, el flujo AcceptPlan ya ejecuta el plan
+  aprobado y el composer ya autocompleta slash-commands y @-archivos, pero
+  sigue pendiente cambiar el MODELO desde la TUI: el pie muestra el modelo del
   entorno, fijo por corrida.
 - El indicador de trabajo es estatico (sin animacion de spinner).
 - Un prompt nuevo mientras corre una actividad cancela la corrida anterior

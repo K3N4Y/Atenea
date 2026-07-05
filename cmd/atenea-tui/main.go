@@ -6,6 +6,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -37,6 +38,20 @@ func main() {
 	// pintaria sobre la pantalla alternativa de Bubble Tea: se desvia a un archivo.
 	redirectLog()
 
+	// El store durable COMPARTIDO con la app Wails (mismo SQLite): las sesiones
+	// de la TUI aparecen en su sidebar. Se abre DESPUES de dotenv.Load (ATENEA_DB
+	// puede venir del .env) y de redirectLog (el warning va al log desviado, no
+	// a la pantalla). Si falla, OpenDefault ya devolvio un store en memoria
+	// usable: la TUI sigue funcionando, solo que sin persistir.
+	store, err := session.OpenDefault()
+	if err != nil {
+		log.Printf("atenea-tui: no se pudo abrir el SQLite (%v); las sesiones NO van a persistir (store en memoria)", err)
+	}
+	// El Close al salir dispara el checkpoint del WAL y deja el .db consolidado.
+	if c, ok := store.(io.Closer); ok {
+		defer c.Close()
+	}
+
 	root, err := os.Getwd()
 	if err != nil {
 		root = "."
@@ -49,11 +64,12 @@ func main() {
 	engine := tui.NewEngine(tui.EngineConfig{
 		Root:     root,
 		Provider: provider,
-		Store:    session.NewMemoryStore(),
+		Store:    store,
 	})
 
 	// Una sesion nueva por corrida de la TUI; el id con timestamp evita chocar
-	// entre corridas si el store algun dia es durable.
+	// entre corridas: el store es durable y cada sesion queda persistida y
+	// visible en la sidebar de la app Wails.
 	sessionID := "tui-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 
 	// "build" es el modo INICIAL del agente: Tab lo alterna a plan en vivo (el

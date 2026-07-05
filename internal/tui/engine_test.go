@@ -658,3 +658,105 @@ func TestEngine_ToolResultNeverPrecedesAssistantMessageInHistory(t *testing.T) {
 		t.Fatalf("el Message role=tool de c1 (indice %d) precede al Message assistant con sus tool_calls (indice %d); un provider real lo rechaza con 400 (tool call id not found in previous tool calls); secuencia de roles proyectada: %v", toolIdx, assistantIdx, roles)
 	}
 }
+
+func TestEngine_CapturesSessionCwdOnFirstPrompt(t *testing.T) {
+	// El PRIMER prompt de una sesion (cuando LoadSession aun da error) debe
+	// grabar la carpeta de trabajo como un SessionEvent Session.Cwd de PRIMERO
+	// en el log, antes de admitir el prompt (espejo de App.captureCwd): asi la
+	// sidebar de la app Wails agrupa las sesiones de la TUI por carpeta.
+	root := t.TempDir()
+	store := session.NewMemoryStore()
+	fake := llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.TextStarted},
+		llm.Event{Kind: llm.TextDelta, Text: "hola"},
+		llm.Event{Kind: llm.TextEnded},
+		llm.Event{Kind: llm.StepEnded},
+	)
+	e := NewEngine(EngineConfig{Root: root, Provider: fake, Store: store})
+
+	if err := e.SendPrompt("s1", "hola"); err != nil {
+		t.Fatalf("SendPrompt(s1, hola) = %v, se esperaba nil", err)
+	}
+	if _, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil); done.Err != "" {
+		t.Fatalf("RunDoneMsg.Err = %q, se esperaba corrida limpia", done.Err)
+	}
+
+	// (a) El primer evento durable del log (Seq 1) es el Session.Cwd con la raiz.
+	ctx := context.Background()
+	events, err := store.Events(ctx, "s1", 0)
+	if err != nil {
+		t.Fatalf("store.Events(s1) = %v, se esperaba nil", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("store.Events(s1) sin eventos: la corrida debe persistir el log")
+	}
+	first := events[0]
+	if first.Seq != 1 || first.Kind != session.KindSessionCwd || first.Text != root {
+		t.Errorf("primer evento del log = {Seq:%d Kind:%q Text:%q}, quiero {Seq:1 Kind:%q Text:%q}: la carpeta debe grabarse ANTES de admitir el prompt", first.Seq, first.Kind, first.Text, session.KindSessionCwd, root)
+	}
+
+	// (b) La proyeccion Sessions expone la carpeta en SessionSummary.Cwd.
+	sums, err := store.Sessions(ctx)
+	if err != nil {
+		t.Fatalf("store.Sessions() = %v, se esperaba nil", err)
+	}
+	var summary *session.SessionSummary
+	for i := range sums {
+		if sums[i].ID == "s1" {
+			summary = &sums[i]
+		}
+	}
+	if summary == nil {
+		t.Fatalf("store.Sessions() = %v, debe incluir la sesion s1", sums)
+	}
+	if summary.Cwd != root {
+		t.Errorf("SessionSummary.Cwd de s1 = %q, quiero %q: la sidebar agrupa los chats por carpeta", summary.Cwd, root)
+	}
+}
+
+func TestEngine_CapturesSessionCwdOnce(t *testing.T) {
+	// TRIANGULATE: la captura del Session.Cwd es IDEMPOTENTE. Dos SendPrompt
+	// consecutivos a la MISMA sesion deben dejar en el log exactamente UN evento
+	// Session.Cwd (y de primero): una captura que appendeara la carpeta en cada
+	// envio ensuciaria el log y el historial proyectado en cada follow-up.
+	root := t.TempDir()
+	store := session.NewMemoryStore()
+	fake := llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.TextStarted},
+		llm.Event{Kind: llm.TextDelta, Text: "hola"},
+		llm.Event{Kind: llm.TextEnded},
+		llm.Event{Kind: llm.StepEnded},
+	)
+	e := NewEngine(EngineConfig{Root: root, Provider: fake, Store: store})
+
+	for i, prompt := range []string{"primer prompt", "segundo prompt"} {
+		if err := e.SendPrompt("s1", prompt); err != nil {
+			t.Fatalf("SendPrompt #%d (s1, %q) = %v, se esperaba nil", i+1, prompt, err)
+		}
+		if _, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil); done.Err != "" {
+			t.Fatalf("RunDoneMsg.Err #%d = %q, se esperaba corrida limpia", i+1, done.Err)
+		}
+	}
+
+	events, err := store.Events(context.Background(), "s1", 0)
+	if err != nil {
+		t.Fatalf("store.Events(s1) = %v, se esperaba nil", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("store.Events(s1) sin eventos: las corridas deben persistir el log")
+	}
+	var cwdSeqs []session.Seq
+	for _, ev := range events {
+		if ev.Kind == session.KindSessionCwd {
+			cwdSeqs = append(cwdSeqs, ev.Seq)
+		}
+	}
+	if len(cwdSeqs) != 1 {
+		t.Fatalf("el log tiene %d eventos %s (Seqs %v), quiero exactamente 1: la captura de la carpeta debe ser idempotente entre envios", len(cwdSeqs), session.KindSessionCwd, cwdSeqs)
+	}
+	if first := events[0]; first.Kind != session.KindSessionCwd || first.Text != root {
+		t.Errorf("primer evento del log = {Kind:%q Text:%q}, quiero {Kind:%q Text:%q}: el unico Session.Cwd debe ser el primero", first.Kind, first.Text, session.KindSessionCwd, root)
+	}
+}
