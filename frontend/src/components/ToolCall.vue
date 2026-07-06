@@ -37,6 +37,16 @@ const readLabel = computed(() =>
   props.item.status === 'running' ? 'Reading' : 'Read',
 )
 
+// Tool Skill: muestra solo el nombre, no el contenido completo del SKILL.md.
+const isSkill = computed(() => props.item.name === 'skill')
+
+function inputName(input: unknown): string {
+  if (!input || typeof input !== 'object') return ''
+  const o = input as Record<string, unknown>
+  return typeof o.name === 'string' ? o.name : ''
+}
+const skillName = computed(() => inputName(props.item.input))
+
 // Command the model wants to run (bash): shown next to the permission buttons
 // so the user knows what they are approving.
 function inputCommand(input: unknown): string {
@@ -53,6 +63,19 @@ const isPending = computed(() => props.item.status === 'pending')
     <PhFile :size="16" weight="regular" />
     <span>{{ readLabel }}</span>
     <span v-if="fileName" class="opacity-90">{{ fileName }}</span>
+  </div>
+
+  <div v-else-if="isSkill" class="flex items-center gap-2 text-sm opacity-70">
+    <PhCheck v-if="item.status === 'success'" :size="16" weight="bold" class="opacity-50" />
+    <PhCircleNotch
+      v-else-if="item.status === 'running'"
+      :size="16"
+      weight="bold"
+      class="animate-spin text-accent [animation-duration:0.7s]"
+    />
+    <PhX v-else :size="16" weight="bold" class="text-accent" />
+    <span class="font-medium">skill</span>
+    <span v-if="skillName" class="opacity-90">{{ skillName }}</span>
   </div>
 
   <!-- Resto de tools (edit/diff/echo...): bloque con su propio fondo (§8). -->
