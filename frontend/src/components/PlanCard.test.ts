@@ -13,13 +13,13 @@ const plan = (over: Record<string, unknown> = {}) => ({
 })
 
 // PlanCard es el plan minimizado: vive en el flujo de la conversacion (como una
-// tool card) y solo ofrece expandir; las acciones viven en la vista expandida.
+// tool card). Toda la tarjeta expande; el boton Aceptar permite aprobar sin
+// abrir la vista expandida.
 describe('PlanCard (plan minimizado en la conversacion)', () => {
-  it('muestra el titulo del plan y la accion de expandir', () => {
+  it('muestra el titulo del plan', () => {
     const wrapper = mount(PlanCard, { props: plan() })
 
     expect(wrapper.text()).toContain('Mi Plan')
-    expect(wrapper.text()).toContain('Expandir')
   })
 
   it('titulo vacio: cae a "Plan"', () => {
@@ -43,10 +43,14 @@ describe('PlanCard (plan minimizado en la conversacion)', () => {
     expect(wrapper.emitted('expand')).toBeTruthy()
   })
 
-  it('como una tool: no ofrece aceptar ni solicitar cambio (solo expandir)', () => {
+  it('ofrece un boton Aceptar que emite accept', async () => {
     const wrapper = mount(PlanCard, { props: plan() })
 
-    expect(wrapper.find('[data-action="accept"]').exists()).toBe(false)
-    expect(wrapper.find('[data-action="request-change"]').exists()).toBe(false)
+    const btn = wrapper.get('[data-action="accept"]')
+    expect(btn.exists()).toBe(true)
+    expect(btn.text()).toContain('Aceptar')
+
+    await btn.trigger('click')
+    expect(wrapper.emitted('accept')).toBeTruthy()
   })
 })

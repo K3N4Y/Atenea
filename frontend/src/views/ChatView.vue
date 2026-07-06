@@ -191,6 +191,7 @@ onUnmounted(() => chat.teardown())
             v-if="chat.plan && !chat.planExpanded"
             :plan="chat.plan"
             @expand="chat.togglePlanExpanded"
+            @accept="chat.acceptPlan"
           />
         </MessageList>
 
