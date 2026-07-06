@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 
 	"atenea/internal/command"
 	"atenea/internal/session"
@@ -123,6 +124,25 @@ func assertBoxLinesExactWidth(t *testing.T, view string, width int) {
 	if !found {
 		t.Fatalf("View() = %q, no contiene ninguna linea de la caja del composer (bordes ╭/│/╰)", view)
 	}
+}
+
+// forceANSI256Profile fija el perfil de color ANSI256 durante el test: sin TTY
+// el perfil es Ascii y ningun color se emite, asi que los tests que asertan
+// sobre secuencias SGR lo necesitan para que los colores sean observables.
+// El renderer de glamour se memoiza en markdownRendererCache keyed solo por
+// wrap y queda clavado al perfil con que se construyo: hay que invalidarlo al
+// cambiar el perfil (si no el test reusa un renderer Ascii construido por otro
+// test y pasa en falso) y tambien al limpiar (si no un renderer ANSI256
+// envenena a los tests siguientes).
+func forceANSI256Profile(t *testing.T) {
+	t.Helper()
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	markdownRendererCache.renderer = nil
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prev)
+		markdownRendererCache.renderer = nil
+	})
 }
 
 func TestModel_FoldsStreamingAssistantText(t *testing.T) {
@@ -280,6 +300,70 @@ func TestModel_StepEndedMessageRendersAsMarkdown(t *testing.T) {
 	}
 }
 
+// Contrato del color del texto asentado del assistant: el markdown cerrado se
+// rinde con el color por defecto de la terminal, NO con el gris "252" que fija
+// Document.Color del estilo "dark" de glamour (el texto se ve apagado frente
+// al resto de la vista). El resto del tema (headings con color, etc.) se
+// conserva; aqui solo se prohibe el gris del documento. Se fuerza ANSI256
+// (forceANSI256Profile) para que el gris sea observable en la salida.
+func TestModel_AssistantMarkdownUsesDefaultForeground(t *testing.T) {
+	forceANSI256Profile(t)
+
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	text := "texto-asentado con **enfasis** del assistant"
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
+	m = apply(t, m, EventMsg{
+		Kind:    session.KindStepEnded,
+		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: text},
+	})
+	m = drainReveal(t, m)
+
+	view := m.View()
+	if plain := ansi.Strip(view); !strings.Contains(plain, "texto-asentado") {
+		t.Fatalf("View() sin ANSI = %q, debe contener %q: quitar el gris del documento no debe perder el contenido del texto", plain, "texto-asentado")
+	}
+	if strings.Contains(view, "38;5;252") {
+		t.Fatalf("View() = %q, NO debe contener la secuencia SGR %q: el texto asentado del assistant se rinde con el color por defecto de la terminal, no con el gris 252 del estilo dark de glamour", view, "38;5;252")
+	}
+}
+
+func TestModel_AssistantMarkdownKeepsDarkThemeAccents(t *testing.T) {
+	// TRIANGULATE: una implementacion pobre "arregla" el gris del documento
+	// cambiando al estilo notty/ascii o quitando TODOS los colores del tema:
+	// pasa el test del gris (no queda ningun 38;5;252 porque no queda ningun
+	// color) pero apaga los acentos del tema dark. Anular Document.Color debe
+	// ser quirurgico: un heading markdown asentado sigue rendiendo el color de
+	// headings del tema dark (Color "39" -> SGR 38;5;39 en ANSI256) a la vez
+	// que el gris 252 del documento no aparece.
+	forceANSI256Profile(t)
+
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	text := "## Titulo\n\ntexto"
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
+	m = apply(t, m, EventMsg{
+		Kind:    session.KindStepEnded,
+		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: text},
+	})
+	m = drainReveal(t, m)
+
+	view := m.View()
+	if plain := ansi.Strip(view); !strings.Contains(plain, "Titulo") {
+		t.Fatalf("View() sin ANSI = %q, debe contener %q: conservar el tema no debe perder el contenido del heading", plain, "Titulo")
+	}
+	if !strings.Contains(view, "38;5;39") {
+		t.Fatalf("View() = %q, debe contener la secuencia SGR %q: el heading markdown asentado conserva el color de headings del tema dark de glamour; quitar TODOS los colores (o caer al estilo notty/ascii) no es la solucion al gris del documento", view, "38;5;39")
+	}
+	if strings.Contains(view, "38;5;252") {
+		t.Fatalf("View() = %q, NO debe contener la secuencia SGR %q: solo se anula el gris del documento, no el resto del tema", view, "38;5;252")
+	}
+}
+
 func TestModel_RendersUserMessages(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
@@ -335,6 +419,89 @@ func TestModel_RendersToolCallLifecycle(t *testing.T) {
 	}
 	if strings.Contains(got, "ejecutando") {
 		t.Fatalf("View() = %q, no debe quedar ninguna tool en ejecucion", got)
+	}
+}
+
+// Contrato del render de la tool "skill": no usa el header generico
+// `[tool] skill(...)` sino una linea dedicada `[skill] <nombre>: <estado>`,
+// donde el nombre es el campo "name" del Input JSON. En exito la linea va SIN
+// preview del output: el cuerpo del SKILL.md que viaja en ev.Text es para el
+// modelo, no para el transcript.
+func TestModel_RendersSkillToolAsSkillLine(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "skill", Input: json.RawMessage(`{"name":"tdd-cycle-evidence"}`)})
+	view := m.View()
+	if !strings.Contains(view, "[skill] tdd-cycle-evidence: ejecutando") {
+		t.Fatalf("View() = %q, la tool skill en ejecucion debe rendirse como linea dedicada %q (nombre = campo name del Input)", view, "[skill] tdd-cycle-evidence: ejecutando")
+	}
+	if strings.Contains(view, "[tool] skill") {
+		t.Fatalf("View() = %q, NO debe contener el header generico %q: la tool skill tiene su linea dedicada [skill]", view, "[tool] skill")
+	}
+
+	body := "<skill_content name=\"tdd-cycle-evidence\">\ncuerpo del skill para el modelo\n</skill_content>"
+	m = apply(t, m, EventMsg{
+		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "skill", Text: body,
+		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: body, ToolCallID: "c1"},
+	})
+	view = m.View()
+	if !strings.Contains(view, "[skill] tdd-cycle-evidence: ok") {
+		t.Fatalf("View() = %q, la tool skill exitosa debe asentarse como %q", view, "[skill] tdd-cycle-evidence: ok")
+	}
+	if strings.Contains(view, "[tool] skill") {
+		t.Fatalf("View() = %q, NO debe contener el header generico %q tras el exito", view, "[tool] skill")
+	}
+	if strings.Contains(view, "skill_content") {
+		t.Fatalf("View() = %q, NO debe contener %q: en exito la linea de skill va sin preview del output, el cuerpo del SKILL.md es para el modelo y no para el transcript", view, "skill_content")
+	}
+}
+
+func TestModel_SkillToolFailureShowsError(t *testing.T) {
+	// TRIANGULATE: una implementacion pobre de renderSkill solo cubre los
+	// estados running/ok y ante Tool.Failed cae al header generico [tool] o
+	// deja la linea "ejecutando" para siempre. El fallo de la skill (p.ej.
+	// nombre inexistente) se asienta en la misma linea dedicada [skill] con el
+	// sufijo de error, igual que el resto de tools.
+	m := NewModel(nil, "s1", nil)
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "skill", Input: json.RawMessage(`{"name":"inexistente"}`)})
+	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "c1", ToolName: "skill", Error: `skill "inexistente" no encontrada`})
+
+	view := m.View()
+	if want := `[skill] inexistente: error: skill "inexistente" no encontrada`; !strings.Contains(view, want) {
+		t.Fatalf("View() = %q, la skill fallida debe asentarse como %q: la linea dedicada [skill] tambien cubre el estado de error, no solo running/ok", view, want)
+	}
+	if strings.Contains(view, "ejecutando") {
+		t.Fatalf("View() = %q, la skill asentada con error no debe seguir mostrandose como en ejecucion", view)
+	}
+	if strings.Contains(view, "[tool] skill") {
+		t.Fatalf("View() = %q, NO debe contener el header generico %q: el fallo no debe hacer caer a la skill al render generico de tools", view, "[tool] skill")
+	}
+}
+
+func TestModel_SkillToolWithoutNameRendersBareHeader(t *testing.T) {
+	// TRIANGULATE: una implementacion pobre asume que el Input de la skill es
+	// JSON valido (panic o basura en el header al parsearlo) o cae al header
+	// generico [tool] skill cuando no puede extraer el nombre. Con Input no
+	// parseable el header queda "[skill]" pelado: sin nombre, sin parens y sin
+	// filtrar el input crudo al transcript.
+	m := NewModel(nil, "s1", nil)
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "skill", Input: json.RawMessage(`no-es-json`)})
+
+	view := m.View()
+	if !strings.Contains(view, "[skill]: ejecutando") {
+		t.Fatalf("View() = %q, con Input no parseable la skill debe rendirse con el header pelado %q", view, "[skill]: ejecutando")
+	}
+	if strings.Contains(view, "[tool] skill") {
+		t.Fatalf("View() = %q, NO debe contener el header generico %q: sin nombre parseable la skill sigue en su linea dedicada [skill]", view, "[tool] skill")
+	}
+	skillLine := lineWith(t, view, "[skill]")
+	if strings.Contains(skillLine, "(") {
+		t.Fatalf("linea de la skill = %q, NO debe llevar parens: el header pelado no hereda el resumen del Input del render generico", skillLine)
+	}
+	if strings.Contains(view, "no-es-json") {
+		t.Fatalf("View() = %q, NO debe filtrar el Input crudo %q al transcript", view, "no-es-json")
 	}
 }
 

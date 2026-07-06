@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/glamour"
+	glamouransi "github.com/charmbracelet/glamour/ansi"
 	"github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -173,8 +174,12 @@ func formatThinkingDuration(d time.Duration) string {
 }
 
 // renderTool rinde el bloque de una tool call: el header con nombre y resumen
-// del Input, el estado, y en exito el detalle (diff u output) debajo.
+// del Input, el estado, y en exito el detalle (diff u output) debajo. La tool
+// "skill" tiene su linea dedicada (renderSkill), no el header generico.
 func (e entry) renderTool() string {
+	if e.tool == "skill" {
+		return e.renderSkill()
+	}
 	// El header lleva el resumen del Input entre parens (`bash(ls)`) para
 	// decir QUE corrio la tool de un vistazo; sin resumen queda el nombre
 	// pelado, como antes.
@@ -200,6 +205,40 @@ func (e entry) renderTool() string {
 	default:
 		return toolRunningStyle.Render(head + ": ejecutando")
 	}
+}
+
+// renderSkill rinde la tool "skill" como linea dedicada `[skill] <nombre>`:
+// el nombre es el campo "name" del Input JSON (sin nombre parseable el header
+// queda "[skill]" pelado, sin parens). Los sufijos de estado y los estilos son
+// los mismos que el resto de tools, con la linea entera como UN segmento para
+// que el contenido plano siga siendo asertable. En exito NO se muestra preview
+// del output ni diff: el cuerpo del SKILL.md que viaja en el output es para el
+// modelo, no para el transcript.
+func (e entry) renderSkill() string {
+	head := "[skill]"
+	if name := skillName(e.input); name != "" {
+		head += " " + name
+	}
+	switch e.status {
+	case toolOK:
+		return toolOKStyle.Render(head + ": ok")
+	case toolFailed:
+		return toolFailedStyle.Render(head + ": error: " + e.err)
+	default:
+		return toolRunningStyle.Render(head + ": ejecutando")
+	}
+}
+
+// skillName extrae el campo "name" del Input JSON de la tool skill; con JSON
+// invalido o sin campo devuelve "" y el header de renderSkill queda pelado.
+func skillName(raw string) string {
+	var input struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(raw), &input); err != nil {
+		return ""
+	}
+	return input.Name
 }
 
 // summarizeToolInput resume el JSON del Input de la tool para el header del
@@ -291,13 +330,24 @@ func renderDiffPreview(diff string) string {
 	})
 }
 
-// markdownDocMargin es el margen izquierdo del documento del estilo "dark" de
-// glamour. glamour pade cada linea rendida a WordWrap + este margen:
+// markdownStyle es el estilo del markdown asentado del assistant: el tema
+// "dark" de glamour con el color del documento anulado. El gris 252 que fija
+// Document.Color en el tema apaga el texto del assistant frente al resto de
+// la vista; con nil el documento hereda el color por defecto de la terminal.
+// El resto del tema (headings, code, etc.) queda igual.
+var markdownStyle = func() glamouransi.StyleConfig {
+	s := styles.DarkStyleConfig
+	s.Document.StylePrimitive.Color = nil
+	return s
+}()
+
+// markdownDocMargin es el margen izquierdo del documento del estilo del
+// markdown. glamour pade cada linea rendida a WordWrap + este margen:
 // renderMarkdown lo descuenta del ancho pedido para que ninguna linea exceda
 // el ancho util del viewport. Se lee del propio estilo (no un 2 a mano) para
 // seguir cualquier cambio del estilo o de la libreria.
 var markdownDocMargin = func() int {
-	if m := styles.DarkStyleConfig.Document.Margin; m != nil {
+	if m := markdownStyle.Document.Margin; m != nil {
 		return int(*m)
 	}
 	return 0
@@ -330,7 +380,7 @@ func markdownRenderer(wrap int) (*glamour.TermRenderer, error) {
 		return markdownRendererCache.renderer, nil
 	}
 	r, err := glamour.NewTermRenderer(
-		glamour.WithStandardStyle("dark"),
+		glamour.WithStyles(markdownStyle),
 		glamour.WithWordWrap(wrap),
 		glamour.WithColorProfile(lipgloss.ColorProfile()),
 	)
@@ -342,8 +392,8 @@ func markdownRenderer(wrap int) (*glamour.TermRenderer, error) {
 	return r, nil
 }
 
-// renderMarkdown rinde texto markdown al ancho dado (0 = sin envolver) con el
-// estilo fijo "dark": deterministico, sin detectar el fondo de la terminal.
+// renderMarkdown rinde texto markdown al ancho dado (0 = sin envolver) con
+// markdownStyle, fijo: deterministico, sin detectar el fondo de la terminal.
 // El envolvimiento se pide al ancho MENOS el margen del documento del estilo:
 // glamour pade cada linea a WordWrap + margen, y una linea mas ancha que el
 // viewport la re-parte el envolvimiento de emergencia de syncViewport dejando
