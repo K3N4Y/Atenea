@@ -789,6 +789,8 @@ describe('chat store: acciones sobre los bindings', () => {
     expect(store.items).toHaveLength(0)
     expect(store.running).toBe(false)
     expect(store.errorText).toBeNull()
+    // reset tambien recarga archivos/comandos para el @-menu y /-menu.
+    expect(App.ListProjectFiles).toHaveBeenCalled()
   })
 
   it('reset abre una sesion nueva para que el siguiente prompt no reutilice contexto', async () => {
@@ -1413,6 +1415,8 @@ describe('chat store: carpeta de trabajo (workspace)', () => {
     await store.loadSession('s1')
     expect(App.SetWorkspace).toHaveBeenCalledWith('/home/u/b')
     expect(store.workspace).toBe('/home/u/b')
+    // Al cambiar de carpeta debe recargar los archivos del @-menu.
+    expect(App.ListProjectFiles).toHaveBeenCalled()
   })
 
   it('loadSession no cambia el workspace si el chat es de la carpeta vigente', async () => {

@@ -466,12 +466,18 @@ export const useChatStore = defineStore(
 
     // Lienzo nuevo: abre una sesion vacia y limpia la vista local. La fuente de
     // verdad sigue siendo el backend; el historial se rehidrata via loadSession.
+    // Al empezar un chat nuevo (o cambiar de carpeta) tambien refresca los
+    // archivos y comandos para que el @-menu y el /-menu correspondan al workspace
+    // vigente; se hace fire-and-forget porque loadProjectFiles/loadCommands
+    // capturan errores internamente y el UI se actualiza reactivamente.
     function reset(): void {
       const wasSubscribed = unsubscribe.length > 0
       teardown()
       sessionID.value = newSessionID()
       clearLog()
       if (wasSubscribed) subscribe()
+      loadProjectFiles()
+      loadCommands()
     }
 
     // loadSessions trae el historial del backend para poblar la sidebar. Idempotente:
@@ -654,6 +660,7 @@ export const useChatStore = defineStore(
       if (summary?.Cwd && summary.Cwd !== workspace.value) {
         await SetWorkspace(summary.Cwd)
         workspace.value = summary.Cwd
+        await Promise.all([loadProjectFiles(), loadCommands()])
       }
       const wasSubscribed = unsubscribe.length > 0
       teardown()
