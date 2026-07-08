@@ -173,6 +173,11 @@ func (a *App) wire(root string) {
 	})
 
 	a.mu.Lock()
+	// Cancelar las corridas viejas ANTES de swap: asi un SendPrompt concurrente
+	// (que toma el lock en start) espera a que termine el swap y captura el runner
+	// nuevo. Si cancelaramos fuera del lock, un SendPrompt podria colarse y
+	// capturar el runner viejo (tools del workspace anterior).
+	a.cancelRunsLocked()
 	a.root = root
 	a.glob = built.Glob
 	a.commands = built.Commands
@@ -356,7 +361,6 @@ func (a *App) SetProvider(kind, baseURL, model string) error {
 	a.provider = prov
 	a.providerCfg = cfg
 	a.mu.Unlock()
-	a.cancelAllRuns()
 	a.wire(a.workspaceRoot())
 	return nil
 }
@@ -545,7 +549,6 @@ func (a *App) SetWorkspace(path string) error {
 	if !info.IsDir() {
 		return fmt.Errorf("workspace invalido: %s no es una carpeta", path)
 	}
-	a.cancelAllRuns()
 	a.wire(path)
 	return nil
 }
@@ -574,6 +577,14 @@ func (a *App) SelectWorkspace() (string, error) {
 func (a *App) cancelAllRuns() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.cancelRunsLocked()
+}
+
+// cancelRunsLocked asume a.mu YA tomado; lo usan cancelAllRuns y wire para
+// cancelar las corridas viejas antes de reemplazar el runner, sin soltar el lock
+// entre medio. Asi un SendPrompt concurrente no puede capturar el runner viejo
+// (el race que habia entre cancelAllRuns y wire).
+func (a *App) cancelRunsLocked() {
 	for _, h := range a.runs {
 		h.cancel()
 	}

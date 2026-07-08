@@ -2,6 +2,7 @@ package main
 
 import (
 	"strings"
+	"sync"
 	"testing"
 
 	"atenea/internal/llm"
@@ -110,5 +111,31 @@ func TestApp_SetWorkspaceRepointsSystemPrompt(t *testing.T) {
 
 	if sys := prov.captured().System; !strings.Contains(sys, dir) {
 		t.Fatalf("el system prompt no lleva la carpeta nueva %q:\n%s", dir, sys)
+	}
+}
+
+// TestApp_Race_ConcurrentSetWorkspaceAndSendPrompt: SetWorkspace y SendPrompt
+// llamados concurrentemente no tienen data races ni dejan el runner en estado
+// inconsistente. Se repite 20 veces con -race para forzar interleavings. No
+// verifica que workspace gana (es indeterminista), solo que no hay carreras.
+func TestApp_Race_ConcurrentSetWorkspaceAndSendPrompt(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		rec := &recordingEmit{}
+		prov := workspaceFake()
+		app := newApp(prov, rec.emit)
+		dir := t.TempDir()
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_ = app.SetWorkspace(dir)
+		}()
+		go func() {
+			defer wg.Done()
+			_ = app.SendPrompt("s1", "hola")
+		}()
+		wg.Wait()
+		app.wait()
 	}
 }
