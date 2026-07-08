@@ -198,6 +198,45 @@ func (m Model) closeThinkingBlocks() Model {
 	return m
 }
 
+// toggleThinking alterna el estado expandido de todos los bloques de
+// pensamiento asentados (cerrados y con el reveal drenado). Los bloques en
+// vivo o con backlog no participan: el preview del pensamiento en curso se
+// rige por renderThinking, no por expanded. Conmutar todos a la vez es la
+// semantica de la tecla Shift+Tab (ver handleKey): un unico golpe expande o
+// colapsa el razonamiento de toda la conversacion.
+func (m Model) toggleThinking() Model {
+	for i := range m.entries {
+		if m.entries[i].kind == entryReasoning && m.entries[i].settled() {
+			m.entries[i].expanded = !m.entries[i].expanded
+		}
+	}
+	return m
+}
+
+// toggleThinkingAt conmuta el estado expandido del bloque de pensamiento
+// asentado que ocupa la linea absoluta viewportLine del contenido del viewport
+// (ver entryLines). Solo actua sobre bloques entryReasoning ya asentados: el
+// preview del pensamiento en vivo no participa. Devuelve el Model y true si
+// encontro y alterno un bloque (para que el caller re-sincronice el viewport).
+// Con viewportLine fuera de rango o sobre una linea que no es de un bloque de
+// pensamiento asentado, devuelve (m, false) sin cambios.
+func (m Model) toggleThinkingAt(viewportLine int) (Model, bool) {
+	lines := m.entryLines()
+	if viewportLine < 0 || viewportLine >= len(lines) {
+		return m, false
+	}
+	idx := lines[viewportLine].idx
+	if idx < 0 || idx >= len(m.entries) {
+		return m, false
+	}
+	e := &m.entries[idx]
+	if e.kind != entryReasoning || !e.settled() {
+		return m, false
+	}
+	e.expanded = !e.expanded
+	return m, true
+}
+
 // lastEntry devuelve la ultima entrada para mutarla; el caller garantiza que existe.
 func (m Model) lastEntry() *entry {
 	return &m.entries[len(m.entries)-1]

@@ -103,7 +103,7 @@ func (e entry) render(width int) string {
 	case entryUser:
 		return accentStyle.Render("> ") + userTextStyle.Render(e.text)
 	case entryReasoning:
-		return e.renderThinking()
+		return e.renderThinking(width)
 	case entryTool:
 		return e.renderTool()
 	case entryPermission:
@@ -136,16 +136,34 @@ const thinkingPreviewLines = 4
 // no vacias del texto revelado, todo en estilo tenue con cada linea como UN
 // segmento (contenido plano asertable); nunca markdown, es un vistazo al
 // pensamiento y no una respuesta. Asentado (cerrado y drenado) colapsa a una
-// unica linea de resumen "[penso <duracion>]".
-func (e entry) renderThinking() string {
-	if e.settled() {
-		return statusStyle.Render("[penso " + formatThinkingDuration(e.duration) + "]")
+// unica linea de resumen "[penso <duracion>]"; con expanded en true la vista
+// rinde en su lugar el texto completo del pensamiento bajo la cabecera
+// "[penso <duracion>]" (tambien tenue, envuelto a width; ver toggleThinking).
+// width es el ancho util del viewport (0 = sin envolver); solo lo usa el
+// render del pensamiento expandido, el resto de formas ignora el ancho.
+func (e entry) renderThinking(width int) string {
+	if !e.settled() {
+		lines := []string{statusStyle.Render("[pensando]")}
+		for _, line := range lastNonEmptyLines(e.revealedText(), thinkingPreviewLines) {
+			lines = append(lines, statusStyle.Render(line))
+		}
+		return strings.Join(lines, "\n")
 	}
-	lines := []string{statusStyle.Render("[pensando]")}
-	for _, line := range lastNonEmptyLines(e.revealedText(), thinkingPreviewLines) {
-		lines = append(lines, statusStyle.Render(line))
+	summary := statusStyle.Render("[penso " + formatThinkingDuration(e.duration) + "]")
+	if !e.expanded {
+		// Resumen colapsado: una linea con el hint de la tecla que lo expande.
+		// El prefijo "[penso " es estable para los tests; el hint " ⇧Tab" va al
+		// final para no romperlos (asertan por substring).
+		return summary + statusStyle.Render(" ⇧Tab")
 	}
-	return strings.Join(lines, "\n")
+	// Expandido: cabecera de resumen seguida del texto completo del
+	// pensamiento, envuelto al ancho del viewport (0 = sin envolver) y en
+	// estilo tenue, con cada linea como UN segmento asertable.
+	body := e.revealedText()
+	if width > 0 {
+		body = ansi.Wrap(body, width, "")
+	}
+	return strings.Join([]string{summary, statusStyle.Render(body)}, "\n")
 }
 
 // lastNonEmptyLines devuelve las ultimas limit lineas no vacias (ignorando las
@@ -504,6 +522,45 @@ func (m Model) syncViewport() Model {
 	m.viewport.SetContent(transcript)
 	m.viewport.GotoBottom()
 	return m
+}
+
+// entryLine es una linea fisica del contenido del viewport ya envuelto, con el
+// indice de la entrada duena de esa linea. Permite mapear una fila clicada del
+// viewport a su bloque de conversacion (ver clickThinkingToggle) sin re-derivar
+// el texto: replica exactamente el contenido que syncViewport vuelca (mismo
+// renderTranscript + ansi.Wrap), asi la numeracion de lineas coincide con la
+// que el viewport muestra.
+type entryLine struct {
+	idx  int // indice en m.entries de la entrada duena; -1 para las lineas
+	line string
+}
+
+// entryLines reconstruye el contenido del viewport envuelto linea por linea,
+// conservando a que entrada pertenece cada linea fisica. Los bloques se separan
+// con una linea vacia (el "\n\n" de renderTranscript) y el texto se envuelve al
+// ancho del viewport exactamente como syncViewport, de modo que la linea N de
+// esta lista es la linea N absoluta del contenido del viewport (la que ocupa la
+// fila YOffset+N en pantalla). Sin tamano conocido (ready == false) no envuelve.
+func (m Model) entryLines() []entryLine {
+	width := 0
+	if m.ready {
+		width = m.viewport.Width
+	}
+	var out []entryLine
+	for i, e := range m.entries {
+		if i > 0 {
+			// Separador de parrafo entre bloques (una linea vacia).
+			out = append(out, entryLine{idx: -1, line: ""})
+		}
+		block := e.render(width)
+		for _, l := range strings.Split(block, "\n") {
+			if width > 0 {
+				l = ansi.Wrap(l, width, "")
+			}
+			out = append(out, entryLine{idx: i, line: l})
+		}
+	}
+	return out
 }
 
 // View renderiza la conversacion con la caja del composer al final. Con menu

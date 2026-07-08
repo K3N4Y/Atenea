@@ -70,6 +70,15 @@ type entry struct {
 	// y pensamiento); el resto se rinde completo sin mirar este campo.
 	revealed int
 
+	// expanded solo aplica a los bloques de pensamiento asentados (kind ==
+	// entryReasoning y settled): cuando true la vista rinde el texto completo
+	// del pensamiento en lugar de la linea de resumen colapsado. Lo alterna
+	// la tecla Shift+Tab (ver handleKey), que lo conmuta en todos los bloques
+	// de pensamiento asentados a la vez. Inerte mientras el bloque esta en
+	// vivo o con backlog: el preview del pensamiento en curso nunca se fija en
+	// este campo.
+	expanded bool
+
 	// Campos del bloque de pensamiento (kind == entryReasoning): startedAt es
 	// el instante en que Reasoning.Started abrio el bloque y duration la que
 	// tomo pensar, computada al cerrarlo; el resumen colapsado "[penso <dur>]"
@@ -291,9 +300,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKey(ev)
 	case tea.MouseMsg:
-		// La rueda scrollea el historial de a MouseWheelDelta lineas (espejo de
-		// PgUp/PgDn); el resto del mouse (clicks, movimiento) es inerte porque el
-		// viewport lo ignora.
+		// El clic izquierdo sobre un bloque de pensamiento asentado alterna su
+		// estado expandido (ver toggleThinkingAt): paridad con el ThinkingBlock
+		// del escritorio, que se expande/colapsa con un clic. Con WithMouseCellMotion
+		// la TUI recibe tambien eventos de movimiento y rueda: solo el press del
+		// boton izquierdo hace toggle; la rueda y el resto se delegan al scroll
+		// del viewport (scrollViewport) como hasta ahora. Sin tamano conocido
+		// (ready == false) el viewport no tiene coordenadas estables: el clic se
+		// ignora y la rueda igual va al scroll.
+		if m.ready && ev.Action == tea.MouseActionPress && ev.Button == tea.MouseButtonLeft {
+			// La fila clicada es global (0 = arriba de la terminal); el viewport
+			// es la primera seccion de View(), asi que esa fila es la del
+			// viewport, y la linea absoluta del contenido es YOffset + fila.
+			viewportLine := m.viewport.YOffset + ev.Y
+			if next, ok := m.toggleThinkingAt(viewportLine); ok {
+				return next.syncViewport(), nil
+			}
+		}
 		return m.scrollViewport(ev)
 	}
 	return m, nil
@@ -366,6 +389,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// (no inserta el caracter de tabulacion en el prompt).
 		m.planMode = !m.planMode
 		return m, nil
+	case tea.KeyShiftTab:
+		// Shift+Tab alterna el estado expandido de TODOS los bloques de
+		// pensamiento asentados a la vez (ver toggleThinking): colapsa el
+		// resumen a la linea "[penso <dur>] ⇧Tab" o, si estaba expandido,
+		// vuelve a mostrar el texto completo. No toca el input ni el gate de
+		// permisos/plan/menu (esos gates ya capturaron la tecla arriva) y es
+		// inerte frente a un pensamiento en vivo: el preview del pensamiento
+		// en curso no participa del toggle.
+		m = m.toggleThinking()
+		return m.syncViewport(), nil
 	case tea.KeyUp:
 		if next, ok := m.recallHistory(-1); ok {
 			return next, nil

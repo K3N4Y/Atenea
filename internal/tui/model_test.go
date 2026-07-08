@@ -3024,3 +3024,222 @@ func TestModel_RevealSurvivesRunDone(t *testing.T) {
 		t.Fatalf("View() = %q, debe contener %q tras drenar: los ticks posteriores a RunDoneMsg deben terminar mostrando el texto completo", got, "fin-tras-run-done")
 	}
 }
+
+// Contrato del toggle de pensamiento (tecla Shift+Tab, ver handleKey y
+// toggleThinking): un pensamiento asentado (cerrado y con el reveal drenado)
+// colapsa a la linea de resumen "[penso <dur>]"; Shift+Tab lo expande al
+// texto completo y un segundo Shift+Tab lo colapsa de nuevo. El hint " ⇧Tab"
+// acompana al resumen colapsado para descubrir la tecla.
+func TestModel_ShiftTabExpandsAndCollapsesSettledThinking(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	text := "razon-1\nrazon-2\nrazon-3"
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: text})
+	m = drainReveal(t, m)
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: text})
+	m = drainReveal(t, m)
+
+	// Asentado: colapsado por defecto.
+	view := m.View()
+	if !strings.Contains(view, "[penso ") {
+		t.Fatalf("View() = %q, el pensamiento asentado debe colapsar a %q", view, "[penso ")
+	}
+	if !strings.Contains(view, " ⇧Tab") {
+		t.Fatalf("View() = %q, el resumen colapsado debe llevar el hint %q para descubrir el toggle", view, " ⇧Tab")
+	}
+	if strings.Contains(view, "razon-2") {
+		t.Fatalf("View() = %q, el pensamiento colapsado NO debe mostrar el texto completo", view)
+	}
+
+	// Shift+Tab expande.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
+	view = m.View()
+	for _, want := range []string{"[penso ", "razon-1", "razon-2", "razon-3"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("View() = %q, tras Shift+Tab el pensamiento expandido debe mostrar %q", view, want)
+		}
+	}
+
+	// Shift+Tab colapsa de nuevo.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
+	view = m.View()
+	if !strings.Contains(view, "[penso ") {
+		t.Fatalf("View() = %q, el segundo Shift+Tab debe volver al resumen colapsado %q", view, "[penso ")
+	}
+	if strings.Contains(view, "razon-2") {
+		t.Fatalf("View() = %q, el segundo Shift+Tab debe colapsar el texto otra vez", view)
+	}
+}
+
+// Contrato: el toggle es inerte mientras el pensamiento sigue en vivo (preview
+// de las ultimas lineas, no el texto completo). Un Shift+Tab durante el stream
+// no debe fijar expanded ni revelar el texto entero antes de tiempo.
+func TestModel_ShiftTabIsInertWhileThinkingLive(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "vivo-1\nvivo-2\nvivo-3\nvivo-4\nvivo-5"})
+	m = drainReveal(t, m)
+
+	// El preview en vivo muestra la cabecera y las ultimas lineas, no el
+	// resumen ni el texto completo expandido.
+	view := m.View()
+	if !strings.Contains(view, "[pensando]") {
+		t.Fatalf("View() = %q, en vivo debe mostrar %q", view, "[pensando]")
+	}
+	if strings.Contains(view, "[penso ") {
+		t.Fatalf("View() = %q, en vivo NO debe mostrar el resumen colapsado %q", view, "[penso ")
+	}
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
+	view = m.View()
+	if strings.Contains(view, "[penso ") {
+		t.Fatalf("View() = %q, Shift+Tab durante el stream vivo no debe colapsar todavia", view)
+	}
+	if strings.Contains(view, "vivo-1") {
+		t.Fatalf("View() = %q, Shift+Tab durante el stream vivo no debe expandir el texto entero", view)
+	}
+}
+
+// Contrato: Shift+Tab alterna TODOS los bloques de pensamiento asentados a la
+// vez. Con dos pensamientos terminados, un solo golpe los expande ambos y un
+// segundo los colapsa ambos.
+func TestModel_ShiftTabTogglesAllSettledThinkingBlocks(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	for _, tag := range []string{"primero", "segundo"} {
+		m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+		m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: tag + "-a\n" + tag + "-b"})
+		m = drainReveal(t, m)
+		m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: tag + "-a\n" + tag + "-b"})
+		m = drainReveal(t, m)
+	}
+
+	// Ambos colapsados por defecto: dos resumenes, sin texto.
+	view := m.View()
+	if n := strings.Count(view, "[penso "); n != 2 {
+		t.Fatalf("View() = %q, dos pensamientos asentados deben colapsar a dos resumenes %q (n=%d)", view, "[penso ", n)
+	}
+	if strings.Contains(view, "primero-a") || strings.Contains(view, "segundo-a") {
+		t.Fatalf("View() = %q, ambos colapsados no deben mostrar texto", view)
+	}
+
+	// Un Shift+Tab expande ambos.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
+	view = m.View()
+	if !strings.Contains(view, "primero-a") || !strings.Contains(view, "segundo-a") {
+		t.Fatalf("View() = %q, un solo Shift+Tab debe expandir AMBOS pensamientos", view)
+	}
+	if n := strings.Count(view, "[penso "); n != 2 {
+		t.Fatalf("View() = %q, tras expandir siguen habiendo dos resumenes de cabecera (n=%d)", view, n)
+	}
+
+	// Un segundo Shift+Tab colapsa ambos.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
+	view = m.View()
+	if strings.Contains(view, "primero-a") || strings.Contains(view, "segundo-a") {
+		t.Fatalf("View() = %q, el segundo Shift+Tab debe colapsar AMBOS", view)
+	}
+}
+
+// Contrato del toggle por clic (ver toggleThinkingAt y el caso tea.MouseMsg de
+// Update): un clic izquierdo sobre la linea del resumen de un pensamiento
+// asentado lo expande al texto completo, igual que Shift+Tab pero sobre el
+// bloque concreto bajo el cursor. El clic se mapea a la entrada via entryLines,
+// asi que la fila clicada debe caer sobre la linea del resumen.
+func TestModel_ClickExpandsSettledThinking(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 20})
+	text := "razon-1\nrazon-2\nrazon-3"
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: text})
+	m = drainReveal(t, m)
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: text})
+	m = drainReveal(t, m)
+
+	// Localiza la fila del resumen "[penso " en el contenido del viewport.
+	lines := m.entryLines()
+	summaryRow := -1
+	for i, l := range lines {
+		if strings.Contains(l.line, "[penso ") {
+			summaryRow = i
+			break
+		}
+	}
+	if summaryRow < 0 {
+		t.Fatalf("entryLines() no contiene el resumen %q: %v", "[penso ", lines)
+	}
+	// La fila en pantalla es la del contenido menos el desplazamiento visible.
+	clickY := summaryRow - m.viewport.YOffset
+	if clickY < 0 {
+		t.Fatalf("summaryRow=%d YOffset=%d, el resumen no esta visible para clicar", summaryRow, m.viewport.YOffset)
+	}
+
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, Y: clickY})
+	view := m.View()
+	for _, want := range []string{"[penso ", "razon-1", "razon-2", "razon-3"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("View() = %q, el clic sobre el resumen debe expandir el pensamiento mostrando %q", view, want)
+		}
+	}
+}
+
+// Contrato: un clic sobre el texto de un pensamiento YA expandido lo colapsa
+// de nuevo (toggle de ida y vuelta sobre el mismo bloque).
+func TestModel_ClickCollapsesExpandedThinking(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 20})
+	text := "razon-1\nrazon-2"
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: text})
+	m = drainReveal(t, m)
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: text})
+	m = drainReveal(t, m)
+
+	// Expandir primero con Shift+Tab.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
+	if got := m.View(); !strings.Contains(got, "razon-1") {
+		t.Fatalf("View() = %q, precondicion: Shift+Tab debe expandir", got)
+	}
+
+	// Clic sobre la primera linea del texto expandido (la cabecera "[penso ").
+	lines := m.entryLines()
+	headerRow := -1
+	for i, l := range lines {
+		if strings.Contains(l.line, "[penso ") {
+			headerRow = i
+			break
+		}
+	}
+	clickY := headerRow - m.viewport.YOffset
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, Y: clickY})
+	view := m.View()
+	if strings.Contains(view, "razon-1") {
+		t.Fatalf("View() = %q, el clic sobre el bloque expandido debe colapsarlo", view)
+	}
+	if !strings.Contains(view, "[penso ") {
+		t.Fatalf("View() = %q, tras colapsar debe volver el resumen %q", view, "[penso ")
+	}
+}
+
+// Contrato: un clic izquierdo sobre una linea que NO es de un pensamiento
+// asentado (una linea vacia de separacion o el texto de un mensaje user) es
+// inerte: no expande nada ni cambia la vista.
+func TestModel_ClickOutsideThinkingIsInert(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 20})
+	m = apply(t, m, EventMsg{Message: &session.Message{ID: "u1", Role: session.RoleUser, Text: "hola"}})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "penso-a\npenso-b"})
+	m = drainReveal(t, m)
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: "penso-a\npenso-b"})
+	m = drainReveal(t, m)
+
+	before := m.View()
+	// Clic sobre la linea del mensaje user (primera entrada, fila 0).
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, Y: 0})
+	if got := m.View(); got != before {
+		t.Fatalf("View() cambio tras clic fuera del pensamiento:\nantes = %q\ndespues = %q, el clic solo alterna bloques de pensamiento asentados", before, got)
+	}
+	if strings.Contains(m.View(), "penso-a") {
+		t.Fatalf("View() = %q, el clic fuera del pensamiento no debe expandirlo", m.View())
+	}
+}
