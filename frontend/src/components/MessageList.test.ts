@@ -1,8 +1,25 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import MessageList from './MessageList.vue'
 import type { TurnItem } from '../stores/chat'
+
+function configureScroller(scroller: HTMLElement, scrollTop: number) {
+  Object.defineProperty(scroller, 'scrollHeight', {
+    configurable: true,
+    value: 1000,
+  })
+  Object.defineProperty(scroller, 'clientHeight', {
+    configurable: true,
+    value: 400,
+  })
+  Object.defineProperty(scroller, 'scrollTop', {
+    configurable: true,
+    writable: true,
+    value: scrollTop,
+  })
+}
 
 describe('MessageList', () => {
   it('lista vacia: muestra el estado inicial zero-friction', () => {
@@ -88,5 +105,84 @@ describe('MessageList', () => {
 
     await wrapper.get('[data-action="deny"]').trigger('click')
     expect(wrapper.emitted('deny')?.[0]).toEqual(['c1'])
+  })
+
+  it('no arrastra al fondo ni oculta nueva actividad mientras el usuario lee arriba', async () => {
+    const items: TurnItem[] = [
+      {
+        kind: 'assistant',
+        id: 'a1',
+        text: 'Respuesta parcial',
+        streaming: true,
+      },
+    ]
+    const wrapper = mount(MessageList, { props: { items } })
+    const scroller = wrapper.get('[role="log"]').element
+
+    configureScroller(scroller, 160)
+
+    await wrapper.get('[role="log"]').trigger('scroll')
+    await wrapper.setProps({
+      items: [{ ...items[0], text: 'Respuesta parcial que sigue llegando' }],
+    })
+    await nextTick()
+
+    expect(scroller.scrollTop).toBe(160)
+
+    const activityButton = wrapper.get('button')
+    expect(activityButton.text()).toMatch(/Nueva actividad|Volver al agente/)
+  })
+
+  it('sigue al agente sin mostrar actividad nueva cuando el usuario esta cerca del fondo', async () => {
+    const items: TurnItem[] = [
+      {
+        kind: 'assistant',
+        id: 'a1',
+        text: 'Respuesta parcial',
+        streaming: true,
+      },
+    ]
+    const wrapper = mount(MessageList, { props: { items } })
+    const scroller = wrapper.get('[role="log"]').element
+
+    configureScroller(scroller, 570)
+
+    await wrapper.get('[role="log"]').trigger('scroll')
+    await wrapper.setProps({
+      items: [{ ...items[0], text: 'Respuesta parcial que sigue llegando' }],
+    })
+    await nextTick()
+
+    expect(scroller.scrollTop).toBe(1000)
+    expect(wrapper.find('button').exists()).toBe(false)
+  })
+
+  it('vuelve al agente y oculta la actividad nueva al pulsar el control', async () => {
+    const items: TurnItem[] = [
+      {
+        kind: 'assistant',
+        id: 'a1',
+        text: 'Respuesta parcial',
+        streaming: true,
+      },
+    ]
+    const wrapper = mount(MessageList, { props: { items } })
+    const scroller = wrapper.get('[role="log"]').element
+
+    configureScroller(scroller, 160)
+
+    await wrapper.get('[role="log"]').trigger('scroll')
+    await wrapper.setProps({
+      items: [{ ...items[0], text: 'Respuesta parcial que sigue llegando' }],
+    })
+    await nextTick()
+
+    const activityButton = wrapper.get('button')
+    expect(activityButton.text()).toMatch(/Nueva actividad|Volver al agente/)
+
+    await activityButton.trigger('click')
+
+    expect(scroller.scrollTop).toBe(1000)
+    expect(wrapper.find('button').exists()).toBe(false)
   })
 })

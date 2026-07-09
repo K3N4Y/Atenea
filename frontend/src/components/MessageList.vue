@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type { Component } from 'vue'
 import gsap from 'gsap'
 import type { TurnItem } from '../stores/chat'
@@ -26,10 +26,28 @@ const registry: Record<TurnItem['kind'], Component> = {
 }
 
 const scroller = ref<HTMLElement | null>(null)
+const shouldFollowAgent = ref(true)
+const hasNewActivity = ref(false)
+const bottomThreshold = 48
 
 function scrollToBottom() {
   const el = scroller.value
   if (el) el.scrollTop = el.scrollHeight
+}
+
+function scrollToAgent() {
+  shouldFollowAgent.value = true
+  hasNewActivity.value = false
+  scrollToBottom()
+}
+
+function onScroll() {
+  const el = scroller.value
+  if (!el) return
+
+  shouldFollowAgent.value =
+    el.scrollHeight - el.scrollTop - el.clientHeight <= bottomThreshold
+  if (shouldFollowAgent.value) hasNewActivity.value = false
 }
 
 // Firma del ultimo item: cambia tanto al crecer el log como al avanzar el
@@ -41,10 +59,17 @@ const tail = computed(() => {
   return last.text
 })
 
-// Auto-scroll al fondo. El flush 'post' espera al render del DOM.
+// Sigue al agente solo mientras el usuario este al final. El flush 'post'
+// espera al render del DOM antes de desplazar.
 watch(
   () => [props.items.length, tail.value] as const,
-  () => nextTick(scrollToBottom),
+  () => {
+    if (shouldFollowAgent.value) {
+      scrollToBottom()
+    } else {
+      hasNewActivity.value = true
+    }
+  },
   { flush: 'post' },
 )
 
@@ -65,42 +90,54 @@ function onEnter(el: Element, done: () => void) {
 </script>
 
 <template>
-  <div
-    ref="scroller"
-    role="log"
-    aria-live="polite"
-    aria-label="Conversation"
-    class="flex-1 overflow-y-auto"
-  >
-    <div class="mx-auto w-full max-w-3xl px-6 py-10">
-      <TransitionGroup
-        v-if="props.items.length"
-        tag="div"
-        class="flex flex-col gap-5"
-        :css="false"
-        @enter="onEnter"
-      >
-        <component
-          :is="registry[item.kind]"
-          v-for="item in props.items"
-          :key="item.id"
-          :item="item"
-          @approve="emit('approve', $event)"
-          @deny="emit('deny', $event)"
-        />
-      </TransitionGroup>
+  <div class="relative flex-1 min-h-0">
+    <div
+      ref="scroller"
+      role="log"
+      aria-live="polite"
+      aria-label="Conversation"
+      class="h-full overflow-y-auto"
+      @scroll="onScroll"
+    >
+      <div class="mx-auto w-full max-w-3xl px-6 py-10">
+        <TransitionGroup
+          v-if="props.items.length"
+          tag="div"
+          class="flex flex-col gap-5"
+          :css="false"
+          @enter="onEnter"
+        >
+          <component
+            :is="registry[item.kind]"
+            v-for="item in props.items"
+            :key="item.id"
+            :item="item"
+            @approve="emit('approve', $event)"
+            @deny="emit('deny', $event)"
+          />
+        </TransitionGroup>
 
-      <div
-        v-else
-        class="flex min-h-[60vh] flex-col items-center justify-center text-center"
-      >
-        <p class="text-2xl tracking-tight opacity-90">atenea</p>
-        <p class="mt-2 text-sm opacity-50">Ask anything to get started.</p>
+        <div
+          v-else
+          class="flex min-h-[60vh] flex-col items-center justify-center text-center"
+        >
+          <p class="text-2xl tracking-tight opacity-90">atenea</p>
+          <p class="mt-2 text-sm opacity-50">Ask anything to get started.</p>
+        </div>
+
+        <!-- Pie del flujo: contenido que vive al final de la conversacion y
+             scrollea con ella (p. ej. el plan minimizado como tarjeta). -->
+        <slot />
       </div>
-
-      <!-- Pie del flujo: contenido que vive al final de la conversacion y
-           scrollea con ella (p. ej. el plan minimizado como tarjeta). -->
-      <slot />
     </div>
+
+    <button
+      v-if="hasNewActivity"
+      type="button"
+      class="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white shadow-lg transition hover:bg-zinc-700 focus:outline-none focus:ring-2 focus:ring-zinc-400 focus:ring-offset-2"
+      @click="scrollToAgent"
+    >
+      ↓ Nueva actividad
+    </button>
   </div>
 </template>
