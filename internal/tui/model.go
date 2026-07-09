@@ -8,6 +8,7 @@
 package tui
 
 import (
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -24,6 +25,8 @@ type EventMsg session.SessionEvent
 
 // RunDoneMsg marca el fin de una corrida; Err == "" significa terminada limpia.
 type RunDoneMsg struct{ Err string }
+
+type leaderTimeoutMsg struct{ generation uint64 }
 
 // Agent es la superficie del engine que la TUI necesita para operar la sesion.
 type Agent interface {
@@ -182,6 +185,13 @@ type Model struct {
 	history []string
 	histIdx int
 	draft   string
+
+	leaderPending    bool
+	leaderGeneration uint64
+	treeOpen         bool
+	tree             fileTree
+	treeCursor       int
+	treeError        string
 }
 
 // NewModel construye el Model raiz de la TUI.
@@ -283,6 +293,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.revealing = true
 		return m.syncViewport(), revealTick()
+	case leaderTimeoutMsg:
+		if ev.generation == 0 || ev.generation == m.leaderGeneration {
+			m.leaderPending = false
+		}
+		return m, nil
 	case spinner.TickMsg:
 		// El loop de animacion muere solo: cuando RunDoneMsg apago working, el
 		// tick pendiente llega aqui y no se reagenda (cmd nil).
@@ -336,13 +351,15 @@ func (m Model) scrollViewport(msg tea.Msg) (Model, tea.Cmd) {
 // tocan el gate de permisos); un permiso pendiente pone el teclado en modo
 // aprobacion (solo y/n hacen algo; Tab incluido queda inerte); tras el gate de
 // permisos, un plan pendiente pone el teclado en modo aprobacion de plan (y
-// acepta y ejecuta, n descarta la oferta); tras esos gates, el menu de
+// acepta y ejecuta, n descarta la oferta); tras esos gates, el arbol abierto
+// captura su navegacion y Space+e lo cierra; con el arbol cerrado el menu de
 // autocompletado abierto captura Up/Down (seleccion ciclica, sin tocar el
 // viewport ni el input), Tab/Enter (aplican la seleccion) y Esc (cierra el
-// popup); con menu cerrado y sin nada pendiente Esc detiene la corrida, Enter
-// envia el prompt tecleado, Tab alterna el modo build/plan, Up/Down navegan el
-// historial de prompts enviados (ver recallHistory) y el resto de teclas
-// alimenta el input (y recomputa el popup).
+// popup); con menu cerrado y composer vacio Space arma el leader de un segundo
+// (e abre el explorer, otra tecla o timeout lo cancelan sin insertar); despues
+// Esc detiene la corrida, Enter envia el prompt tecleado, Tab alterna el modo
+// build/plan, Up/Down navegan el historial de prompts enviados (ver
+// recallHistory) y el resto de teclas alimenta el input (y recomputa el popup).
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		m.stopRun()
@@ -357,6 +374,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.hasPendingPlan() {
 		return m.resolvePlanKey(msg)
+	}
+	if m.treeOpen {
+		return m.handleTreeKey(msg)
 	}
 	if len(m.menuItems) > 0 {
 		switch msg.Type {
@@ -376,6 +396,21 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.closeMenu(), nil
 		}
 		// El resto de teclas sigue alimentando el input (rama default de abajo).
+	}
+	if m.leaderPending {
+		m.leaderPending = false
+		if keyRune(msg) == "e" {
+			return m.toggleTree(), nil
+		}
+		return m, nil
+	}
+	if m.input.Value() == "" && (msg.Type == tea.KeySpace || keyRune(msg) == " ") {
+		m.leaderPending = true
+		m.leaderGeneration++
+		generation := m.leaderGeneration
+		return m, tea.Tick(time.Second, func(time.Time) tea.Msg {
+			return leaderTimeoutMsg{generation: generation}
+		})
 	}
 	switch msg.Type {
 	case tea.KeyEsc:
@@ -415,6 +450,122 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// La tecla pudo cambiar el texto o el caret: recomputar el popup de
 	// autocompletado desde el estado nuevo del input.
 	return m.refreshMenu(), cmd
+}
+
+func keyRune(msg tea.KeyMsg) string {
+	if msg.Type != tea.KeyRunes {
+		return ""
+	}
+	return string(msg.Runes)
+}
+
+func (m Model) toggleTree() Model {
+	m.leaderPending = false
+	m.treeOpen = !m.treeOpen
+	if !m.treeOpen {
+		return m
+	}
+	m.treeCursor = 0
+	m.treeError = ""
+	if m.listFiles == nil {
+		m.tree = newFileTree(nil)
+		return m
+	}
+	files, err := m.listFiles()
+	if err != nil {
+		m.tree = newFileTree(nil)
+		m.treeError = err.Error()
+		return m
+	}
+	m.tree = newFileTree(files)
+	return m
+}
+
+func (m Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.leaderPending {
+		m.leaderPending = false
+		if keyRune(msg) == "e" {
+			return m.toggleTree(), nil
+		}
+		return m, nil
+	}
+	if msg.Type == tea.KeySpace || keyRune(msg) == " " {
+		m.leaderPending = true
+		m.leaderGeneration++
+		generation := m.leaderGeneration
+		return m, tea.Tick(time.Second, func(time.Time) tea.Msg {
+			return leaderTimeoutMsg{generation: generation}
+		})
+	}
+	rows := m.tree.visibleRows()
+	switch {
+	case msg.Type == tea.KeyEsc || keyRune(msg) == "q":
+		m.treeOpen = false
+	case msg.Type == tea.KeyDown || keyRune(msg) == "j":
+		if m.treeCursor < len(rows)-1 {
+			m.treeCursor++
+		}
+	case msg.Type == tea.KeyUp || keyRune(msg) == "k":
+		if m.treeCursor > 0 {
+			m.treeCursor--
+		}
+	case msg.Type == tea.KeyEnter || keyRune(msg) == "l":
+		if len(rows) == 0 {
+			break
+		}
+		node := rows[m.treeCursor].node
+		if node.dir {
+			m.tree.toggle(node.path)
+			m.clampTreeCursor()
+			break
+		}
+		m.insertTreeMention(node.path)
+		m.treeOpen = false
+	case keyRune(msg) == "h":
+		if len(rows) == 0 {
+			break
+		}
+		node := rows[m.treeCursor].node
+		if node.dir && m.tree.expanded[node.path] {
+			m.tree.toggle(node.path)
+			m.clampTreeCursor()
+			break
+		}
+		parent := pathParent(node.path)
+		for i, row := range rows {
+			if row.node.path == parent {
+				m.treeCursor = i
+				break
+			}
+		}
+	}
+	return m, nil
+}
+
+func (m *Model) clampTreeCursor() {
+	rows := m.tree.visibleRows()
+	if len(rows) == 0 {
+		m.treeCursor = 0
+	} else if m.treeCursor >= len(rows) {
+		m.treeCursor = len(rows) - 1
+	}
+}
+
+func (m *Model) insertTreeMention(nodePath string) {
+	value := m.input.Value()
+	if value != "" && !strings.HasSuffix(value, " ") {
+		value += " "
+	}
+	value += "@" + nodePath
+	m.input.SetValue(value)
+	m.input.CursorEnd()
+}
+
+func pathParent(nodePath string) string {
+	if index := strings.LastIndex(nodePath, "/"); index >= 0 {
+		return nodePath[:index]
+	}
+	return ""
 }
 
 // resolvePermissionKey atiende el teclado en modo aprobacion: 'y' aprueba y

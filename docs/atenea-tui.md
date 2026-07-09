@@ -82,6 +82,15 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
   (un prompt mas largo que el ancho scrollea horizontal dentro del input); el
   pie muestra `<agente> · <modelo>`: el modelo entra una sola vez via
   `WithStatus` y el agente refleja el modo activo (build/plan).
+- Con el composer vacio, `Space` arma un leader de un segundo y `Space e` abre
+  o cierra el panel `explorer`. El panel lista el workspace como arbol con
+  iconos Nerd Font; `j`/Down y `k`/Up mueven el cursor, `l`/Enter expande una
+  carpeta o inserta `@ruta` para un archivo, `h` colapsa o sube al padre, y
+  Esc/`q` cierran sin insertar. Mientras el explorer esta abierto sus teclas
+  no llegan al composer; permisos y aprobacion de plan conservan prioridad.
+- El explorer ocupa una columna izquierda acotada y transcript, menus y
+  composer se recalculan al ancho restante. Si `listFiles` falla o el workspace
+  esta vacio, el panel sigue siendo usable y muestra el estado sin panic.
 
 ## Persistencia compartida con la app
 

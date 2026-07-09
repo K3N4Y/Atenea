@@ -3243,3 +3243,199 @@ func TestModel_ClickOutsideThinkingIsInert(t *testing.T) {
 		t.Fatalf("View() = %q, el clic fuera del pensamiento no debe expandirlo", m.View())
 	}
 }
+
+func TestModel_LeaderSpaceE_OpensTree(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+		return []string{"internal/tui/model.go", "go.mod"}, nil
+	})
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeySpace})
+	if got := m.input.Value(); got != "" {
+		t.Fatalf("input.Value() = %q after leader Space, want empty", got)
+	}
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+
+	if !m.treeOpen {
+		t.Fatal("Space then e must open the file tree")
+	}
+	if got := m.View(); !strings.Contains(got, "explorer") {
+		t.Fatalf("View() = %q, open tree must render explorer title", got)
+	}
+}
+
+func TestModel_LeaderSpaceE_TogglesClosed(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+		return []string{"go.mod"}, nil
+	})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeySpace})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeySpace})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+
+	if m.treeOpen {
+		t.Fatal("second Space+e must close the file tree")
+	}
+}
+
+func TestModel_TreeKeys_NavigateAndInsertAt(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+		return []string{"internal/tui/model.go", "go.mod"}, nil
+	})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeySpace})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+
+	// Directories sort before files. Expand internal, move to internal/tui,
+	// expand it, move to model.go and select the file.
+	for _, msg := range []tea.KeyMsg{
+		{Type: tea.KeyEnter},
+		{Type: tea.KeyRunes, Runes: []rune{'j'}},
+		{Type: tea.KeyRunes, Runes: []rune{'l'}},
+		{Type: tea.KeyDown},
+		{Type: tea.KeyEnter},
+	} {
+		m = apply(t, m, msg)
+	}
+
+	if m.treeOpen {
+		t.Fatal("selecting a file must close the tree")
+	}
+	if got, want := m.input.Value(), "@internal/tui/model.go"; got != want {
+		t.Fatalf("input.Value() = %q, want %q", got, want)
+	}
+}
+
+func TestModel_TreeOpen_CapturesKeyboard(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+		return []string{"go.mod"}, nil
+	})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeySpace})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+
+	if got := m.input.Value(); got != "" {
+		t.Fatalf("input.Value() = %q, tree keyboard must not feed textinput", got)
+	}
+}
+
+func TestModel_LeaderTimeoutCancelsWithoutInput(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil)
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeySpace})
+	m = apply(t, m, leaderTimeoutMsg{})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+
+	if m.treeOpen {
+		t.Fatal("leader timeout must not open tree")
+	}
+	if got := m.input.Value(); got != "x" {
+		t.Fatalf("input.Value() = %q, after timeout the next key must reach input", got)
+	}
+}
+
+func TestModel_TreeListErrorRendersWithoutPanic(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+		return nil, fmt.Errorf("workspace unavailable")
+	})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeySpace})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+
+	if got := m.View(); !strings.Contains(got, "workspace unavailable") {
+		t.Fatalf("View() = %q, tree error must be visible", got)
+	}
+}
+
+func TestModel_TreeKeys_HCollapsesThenMovesToParent(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+		return []string{"internal/tui/model.go"}, nil
+	})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeySpace})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	if got := m.tree.visibleRows()[m.treeCursor].node.path; got != "internal/tui" {
+		t.Fatalf("selected path after h from file = %q, want parent internal/tui", got)
+	}
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	if m.tree.expanded["internal/tui"] {
+		t.Fatal("h on expanded directory must collapse it")
+	}
+}
+
+func TestModel_TreeKeys_EscapeAndQCloseWithoutInsert(t *testing.T) {
+	for _, key := range []tea.KeyMsg{
+		{Type: tea.KeyEsc},
+		{Type: tea.KeyRunes, Runes: []rune{'q'}},
+	} {
+		t.Run(key.String(), func(t *testing.T) {
+			m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+				return []string{"go.mod"}, nil
+			})
+			m = apply(t, m, tea.KeyMsg{Type: tea.KeySpace})
+			m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+			m = apply(t, m, key)
+
+			if m.treeOpen {
+				t.Fatal("close key must close tree")
+			}
+			if got := m.input.Value(); got != "" {
+				t.Fatalf("input.Value() = %q, closing tree must not insert", got)
+			}
+		})
+	}
+}
+
+func TestModel_TreeLeaderDoesNotInterceptPendingGates(t *testing.T) {
+	permission := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+		return []string{"go.mod"}, nil
+	})
+	permission = apply(t, permission, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"ls"}`)})
+	permission = apply(t, permission, tea.KeyMsg{Type: tea.KeySpace})
+	permission = apply(t, permission, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	if permission.treeOpen || permission.leaderPending {
+		t.Fatal("pending permission must keep leader and tree inactive")
+	}
+
+	plan := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+		return []string{"go.mod"}, nil
+	})
+	plan.entries = append(plan.entries, entry{kind: entryPlanApproval})
+	plan = apply(t, plan, tea.KeyMsg{Type: tea.KeySpace})
+	plan = apply(t, plan, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	if plan.treeOpen || plan.leaderPending {
+		t.Fatal("pending plan must keep leader and tree inactive")
+	}
+}
+
+func TestModel_TreeViewHandlesNarrowTerminal(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+		return []string{"internal/tui/model.go"}, nil
+	})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 12, Height: 4})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeySpace})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+
+	if got := m.View(); !strings.Contains(got, "explorer") {
+		t.Fatalf("View() = %q, narrow terminal must still render explorer without panic", got)
+	}
+	for _, line := range strings.Split(m.View(), "\n") {
+		if width := ansi.StringWidth(line); width > 12 {
+			t.Fatalf("narrow View line width = %d, want <= 12: %q", width, line)
+		}
+	}
+}
+
+func TestModel_TreeSelectionAppendsMentionToExistingComposer(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+		return []string{"go.mod"}, nil
+	})
+	m.input.SetValue("revisa")
+	m = m.toggleTree()
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if got, want := m.input.Value(), "revisa @go.mod"; got != want {
+		t.Fatalf("input.Value() = %q, want %q", got, want)
+	}
+}

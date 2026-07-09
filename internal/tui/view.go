@@ -81,6 +81,8 @@ var (
 	permissionStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
 	errorStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 	statusStyle      = lipgloss.NewStyle().Faint(true)
+	treeCursorStyle  = lipgloss.NewStyle().Reverse(true)
+	treeBorderStyle  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder())
 
 	// composerBoxStyle es la caja de borde redondeado del composer (estilo
 	// Claude Code). Es la excepcion deliberada a la regla de arriba: agrega las
@@ -499,8 +501,9 @@ func (m Model) resizeViewport() Model {
 	if !m.ready {
 		return m
 	}
-	m.input.Width = max(m.width-composerBoxBorderWidth-2*composerBoxPadding-ansi.StringWidth(inputPrompt)-inputCursorWidth, 0)
-	m.viewport.Width = max(m.width, 0)
+	contentWidth := m.contentWidth()
+	m.input.Width = max(contentWidth-composerBoxBorderWidth-2*composerBoxPadding-ansi.StringWidth(inputPrompt)-inputCursorWidth, 0)
+	m.viewport.Width = max(contentWidth, 0)
 	m.viewport.Height = max(m.height-m.reservedLines(), 0)
 	return m.syncViewport()
 }
@@ -582,7 +585,14 @@ func (m Model) View() string {
 	if f := m.statusFooter(); f != "" {
 		footer = "\n" + statusStyle.Render(f)
 	}
-	return m.transcriptView() + m.menuView() + status + m.composerBox() + footer
+	content := m.transcriptView() + m.menuView() + status + m.composerBox() + footer
+	if !m.treeOpen {
+		return content
+	}
+	if m.ready && m.treePanelWidth() >= m.width {
+		return m.treeView()
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, m.treeView(), " ", content)
 }
 
 // menuView rinde el popup de autocompletado: una linea por item, con el
@@ -610,8 +620,8 @@ func (m Model) menuView() string {
 		if item.description != "" {
 			line += "  " + statusStyle.Render(item.description)
 		}
-		if m.ready && m.width > 0 {
-			line = ansi.Truncate(line, m.width, "…")
+		if width := m.contentWidth(); m.ready && width > 0 {
+			line = ansi.Truncate(line, width, "…")
 		}
 		b.WriteString(line + "\n")
 	}
@@ -628,9 +638,66 @@ func (m Model) menuView() string {
 func (m Model) composerBox() string {
 	style := composerBoxStyle
 	if m.ready {
-		style = style.Width(max(m.width-composerBoxBorderWidth, 0))
+		style = style.Width(max(m.contentWidth()-composerBoxBorderWidth, 0))
 	}
 	return style.Render(m.input.View())
+}
+
+func (m Model) contentWidth() int {
+	if !m.ready || !m.treeOpen {
+		return m.width
+	}
+	return max(m.width-m.treePanelWidth()-1, 0)
+}
+
+func (m Model) treePanelWidth() int {
+	if !m.ready || m.width <= 0 {
+		return 28
+	}
+	width := m.width / 4
+	width = max(width, 20)
+	width = min(width, 36)
+	if width+1 >= m.width {
+		return max(m.width, 0)
+	}
+	return width
+}
+
+func (m Model) treeView() string {
+	panelWidth := m.treePanelWidth()
+	innerWidth := max(panelWidth-2, 0)
+	lines := []string{"explorer", ""}
+	if m.treeError != "" {
+		lines = append(lines, statusStyle.Render(m.treeError))
+	} else {
+		rows := m.tree.visibleRows()
+		if len(rows) == 0 {
+			lines = append(lines, statusStyle.Render("workspace vacio"))
+		}
+		for i, row := range rows {
+			icon := iconForFile(row.node.name)
+			if row.node.dir {
+				icon = iconFolderClosed
+				if m.tree.expanded[row.node.path] {
+					icon = iconFolderOpen
+				}
+			}
+			line := strings.Repeat("  ", row.depth) + icon + " " + row.node.name
+			if innerWidth > 0 {
+				line = ansi.Truncate(line, innerWidth, "…")
+			}
+			if i == m.treeCursor {
+				line = treeCursorStyle.Render(line)
+			}
+			lines = append(lines, line)
+		}
+	}
+	content := strings.Join(lines, "\n")
+	style := treeBorderStyle
+	if m.ready {
+		style = style.Width(innerWidth).Height(max(m.height-2, 0))
+	}
+	return style.Render(content)
 }
 
 // transcriptView devuelve el transcript con su separador hacia el resto de la
