@@ -76,6 +76,8 @@ type SessionEvent struct {
 	// entra en Message, asi que el modelo no lo ve ni consume tokens; se persiste y
 	// se replica al rehidratar la sesion.
 	Diff string
+
+	Compaction *CompactionCheckpoint
 }
 
 // Session es el agregado durable de una conversacion. En M1 es minimo: solo el

@@ -46,6 +46,8 @@ const (
 	// SessionSummary.Cwd para que la sidebar agrupe los chats por carpeta. El
 	// ultimo Session.Cwd es el vigente. No materializa Message.
 	KindSessionCwd EventKind = "Session.Cwd"
+
+	KindContextCompacted EventKind = "Context.Compacted"
 )
 
 // Usage son los tokens del turno que el publisher persiste en Step.Ended. Es un
