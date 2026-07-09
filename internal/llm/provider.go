@@ -40,10 +40,11 @@ type Message struct {
 // construir el turno. System (system context/baseline) y ProviderOpts (prompt
 // cache key) llegan en M7. Crece sin cambiar la interface Provider.
 type Request struct {
-	Model    string
-	System   string    // turn baseline prompt (<env>, identity, repo instructions); the runner builds it
-	Messages []Message // historial proyectado convertido al formato del proveedor
-	Tools    []ToolDef // schemas materializados por el registry (M4)
+	Model           string
+	System          string    // turn baseline prompt (<env>, identity, repo instructions); the runner builds it
+	Messages        []Message // historial proyectado convertido al formato del proveedor
+	Tools           []ToolDef // schemas materializados por el registry (M4)
+	MaxOutputTokens int
 }
 
 // EventKind clasifica cada evento del stream del proveedor. El conjunto refleja
@@ -84,6 +85,7 @@ type Event struct {
 	Input    json.RawMessage // ToolCall / ToolInputDelta: input JSON (crudo)
 	Text     string          // TextDelta / ReasoningDelta
 	Usage    *Usage          // solo StepEnded
+	Err      error
 	// ProviderExecuted marca una ToolCall que el proveedor ejecuto el mismo: el
 	// runner NO la asienta localmente, solo la persiste.
 	ProviderExecuted bool
