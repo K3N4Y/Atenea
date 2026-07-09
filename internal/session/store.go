@@ -87,3 +87,12 @@ type Store interface {
 	// si la sesion no existe. Las demas sesiones quedan intactas.
 	DeleteSession(ctx context.Context, sessionID string) error
 }
+
+// CompactionStore amplía Store con la proyeccion efectiva que consume el runner
+// y el commit atomico de checkpoints de compactacion. Se mantiene separado
+// hasta que todos los stores y decoradores implementen el contrato.
+type CompactionStore interface {
+	Store
+	ContextForRunner(ctx context.Context, sessionID string) (RunnerContext, error)
+	CommitCompaction(ctx context.Context, sessionID string, checkpoint CompactionCheckpoint) (Seq, error)
+}
