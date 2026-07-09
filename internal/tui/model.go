@@ -380,6 +380,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.treeOpen {
 		return m.handleTreeKey(msg)
 	}
+	if msg.Type == tea.KeyEnter && m.input.Value() == "/new" {
+		return m.submitPrompt()
+	}
 	if len(m.menuItems) > 0 {
 		switch msg.Type {
 		case tea.KeyUp:
@@ -388,9 +391,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case tea.KeyDown:
 			m.menuSelected = (m.menuSelected + 1) % len(m.menuItems)
 			return m, nil
-		case tea.KeyTab, tea.KeyEnter:
-			// Tab y Enter aplican la seleccion; ni alternan el modo build/plan
-			// ni envian el prompt (enviar exige un segundo Enter con menu cerrado).
+		case tea.KeyTab:
+			// Tab aplica la seleccion; no alterna el modo build/plan.
+			return m.applySelection(), nil
+		case tea.KeyEnter:
+			if m.menuItems[m.menuSelected].builtin {
+				m.input.SetValue(m.menuItems[m.menuSelected].label)
+				m.input.SetCursor(len([]rune(m.menuItems[m.menuSelected].label)))
+				return m.closeMenu().submitPrompt()
+			}
 			return m.applySelection(), nil
 		case tea.KeyEsc:
 			// Esc cierra el popup sin detener la corrida ni tocar el input; la

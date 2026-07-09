@@ -26,6 +26,7 @@ const menuLimit = 6
 type menuItem struct {
 	label       string
 	description string
+	builtin     bool
 }
 
 // tokenQuery es el token de autocompletado vigente bajo el caret, la forma
@@ -250,7 +251,13 @@ func (m Model) refreshMenu() Model {
 	text, caret := m.input.Value(), m.input.Position()
 	if q := detectCommand(text, caret); q.active {
 		m = m.dropFileCache()
+		if strings.HasPrefix("new", strings.ToLower(q.query)) {
+			m.menuItems = append(m.menuItems, menuItem{label: "/new", builtin: true})
+		}
 		for _, cmd := range filterCommands(m.commands, q.query, menuLimit) {
+			if len(m.menuItems) == menuLimit {
+				break
+			}
 			m.menuItems = append(m.menuItems, menuItem{label: "/" + cmd.Name, description: cmd.Description})
 		}
 	} else if q := detectMention(text, caret); q.active {

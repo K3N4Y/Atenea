@@ -18,9 +18,10 @@ import (
 
 // fakeAgent implementa Agent y registra las llamadas para asertar sobre ellas.
 type fakeAgent struct {
-	sent     []struct{ sessionID, text string }
-	planSent []struct{ sessionID, text string }
-	resolved []struct {
+	sent         []struct{ sessionID, text string }
+	planSent     []struct{ sessionID, text string }
+	newSessionID string
+	resolved     []struct {
 		sessionID, callID string
 		approved          bool
 	}
@@ -30,6 +31,9 @@ type fakeAgent struct {
 
 func (f *fakeAgent) SendPrompt(sessionID, text string) (string, error) {
 	f.sent = append(f.sent, struct{ sessionID, text string }{sessionID, text})
+	if text == "/new" && f.newSessionID != "" {
+		return f.newSessionID, nil
+	}
 	return sessionID, nil
 }
 
@@ -2147,39 +2151,49 @@ func TestModel_MenuKeysNavigateSelection(t *testing.T) {
 	}
 
 	m = typeRunes(t, m, "/")
-	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/commit") {
-		t.Fatalf("linea seleccionada del menu = %q, el primer item /commit debe arrancar seleccionado", got)
+	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/new") {
+		t.Fatalf("linea seleccionada del menu = %q, el comando integrado /new debe arrancar seleccionado", got)
 	}
 
-	// Down baja al segundo item.
-	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
-	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/review") {
-		t.Fatalf("linea seleccionada del menu = %q, Down debe mover el marcador a /review", got)
-	}
-
-	// Up vuelve al primero.
-	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
-	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/commit") {
-		t.Fatalf("linea seleccionada del menu = %q, Up debe devolver el marcador a /commit", got)
-	}
-
-	// La seleccion es ciclica: Up en el primero va al ultimo...
-	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
-	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/review") {
-		t.Fatalf("linea seleccionada del menu = %q, Up en el primer item debe ciclar al ultimo (/review)", got)
-	}
-	// ...y Down en el ultimo vuelve al primero.
+	// Down baja a la primera skill.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/commit") {
-		t.Fatalf("linea seleccionada del menu = %q, Down en el ultimo item debe ciclar al primero (/commit)", got)
+		t.Fatalf("linea seleccionada del menu = %q, Down debe mover el marcador a la skill /commit", got)
 	}
 
-	// Las flechas quedaron en el popup: ni scroll del viewport ni input.
+	// Enter sobre una skill conserva el flujo de completar con espacio.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if got := m.input.Value(); got != "/commit " {
+		t.Fatalf("input.Value() = %q, Enter sobre una skill debe completarla con espacio para argumentos", got)
+	}
+	if got := menuSelectedLine(m.View()); got != "" {
+		t.Fatalf("linea seleccionada del menu = %q, completar una skill debe cerrar el menu", got)
+	}
+	if got := len(m.agent.(*fakeAgent).sent); got != 0 {
+		t.Fatalf("SendPrompt fue llamado %d veces, Enter sobre una skill solo debe completarla", got)
+	}
+
+	// En un menu fresco, Up desde /new cicla al ultimo item.
+	mCycle := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(menuCommands, nil)
+	mCycle = apply(t, mCycle, tea.WindowSizeMsg{Width: 80, Height: 24})
+	mCycle = typeRunes(t, mCycle, "/")
+	mCycle = apply(t, mCycle, tea.KeyMsg{Type: tea.KeyUp})
+	if got := menuSelectedLine(mCycle.View()); !strings.Contains(got, "/review") {
+		t.Fatalf("linea seleccionada del menu = %q, Up en /new debe ciclar al ultimo item (/review)", got)
+	}
+
+	// Down en el ultimo vuelve al comando integrado.
+	mCycle = apply(t, mCycle, tea.KeyMsg{Type: tea.KeyDown})
+	if got := menuSelectedLine(mCycle.View()); !strings.Contains(got, "/new") {
+		t.Fatalf("linea seleccionada del menu = %q, Down en el ultimo item debe ciclar al primero (/new)", got)
+	}
+
+	// Las flechas quedaron en el segundo popup: no escriben en el input.
 	view := m.View()
 	if !strings.Contains(view, "mensaje-29") {
 		t.Fatalf("View() = %q, con menu abierto Up/Down NO deben scrollear el viewport: la cola (mensaje-29) debe seguir visible", view)
 	}
-	if got := m.input.Value(); got != "/" {
+	if got := mCycle.input.Value(); got != "/" {
 		t.Fatalf("input.Value() = %q, Up/Down con menu abierto NO deben escribir en el input", got)
 	}
 }
@@ -2401,8 +2415,80 @@ func TestModel_SlashOpensCommandMenu(t *testing.T) {
 		t.Fatalf("linea de /commit = %q, el menu debe mostrar la descripcion %q junto al comando", commitLine, "genera un commit")
 	}
 	lineWith(t, view, "/review")
-	if plain := ansi.Strip(commitLine); !strings.HasPrefix(plain, "❯ ") {
-		t.Fatalf("linea de /commit sin ANSI = %q, el primer item del menu debe estar seleccionado con el prefijo %q", plain, "❯ ")
+	newLine := lineWith(t, view, "/new")
+	if plain := ansi.Strip(newLine); !strings.HasPrefix(plain, "❯ ") {
+		t.Fatalf("linea de /new sin ANSI = %q, el comando integrado debe arrancar seleccionado con el prefijo %q", plain, "❯ ")
+	}
+}
+
+func TestModel_CommandMenuPrioritizesNewAndEnterCreatesSession(t *testing.T) {
+	// /new es un comando integrado, no una skill fuzzy: debe aparecer primero
+	// y Enter sobre su seleccion crea y activa la sesion sin insertar espacio.
+	fake := &fakeAgent{newSessionID: "s2"}
+	m := NewModel(fake, "s1", nil).WithCompletions([]command.Command{
+		{Name: "renew", Description: "skill con coincidencia fuzzy"},
+	}, nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = typeRunes(t, m, "/")
+	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/new") {
+		t.Fatalf("linea seleccionada del menu = %q, /new debe ser el comando integrado seleccionado por encima de skills", got)
+	}
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if got := m.sessionID; got != "s2" {
+		t.Fatalf("sessionID = %q, Enter sobre /new debe activar la sesion nueva %q", got, "s2")
+	}
+	if got := m.input.Value(); got != "" {
+		t.Fatalf("input.Value() = %q, ejecutar /new desde el menu debe limpiar el composer sin dejar un espacio", got)
+	}
+	if got := fake.sent; len(got) != 1 || got[0].text != "/new" {
+		t.Fatalf("SendPrompt llamadas = %#v, Enter sobre /new debe ejecutar el comando reservado exactamente una vez", got)
+	}
+}
+
+func TestModel_ExactNewEnterBeatsFuzzySkillSelection(t *testing.T) {
+	// Aunque una skill fuzzy este seleccionada, escribir exactamente /new y
+	// pulsar Enter debe ejecutar el reservado, no completar la skill.
+	fake := &fakeAgent{newSessionID: "s2"}
+	m := NewModel(fake, "s1", nil).WithCompletions([]command.Command{
+		{Name: "renew", Description: "skill con coincidencia fuzzy"},
+	}, nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = typeRunes(t, m, "/new")
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if got := m.sessionID; got != "s2" {
+		t.Fatalf("sessionID = %q, Enter con /new escrito debe activar la sesion nueva %q aunque haya una skill fuzzy", got, "s2")
+	}
+	if got := m.input.Value(); got != "" {
+		t.Fatalf("input.Value() = %q, Enter con /new escrito debe ejecutarlo, no completar una skill", got)
+	}
+}
+
+func TestModel_NewWithTrailingSpaceKeepsComposerForArguments(t *testing.T) {
+	// El espacio cierra el menu y desactiva solo el comando reservado: el texto
+	// queda intacto para que el usuario pueda continuar escribiendo argumentos.
+	fake := &fakeAgent{newSessionID: "s2"}
+	m := NewModel(fake, "s1", nil).WithCompletions([]command.Command{
+		{Name: "renew", Description: "skill con coincidencia fuzzy"},
+	}, nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = typeRunes(t, m, "/new ")
+
+	if got := menuSelectedLine(m.View()); got != "" {
+		t.Fatalf("linea seleccionada del menu = %q, /new con espacio final debe cerrar el menu", got)
+	}
+	if got := m.input.Value(); got != "/new " {
+		t.Fatalf("input.Value() = %q, /new con espacio final debe conservarse para argumentos", got)
+	}
+	if got := m.sessionID; got != "s1" {
+		t.Fatalf("sessionID = %q, escribir /new con espacio final no debe ejecutar el reservado", got)
+	}
+	if got := len(fake.sent); got != 0 {
+		t.Fatalf("SendPrompt fue llamado %d veces, escribir /new con espacio final no debe ejecutar el reservado", got)
 	}
 }
 
@@ -2684,8 +2770,8 @@ func TestModel_MenuOpenKeepsUpDownForSelection(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	m = typeRunes(t, m, "/")
-	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/commit") {
-		t.Fatalf("linea seleccionada del menu = %q, con %q tecleado el menu debe estar abierto sobre /commit", got, "/")
+	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/new") {
+		t.Fatalf("linea seleccionada del menu = %q, con %q tecleado el menu debe estar abierto sobre /new", got, "/")
 	}
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
