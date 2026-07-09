@@ -4,10 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"net/url"
 	"strings"
 	"sync"
+	"time"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // schema es la tabla unica del log de eventos. Las columnas cubren el round-trip
@@ -32,7 +37,17 @@ CREATE TABLE IF NOT EXISTS events (
   tool_call_id TEXT,
   ev_text     TEXT,
   diff        TEXT,
+	compaction  BLOB,
   PRIMARY KEY (session_id, seq)
+);
+
+CREATE TABLE IF NOT EXISTS session_context (
+  session_id   TEXT    NOT NULL PRIMARY KEY,
+  agent        TEXT    NOT NULL DEFAULT '',
+  model        TEXT    NOT NULL DEFAULT '',
+  baseline_seq INTEGER NOT NULL DEFAULT 0,
+  revision     INTEGER NOT NULL DEFAULT 0,
+  checkpoint   BLOB
 );`
 
 // SQLiteStore implementa Store sobre SQLite via el driver puro Go modernc.org/sqlite.
@@ -42,6 +57,7 @@ type SQLiteStore struct {
 }
 
 var _ Store = (*SQLiteStore)(nil)
+var _ CompactionStore = (*SQLiteStore)(nil)
 
 // NewSQLiteStore abre (o crea) la base en dsn y asegura el esquema. dsn puede ser
 // ":memory:" o una ruta de archivo. Para archivo construye un DSN URI del driver
@@ -53,35 +69,157 @@ var _ Store = (*SQLiteStore)(nil)
 // conexiones nuevas; via DSN cada conexion lo aplica al abrirse. ":memory:"
 // queda como esta (WAL no aplica a memoria y el pool esta clavado en 1 conexion).
 func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
-	if dsn != ":memory:" && !strings.HasPrefix(dsn, "file:") {
-		dsn = "file:" + dsn + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	displayDSN := sqliteDisplayDSN(dsn)
+	var err error
+	dsn, err = sqliteDSN(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("normalize sqlite DSN %q: %w", displayDSN, err)
 	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open sqlite database %q: %w", displayDSN, err)
 	}
 	// Obligatorio: con ":memory:" cada conexion del pool tendria su PROPIA base y
 	// se perderian datos entre llamadas. Ademas serializa el unico escritor.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema); err != nil {
+	if err := initializeSQLiteSchema(db); err != nil {
 		db.Close()
-		return nil, err
-	}
-	// Migracion idempotente para bases ya creadas: CREATE TABLE IF NOT EXISTS no
-	// agrega columnas, asi que las anadimos con ALTER ignorando solo el error de
-	// columna duplicada (la base ya tenia la columna).
-	for _, stmt := range []string{
-		`ALTER TABLE events ADD COLUMN tool_calls BLOB`,
-		`ALTER TABLE events ADD COLUMN tool_call_id TEXT`,
-		`ALTER TABLE events ADD COLUMN ev_text TEXT`,
-		`ALTER TABLE events ADD COLUMN diff TEXT`,
-	} {
-		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-			db.Close()
-			return nil, err
-		}
+		return nil, fmt.Errorf("initialize sqlite schema for %q: %w", displayDSN, err)
 	}
 	return &SQLiteStore{db: db}, nil
+}
+
+func initializeSQLiteSchema(db *sql.DB) error {
+	deadline := time.Now().Add(5 * time.Second)
+	backoff := 5 * time.Millisecond
+	for {
+		err := migrateSQLiteSchema(db)
+		if err == nil || !isSQLiteLockError(err) || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(backoff)
+		if backoff < 100*time.Millisecond {
+			backoff *= 2
+		}
+	}
+}
+
+func migrateSQLiteSchema(db *sql.DB) error {
+	if _, err := db.Exec(schema); err != nil {
+		return err
+	}
+	columns, err := sqliteTableColumns(db, "events")
+	if err != nil {
+		return fmt.Errorf("inspect events schema: %w", err)
+	}
+	for _, column := range []struct {
+		name       string
+		definition string
+	}{
+		{"tool_calls", "BLOB"},
+		{"tool_call_id", "TEXT"},
+		{"ev_text", "TEXT"},
+		{"diff", "TEXT"},
+		{"compaction", "BLOB"},
+	} {
+		if columns[column.name] {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE events ADD COLUMN ` + column.name + ` ` + column.definition); err != nil {
+			columns, inspectErr := sqliteTableColumns(db, "events")
+			if inspectErr != nil || !columns[column.name] {
+				if inspectErr != nil {
+					return fmt.Errorf("migrate events column %q: %v; re-inspect: %w", column.name, err, inspectErr)
+				}
+				return fmt.Errorf("migrate events column %q: %w", column.name, err)
+			}
+		}
+	}
+	return nil
+}
+
+func isSQLiteLockError(err error) bool {
+	var sqliteErr *sqlite.Error
+	if !errors.As(err, &sqliteErr) {
+		return false
+	}
+	switch sqliteErr.Code() & 0xff {
+	case sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED:
+		return true
+	default:
+		return false
+	}
+}
+
+func sqliteDisplayDSN(dsn string) string {
+	if dsn == ":memory:" {
+		return dsn
+	}
+	if strings.HasPrefix(dsn, "file:") {
+		if parsed, err := url.Parse(dsn); err == nil {
+			parsed.RawQuery = ""
+			parsed.Fragment = ""
+			return parsed.String()
+		}
+		if index := strings.IndexAny(dsn, "?#"); index >= 0 {
+			return dsn[:index]
+		}
+	}
+	return dsn
+}
+
+func sqliteDSN(dsn string) (string, error) {
+	if dsn == ":memory:" {
+		return dsn, nil
+	}
+	var parsed *url.URL
+	var err error
+	if strings.HasPrefix(dsn, "file:") {
+		parsed, err = url.Parse(dsn)
+	} else {
+		parsed = &url.URL{Scheme: "file", Path: dsn}
+	}
+	if err != nil {
+		return "", fmt.Errorf("parse sqlite dsn: %w", err)
+	}
+	query := parsed.Query()
+	pragmas := query["_pragma"]
+	query.Del("_pragma")
+	for _, pragma := range pragmas {
+		name := pragma
+		if index := strings.IndexAny(name, "=("); index >= 0 {
+			name = name[:index]
+		}
+		switch strings.ToLower(strings.TrimSpace(name)) {
+		case "journal_mode", "busy_timeout":
+		default:
+			query.Add("_pragma", pragma)
+		}
+	}
+	query.Add("_pragma", "journal_mode(WAL)")
+	query.Add("_pragma", "busy_timeout(5000)")
+	query.Set("_txlock", "immediate")
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
+}
+
+func sqliteTableColumns(db *sql.DB, table string) (map[string]bool, error) {
+	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	columns := make(map[string]bool)
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return nil, err
+		}
+		columns[name] = true
+	}
+	return columns, rows.Err()
 }
 
 // Close cierra la base subyacente.
@@ -107,8 +245,17 @@ func (s *SQLiteStore) DataVersion(ctx context.Context) (int64, error) {
 // write-lock (con busy_timeout esperan en vez de fallar) y no puede haber UNIQUE
 // constraint por Seqs raceados. El mutex sigue serializando dentro del proceso.
 func (s *SQLiteStore) AppendEvent(ctx context.Context, sessionID string, ev SessionEvent) (Seq, error) {
+	if ev.Kind == KindContextCompacted || ev.Compaction != nil {
+		return 0, ErrCompactionRequiresCommit
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 
 	hasMessage := 0
 	var msgID, role, text, toolCallID sql.NullString
@@ -119,7 +266,7 @@ func (s *SQLiteStore) AppendEvent(ctx context.Context, sessionID string, ev Sess
 		role = sql.NullString{String: string(ev.Message.Role), Valid: true}
 		text = sql.NullString{String: ev.Message.Text, Valid: true}
 		toolCallID = sql.NullString{String: ev.Message.ToolCallID, Valid: true}
-		if len(ev.Message.ToolCalls) > 0 {
+		if ev.Message.ToolCalls != nil {
 			b, err := json.Marshal(ev.Message.ToolCalls)
 			if err != nil {
 				return 0, err
@@ -136,6 +283,14 @@ func (s *SQLiteStore) AppendEvent(ctx context.Context, sessionID string, ev Sess
 		}
 		usage = b
 	}
+	var compaction []byte
+	if ev.Compaction != nil {
+		b, err := json.Marshal(ev.Compaction)
+		if err != nil {
+			return 0, err
+		}
+		compaction = b
+	}
 
 	// ev_text guarda el Text top-level del SessionEvent (Reasoning/Text.*,
 	// Tool.Input.Delta), independiente de la columna text (que es Message.Text).
@@ -144,11 +299,11 @@ func (s *SQLiteStore) AppendEvent(ctx context.Context, sessionID string, ev Sess
 	var seq int64
 	if err := s.db.QueryRowContext(ctx,
 		`INSERT INTO events
-		   (session_id, seq, kind, has_message, msg_id, role, text, call_id, tool_name, input, usage, error, tool_calls, tool_call_id, ev_text, diff)
-		 VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM events WHERE session_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		   (session_id, seq, kind, has_message, msg_id, role, text, call_id, tool_name, input, usage, error, tool_calls, tool_call_id, ev_text, diff, compaction)
+		 VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM events WHERE session_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 RETURNING seq`,
 		sessionID, sessionID, string(ev.Kind), hasMessage, msgID, role, text,
-		ev.CallID, ev.ToolName, []byte(ev.Input), usage, ev.Error, toolCalls, toolCallID, ev.Text, ev.Diff,
+		ev.CallID, ev.ToolName, []byte(ev.Input), usage, ev.Error, toolCalls, toolCallID, ev.Text, ev.Diff, compaction,
 	).Scan(&seq); err != nil {
 		return 0, err
 	}
@@ -305,7 +460,7 @@ func (s *SQLiteStore) Events(ctx context.Context, sessionID string, sinceSeq Seq
 
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT seq, kind, has_message, msg_id, role, text, call_id, tool_name,
-		        input, usage, error, tool_calls, tool_call_id, ev_text, diff
+		        input, usage, error, tool_calls, tool_call_id, ev_text, diff, compaction
 		   FROM events
 		  WHERE session_id = ? AND seq > ?
 		  ORDER BY seq`,
@@ -324,10 +479,10 @@ func (s *SQLiteStore) Events(ctx context.Context, sessionID string, sinceSeq Seq
 			hasMessage                                int
 			msgID, role, text, callID, toolName, tcID sql.NullString
 			errText, evText, diff                     sql.NullString
-			input, usage, toolCalls                   []byte
+			input, usage, toolCalls, compaction       []byte
 		)
 		if err := rows.Scan(&seq, &kind, &hasMessage, &msgID, &role, &text,
-			&callID, &toolName, &input, &usage, &errText, &toolCalls, &tcID, &evText, &diff); err != nil {
+			&callID, &toolName, &input, &usage, &errText, &toolCalls, &tcID, &evText, &diff, &compaction); err != nil {
 			return nil, err
 		}
 
@@ -369,6 +524,16 @@ func (s *SQLiteStore) Events(ctx context.Context, sessionID string, sinceSeq Seq
 			}
 			ev.Usage = &u
 		}
+		if len(compaction) > 0 {
+			var checkpoint CompactionCheckpoint
+			if err := json.Unmarshal(compaction, &checkpoint); err != nil {
+				return nil, fmt.Errorf("decode Context.Compacted payload for session %q seq %d: %w: %v", sessionID, seq, ErrInvalidCompactionCheckpoint, err)
+			}
+			if err := ValidateCompactionCheckpoint(checkpoint); err != nil {
+				return nil, fmt.Errorf("validate Context.Compacted payload for session %q seq %d: %w", sessionID, seq, err)
+			}
+			ev.Compaction = &checkpoint
+		}
 		out = append(out, ev)
 	}
 	if err := rows.Err(); err != nil {
@@ -389,7 +554,204 @@ func (s *SQLiteStore) Epoch(ctx context.Context, sessionID string) (ContextEpoch
 	if !ok {
 		return ContextEpoch{}, ErrSessionNotFound
 	}
-	return ContextEpoch{}, nil
+	var epoch ContextEpoch
+	err = s.db.QueryRowContext(ctx,
+		`SELECT agent, model, baseline_seq, revision FROM session_context WHERE session_id = ?`, sessionID,
+	).Scan(&epoch.Agent, &epoch.Model, &epoch.BaselineSeq, &epoch.Revision)
+	if err == sql.ErrNoRows {
+		return ContextEpoch{}, nil
+	}
+	return epoch, err
+}
+
+// ContextForRunner reconstruye el checkpoint durable y el sufijo literal que
+// consume el runner. Bases anteriores a session_context conservan epoch cero y
+// proyectan el historial completo.
+func (s *SQLiteStore) ContextForRunner(ctx context.Context, sessionID string) (result RunnerContext, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("SQLiteStore.ContextForRunner session %q: %w", sessionID, err)
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return RunnerContext{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return RunnerContext{}, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return RunnerContext{}, err
+	}
+	defer tx.Rollback()
+
+	if ok, err := sqliteSessionExists(ctx, tx, sessionID); err != nil {
+		return RunnerContext{}, err
+	} else if !ok {
+		return RunnerContext{}, ErrSessionNotFound
+	}
+
+	result = RunnerContext{}
+	var checkpointRaw []byte
+	err = tx.QueryRowContext(ctx,
+		`SELECT agent, model, baseline_seq, revision, checkpoint FROM session_context WHERE session_id = ?`, sessionID,
+	).Scan(&result.Epoch.Agent, &result.Epoch.Model, &result.Epoch.BaselineSeq, &result.Epoch.Revision, &checkpointRaw)
+	if err != nil && err != sql.ErrNoRows {
+		return RunnerContext{}, err
+	}
+	if len(checkpointRaw) == 0 {
+		messages, err := sqliteMessages(ctx, tx, sessionID, result.Epoch.BaselineSeq)
+		if err != nil {
+			return RunnerContext{}, err
+		}
+		result.Messages = messages
+		return result, tx.Commit()
+	}
+
+	var checkpoint CompactionCheckpoint
+	if err := json.Unmarshal(checkpointRaw, &checkpoint); err != nil {
+		return RunnerContext{}, fmt.Errorf("%w: decode durable checkpoint: %v", ErrInvalidCompactionCheckpoint, err)
+	}
+	if err := ValidateCompactionCheckpoint(checkpoint); err != nil {
+		return RunnerContext{}, fmt.Errorf("load compaction checkpoint for session %q: %w", sessionID, err)
+	}
+	if err := validateCheckpointEpoch(result.Epoch, checkpoint); err != nil {
+		return RunnerContext{}, err
+	}
+	result.Checkpoint = &checkpoint
+	result.Messages, err = sqliteMessages(ctx, tx, sessionID, checkpoint.PreservedFromSeq-1)
+	if err != nil {
+		return RunnerContext{}, err
+	}
+	if checkpoint.AnchorUserSeq <= result.Epoch.BaselineSeq {
+		anchor, err := sqliteMessageAt(ctx, tx, sessionID, checkpoint.AnchorUserSeq)
+		if err != nil {
+			return RunnerContext{}, err
+		}
+		result.Anchor = &anchor
+	}
+	return result, tx.Commit()
+}
+
+func validateCheckpointEpoch(current ContextEpoch, checkpoint CompactionCheckpoint) error {
+	if current.BaselineSeq != checkpoint.CoveredThroughSeq {
+		return fmt.Errorf("%w: corrupt checkpoint epoch baseline=%d covered=%d", ErrInvalidCompactionCheckpoint, current.BaselineSeq, checkpoint.CoveredThroughSeq)
+	}
+	if current.Revision != checkpoint.ExpectedEpoch.Revision+1 {
+		return fmt.Errorf("%w: corrupt checkpoint epoch revision=%d expected_previous=%d", ErrInvalidCompactionCheckpoint, current.Revision, checkpoint.ExpectedEpoch.Revision)
+	}
+	if current.Agent != checkpoint.ExpectedEpoch.Agent {
+		return fmt.Errorf("%w: corrupt checkpoint epoch agent mismatch", ErrInvalidCompactionCheckpoint)
+	}
+	if current.Model != checkpoint.ExpectedEpoch.Model {
+		return fmt.Errorf("%w: corrupt checkpoint epoch model mismatch", ErrInvalidCompactionCheckpoint)
+	}
+	if current.Model != "" && checkpoint.Model != current.Model {
+		return fmt.Errorf("%w: corrupt checkpoint generation model mismatch", ErrInvalidCompactionCheckpoint)
+	}
+	return nil
+}
+
+// CommitCompaction inserta el evento y avanza baseline/revision/checkpoint en
+// una sola transaccion. El UPDATE final compara el epoch completo para que dos
+// procesos con el mismo snapshot no puedan confirmar ambos checkpoints.
+func (s *SQLiteStore) CommitCompaction(ctx context.Context, sessionID string, checkpoint CompactionCheckpoint) (seqResult Seq, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("SQLiteStore.CommitCompaction session %q: %w", sessionID, err)
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if err := ValidateCompactionCheckpoint(checkpoint); err != nil {
+		return 0, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	if ok, err := sqliteSessionExists(ctx, tx, sessionID); err != nil {
+		return 0, err
+	} else if !ok {
+		return 0, ErrSessionNotFound
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO session_context (session_id) VALUES (?) ON CONFLICT(session_id) DO NOTHING`, sessionID,
+	); err != nil {
+		return 0, err
+	}
+
+	var current ContextEpoch
+	if err := tx.QueryRowContext(ctx,
+		`SELECT agent, model, baseline_seq, revision FROM session_context WHERE session_id = ?`, sessionID,
+	).Scan(&current.Agent, &current.Model, &current.BaselineSeq, &current.Revision); err != nil {
+		return 0, err
+	}
+	if current != checkpoint.ExpectedEpoch || checkpoint.CoveredThroughSeq < current.BaselineSeq {
+		return 0, compactionConflict("epoch mismatch: expected=%+v current=%+v covered=%d", checkpoint.ExpectedEpoch, current, checkpoint.CoveredThroughSeq)
+	}
+
+	var lastSeq Seq
+	if err := tx.QueryRowContext(ctx, `SELECT MAX(seq) FROM events WHERE session_id = ?`, sessionID).Scan(&lastSeq); err != nil {
+		return 0, err
+	}
+	events, err := sqliteEventsForValidation(ctx, tx, sessionID, checkpoint.AnchorUserSeq)
+	if err != nil {
+		return 0, err
+	}
+	if checkpoint.CoveredThroughSeq > lastSeq {
+		return 0, compactionConflict("covered sequence out of range: covered=%d last=%d", checkpoint.CoveredThroughSeq, lastSeq)
+	}
+	if !validCompactionReferences(events, checkpoint) {
+		return 0, compactionConflict("invalid references: covered=%d anchor=%d preserved=%d", checkpoint.CoveredThroughSeq, checkpoint.AnchorUserSeq, checkpoint.PreservedFromSeq)
+	}
+
+	checkpointRaw, err := json.Marshal(checkpoint)
+	if err != nil {
+		return 0, err
+	}
+	var seq int64
+	if err := tx.QueryRowContext(ctx,
+		`INSERT INTO events (session_id, seq, kind, has_message, compaction)
+		 VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM events WHERE session_id = ?), ?, 0, ?)
+		 RETURNING seq`,
+		sessionID, sessionID, string(KindContextCompacted), checkpointRaw,
+	).Scan(&seq); err != nil {
+		return 0, err
+	}
+	result, err := tx.ExecContext(ctx,
+		`UPDATE session_context
+		    SET baseline_seq = ?, revision = revision + 1, checkpoint = ?
+		  WHERE session_id = ? AND agent = ? AND model = ? AND baseline_seq = ? AND revision = ?`,
+		checkpoint.CoveredThroughSeq, checkpointRaw, sessionID,
+		checkpoint.ExpectedEpoch.Agent, checkpoint.ExpectedEpoch.Model,
+		checkpoint.ExpectedEpoch.BaselineSeq, checkpoint.ExpectedEpoch.Revision,
+	)
+	if err != nil {
+		return 0, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if rows != 1 {
+		return 0, compactionConflict("compare-and-swap failed: expected=%+v current changed", checkpoint.ExpectedEpoch)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return Seq(seq), nil
 }
 
 // PendingToolCalls reconstruye la proyeccion durable de Tool.Called sin
@@ -460,10 +822,117 @@ func (s *SQLiteStore) DeleteSession(ctx context.Context, sessionID string) error
 	if !ok {
 		return ErrSessionNotFound
 	}
-	if _, err := s.db.ExecContext(ctx,
-		`DELETE FROM events WHERE session_id = ?`, sessionID,
-	); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
 		return err
 	}
-	return nil
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM session_context WHERE session_id = ?`, sessionID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM events WHERE session_id = ?`, sessionID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+type sqliteQueryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func sqliteSessionExists(ctx context.Context, queryer sqliteQueryer, sessionID string) (bool, error) {
+	var one int
+	err := queryer.QueryRowContext(ctx, `SELECT 1 FROM events WHERE session_id = ? LIMIT 1`, sessionID).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func sqliteMessages(ctx context.Context, queryer sqliteQueryer, sessionID string, sinceSeq Seq) ([]Message, error) {
+	rows, err := queryer.QueryContext(ctx,
+		`SELECT msg_id, role, text, seq, tool_calls, tool_call_id
+		   FROM events WHERE session_id = ? AND has_message = 1 AND seq > ? ORDER BY seq`,
+		sessionID, sinceSeq,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]Message, 0)
+	for rows.Next() {
+		var message Message
+		var role string
+		var toolCalls []byte
+		var toolCallID sql.NullString
+		if err := rows.Scan(&message.ID, &role, &message.Text, &message.Seq, &toolCalls, &toolCallID); err != nil {
+			return nil, err
+		}
+		message.Role = Role(role)
+		message.ToolCallID = toolCallID.String
+		if len(toolCalls) > 0 {
+			if err := json.Unmarshal(toolCalls, &message.ToolCalls); err != nil {
+				return nil, err
+			}
+		}
+		out = append(out, message)
+	}
+	return out, rows.Err()
+}
+
+func sqliteMessageAt(ctx context.Context, queryer sqliteQueryer, sessionID string, seq Seq) (Message, error) {
+	var message Message
+	var role string
+	var toolCalls []byte
+	var toolCallID sql.NullString
+	err := queryer.QueryRowContext(ctx,
+		`SELECT msg_id, role, text, seq, tool_calls, tool_call_id
+		   FROM events WHERE session_id = ? AND seq = ? AND has_message = 1`,
+		sessionID, seq,
+	).Scan(&message.ID, &role, &message.Text, &message.Seq, &toolCalls, &toolCallID)
+	if err != nil {
+		return Message{}, err
+	}
+	message.Role = Role(role)
+	message.ToolCallID = toolCallID.String
+	if len(toolCalls) > 0 {
+		if err := json.Unmarshal(toolCalls, &message.ToolCalls); err != nil {
+			return Message{}, err
+		}
+	}
+	return message, nil
+}
+
+func sqliteEventsForValidation(ctx context.Context, queryer sqliteQueryer, sessionID string, fromSeq Seq) ([]SessionEvent, error) {
+	rows, err := queryer.QueryContext(ctx,
+		`SELECT seq, has_message, msg_id, role, text, tool_calls, tool_call_id
+		   FROM events WHERE session_id = ? AND has_message = 1 AND seq >= ? ORDER BY seq`, sessionID, fromSeq,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	events := make([]SessionEvent, 0)
+	for rows.Next() {
+		var event SessionEvent
+		var hasMessage int
+		var msgID, role, text, toolCallID sql.NullString
+		var toolCalls []byte
+		if err := rows.Scan(&event.Seq, &hasMessage, &msgID, &role, &text, &toolCalls, &toolCallID); err != nil {
+			return nil, err
+		}
+		message := Message{ID: msgID.String, Role: Role(role.String), Text: text.String, ToolCallID: toolCallID.String}
+		if len(toolCalls) > 0 {
+			if err := json.Unmarshal(toolCalls, &message.ToolCalls); err != nil {
+				return nil, err
+			}
+		}
+		event.Message = &message
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return events, nil
 }

@@ -222,6 +222,54 @@ func TestErrCompactionConflict_IsStableDomainError(t *testing.T) {
 	}
 }
 
+func TestValidateCompactionCheckpoint_RejectsInvalidStructure(t *testing.T) {
+	valid := CompactionCheckpoint{
+		Summary:              validSummary(),
+		ExpectedEpoch:        ContextEpoch{},
+		CoveredThroughSeq:    1,
+		AnchorUserSeq:        2,
+		PreservedFromSeq:     2,
+		Model:                "claude-sonnet-4-5",
+		Reason:               CompactionPreventive,
+		InputTokensBefore:    100,
+		EstimatedTokensAfter: 40,
+	}
+	tests := []struct {
+		name   string
+		mutate func(*CompactionCheckpoint)
+	}{
+		{"invalid summary", func(checkpoint *CompactionCheckpoint) { checkpoint.Summary.CurrentGoal = " " }},
+		{"nil summary array", func(checkpoint *CompactionCheckpoint) { checkpoint.Summary.Pending = nil }},
+		{"invalid reason", func(checkpoint *CompactionCheckpoint) { checkpoint.Reason = "manual" }},
+		{"empty model", func(checkpoint *CompactionCheckpoint) { checkpoint.Model = " " }},
+		{"non positive input", func(checkpoint *CompactionCheckpoint) { checkpoint.InputTokensBefore = 0 }},
+		{"negative estimate", func(checkpoint *CompactionCheckpoint) { checkpoint.EstimatedTokensAfter = -1 }},
+		{"non reducing estimate", func(checkpoint *CompactionCheckpoint) { checkpoint.EstimatedTokensAfter = 100 }},
+		{"non positive covered", func(checkpoint *CompactionCheckpoint) { checkpoint.CoveredThroughSeq = 0 }},
+		{"non positive anchor", func(checkpoint *CompactionCheckpoint) { checkpoint.AnchorUserSeq = 0 }},
+		{"non positive preserved", func(checkpoint *CompactionCheckpoint) { checkpoint.PreservedFromSeq = 0 }},
+		{"covered reaches preserved", func(checkpoint *CompactionCheckpoint) { checkpoint.CoveredThroughSeq = 2 }},
+		{"anchor follows preserved", func(checkpoint *CompactionCheckpoint) { checkpoint.AnchorUserSeq = 3 }},
+		{"covered does not advance baseline", func(checkpoint *CompactionCheckpoint) { checkpoint.ExpectedEpoch.BaselineSeq = 1 }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			checkpoint := valid
+			test.mutate(&checkpoint)
+			if err := ValidateCompactionCheckpoint(checkpoint); !errors.Is(err, ErrInvalidCompactionCheckpoint) {
+				t.Fatalf("error = %v, want ErrInvalidCompactionCheckpoint", err)
+			}
+		})
+	}
+	if err := ValidateCompactionCheckpoint(valid); err != nil {
+		t.Fatalf("valid checkpoint: %v", err)
+	}
+	valid.Reason = CompactionOverflow
+	if err := ValidateCompactionCheckpoint(valid); err != nil {
+		t.Fatalf("overflow checkpoint: %v", err)
+	}
+}
+
 func validSummaryJSON(t *testing.T) []byte {
 	t.Helper()
 	raw, err := json.Marshal(validSummary())

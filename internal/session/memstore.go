@@ -41,6 +41,9 @@ var _ CompactionStore = (*MemoryStore)(nil)
 // monotonico y lo devuelve. Crea la sesion si es su primer evento. El SessionID
 // y Seq que traiga ev se ignoran: los fija el Store.
 func (s *MemoryStore) AppendEvent(ctx context.Context, sessionID string, ev SessionEvent) (Seq, error) {
+	if ev.Kind == KindContextCompacted || ev.Compaction != nil {
+		return 0, ErrCompactionRequiresCommit
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -214,6 +217,9 @@ func (s *MemoryStore) ContextForRunner(ctx context.Context, sessionID string) (R
 // unica operacion protegida por el mutex. Un epoch obsoleto no modifica estado.
 func (s *MemoryStore) CommitCompaction(ctx context.Context, sessionID string, checkpoint CompactionCheckpoint) (Seq, error) {
 	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if err := ValidateCompactionCheckpoint(checkpoint); err != nil {
 		return 0, err
 	}
 	s.mu.Lock()

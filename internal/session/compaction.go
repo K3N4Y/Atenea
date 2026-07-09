@@ -10,10 +10,12 @@ import (
 )
 
 var (
-	ErrCompactionConflict   = errors.New("compaction checkpoint conflicts with current epoch")
-	ErrNoCompactableHistory = errors.New("no compactable history before current activity")
-	ErrActivityTooLarge     = errors.New("current user activity does not fit the model context")
-	ErrInvalidSummary       = errors.New("invalid structured compaction summary")
+	ErrCompactionConflict          = errors.New("compaction checkpoint conflicts with current epoch")
+	ErrNoCompactableHistory        = errors.New("no compactable history before current activity")
+	ErrActivityTooLarge            = errors.New("current user activity does not fit the model context")
+	ErrInvalidSummary              = errors.New("invalid structured compaction summary")
+	ErrInvalidCompactionCheckpoint = errors.New("invalid compaction checkpoint")
+	ErrCompactionRequiresCommit    = errors.New("compaction events must use CommitCompaction")
 )
 
 type CompactionReason string
@@ -139,4 +141,40 @@ type RunnerContext struct {
 	Checkpoint *CompactionCheckpoint
 	Anchor     *Message
 	Messages   []Message
+}
+
+func ValidateCompactionCheckpoint(checkpoint CompactionCheckpoint) error {
+	raw, err := json.Marshal(checkpoint.Summary)
+	if err != nil {
+		return fmt.Errorf("%w: encode summary: %v", ErrInvalidCompactionCheckpoint, err)
+	}
+	var summary StructuredSummary
+	if err := DecodeStructuredSummary(raw, &summary); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidCompactionCheckpoint, err)
+	}
+	if checkpoint.Reason != CompactionPreventive && checkpoint.Reason != CompactionOverflow {
+		return fmt.Errorf("%w: invalid reason %q", ErrInvalidCompactionCheckpoint, checkpoint.Reason)
+	}
+	if strings.TrimSpace(checkpoint.Model) == "" {
+		return fmt.Errorf("%w: model is empty", ErrInvalidCompactionCheckpoint)
+	}
+	if checkpoint.InputTokensBefore <= 0 {
+		return fmt.Errorf("%w: input tokens before must be positive", ErrInvalidCompactionCheckpoint)
+	}
+	if checkpoint.EstimatedTokensAfter < 0 || checkpoint.EstimatedTokensAfter >= checkpoint.InputTokensBefore {
+		return fmt.Errorf("%w: estimated tokens after must be non-negative and lower than input", ErrInvalidCompactionCheckpoint)
+	}
+	if checkpoint.CoveredThroughSeq <= 0 || checkpoint.AnchorUserSeq <= 0 || checkpoint.PreservedFromSeq <= 0 {
+		return fmt.Errorf("%w: sequences must be positive", ErrInvalidCompactionCheckpoint)
+	}
+	if checkpoint.ExpectedEpoch.BaselineSeq >= checkpoint.CoveredThroughSeq {
+		return fmt.Errorf("%w: covered %d must advance baseline %d", ErrInvalidCompactionCheckpoint, checkpoint.CoveredThroughSeq, checkpoint.ExpectedEpoch.BaselineSeq)
+	}
+	if checkpoint.CoveredThroughSeq >= checkpoint.PreservedFromSeq {
+		return fmt.Errorf("%w: covered %d must precede preserved %d", ErrInvalidCompactionCheckpoint, checkpoint.CoveredThroughSeq, checkpoint.PreservedFromSeq)
+	}
+	if checkpoint.AnchorUserSeq > checkpoint.PreservedFromSeq {
+		return fmt.Errorf("%w: anchor %d follows preserved %d", ErrInvalidCompactionCheckpoint, checkpoint.AnchorUserSeq, checkpoint.PreservedFromSeq)
+	}
+	return nil
 }

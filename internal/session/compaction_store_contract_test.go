@@ -23,14 +23,7 @@ func runCompactionStoreContract(t *testing.T, factory compactionStoreFactory) {
 		anchorSeq := appendCompactionMessage(t, store, ctx, "s1", Message{ID: "u2", Role: RoleUser, Text: "current"})
 		epoch := compactionEpoch(t, store, ctx, "s1")
 
-		checkpoint := CompactionCheckpoint{
-			Summary:           validSummary(),
-			ExpectedEpoch:     epoch,
-			CoveredThroughSeq: assistantSeq,
-			AnchorUserSeq:     anchorSeq,
-			PreservedFromSeq:  anchorSeq,
-			Reason:            CompactionPreventive,
-		}
+		checkpoint := compactionCheckpoint(epoch, assistantSeq, anchorSeq, anchorSeq)
 		seq, err := store.CommitCompaction(ctx, "s1", checkpoint)
 		if err != nil {
 			t.Fatalf("CommitCompaction: %v", err)
@@ -62,20 +55,61 @@ func runCompactionStoreContract(t *testing.T, factory compactionStoreFactory) {
 		}
 	})
 
+	t.Run("generic append rejects compaction events", func(t *testing.T) {
+		store := factory(t)
+		ctx := context.Background()
+		appendCompactionMessage(t, store, ctx, "s1", Message{ID: "u1", Role: RoleUser, Text: "current"})
+		before, err := store.Events(ctx, "s1", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, event := range []SessionEvent{
+			{Kind: KindContextCompacted},
+			{Compaction: &CompactionCheckpoint{}},
+		} {
+			if _, err := store.AppendEvent(ctx, "s1", event); !errors.Is(err, ErrCompactionRequiresCommit) {
+				t.Fatalf("AppendEvent error = %v, want ErrCompactionRequiresCommit", err)
+			}
+		}
+		after, err := store.Events(ctx, "s1", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(after) != len(before) {
+			t.Fatalf("AppendEvent persisted compaction: before=%d after=%d", len(before), len(after))
+		}
+	})
+
+	t.Run("structurally invalid checkpoints are atomic", func(t *testing.T) {
+		store := factory(t)
+		ctx := context.Background()
+		anchorSeq := appendCompactionMessage(t, store, ctx, "s1", Message{ID: "u1", Role: RoleUser, Text: "current"})
+		preservedSeq := appendCompactionMessage(t, store, ctx, "s1", Message{ID: "a1", Role: RoleAssistant, Text: "preserved"})
+		checkpoint := compactionCheckpoint(compactionEpoch(t, store, ctx, "s1"), anchorSeq, anchorSeq, preservedSeq)
+		checkpoint.Model = ""
+		before, err := store.Events(ctx, "s1", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.CommitCompaction(ctx, "s1", checkpoint); !errors.Is(err, ErrInvalidCompactionCheckpoint) {
+			t.Fatalf("CommitCompaction error = %v, want ErrInvalidCompactionCheckpoint", err)
+		}
+		after, err := store.Events(ctx, "s1", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(after) != len(before) {
+			t.Fatalf("invalid checkpoint persisted: before=%d after=%d", len(before), len(after))
+		}
+	})
+
 	t.Run("stale epoch is atomic conflict", func(t *testing.T) {
 		store := factory(t)
 		ctx := context.Background()
 		first := appendCompactionMessage(t, store, ctx, "s1", Message{ID: "u1", Role: RoleUser, Text: "one"})
 		preserved := appendCompactionMessage(t, store, ctx, "s1", Message{ID: "a1", Role: RoleAssistant, Text: "two"})
 		epoch := compactionEpoch(t, store, ctx, "s1")
-		checkpoint := CompactionCheckpoint{
-			Summary:           validSummary(),
-			ExpectedEpoch:     epoch,
-			CoveredThroughSeq: first,
-			AnchorUserSeq:     first,
-			PreservedFromSeq:  preserved,
-			Reason:            CompactionPreventive,
-		}
+		checkpoint := compactionCheckpoint(epoch, first, first, preserved)
 		if _, err := store.CommitCompaction(ctx, "s1", checkpoint); err != nil {
 			t.Fatal(err)
 		}
@@ -113,14 +147,7 @@ func runCompactionStoreContract(t *testing.T, factory compactionStoreFactory) {
 		first := appendCompactionMessage(t, store, ctx, "s1", Message{ID: "u1", Role: RoleUser, Text: "first"})
 		second := appendCompactionMessage(t, store, ctx, "s1", Message{ID: "a1", Role: RoleAssistant, Text: "second"})
 		epoch := compactionEpoch(t, store, ctx, "s1")
-		firstCheckpoint := CompactionCheckpoint{
-			Summary:           validSummary(),
-			ExpectedEpoch:     epoch,
-			CoveredThroughSeq: first,
-			AnchorUserSeq:     first,
-			PreservedFromSeq:  second,
-			Reason:            CompactionPreventive,
-		}
+		firstCheckpoint := compactionCheckpoint(epoch, first, first, second)
 		if _, err := store.CommitCompaction(ctx, "s1", firstCheckpoint); err != nil {
 			t.Fatal(err)
 		}
@@ -129,14 +156,8 @@ func runCompactionStoreContract(t *testing.T, factory compactionStoreFactory) {
 		epoch = compactionEpoch(t, store, ctx, "s1")
 		secondSummary := validSummary()
 		secondSummary.CurrentGoal = "continue after another checkpoint"
-		secondCheckpoint := CompactionCheckpoint{
-			Summary:           secondSummary,
-			ExpectedEpoch:     epoch,
-			CoveredThroughSeq: second,
-			AnchorUserSeq:     third,
-			PreservedFromSeq:  third,
-			Reason:            CompactionPreventive,
-		}
+		secondCheckpoint := compactionCheckpoint(epoch, second, third, third)
+		secondCheckpoint.Summary = secondSummary
 		if _, err := store.CommitCompaction(ctx, "s1", secondCheckpoint); err != nil {
 			t.Fatal(err)
 		}
@@ -165,14 +186,7 @@ func runCompactionStoreContract(t *testing.T, factory compactionStoreFactory) {
 		discardedSeq := appendCompactionMessage(t, store, ctx, "s1", Message{ID: "a2", Role: RoleAssistant, Text: "summarized middle"})
 		preservedSeq := appendCompactionMessage(t, store, ctx, "s1", Message{ID: "a3", Role: RoleAssistant, Text: "recent suffix"})
 		epoch := compactionEpoch(t, store, ctx, "s1")
-		_, err := store.CommitCompaction(ctx, "s1", CompactionCheckpoint{
-			Summary:           validSummary(),
-			ExpectedEpoch:     epoch,
-			CoveredThroughSeq: coveredSeq,
-			AnchorUserSeq:     anchorSeq,
-			PreservedFromSeq:  preservedSeq,
-			Reason:            CompactionPreventive,
-		})
+		_, err := store.CommitCompaction(ctx, "s1", compactionCheckpoint(epoch, coveredSeq, anchorSeq, preservedSeq))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -197,14 +211,7 @@ func runCompactionStoreContract(t *testing.T, factory compactionStoreFactory) {
 		coveredSeq := appendCompactionMessage(t, store, ctx, "s1", Message{ID: "u1", Role: RoleUser, Text: "old"})
 		anchorSeq := appendCompactionMessage(t, store, ctx, "s1", Message{ID: "u2", Role: RoleUser, Text: "current"})
 		epoch := compactionEpoch(t, store, ctx, "s1")
-		_, err := store.CommitCompaction(ctx, "s1", CompactionCheckpoint{
-			Summary:           validSummary(),
-			ExpectedEpoch:     epoch,
-			CoveredThroughSeq: coveredSeq,
-			AnchorUserSeq:     anchorSeq,
-			PreservedFromSeq:  anchorSeq,
-			Reason:            CompactionPreventive,
-		})
+		_, err := store.CommitCompaction(ctx, "s1", compactionCheckpoint(epoch, coveredSeq, anchorSeq, anchorSeq))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -241,18 +248,6 @@ func runCompactionStoreContract(t *testing.T, factory compactionStoreFactory) {
 				name: "preserved seq is not materialized",
 				checkpoint: func(epoch ContextEpoch, userSeq, assistantSeq, preservedSeq, nonMessageSeq, tailSeq Seq) CompactionCheckpoint {
 					return compactionCheckpoint(epoch, userSeq, userSeq, nonMessageSeq)
-				},
-			},
-			{
-				name: "covered seq reaches preserved seq",
-				checkpoint: func(epoch ContextEpoch, userSeq, assistantSeq, preservedSeq, nonMessageSeq, tailSeq Seq) CompactionCheckpoint {
-					return compactionCheckpoint(epoch, preservedSeq, userSeq, preservedSeq)
-				},
-			},
-			{
-				name: "anchor follows preserved seq",
-				checkpoint: func(epoch ContextEpoch, userSeq, assistantSeq, preservedSeq, nonMessageSeq, tailSeq Seq) CompactionCheckpoint {
-					return compactionCheckpoint(epoch, userSeq, preservedSeq, assistantSeq)
 				},
 			},
 		}
@@ -640,6 +635,18 @@ func TestMemoryStore_CompactionContract(t *testing.T) {
 	})
 }
 
+func TestSQLiteStore_CompactionContract(t *testing.T) {
+	runCompactionStoreContract(t, func(t *testing.T) CompactionStore {
+		t.Helper()
+		store, err := NewSQLiteStore(":memory:")
+		if err != nil {
+			t.Fatalf("NewSQLiteStore: %v", err)
+		}
+		t.Cleanup(func() { store.Close() })
+		return store
+	})
+}
+
 func TestMemoryStore_CommitCompactionChecksCancellationAfterLock(t *testing.T) {
 	store := NewMemoryStore()
 	ctx := context.Background()
@@ -719,12 +726,15 @@ func compactionEpoch(t *testing.T, store Store, ctx context.Context, sessionID s
 
 func compactionCheckpoint(epoch ContextEpoch, coveredThroughSeq, anchorUserSeq, preservedFromSeq Seq) CompactionCheckpoint {
 	return CompactionCheckpoint{
-		Summary:           validSummary(),
-		ExpectedEpoch:     epoch,
-		CoveredThroughSeq: coveredThroughSeq,
-		AnchorUserSeq:     anchorUserSeq,
-		PreservedFromSeq:  preservedFromSeq,
-		Reason:            CompactionPreventive,
+		Summary:              validSummary(),
+		ExpectedEpoch:        epoch,
+		CoveredThroughSeq:    coveredThroughSeq,
+		AnchorUserSeq:        anchorUserSeq,
+		PreservedFromSeq:     preservedFromSeq,
+		Model:                "claude-sonnet-4-5",
+		Reason:               CompactionPreventive,
+		InputTokensBefore:    100,
+		EstimatedTokensAfter: 40,
 	}
 }
 
