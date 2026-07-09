@@ -292,7 +292,7 @@ func TestEngine_SendPromptExpandsSlashCommand(t *testing.T) {
 	// user promovido entre sus eventos.
 	lastUserPrompt := func(sessionID, text string) string {
 		t.Helper()
-		if err := e.SendPrompt(sessionID, text); err != nil {
+		if _, err := e.SendPrompt(sessionID, text); err != nil {
 			t.Fatalf("SendPrompt(%s, %s) = %v, se esperaba nil", sessionID, text, err)
 		}
 		events, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil)
@@ -332,7 +332,7 @@ func TestEngine_StreamsSessionEventsAndSignalsRunDone(t *testing.T) {
 
 	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: fake, Store: session.NewMemoryStore()})
 
-	if err := e.SendPrompt("s1", "hola"); err != nil {
+	if _, err := e.SendPrompt("s1", "hola"); err != nil {
 		t.Fatalf("SendPrompt(s1, hola) = %v, se esperaba nil", err)
 	}
 
@@ -375,7 +375,7 @@ func TestEngine_GatedBashApprovedRunsAndSettles(t *testing.T) {
 	provider := newTurnProvider(gatedBashTurns("echo hola-gate")...)
 	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 
-	if err := e.SendPrompt("s1", "corre el comando"); err != nil {
+	if _, err := e.SendPrompt("s1", "corre el comando"); err != nil {
 		t.Fatalf("SendPrompt(s1, corre el comando) = %v, se esperaba nil", err)
 	}
 
@@ -404,7 +404,7 @@ func TestEngine_GatedBashDeniedFailsWithoutRunning(t *testing.T) {
 	provider := newTurnProvider(gatedBashTurns("touch " + forbidden)...)
 	e := NewEngine(EngineConfig{Root: root, Provider: provider, Store: session.NewMemoryStore()})
 
-	if err := e.SendPrompt("s1", "corre el comando"); err != nil {
+	if _, err := e.SendPrompt("s1", "corre el comando"); err != nil {
 		t.Fatalf("SendPrompt(s1, corre el comando) = %v, se esperaba nil", err)
 	}
 
@@ -445,7 +445,7 @@ func TestEngine_StopUnblocksPendingPermission(t *testing.T) {
 	})
 	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 
-	if err := e.SendPrompt("s1", "corre el comando"); err != nil {
+	if _, err := e.SendPrompt("s1", "corre el comando"); err != nil {
 		t.Fatalf("SendPrompt(s1, corre el comando) = %v, se esperaba nil", err)
 	}
 
@@ -565,7 +565,7 @@ func TestEngine_SendPlanPromptRunsInPlanMode(t *testing.T) {
 
 	// Envio normal posterior en la MISMA sesion: el modo es por envio (espejo
 	// de la app Wails) y el turno vuelve a anunciar las tools de build.
-	if err := e.SendPrompt("s1", "hazlo"); err != nil {
+	if _, err := e.SendPrompt("s1", "hazlo"); err != nil {
 		t.Fatalf("SendPrompt(s1, hazlo) = %v, se esperaba nil", err)
 	}
 	if _, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil); done.Err != "" {
@@ -609,7 +609,7 @@ func TestEngine_ToolResultNeverPrecedesAssistantMessageInHistory(t *testing.T) {
 	provider.delayStepEnded = 100 * time.Millisecond
 	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 
-	if err := e.SendPrompt("s1", "lee eso"); err != nil {
+	if _, err := e.SendPrompt("s1", "lee eso"); err != nil {
 		t.Fatalf("SendPrompt(s1, lee eso) = %v, se esperaba nil", err)
 	}
 	if _, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil); done.Err != "" {
@@ -675,7 +675,7 @@ func TestEngine_CapturesSessionCwdOnFirstPrompt(t *testing.T) {
 	)
 	e := NewEngine(EngineConfig{Root: root, Provider: fake, Store: store})
 
-	if err := e.SendPrompt("s1", "hola"); err != nil {
+	if _, err := e.SendPrompt("s1", "hola"); err != nil {
 		t.Fatalf("SendPrompt(s1, hola) = %v, se esperaba nil", err)
 	}
 	if _, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil); done.Err != "" {
@@ -732,7 +732,7 @@ func TestEngine_CapturesSessionCwdOnce(t *testing.T) {
 	e := NewEngine(EngineConfig{Root: root, Provider: fake, Store: store})
 
 	for i, prompt := range []string{"primer prompt", "segundo prompt"} {
-		if err := e.SendPrompt("s1", prompt); err != nil {
+		if _, err := e.SendPrompt("s1", prompt); err != nil {
 			t.Fatalf("SendPrompt #%d (s1, %q) = %v, se esperaba nil", i+1, prompt, err)
 		}
 		if _, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil); done.Err != "" {
@@ -758,5 +758,125 @@ func TestEngine_CapturesSessionCwdOnce(t *testing.T) {
 	}
 	if first := events[0]; first.Kind != session.KindSessionCwd || first.Text != root {
 		t.Errorf("primer evento del log = {Kind:%q Text:%q}, quiero {Kind:%q Text:%q}: el unico Session.Cwd debe ser el primero", first.Kind, first.Text, session.KindSessionCwd, root)
+	}
+}
+
+func TestEngine_SendPromptNewCreatesFreshDurableSession(t *testing.T) {
+	// /new es un comando reservado de la TUI: al recibirlo, el Engine debe
+	// abrir otra sesion durable en vez de tratarlo como un prompt para la
+	// sesion actual o resolverlo como una skill.
+	root := t.TempDir()
+	store := session.NewMemoryStore()
+	if _, err := store.AppendEvent(context.Background(), "s1", session.SessionEvent{
+		Kind: session.KindSessionCwd,
+		Text: root,
+	}); err != nil {
+		t.Fatalf("store.AppendEvent(s1, Session.Cwd) = %v, se esperaba nil", err)
+	}
+	e := NewEngine(EngineConfig{
+		Root:     root,
+		Provider: llm.NewFakeProvider(llm.Event{Kind: llm.StepEnded}),
+		Store:    store,
+	})
+
+	if _, err := e.SendPrompt("s1", "/new"); err != nil {
+		t.Fatalf("SendPrompt(s1, /new) = %v, se esperaba nil", err)
+	}
+
+	sessions, err := store.Sessions(context.Background())
+	if err != nil {
+		t.Fatalf("store.Sessions() = %v, se esperaba nil", err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("store.Sessions() contiene %d sesiones, se esperaban 2: /new debe abrir una sesion durable nueva sin enviar el comando a s1", len(sessions))
+	}
+}
+
+func TestModel_SubmittingNewActivatesFreshSessionForFuturePrompts(t *testing.T) {
+	// TRIANGULATE: crear la fila durable no basta. El composer debe cambiar al
+	// ID nuevo para que el siguiente prompt no vuelva a la sesion anterior.
+	root := t.TempDir()
+	store := session.NewMemoryStore()
+	if _, err := store.AppendEvent(context.Background(), "s1", session.SessionEvent{
+		Kind: session.KindSessionCwd,
+		Text: root,
+	}); err != nil {
+		t.Fatalf("store.AppendEvent(s1, Session.Cwd) = %v, se esperaba nil", err)
+	}
+	e := NewEngine(EngineConfig{
+		Root:     root,
+		Provider: llm.NewFakeProvider(llm.Event{Kind: llm.StepEnded}),
+		Store:    store,
+	})
+	m := NewModel(e, "s1", e.Events())
+
+	m = typeRunes(t, m, "/new")
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	sessions, err := store.Sessions(context.Background())
+	if err != nil {
+		t.Fatalf("store.Sessions() = %v, se esperaba nil", err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("store.Sessions() contiene %d sesiones, se esperaban 2", len(sessions))
+	}
+	newSessionID := ""
+	for _, s := range sessions {
+		if s.ID != "s1" {
+			newSessionID = s.ID
+			break
+		}
+	}
+	if newSessionID == "" {
+		t.Fatal("no se encontro la sesion creada por /new")
+	}
+	m = typeRunes(t, m, "continua aqui")
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	_, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil)
+	if done.Err != "" {
+		t.Fatalf("RunDoneMsg.Err = %q, se esperaba corrida limpia", done.Err)
+	}
+	messages, err := store.Messages(context.Background(), newSessionID, 0)
+	if err != nil {
+		t.Fatalf("store.Messages(%s, 0) = %v, se esperaba nil", newSessionID, err)
+	}
+	if len(messages) != 1 || messages[0].Text != "continua aqui" {
+		t.Fatalf("mensajes de %s = %+v, se esperaba que el siguiente prompt se enviara a la sesion nueva", newSessionID, messages)
+	}
+}
+
+func TestEngine_SendPromptNewWithArgumentsRemainsRegularPrompt(t *testing.T) {
+	// TRIANGULATE: solo el literal exacto /new esta reservado. Con argumentos,
+	// el texto conserva el camino normal de slash-command/prompt y no abre otra
+	// sesion durable.
+	root := t.TempDir()
+	store := session.NewMemoryStore()
+	e := NewEngine(EngineConfig{
+		Root:     root,
+		Provider: llm.NewFakeProvider(llm.Event{Kind: llm.StepEnded}),
+		Store:    store,
+	})
+
+	if _, err := e.SendPrompt("s1", "/new algo"); err != nil {
+		t.Fatalf("SendPrompt(s1, /new algo) = %v, se esperaba nil", err)
+	}
+	_, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil)
+	if done.Err != "" {
+		t.Fatalf("RunDoneMsg.Err = %q, se esperaba corrida limpia", done.Err)
+	}
+
+	sessions, err := store.Sessions(context.Background())
+	if err != nil {
+		t.Fatalf("store.Sessions() = %v, se esperaba nil", err)
+	}
+	if len(sessions) != 1 || sessions[0].ID != "s1" {
+		t.Fatalf("store.Sessions() = %+v, se esperaba solo la sesion original s1", sessions)
+	}
+	messages, err := store.Messages(context.Background(), "s1", 0)
+	if err != nil {
+		t.Fatalf("store.Messages(s1, 0) = %v, se esperaba nil", err)
+	}
+	if len(messages) != 1 || messages[0].Text != "/new algo" {
+		t.Fatalf("mensajes de s1 = %+v, se esperaba el prompt literal /new algo", messages)
 	}
 }

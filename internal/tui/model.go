@@ -30,7 +30,9 @@ type leaderTimeoutMsg struct{ generation uint64 }
 
 // Agent es la superficie del engine que la TUI necesita para operar la sesion.
 type Agent interface {
-	SendPrompt(sessionID, text string) error
+	// SendPrompt devuelve el ID de la sesion activa; /new exacto devuelve una
+	// sesion durable distinta de la actual.
+	SendPrompt(sessionID, text string) (string, error)
 	// SendPlanPrompt envia el prompt por el camino de plan-mode.
 	SendPlanPrompt(sessionID, text string) error
 	// AcceptPlan acepta el plan presentado: vuelve a modo normal y ejecuta.
@@ -625,6 +627,22 @@ func (m Model) submitPrompt() (Model, tea.Cmd) {
 	text := m.input.Value()
 	if text == "" || m.agent == nil {
 		return m, nil
+	}
+	if text == "/new" {
+		newSessionID, err := m.agent.SendPrompt(m.sessionID, text)
+		if err != nil {
+			return m.appendError(err.Error()).syncViewport(), nil
+		}
+		m.sessionID = newSessionID
+		m.entries = nil
+		m.history = nil
+		m.histIdx = 0
+		m.draft = ""
+		m.planMode = false
+		m.working = false
+		m.revealing = false
+		m.input.SetValue("")
+		return m.resizeViewport(), nil
 	}
 	if m.planMode {
 		m.agent.SendPlanPrompt(m.sessionID, text)

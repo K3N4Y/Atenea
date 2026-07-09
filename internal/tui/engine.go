@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"log"
+	"strconv"
 	"sync"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -142,12 +144,25 @@ func (e *Engine) setMode(sessionID string, m session.Mode) {
 	e.modes[sessionID] = m
 }
 
-// SendPrompt encola un prompt del usuario por el camino normal. Fija modo
-// normal primero: una sesion que estaba en plan-mode vuelve a las tools
-// normales al enviar (el modo es por envio, como en la app Wails).
-func (e *Engine) SendPrompt(sessionID, text string) error {
+// SendPrompt encola un prompt del usuario por el camino normal y devuelve el
+// ID de la sesion activa. Para /new exacto crea y devuelve una sesion durable
+// nueva; en cualquier otro caso conserva sessionID. Fija modo normal primero:
+// una sesion que estaba en plan-mode vuelve a las tools normales al enviar.
+func (e *Engine) SendPrompt(sessionID, text string) (string, error) {
+	if text == "/new" {
+		newSessionID := "tui-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+		_, err := e.store.AppendEvent(context.Background(), newSessionID,
+			session.SessionEvent{Kind: session.KindSessionCwd, Text: e.root})
+		if err != nil {
+			return "", err
+		}
+		return newSessionID, nil
+	}
 	e.setMode(sessionID, session.ModeNormal)
-	return e.send(sessionID, text)
+	if err := e.send(sessionID, text); err != nil {
+		return "", err
+	}
+	return sessionID, nil
 }
 
 // SendPlanPrompt encola el prompt en plan-mode: investigacion de solo lectura

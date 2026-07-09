@@ -28,9 +28,9 @@ type fakeAgent struct {
 	accepted []string
 }
 
-func (f *fakeAgent) SendPrompt(sessionID, text string) error {
+func (f *fakeAgent) SendPrompt(sessionID, text string) (string, error) {
 	f.sent = append(f.sent, struct{ sessionID, text string }{sessionID, text})
-	return nil
+	return sessionID, nil
 }
 
 func (f *fakeAgent) SendPlanPrompt(sessionID, text string) error {
