@@ -9,3 +9,4 @@ frontend/dist
 .env
 .env.*
 *.db
+.worktrees/
