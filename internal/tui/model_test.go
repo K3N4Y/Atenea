@@ -3365,6 +3365,63 @@ func TestModel_LeaderSpaceE_TogglesClosed(t *testing.T) {
 	}
 }
 
+func TestModel_KeyRunesBatch_LeaderSpaceEOpensTree(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+		return []string{"go.mod", "internal/tui/model.go"}, nil
+	})
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" e")})
+
+	if !m.treeOpen {
+		t.Fatal(`single KeyRunes batch " e" must open the file tree`)
+	}
+	if got := m.input.Value(); got != "" {
+		t.Fatalf("input.Value() = %q, leader batch must not insert into composer", got)
+	}
+	if got := m.View(); !strings.Contains(got, "explorer") {
+		t.Fatalf("View() = %q, open tree must render explorer title", got)
+	}
+}
+
+func TestModel_KeyRunesBatch_LeaderSpaceEParity(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		batch    string
+		wantOpen bool
+	}{
+		{name: "two pairs close", batch: " e e", wantOpen: false},
+		{name: "three pairs open", batch: " e e e", wantOpen: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+				return []string{"go.mod", "internal/tui/model.go"}, nil
+			})
+
+			m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tc.batch)})
+
+			if got := m.treeOpen; got != tc.wantOpen {
+				t.Fatalf("treeOpen = %v, want %v after batch %q", got, tc.wantOpen, tc.batch)
+			}
+			if got := m.input.Value(); got != "" {
+				t.Fatalf("input.Value() = %q, repeated leader pairs must not insert into composer", got)
+			}
+		})
+	}
+}
+
+func TestModel_KeyRunesBatch_NormalTextInsertsIntoComposer(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil)
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola mundo")})
+
+	if got, want := m.input.Value(), "hola mundo"; got != want {
+		t.Fatalf("input.Value() = %q, want %q: normal text batch must preserve every rune in order", got, want)
+	}
+	if m.treeOpen || m.leaderPending {
+		t.Fatalf("treeOpen=%v leaderPending=%v, normal text batch must not trigger leader state", m.treeOpen, m.leaderPending)
+	}
+}
+
 func TestModel_TreeKeys_NavigateAndOpenFileViewer(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil).
 		WithCompletions(nil, func() ([]string, error) {

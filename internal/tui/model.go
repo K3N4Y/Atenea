@@ -200,6 +200,7 @@ type Model struct {
 	leaderPending    bool
 	leaderGeneration uint64
 	treeOpen         bool
+	treeLoaded       bool
 	tree             fileTree
 	treeCursor       int
 	treeOffset       int
@@ -439,6 +440,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.hasPendingPlan() {
 		return m.resolvePlanKey(msg)
 	}
+	if msg.Type == tea.KeyRunes && len(msg.Runes) > 1 {
+		return m.handleKeyRuneBatch(msg)
+	}
 	m.focus = m.normalizedFocus()
 	if m.focus == viewerFocus {
 		return m.handleFileViewerKey(msg)
@@ -485,12 +489,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.input.Value() == "" && (msg.Type == tea.KeySpace || keyRune(msg) == " ") {
-		m.leaderPending = true
-		m.leaderGeneration++
-		generation := m.leaderGeneration
-		return m, tea.Tick(time.Second, func(time.Time) tea.Msg {
-			return leaderTimeoutMsg{generation: generation}
-		})
+		return m.startLeader()
 	}
 	switch msg.Type {
 	case tea.KeyEsc:
@@ -532,6 +531,37 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m.refreshMenu(), cmd
 }
 
+func (m Model) handleKeyRuneBatch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	for _, key := range msg.Runes {
+		next, _ := m.handleKey(tea.KeyMsg{
+			Type:  tea.KeyRunes,
+			Runes: []rune{key},
+			Alt:   msg.Alt,
+		})
+		nextModel, ok := next.(Model)
+		if !ok {
+			return next, nil
+		}
+		m = nextModel
+	}
+	if m.leaderPending {
+		return m, leaderTimeout(m.leaderGeneration)
+	}
+	return m, nil
+}
+
+func (m Model) startLeader() (Model, tea.Cmd) {
+	m.leaderPending = true
+	m.leaderGeneration++
+	return m, leaderTimeout(m.leaderGeneration)
+}
+
+func leaderTimeout(generation uint64) tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg {
+		return leaderTimeoutMsg{generation: generation}
+	})
+}
+
 func keyRune(msg tea.KeyMsg) string {
 	if msg.Type != tea.KeyRunes {
 		return ""
@@ -555,19 +585,29 @@ func (m Model) toggleTree() Model {
 	m.focus = explorerFocus
 	m.treeCursor = 0
 	m.treeOffset = 0
+	m = m.loadTreeOnce()
+	return resizeViewport()
+}
+
+func (m Model) loadTreeOnce() Model {
+	if m.treeLoaded {
+		return m
+	}
 	m.treeError = ""
 	if m.listFiles == nil {
 		m.tree = newFileTree(nil)
-		return resizeViewport()
+		m.treeLoaded = true
+		return m
 	}
 	files, err := m.listFiles()
 	if err != nil {
 		m.tree = newFileTree(nil)
 		m.treeError = err.Error()
-		return resizeViewport()
+		return m
 	}
 	m.tree = newFileTree(files)
-	return resizeViewport()
+	m.treeLoaded = true
+	return m
 }
 
 func (m Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -579,12 +619,7 @@ func (m Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if msg.Type == tea.KeySpace || keyRune(msg) == " " {
-		m.leaderPending = true
-		m.leaderGeneration++
-		generation := m.leaderGeneration
-		return m, tea.Tick(time.Second, func(time.Time) tea.Msg {
-			return leaderTimeoutMsg{generation: generation}
-		})
+		return m.startLeader()
 	}
 	rows := m.tree.visibleRows()
 	switch {

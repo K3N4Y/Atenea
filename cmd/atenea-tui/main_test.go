@@ -118,6 +118,57 @@ func TestTUI_FileTreeMouseWheelAndClickUnderPTY(t *testing.T) {
 	}
 }
 
+func TestTUI_ExplorerLeaderRapidSequencesUnderPTY(t *testing.T) {
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "atenea-tui")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea-tui")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, output)
+	}
+	cmd := exec.Command(binary)
+	cmd.Dir = filepath.Join(repoRoot, "cmd/atenea-tui/testdata/file-viewer/project")
+	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY=", "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"))
+	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = terminal.Close(); _ = cmd.Wait() }()
+	var output lockedBuffer
+	done := make(chan struct{})
+	go func() { _, _ = io.Copy(&output, terminal); close(done) }()
+	waitForPTYText(t, &output, "build · demo")
+
+	before := output.String()
+	if _, err := terminal.Write(bytes.Repeat([]byte(" e"), 2001)); err != nil {
+		t.Fatal(err)
+	}
+	latest := waitForStablePTYOutputAfter(t, &output, before)
+	if !strings.Contains(latest, "explorer *") || !strings.Contains(latest, "hello.go") {
+		t.Fatalf("rapid Space+e sequences should leave explorer open after an odd count; latest PTY output:\n%s", latest)
+	}
+
+	before = output.String()
+	if _, err := terminal.Write([]byte(" e")); err != nil {
+		t.Fatal(err)
+	}
+	latest = waitForStablePTYOutputAfter(t, &output, before)
+	if strings.Contains(latest, "explorer") || strings.Contains(latest, "hello.go") {
+		t.Fatalf("one more Space+e sequence should close the explorer after the rapid burst; latest PTY output:\n%s", latest)
+	}
+	if _, err := terminal.Write([]byte("\x03")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("TUI did not exit")
+	}
+}
+
 func waitForPTYText(t *testing.T, output *lockedBuffer, want string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
@@ -128,6 +179,27 @@ func waitForPTYText(t *testing.T, output *lockedBuffer, want string) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("PTY output did not contain %q:\n%s", want, ansi.Strip(output.String()))
+}
+
+func waitForStablePTYOutputAfter(t *testing.T, output *lockedBuffer, previous string) string {
+	t.Helper()
+	deadline := time.Now().Add(8 * time.Second)
+	quietSince := time.Now()
+	last := output.String()
+	for time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+		current := output.String()
+		if current == last {
+			if len(current) > len(previous) && time.Since(quietSince) >= 200*time.Millisecond {
+				return ansi.Strip(current[len(previous):])
+			}
+			continue
+		}
+		last = current
+		quietSince = time.Now()
+	}
+	t.Fatalf("PTY output did not settle after rapid input:\n%s", ansi.Strip(last))
+	return ""
 }
 
 type lockedBuffer struct {
