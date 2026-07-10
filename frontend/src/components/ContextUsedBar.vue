@@ -49,11 +49,15 @@ const title = computed(() => {
       :title="title"
       class="h-1.5 w-16 overflow-hidden rounded-soft bg-black/[0.08]"
     >
-      <div class="h-full rounded-soft bg-accent" :style="{ width: pct + '%' }"></div>
+      <div
+        class="h-full rounded-soft bg-accent"
+        :style="{ width: pct + '%' }"
+      ></div>
     </div>
     <span class="tabular-nums">{{ pct }}%</span>
     <span class="tabular-nums opacity-80">
-      {{ formatTokens(usage.inputTokens) }} in · {{ formatTokens(usage.outputTokens) }} out
+      {{ formatTokens(usage.inputTokens) }} in ·
+      {{ formatTokens(usage.outputTokens) }} out
     </span>
   </div>
 </template>

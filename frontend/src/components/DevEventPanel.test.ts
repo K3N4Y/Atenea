@@ -18,7 +18,9 @@ vi.mock('../../wailsjs/go/main/App', () => ({
   ListProjectFiles: vi.fn(() => Promise.resolve([])),
   ListCommands: vi.fn(() => Promise.resolve([])),
 }))
-vi.mock('../../wailsjs/runtime/runtime', () => ({ EventsOn: vi.fn(() => () => {}) }))
+vi.mock('../../wailsjs/runtime/runtime', () => ({
+  EventsOn: vi.fn(() => () => {}),
+}))
 
 import DevEventPanel from './DevEventPanel.vue'
 import { useChatStore } from '../stores/chat'

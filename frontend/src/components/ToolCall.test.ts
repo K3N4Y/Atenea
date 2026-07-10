@@ -18,7 +18,14 @@ const tool = (over: Record<string, unknown> = {}) => ({
   },
 })
 
-const EDIT_DIFF = ['--- a/foo.go', '+++ b/foo.go', '@@ -1 +1 @@', '-a', '+b', ''].join('\n')
+const EDIT_DIFF = [
+  '--- a/foo.go',
+  '+++ b/foo.go',
+  '@@ -1 +1 @@',
+  '-a',
+  '+b',
+  '',
+].join('\n')
 
 describe('ToolCall', () => {
   it('read en curso: "Reading" + solo el nombre del archivo (§10)', () => {
@@ -71,7 +78,13 @@ describe('ToolCall', () => {
   })
 
   it('write con diff: renderiza el diff', () => {
-    const diff = ['--- a/n.txt', '+++ b/n.txt', '@@ -0,0 +1 @@', '+nuevo', ''].join('\n')
+    const diff = [
+      '--- a/n.txt',
+      '+++ b/n.txt',
+      '@@ -0,0 +1 @@',
+      '+nuevo',
+      '',
+    ].join('\n')
     const wrapper = mount(ToolCall, {
       props: tool({ name: 'write', output: '[n.txt#cd34]', diff }),
     })

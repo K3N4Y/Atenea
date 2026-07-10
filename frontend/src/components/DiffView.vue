@@ -3,7 +3,12 @@ import { computed, ref } from 'vue'
 import { PhCaretRight } from '@phosphor-icons/vue'
 import hljs from 'highlight.js/lib/common'
 import DOMPurify from 'dompurify'
-import { parseDiff, pathFromDiff, langForPath, type DiffLine } from '../lib/diff'
+import {
+  parseDiff,
+  pathFromDiff,
+  langForPath,
+  type DiffLine,
+} from '../lib/diff'
 import { basename } from '../lib/path'
 
 // Render del diff de edit/write (identidad §8): cabecera con el archivo y, debajo,
@@ -22,7 +27,9 @@ const lang = computed(() => {
   return hljs.getLanguage(l) ? l : 'plaintext'
 })
 
-const lines = computed(() => parseDiff(props.diff).filter((l) => l.type !== 'meta'))
+const lines = computed(() =>
+  parseDiff(props.diff).filter((l) => l.type !== 'meta'),
+)
 
 // Colapsar el diff (click en la cabecera): util cuando el cambio es largo y solo
 // se quiere ver el archivo. Empieza expandido. La cabecera resume +adds/-dels.
@@ -92,7 +99,10 @@ const lineClass: Record<DiffLine['type'], string> = {
               <span class="px-3 py-0.5 opacity-70">{{ l.text }}</span>
             </template>
             <template v-else>
-              <span class="w-5 shrink-0 select-none px-1 text-center opacity-40">{{ gutter(l) }}</span>
+              <span
+                class="w-5 shrink-0 select-none px-1 text-center opacity-40"
+                >{{ gutter(l) }}</span
+              >
               <span class="hljs flex-1 pr-3" v-html="codeHtml(l.text)"></span>
             </template>
           </div>

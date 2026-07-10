@@ -3,7 +3,16 @@ import { parseDiff, pathFromDiff, langForPath, buildSideBySide } from './diff'
 
 // Un diff unificado tipico que produce el backend (go-difflib): headers de archivo
 // con a/ b/, un header de hunk @@ y el cuerpo con prefijos un caracter.
-const SAMPLE = ['--- a/foo.go', '+++ b/foo.go', '@@ -1,3 +1,3 @@', ' a', '-b', '+B', ' c', ''].join('\n')
+const SAMPLE = [
+  '--- a/foo.go',
+  '+++ b/foo.go',
+  '@@ -1,3 +1,3 @@',
+  ' a',
+  '-b',
+  '+B',
+  ' c',
+  '',
+].join('\n')
 
 describe('parseDiff', () => {
   it('clasifica meta, hunk, context, add y del', () => {
@@ -35,9 +44,15 @@ describe('parseDiff', () => {
   })
 
   it('una linea de contexto que contiene @@ no es un header de hunk', () => {
-    const raw = ['--- a/x', '+++ b/x', '@@ -1,2 +1,2 @@', ' @@ no soy header', '-old', '+new', ''].join(
-      '\n',
-    )
+    const raw = [
+      '--- a/x',
+      '+++ b/x',
+      '@@ -1,2 +1,2 @@',
+      ' @@ no soy header',
+      '-old',
+      '+new',
+      '',
+    ].join('\n')
     const types = parseDiff(raw).map((l) => l.type)
     // solo UN hunk; la linea " @@..." es context
     expect(types.filter((t) => t === 'hunk')).toHaveLength(1)
@@ -45,7 +60,14 @@ describe('parseDiff', () => {
   })
 
   it('archivo nuevo: todo adicion', () => {
-    const raw = ['--- a/n.txt', '+++ b/n.txt', '@@ -0,0 +1,2 @@', '+x', '+y', ''].join('\n')
+    const raw = [
+      '--- a/n.txt',
+      '+++ b/n.txt',
+      '@@ -0,0 +1,2 @@',
+      '+x',
+      '+y',
+      '',
+    ].join('\n')
     const types = parseDiff(raw).map((l) => l.type)
     expect(types.filter((t) => t === 'add')).toHaveLength(2)
     expect(types).not.toContain('del')
@@ -77,7 +99,15 @@ describe('buildSideBySide', () => {
   })
 
   it('mas dels que adds: la fila sobrante deja el lado derecho vacio', () => {
-    const raw = ['--- a/x', '+++ b/x', '@@ -1,2 +1,1 @@', '-a', '-b', '+C', ''].join('\n')
+    const raw = [
+      '--- a/x',
+      '+++ b/x',
+      '@@ -1,2 +1,1 @@',
+      '-a',
+      '-b',
+      '+C',
+      '',
+    ].join('\n')
     const rows = buildSideBySide(raw).filter((r) => r.hunk === null)
     expect(rows[0].left.kind).toBe('del')
     expect(rows[0].right.kind).toBe('add')
@@ -86,7 +116,14 @@ describe('buildSideBySide', () => {
   })
 
   it('archivo nuevo (solo adds): cada fila deja el lado izquierdo vacio', () => {
-    const raw = ['--- /dev/null', '+++ b/n.txt', '@@ -0,0 +1,2 @@', '+x', '+y', ''].join('\n')
+    const raw = [
+      '--- /dev/null',
+      '+++ b/n.txt',
+      '@@ -0,0 +1,2 @@',
+      '+x',
+      '+y',
+      '',
+    ].join('\n')
     const rows = buildSideBySide(raw).filter((r) => r.hunk === null)
     expect(rows).toHaveLength(2)
     expect(rows[0].left).toEqual({ kind: 'empty', text: '', num: null })

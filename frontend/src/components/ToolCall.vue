@@ -16,7 +16,9 @@ const props = defineProps<{ item: ToolItem }>()
 // edit/write traen un diff unificado (solo-UI): se renderiza coloreado con
 // DiffView en vez del output plano. Sin diff (sesiones viejas, bash) cae al <pre>.
 const isDiff = computed(
-  () => (props.item.name === 'edit' || props.item.name === 'write') && !!props.item.diff,
+  () =>
+    (props.item.name === 'edit' || props.item.name === 'write') &&
+    !!props.item.diff,
 )
 
 // approve/deny carry the callID up (MessageList -> ChatView -> store): the
@@ -76,7 +78,12 @@ const isPending = computed(() => props.item.status === 'pending')
   </div>
 
   <div v-else-if="isSkill" class="flex items-center gap-2 text-sm opacity-70">
-    <PhCheck v-if="item.status === 'success'" :size="16" weight="bold" class="opacity-50" />
+    <PhCheck
+      v-if="item.status === 'success'"
+      :size="16"
+      weight="bold"
+      class="opacity-50"
+    />
     <PhCircleNotch
       v-else-if="item.status === 'running'"
       :size="16"

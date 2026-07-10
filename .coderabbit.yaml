@@ -1,0 +1,52 @@
+language: en-US
+
+reviews:
+  profile: assertive
+  request_changes_workflow: true
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  auto_review:
+    enabled: true
+    drafts: false
+  path_filters:
+    - "!frontend/wailsjs/**"
+    - "!frontend/node_modules/**"
+    - "!docs/frontend/node_modules/**"
+    - "!build/bin/**"
+    - "!atenea-tui"
+    - "!**/package-lock.json"
+  path_instructions:
+    - path: "**/*.go"
+      instructions: |
+        Review for simplicity, robustness, concurrency safety, and explicit
+        error handling. Require behavioral tests next to the code and use the
+        race detector when goroutines, channels, or shared state change.
+    - path: "internal/tui/**/*.go"
+      instructions: |
+        Prioritize visible regressions, keyboard and mouse navigation, narrow
+        terminal sizes, focus, scrolling, and pixel-perfect consistency.
+    - path: "cmd/atenea-tui/**/*.go"
+      instructions: |
+        Check end-to-end TUI behavior and require PTY tests when a change
+        affects real terminal interaction.
+    - path: "frontend/**/*.{ts,vue,css}"
+      instructions: |
+        Review accessibility, strict typing, UI states, responsive design, and
+        Vitest coverage. Avoid duplication and fragile styling.
+    - path: "**/*_test.go"
+      instructions: |
+        Check that tests describe behavior, fail for a useful reason, and cover
+        relevant happy paths, errors, and edge cases.
+    - path: ".github/workflows/**"
+      instructions: |
+        Review minimal permissions, actions pinned to current major versions,
+        deterministic caches, and commands that match the local quality gates.
+    - path: ".okf/**"
+      instructions: |
+        Check that documentation is written in English, includes YAML metadata,
+        and remains synchronized with actual behavior and architecture.
+
+chat:
+  auto_reply: true

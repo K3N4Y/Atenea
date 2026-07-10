@@ -27,7 +27,9 @@ export function b64ToBytes(b64: string): Uint8Array {
 // dispose que desuscribe y cierra el pty. El caller arranca el pty (StartPty)
 // cuando ya sabe el tamano; aca solo se cablea la E/S.
 export function connectTerminal(id: string, term: TermLike): () => void {
-  const off = EventsOn(ptyData(id), (b64: string) => term.write(b64ToBytes(b64)))
+  const off = EventsOn(ptyData(id), (b64: string) =>
+    term.write(b64ToBytes(b64)),
+  )
   term.onData((d) => WritePty(id, d))
   return () => {
     off()
