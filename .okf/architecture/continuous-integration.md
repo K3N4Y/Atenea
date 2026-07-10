@@ -23,10 +23,12 @@ Go checks, and vice versa.
 
 The Go job uses the version declared in `go.mod` and runs:
 
-1. `test -z "$(gofmt -l .)"`
-2. `go vet ./...`
-3. `go test ./...`
-4. `go test -race ./...`
+1. Create `frontend/dist/.gitkeep` so the root package's `go:embed` directive
+   has an input in clean checkouts without building the frontend.
+2. `test -z "$(gofmt -l .)"`
+3. `go vet ./...`
+4. `go test ./...`
+5. `go test -race ./...`
 
 The race detector is a required gate because the runner, tools, and TUI use
 goroutines, channels, and shared state.
@@ -46,6 +48,8 @@ All frontend commands run from `frontend/`.
 The workflow does not run `npm run build`, `wails build`, or platform packaging.
 Those gates should be introduced together when desktop release work resumes so
 the required native dependencies and platform matrix are designed explicitly.
+The placeholder created by the Go job exists only to satisfy compile-time asset
+embedding and is not treated as a production frontend build.
 
 ## CodeRabbit
 

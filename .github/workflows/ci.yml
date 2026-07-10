@@ -26,6 +26,9 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
+      - name: Prepare embedded frontend assets
+        run: mkdir -p frontend/dist && touch frontend/dist/.gitkeep
+
       - name: Check formatting
         run: test -z "$(gofmt -l .)"
 

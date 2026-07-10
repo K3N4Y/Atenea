@@ -25,6 +25,8 @@ Two independent jobs run in parallel:
 - Check out the repository.
 - Install the Go version declared by `go.mod` and cache module/build data using
   `go.sum`.
+- Create a temporary file under `frontend/dist` so `go:embed` can compile the
+  root package in a clean checkout without building the frontend.
 - Fail when `gofmt -l .` reports files.
 - Run `go vet ./...`.
 - Run `go test ./...`.
