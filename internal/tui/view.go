@@ -578,12 +578,15 @@ func (m Model) View() string {
 		if !m.ready {
 			contentWidth = -1
 		}
+		if m.ready && m.treeOpen && m.treePanelWidth() >= m.width {
+			contentWidth = m.width
+		}
 		content := m.renderFileViewer(contentWidth, max(m.height, 0))
 		if !m.treeOpen {
 			return content
 		}
 		if m.ready && m.treePanelWidth() >= m.width {
-			return m.treeView()
+			return content
 		}
 		return lipgloss.JoinHorizontal(lipgloss.Top, m.treeView(), " ", content)
 	}

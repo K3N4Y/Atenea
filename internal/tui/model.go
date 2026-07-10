@@ -198,6 +198,7 @@ type Model struct {
 	treeError        string
 	fileReader       FileReader
 	viewer           fileViewer
+	viewerReturnY    int
 }
 
 // NewModel construye el Model raiz de la TUI.
@@ -331,6 +332,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKey(ev)
 	case tea.MouseMsg:
+		if m.viewer.active() {
+			m.scrollFileViewerMouse(ev)
+			return m, nil
+		}
 		// El clic izquierdo sobre un bloque de pensamiento asentado alterna su
 		// estado expandido (ver toggleThinkingAt): paridad con el ThinkingBlock
 		// del escritorio, que se expande/colapsa con un clic. Con WithMouseCellMotion
@@ -360,6 +365,18 @@ func (m Model) scrollViewport(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.viewport, cmd = m.viewport.Update(msg)
 	return m, cmd
+}
+
+func (m *Model) scrollFileViewerMouse(msg tea.MouseMsg) {
+	if msg.Action != tea.MouseActionPress {
+		return
+	}
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		m.viewer.scroll(-3, m.fileViewerHeight())
+	case tea.MouseButtonWheelDown:
+		m.viewer.scroll(3, m.fileViewerHeight())
+	}
 }
 
 // handleKey procesa el teclado en orden de prioridad: Ctrl+C detiene y sale
@@ -576,6 +593,7 @@ func (m Model) fileViewerHeight() int {
 }
 
 func (m Model) openTreeFile(path string) Model {
+	m.viewerReturnY = m.viewport.YOffset
 	if m.fileReader == nil {
 		m.viewer = openFileViewerError(path, errors.New("lector de archivos no configurado"))
 		return m
@@ -595,6 +613,7 @@ func (m Model) handleFileViewerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case msg.Type == tea.KeyEsc:
 		m.viewer = fileViewer{}
+		m.viewport.SetYOffset(m.viewerReturnY)
 	case msg.Type == tea.KeyDown || keyRune(msg) == "j":
 		m.viewer.scroll(1, height)
 	case msg.Type == tea.KeyUp || keyRune(msg) == "k":

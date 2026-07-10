@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -3649,6 +3650,84 @@ func TestModel_FileViewerScrollCapturesKeysButPermissionWins(t *testing.T) {
 	}
 }
 
+func TestModel_FileViewerMouseWheelScrollsFileWithoutMovingHiddenTranscript(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).
+		WithCompletions(nil, func() ([]string, error) { return []string{"many.txt"}, nil }).
+		WithFileReader(viewerReader(map[string][]byte{"many.txt": []byte("1\n2\n3\n4\n5\n6\n7\n8\n")}))
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 5})
+	for i := 0; i < 20; i++ {
+		m = apply(t, m, EventMsg{Message: &session.Message{ID: fmt.Sprintf("u%d", i), Role: session.RoleUser, Text: fmt.Sprintf("message-%d", i)}})
+	}
+	m = m.toggleTree()
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyPgDown})
+	beforeOffset, beforeTranscriptOffset := m.viewer.offset, m.viewport.YOffset
+	m = apply(t, m, wheelUp)
+	if m.viewer.offset >= beforeOffset {
+		t.Fatalf("wheel up viewer offset = %d, want less than %d", m.viewer.offset, beforeOffset)
+	}
+	if m.viewport.YOffset != beforeTranscriptOffset {
+		t.Fatalf("hidden transcript offset = %d, want %d", m.viewport.YOffset, beforeTranscriptOffset)
+	}
+}
+
+func TestModel_FileViewerTrackpadScrollKeepsTabbedRowsWithinLayout(t *testing.T) {
+	content := strings.Repeat("\tfield string // comment that must not wrap the terminal row\n", 12)
+	m := NewModel(&fakeAgent{}, "s1", nil).
+		WithCompletions(nil, func() ([]string, error) { return []string{"tabs.go"}, nil }).
+		WithFileReader(viewerReader(map[string][]byte{"tabs.go": []byte(content)}))
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 6})
+	m = m.toggleTree()
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	for range 12 {
+		m = apply(t, m, wheelDown)
+	}
+	if got, want := m.viewer.offset, 7; got != want {
+		t.Fatalf("viewer offset after continuous wheel events = %d, want %d", got, want)
+	}
+	for _, line := range strings.Split(m.View(), "\n") {
+		if strings.Contains(line, "\t") {
+			t.Fatalf("View() retains terminal tab: %q", line)
+		}
+		if width := ansi.StringWidth(line); width > 80 {
+			t.Fatalf("View() overflows terminal width %d: %q", width, line)
+		}
+	}
+}
+
+func TestModel_FileViewerMouseClickDoesNotToggleHiddenThinking(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).
+		WithCompletions(nil, func() ([]string, error) { return []string{"one.txt"}, nil }).
+		WithFileReader(viewerReader(map[string][]byte{"one.txt": []byte("one\n")}))
+	m.entries = []entry{{kind: entryReasoning, text: "hidden thought", revealed: len("hidden thought"), duration: time.Second}}
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 8})
+	m = m.toggleTree()
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, Y: 0})
+	if m.entries[0].expanded {
+		t.Fatal("clicking the viewer must not toggle hidden transcript thinking")
+	}
+}
+
+func TestModel_FileViewerPreservesTranscriptPositionAcrossIncomingEvents(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).
+		WithCompletions(nil, func() ([]string, error) { return []string{"one.txt"}, nil }).
+		WithFileReader(viewerReader(map[string][]byte{"one.txt": []byte("one\n")}))
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 8})
+	for i := 0; i < 20; i++ {
+		m = apply(t, m, EventMsg{Message: &session.Message{ID: fmt.Sprintf("u%d", i), Role: session.RoleUser, Text: fmt.Sprintf("message-%d", i)}})
+	}
+	m = apply(t, m, wheelUp)
+	beforeOffset := m.viewport.YOffset
+	m = m.toggleTree()
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = apply(t, m, EventMsg{Message: &session.Message{ID: "later", Role: session.RoleUser, Text: "later message"}})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.viewport.YOffset != beforeOffset {
+		t.Fatalf("transcript offset after viewer = %d, want %d", m.viewport.YOffset, beforeOffset)
+	}
+}
+
 func TestModel_TreeEnterFileShowsReadFailure(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil).
 		WithCompletions(nil, func() ([]string, error) { return []string{"gone.go"}, nil }).
@@ -3689,9 +3768,35 @@ func TestModel_FileViewerNarrowTerminalNeverOverflows(t *testing.T) {
 	m = apply(t, m, tea.WindowSizeMsg{Width: 12, Height: 4})
 	m = m.toggleTree()
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "long.go ·") || !strings.Contains(view, "package") {
+		t.Fatalf("narrow terminal must show the active file viewer: %q", view)
+	}
 	for _, line := range strings.Split(m.View(), "\n") {
 		if ansi.StringWidth(line) > 12 {
 			t.Fatalf("overflow: %q", line)
 		}
+	}
+}
+
+func TestModel_FileViewerResizeBetweenSplitAndFullScreenKeepsScroll(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).
+		WithCompletions(nil, func() ([]string, error) { return []string{"many.txt"}, nil }).
+		WithFileReader(viewerReader(map[string][]byte{"many.txt": []byte("1\n2\n3\n4\n5\n6\n7\n8\n")}))
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 5})
+	m = m.toggleTree()
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyPgDown})
+	beforeOffset := m.viewer.offset
+	m = apply(t, m, tea.WindowSizeMsg{Width: 12, Height: 4})
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "many.txt ·") || strings.Contains(view, "explorer") {
+		t.Fatalf("narrow viewer must fill the screen: %q", view)
+	}
+	if m.viewer.offset != beforeOffset {
+		t.Fatalf("viewer offset after narrow resize = %d, want %d", m.viewer.offset, beforeOffset)
+	}
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 5})
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "explorer") || !strings.Contains(view, "many.txt ·") {
+		t.Fatalf("wide viewer must restore split layout: %q", view)
 	}
 }

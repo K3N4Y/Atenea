@@ -97,7 +97,15 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
 
 - `Enter` on a file opens a read-only view in the main area;
  does not add `@ruta` or close the explorer. The view shows path,
- line numbers and highlighting when Chroma recognizes the language.
+ line numbers and highlighting when Chroma recognizes the language. The viewer
+ owns keyboard and mouse-wheel scrolling while active; clicks cannot alter the
+ hidden transcript, and `Esc` restores its saved scroll position. On a terminal
+ too narrow for the explorer column, the viewer takes the full screen until the
+ terminal is wide enough again. Syntax highlighting is reset at every rendered
+ file row, so multiline tokens (such as comments) cannot leak styles into the
+ explorer or another terminal row. Tabs are expanded to four spaces before
+ highlighting because terminal tab stops and ANSI width measurement disagree;
+ every source row therefore maps to exactly one terminal row while scrolling.
 - Does not allow editing or saving. Binaries, files larger than 1 MiB, empty or
  read errors show an explicit status.
 

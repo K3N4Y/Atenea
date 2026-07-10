@@ -16,6 +16,7 @@ import (
 )
 
 const maxFileViewerBytes = 1 << 20
+const fileViewerTabWidth = 4
 
 var (
 	ErrFileViewerBinary   = errors.New("archivo binario")
@@ -64,6 +65,7 @@ func openFileViewer(path string, content []byte) fileViewer {
 	}
 
 	normalized := strings.ReplaceAll(string(content), "\r\n", "\n")
+	normalized = strings.ReplaceAll(normalized, "\t", strings.Repeat(" ", fileViewerTabWidth))
 	lines := strings.Split(normalized, "\n")
 	if strings.HasSuffix(normalized, "\n") {
 		lines = lines[:len(lines)-1]
@@ -98,6 +100,11 @@ func highlightFile(path string, lines []string) []string {
 	highlighted := strings.Split(strings.TrimSuffix(output.String(), "\n"), "\n")
 	if len(highlighted) != len(lines) {
 		return lines
+	}
+	for index, line := range highlighted {
+		if !strings.HasSuffix(line, ansi.ResetStyle) {
+			highlighted[index] = line + ansi.ResetStyle
+		}
 	}
 	return highlighted
 }

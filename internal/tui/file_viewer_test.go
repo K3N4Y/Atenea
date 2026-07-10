@@ -56,6 +56,27 @@ func TestOpenFileViewer_UsesLexerAndPlainFallback(t *testing.T) {
 	}
 }
 
+func TestOpenFileViewer_ResetsSyntaxStyleAtEachLineBoundary(t *testing.T) {
+	viewer := openFileViewer("comment.go", []byte("/* first comment\nsecond comment */\npackage main\n"))
+	for index, line := range viewer.lines {
+		if !strings.HasSuffix(line, ansi.ResetStyle) {
+			t.Fatalf("line %d = %q, must reset ANSI style before the next terminal row", index, line)
+		}
+	}
+}
+
+func TestOpenFileViewer_ExpandsTabsBeforeHighlighting(t *testing.T) {
+	viewer := openFileViewer("tabs.go", []byte("\tfield string // comment that would wrap\n"))
+	for index, line := range viewer.lines {
+		if strings.Contains(line, "\t") {
+			t.Fatalf("line %d = %q, must not retain terminal tabs", index, line)
+		}
+	}
+	if got := ansi.StringWidth(viewer.render(20, 1)); got > 20 {
+		t.Fatalf("render width = %d, want <= 20", got)
+	}
+}
+
 func TestWorkspaceFileReader_ReadsRelativePathAndRejectsEscape(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "ok.txt"), []byte("ok"), 0o600); err != nil {

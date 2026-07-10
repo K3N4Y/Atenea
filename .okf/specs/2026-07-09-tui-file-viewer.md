@@ -67,10 +67,12 @@ interaction similar to LazyVim, without running tools or modifying the filesyste
 3. `Enter` on a folder retains its current semantics: expand/collapse.
 4. `Enter` about a file tries to open it in the viewer; does not insert `@ruta` and
  does not close the explorer.
-5. In the viewer, `j`/Down, `k`/Up, PgUp, and PgDn scroll the content. The keyboard focus
- remains in the viewer, not in the composer or in the tree.
+5. In the viewer, `j`/Down, `k`/Up, PgUp, PgDn, and the mouse wheel scroll the
+ content. Clicks do not interact with the hidden transcript; focus remains in
+ the viewer, not in the composer or in the tree.
 6. `Esc` returns to the chat. The explorer remains open, retains the selected
- file, and another file can be opened immediately.
+ file, and the transcript returns to its prior scroll position even if events
+ arrived while reading.
 7. `q` and `Space` + `e` keep closing the explorer from the chat. Inside the
  viewer only `Esc` exits reading mode; `q` is not overloaded to avoid
  ambiguity with content and maintain a unique, visible and safe output.
@@ -91,10 +93,18 @@ interaction similar to LazyVim, without running tools or modifying the filesyste
 - The explorer retains its current width and viewport.
 - The viewer uses all the remaining width, including the space previously occupied by
  transcript, autocomplete menu, composer and status.
+- If the terminal is too narrow to show both columns, the viewer replaces the
+ explorer for the duration of read mode, so the open file remains visible; a
+ later resize restores the split layout and the file offset.
 - The header contains the relative path of the workspace and `primera-ultima/total`
  of visible lines. In a single line file use `1-1/1`.
 - Each line has a fixed width gutter calculated from the total number of lines,
  aligned to the right. The gutter is faint; the highlighted content is the focus.
+- Every rendered source row resets its ANSI style, including intermediate rows
+ of multiline tokens, so file syntax colors never affect the explorer panel.
+- Source tabs are expanded to four spaces before highlighting. This makes ANSI
+ width calculations match terminal cells, so a long tab-indented line cannot
+ wrap into a second physical row and corrupt incremental scrolling.
 - Long lines do not wrap in v1: they are trimmed to the visible width to
  preserve line numbers, performance and predictable vertical navigation.
 - When opening a file, the viewport starts at line 1. When resizing, the first visible line is preserved
