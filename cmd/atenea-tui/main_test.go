@@ -1,0 +1,73 @@
+package main
+
+import (
+	"bytes"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/charmbracelet/x/ansi"
+	"github.com/creack/pty"
+)
+
+func TestTUI_FileViewerFlowUnderPTY(t *testing.T) {
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "atenea-tui")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea-tui")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, output)
+	}
+	cmd := exec.Command(binary)
+	cmd.Dir = filepath.Join(repoRoot, "cmd/atenea-tui/testdata/file-viewer/project")
+	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY=", "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"))
+	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = terminal.Close(); _ = cmd.Wait() }()
+	var output bytes.Buffer
+	done := make(chan struct{})
+	go func() { _, _ = io.Copy(&output, terminal); close(done) }()
+	waitForPTYText(t, &output, "build · demo")
+	if _, err := terminal.Write([]byte(" e\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, &output, "hello.go")
+	if _, err := terminal.Write([]byte("\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, &output, "hello.go · 1-3/3")
+	waitForPTYText(t, &output, "hello from file viewer")
+	if _, err := terminal.Write([]byte("\x1b")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, &output, "build · demo")
+	if _, err := terminal.Write([]byte("\x03")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("TUI did not exit")
+	}
+}
+
+func waitForPTYText(t *testing.T, output *bytes.Buffer, want string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(ansi.Strip(output.String()), want) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("PTY output did not contain %q:\n%s", want, ansi.Strip(output.String()))
+}

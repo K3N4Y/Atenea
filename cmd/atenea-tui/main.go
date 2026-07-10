@@ -79,7 +79,8 @@ func main() {
 	// skills para el menu "/" y el listado del workspace para el @-menu.
 	m := tui.NewModel(engine, sessionID, engine.Events()).
 		WithStatus("build", model).
-		WithCompletions(engine.Commands(), engine.ProjectFiles)
+		WithCompletions(engine.Commands(), engine.ProjectFiles).
+		WithFileReader(tui.WorkspaceFileReader(root))
 	// WithMouseCellMotion habilita el mouse tracking: sin el, la terminal nunca
 	// reporta la rueda a la app (en pantalla alternativa la traduce a flechas
 	// via "alternate scroll"); con la opcion llegan eventos de mouse reales.
