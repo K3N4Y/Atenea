@@ -3403,6 +3403,64 @@ func TestModel_TreeOpen_CapturesKeyboard(t *testing.T) {
 	}
 }
 
+func TestModel_TreeNavigationScrollsSelectedRowIntoView(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+		return []string{
+			"file-00.go",
+			"file-01.go",
+			"file-02.go",
+			"file-03.go",
+			"file-04.go",
+		}, nil
+	})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 50, Height: 6})
+	m = m.toggleTree()
+
+	for range 3 {
+		m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	}
+
+	if got := m.View(); strings.Contains(got, "file-00.go") {
+		t.Fatalf("View() = %q, rows above the viewport must scroll away with the selection", got)
+	}
+}
+
+func TestModel_TreeNavigationScrollsBackAtTopAndAfterResize(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+		return []string{
+			"file-00.go",
+			"file-01.go",
+			"file-02.go",
+			"file-03.go",
+			"file-04.go",
+		}, nil
+	})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 50, Height: 8})
+	m = m.toggleTree()
+
+	for range 4 {
+		m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	}
+	if got, want := m.treeOffset, 1; got != want {
+		t.Fatalf("treeOffset at bottom = %d, want %d", got, want)
+	}
+
+	m = apply(t, m, tea.WindowSizeMsg{Width: 50, Height: 6})
+	if got, want := m.treeOffset, 3; got != want {
+		t.Fatalf("treeOffset after shrinking = %d, want %d", got, want)
+	}
+
+	for range 4 {
+		m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	}
+	if got, want := m.treeOffset, 0; got != want {
+		t.Fatalf("treeOffset after returning to top = %d, want %d", got, want)
+	}
+	if got := m.View(); !strings.Contains(got, "file-00.go") {
+		t.Fatalf("View() = %q, first row must be visible after moving to top", got)
+	}
+}
+
 func TestModel_LeaderTimeoutCancelsWithoutInput(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeySpace})

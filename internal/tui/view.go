@@ -674,7 +674,13 @@ func (m Model) treeView() string {
 		if len(rows) == 0 {
 			lines = append(lines, statusStyle.Render("workspace vacio"))
 		}
-		for i, row := range rows {
+		start := min(m.treeOffset, len(rows))
+		end := len(rows)
+		if visibleRows := m.treeVisibleRowCount(); visibleRows > 0 {
+			end = min(start+visibleRows, len(rows))
+		}
+		for i := start; i < end; i++ {
+			row := rows[i]
 			icon := iconForFile(row.node.name)
 			if row.node.dir {
 				icon = iconFolderClosed
@@ -698,6 +704,13 @@ func (m Model) treeView() string {
 		style = style.Width(innerWidth).Height(max(m.height-2, 0))
 	}
 	return style.Render(content)
+}
+
+func (m Model) treeVisibleRowCount() int {
+	if !m.ready {
+		return 0
+	}
+	return max(m.height-4, 0)
 }
 
 // transcriptView devuelve el transcript con su separador hacia el resto de la

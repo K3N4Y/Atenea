@@ -193,6 +193,7 @@ type Model struct {
 	treeOpen         bool
 	tree             fileTree
 	treeCursor       int
+	treeOffset       int
 	treeError        string
 }
 
@@ -313,7 +314,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ready = true
 		m.width = ev.Width
 		m.height = ev.Height
-		return m.resizeViewport(), nil
+		m = m.resizeViewport()
+		m.syncTreeViewport()
+		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(ev)
 	case tea.MouseMsg:
@@ -477,6 +480,7 @@ func (m Model) toggleTree() Model {
 		return m
 	}
 	m.treeCursor = 0
+	m.treeOffset = 0
 	m.treeError = ""
 	if m.listFiles == nil {
 		m.tree = newFileTree(nil)
@@ -550,6 +554,7 @@ func (m Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
+	m.syncTreeViewport()
 	return m, nil
 }
 
@@ -560,6 +565,27 @@ func (m *Model) clampTreeCursor() {
 	} else if m.treeCursor >= len(rows) {
 		m.treeCursor = len(rows) - 1
 	}
+	m.syncTreeViewport()
+}
+
+func (m *Model) syncTreeViewport() {
+	rows := m.tree.visibleRows()
+	if len(rows) == 0 {
+		m.treeOffset = 0
+		return
+	}
+	visibleRows := m.treeVisibleRowCount()
+	if visibleRows == 0 {
+		m.treeOffset = 0
+		return
+	}
+	if m.treeCursor < m.treeOffset {
+		m.treeOffset = m.treeCursor
+	}
+	if m.treeCursor >= m.treeOffset+visibleRows {
+		m.treeOffset = m.treeCursor - visibleRows + 1
+	}
+	m.treeOffset = min(m.treeOffset, max(len(rows)-visibleRows, 0))
 }
 
 func (m *Model) insertTreeMention(nodePath string) {
