@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,7 +34,7 @@ func TestTUI_FileViewerFlowUnderPTY(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = terminal.Close(); _ = cmd.Wait() }()
-	var output bytes.Buffer
+	var output lockedBuffer
 	done := make(chan struct{})
 	go func() { _, _ = io.Copy(&output, terminal); close(done) }()
 	waitForPTYText(t, &output, "build · demo")
@@ -60,7 +61,7 @@ func TestTUI_FileViewerFlowUnderPTY(t *testing.T) {
 	}
 }
 
-func waitForPTYText(t *testing.T, output *bytes.Buffer, want string) {
+func waitForPTYText(t *testing.T, output *lockedBuffer, want string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
@@ -70,4 +71,21 @@ func waitForPTYText(t *testing.T, output *bytes.Buffer, want string) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("PTY output did not contain %q:\n%s", want, ansi.Strip(output.String()))
+}
+
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(data []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.Write(data)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.String()
 }
