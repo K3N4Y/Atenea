@@ -20,7 +20,11 @@ if you see one, even if it is no caused by what you are working on right now, st
 - Backend: Go 1.23+ (tested with go1.26).
 - App: Wails v2.12 (Go + web frontend).
 - Frontend: under `frontend/` (npm).
-- Architecture docs: `docs/` (Spanish, no accents).
+- Project documentation: `.okf/`. Consult its index first when you need
+  product, architecture, specifications, plans, or research context; then read
+  the relevant document in its category.
+- Update the relevant `.okf/` documentation whenever a change affects the
+  documented behavior, architecture, specification, plan, or research.
 
 ## Core rule: TDD with evidence
 
@@ -73,4 +77,5 @@ wails build         # production build
 - Concurrent code (goroutines, channels, `errgroup`) is tested with `-race`.
 - The Wails boundary (`runtime.EventsEmit`) lives in `internal/event`; test
   the runner against a fake `EventBus`, not against Wails.
-- Docs in Spanish without accents, same as `docs/`.
+- Documentation lives in `.okf/`, uses Markdown files, and is written in
+  English.
