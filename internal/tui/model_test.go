@@ -3,6 +3,7 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -3363,10 +3364,12 @@ func TestModel_LeaderSpaceE_TogglesClosed(t *testing.T) {
 	}
 }
 
-func TestModel_TreeKeys_NavigateAndInsertAt(t *testing.T) {
-	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
-		return []string{"internal/tui/model.go", "go.mod"}, nil
-	})
+func TestModel_TreeKeys_NavigateAndOpenFileViewer(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).
+		WithCompletions(nil, func() ([]string, error) {
+			return []string{"internal/tui/model.go", "go.mod"}, nil
+		}).
+		WithFileReader(viewerReader(map[string][]byte{"internal/tui/model.go": []byte("package tui\n")}))
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeySpace})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
 
@@ -3382,11 +3385,11 @@ func TestModel_TreeKeys_NavigateAndInsertAt(t *testing.T) {
 		m = apply(t, m, msg)
 	}
 
-	if m.treeOpen {
-		t.Fatal("selecting a file must close the tree")
+	if !m.treeOpen || !m.viewer.active() {
+		t.Fatal("selecting a file must open the viewer and keep the tree open")
 	}
-	if got, want := m.input.Value(), "@internal/tui/model.go"; got != want {
-		t.Fatalf("input.Value() = %q, want %q", got, want)
+	if got := m.input.Value(); got != "" {
+		t.Fatalf("input.Value() = %q, opening a file must not insert a mention", got)
 	}
 }
 
@@ -3571,15 +3574,124 @@ func TestModel_TreeViewHandlesNarrowTerminal(t *testing.T) {
 	}
 }
 
-func TestModel_TreeSelectionAppendsMentionToExistingComposer(t *testing.T) {
-	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
-		return []string{"go.mod"}, nil
-	})
+func TestModel_TreeSelectionPreservesExistingComposer(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).
+		WithCompletions(nil, func() ([]string, error) {
+			return []string{"go.mod"}, nil
+		}).
+		WithFileReader(viewerReader(map[string][]byte{"go.mod": []byte("module atenea\n")}))
 	m.input.SetValue("revisa")
 	m = m.toggleTree()
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
-	if got, want := m.input.Value(), "revisa @go.mod"; got != want {
+	if got, want := m.input.Value(), "revisa"; got != want {
 		t.Fatalf("input.Value() = %q, want %q", got, want)
+	}
+	if !m.viewer.active() || !m.treeOpen {
+		t.Fatal("selection must open viewer while preserving tree")
+	}
+}
+
+func viewerReader(files map[string][]byte) FileReader {
+	return func(path string) ([]byte, error) {
+		content, ok := files[path]
+		if !ok {
+			return nil, fs.ErrNotExist
+		}
+		return content, nil
+	}
+}
+
+func TestModel_TreeEnterFileOpensViewerWithoutMention(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).
+		WithCompletions(nil, func() ([]string, error) { return []string{"go.mod"}, nil }).
+		WithFileReader(viewerReader(map[string][]byte{"go.mod": []byte("module atenea\n")}))
+	m = m.toggleTree()
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.viewer.active() || !m.treeOpen {
+		t.Fatalf("viewer active=%v treeOpen=%v", m.viewer.active(), m.treeOpen)
+	}
+	if got := m.input.Value(); got != "" {
+		t.Fatalf("input = %q, must not contain a mention", got)
+	}
+}
+
+func TestModel_FileViewerEscapePreservesExplorerCursor(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).
+		WithCompletions(nil, func() ([]string, error) { return []string{"a.go", "b.go"}, nil }).
+		WithFileReader(viewerReader(map[string][]byte{"b.go": []byte("package b\n")}))
+	m = m.toggleTree()
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	cursor, offset := m.treeCursor, m.treeOffset
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.viewer.active() || !m.treeOpen || m.treeCursor != cursor || m.treeOffset != offset {
+		t.Fatal("Esc must preserve explorer state")
+	}
+}
+
+func TestModel_FileViewerScrollCapturesKeysButPermissionWins(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).
+		WithCompletions(nil, func() ([]string, error) { return []string{"many.txt"}, nil }).
+		WithFileReader(viewerReader(map[string][]byte{"many.txt": []byte("1\n2\n3\n4\n5\n")}))
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 5})
+	m = m.toggleTree()
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	if m.viewer.offset == 0 {
+		t.Fatal("Down must scroll viewer")
+	}
+	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "bash"})
+	before := m.viewer.offset
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	if m.viewer.offset != before {
+		t.Fatal("permission must capture key")
+	}
+}
+
+func TestModel_TreeEnterFileShowsReadFailure(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).
+		WithCompletions(nil, func() ([]string, error) { return []string{"gone.go"}, nil }).
+		WithFileReader(viewerReader(nil))
+	m = m.toggleTree()
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if got := m.View(); !strings.Contains(got, "no se puede abrir gone.go") {
+		t.Fatalf("View() = %q", got)
+	}
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.viewer.active() || !m.treeOpen {
+		t.Fatal("Esc must return to chat while preserving explorer")
+	}
+}
+
+func TestModel_FileViewerReplacesChatWithHeaderAndGutter(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).
+		WithCompletions(nil, func() ([]string, error) { return []string{"main.go"}, nil }).
+		WithFileReader(viewerReader(map[string][]byte{"main.go": []byte("package main\nfunc main() {}\n")}))
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 8})
+	m = m.toggleTree()
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	view := ansi.Strip(m.View())
+	for _, want := range []string{"explorer", "main.go · 1-2/2", "1", "package main", "2", "func main() {}"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("View() missing %q: %q", want, view)
+		}
+	}
+	if strings.Contains(view, "build ·") {
+		t.Fatalf("composer status rendered: %q", view)
+	}
+}
+
+func TestModel_FileViewerNarrowTerminalNeverOverflows(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).
+		WithCompletions(nil, func() ([]string, error) { return []string{"long.go"}, nil }).
+		WithFileReader(viewerReader(map[string][]byte{"long.go": []byte("package extremelylongpackagename\n")}))
+	m = apply(t, m, tea.WindowSizeMsg{Width: 12, Height: 4})
+	m = m.toggleTree()
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	for _, line := range strings.Split(m.View(), "\n") {
+		if ansi.StringWidth(line) > 12 {
+			t.Fatalf("overflow: %q", line)
+		}
 	}
 }

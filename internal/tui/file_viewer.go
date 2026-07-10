@@ -129,18 +129,30 @@ func (v *fileViewer) scroll(delta, height int) {
 
 func (v fileViewer) header(width, height int) string {
 	if v.message != "" || v.empty {
-		return ansi.Truncate(v.path, max(width, 0), "…")
+		if width <= 0 {
+			return v.path
+		}
+		return ansi.Truncate(v.path, width, "…")
 	}
 	first, last := v.visibleRange(height)
-	return ansi.Truncate(fmt.Sprintf("%s · %d-%d/%d", v.path, first+1, last, v.lineCount), max(width, 0), "…")
+	value := fmt.Sprintf("%s · %d-%d/%d", v.path, first+1, last, v.lineCount)
+	if width <= 0 {
+		return value
+	}
+	return ansi.Truncate(value, width, "…")
 }
 
 func (v fileViewer) render(width, height int) string {
-	width = max(width, 0)
 	if v.message != "" {
+		if width <= 0 {
+			return v.message
+		}
 		return ansi.Truncate(v.message, width, "…")
 	}
 	if v.empty {
+		if width <= 0 {
+			return "archivo vacio: " + v.path
+		}
 		return ansi.Truncate("archivo vacio: "+v.path, width, "…")
 	}
 	first, last := v.visibleRange(height)
@@ -148,7 +160,13 @@ func (v fileViewer) render(width, height int) string {
 	rows := make([]string, 0, last-first)
 	for index := first; index < last; index++ {
 		gutter := fmt.Sprintf("%*d  ", gutterWidth, index+1)
-		rows = append(rows, ansi.Truncate(gutter+v.lines[index], width, "…"))
+		line := gutter + v.lines[index]
+		if width > 0 {
+			line = ansi.Truncate(line, width, "…")
+		} else if width == 0 {
+			line = ""
+		}
+		rows = append(rows, line)
 	}
 	return strings.Join(rows, "\n")
 }

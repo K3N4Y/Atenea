@@ -8,6 +8,7 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"time"
 
@@ -195,6 +196,8 @@ type Model struct {
 	treeCursor       int
 	treeOffset       int
 	treeError        string
+	fileReader       FileReader
+	viewer           fileViewer
 }
 
 // NewModel construye el Model raiz de la TUI.
@@ -224,6 +227,13 @@ func (m Model) WithStatus(agentName, model string) Model {
 func (m Model) WithCompletions(commands []command.Command, listFiles func() ([]string, error)) Model {
 	m.commands = commands
 	m.listFiles = listFiles
+	return m
+}
+
+// WithFileReader fija el lector de workspace para el visor de solo lectura.
+// Builder de valor para que los tests inyecten un filesystem controlado.
+func (m Model) WithFileReader(read FileReader) Model {
+	m.fileReader = read
 	return m
 }
 
@@ -316,6 +326,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = ev.Height
 		m = m.resizeViewport()
 		m.syncTreeViewport()
+		m.viewer.clamp(m.fileViewerHeight())
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(ev)
@@ -370,15 +381,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.stopRun()
 		return m, tea.Quit
 	}
-	if msg.Type == tea.KeyPgUp || msg.Type == tea.KeyPgDown {
-		return m.scrollViewport(msg)
-	}
 	if perm, ok := m.pendingPermission(); ok {
 		m.resolvePermissionKey(msg, perm)
 		return m, nil
 	}
 	if m.hasPendingPlan() {
 		return m.resolvePlanKey(msg)
+	}
+	if m.viewer.active() {
+		return m.handleFileViewerKey(msg)
+	}
+	if msg.Type == tea.KeyPgUp || msg.Type == tea.KeyPgDown {
+		return m.scrollViewport(msg)
 	}
 	if m.treeOpen {
 		return m.handleTreeKey(msg)
@@ -534,8 +548,7 @@ func (m Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.clampTreeCursor()
 			break
 		}
-		m.insertTreeMention(node.path)
-		m.treeOpen = false
+		m = m.openTreeFile(node.path)
 	case keyRune(msg) == "h":
 		if len(rows) == 0 {
 			break
@@ -555,6 +568,42 @@ func (m Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	m.syncTreeViewport()
+	return m, nil
+}
+
+func (m Model) fileViewerHeight() int {
+	return max(m.height-1, 0)
+}
+
+func (m Model) openTreeFile(path string) Model {
+	if m.fileReader == nil {
+		m.viewer = openFileViewerError(path, errors.New("lector de archivos no configurado"))
+		return m
+	}
+	content, err := m.fileReader(path)
+	if err != nil {
+		m.viewer = openFileViewerError(path, err)
+		return m
+	}
+	m.viewer = openFileViewer(path, content)
+	m.viewer.clamp(m.fileViewerHeight())
+	return m
+}
+
+func (m Model) handleFileViewerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	height := m.fileViewerHeight()
+	switch {
+	case msg.Type == tea.KeyEsc:
+		m.viewer = fileViewer{}
+	case msg.Type == tea.KeyDown || keyRune(msg) == "j":
+		m.viewer.scroll(1, height)
+	case msg.Type == tea.KeyUp || keyRune(msg) == "k":
+		m.viewer.scroll(-1, height)
+	case msg.Type == tea.KeyPgDown:
+		m.viewer.scroll(max(height, 1), height)
+	case msg.Type == tea.KeyPgUp:
+		m.viewer.scroll(-max(height, 1), height)
+	}
 	return m, nil
 }
 

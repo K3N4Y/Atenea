@@ -573,6 +573,21 @@ func (m Model) entryLines() []entryLine {
 // pie tenue con el agente y el modelo la sigue. El alto sigue acotado porque
 // reservedLines ya las descuenta del viewport.
 func (m Model) View() string {
+	if m.viewer.active() {
+		contentWidth := m.contentWidth()
+		if !m.ready {
+			contentWidth = -1
+		}
+		content := m.renderFileViewer(contentWidth, max(m.height, 0))
+		if !m.treeOpen {
+			return content
+		}
+		if m.ready && m.treePanelWidth() >= m.width {
+			return m.treeView()
+		}
+		return lipgloss.JoinHorizontal(lipgloss.Top, m.treeView(), " ", content)
+	}
+
 	status := ""
 	if m.working {
 		// La linea de estado es "<glifo> trabajando": el glifo animado del
@@ -593,6 +608,16 @@ func (m Model) View() string {
 		return m.treeView()
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Top, m.treeView(), " ", content)
+}
+
+func (m Model) renderFileViewer(width, height int) string {
+	contentHeight := max(height-1, 0)
+	header := statusStyle.Render(m.viewer.header(width, contentHeight))
+	body := m.viewer.render(width, contentHeight)
+	if body == "" {
+		return header
+	}
+	return header + "\n" + body
 }
 
 // menuView rinde el popup de autocompletado: una linea por item, con el
