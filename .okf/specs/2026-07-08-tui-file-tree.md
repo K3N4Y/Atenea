@@ -153,7 +153,7 @@ Same idea as `applySelection` from the file menu:
 | q | Close panel without inserting |
 | Space+e | Close panel (toggle) |
 | Mouse wheel over explorer | Move the selection by three rows and keep it visible; the transcript does not scroll |
-| Left click anywhere on a visible row | Select and activate the complete row: folder toggles; file opens in the viewer |
+| Left click anywhere on a visible row | Select and activate the complete row: folder toggles; file opens or replaces the active viewer |
 
 The composer does **not** receive keys while the tree is open.
 

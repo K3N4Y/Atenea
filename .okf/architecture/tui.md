@@ -89,7 +89,7 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
  folder or opens a file in the viewer, `h` collapses or moves up to the parent, and
  Esc/`q` closes without inserting. The mouse wheel over the explorer moves its
  selection by three rows without moving the transcript; a left click anywhere in
- a visible row activates it (toggle a folder or open a file). While the explorer is
+ a visible row activates it (toggle a folder or open/replace a file in the viewer). While the explorer is
  open its keys do not reach the composer; permissions and plan approval retain priority.
 - The explorer occupies a bounded left column and transcript, menus and
  composer are recalculated to the remaining width. If `listFiles` fails or the workspace
