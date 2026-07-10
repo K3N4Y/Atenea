@@ -341,9 +341,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKey(ev)
 	case tea.MouseMsg:
-		m.focus = m.normalizedFocus()
 		if ev.Action == tea.MouseActionPress && (ev.Button == tea.MouseButtonWheelUp || ev.Button == tea.MouseButtonWheelDown) {
-			if m.focus == explorerFocus && m.treeOpen && m.treeMouseOverPanel(ev) {
+			if m.treeOpen && m.treeMouseOverPanel(ev) {
 				if ev.Button == tea.MouseButtonWheelUp {
 					m.moveTreeCursor(-3)
 				} else {
@@ -351,12 +350,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-			if m.focus == viewerFocus {
+			if m.viewer.active() && ev.Y >= 0 && ev.Y < m.fileViewerHeight() {
 				m.scrollFileViewerMouse(ev)
 				return m, nil
 			}
 			return m.scrollViewport(ev)
 		}
+		m.focus = m.normalizedFocus()
 		if m.treeOpen && m.handleTreeMouse(ev) {
 			return m, nil
 		}
@@ -541,10 +541,16 @@ func keyRune(msg tea.KeyMsg) string {
 
 func (m Model) toggleTree() Model {
 	m.leaderPending = false
+	viewportOffset := m.viewport.YOffset
+	resizeViewport := func() Model {
+		m = m.resizeViewport()
+		m.viewport.SetYOffset(viewportOffset)
+		return m
+	}
 	m.treeOpen = !m.treeOpen
 	if !m.treeOpen {
 		m.focus = m.normalizedFocus()
-		return m
+		return resizeViewport()
 	}
 	m.focus = explorerFocus
 	m.treeCursor = 0
@@ -552,16 +558,16 @@ func (m Model) toggleTree() Model {
 	m.treeError = ""
 	if m.listFiles == nil {
 		m.tree = newFileTree(nil)
-		return m
+		return resizeViewport()
 	}
 	files, err := m.listFiles()
 	if err != nil {
 		m.tree = newFileTree(nil)
 		m.treeError = err.Error()
-		return m
+		return resizeViewport()
 	}
 	m.tree = newFileTree(files)
-	return m
+	return resizeViewport()
 }
 
 func (m Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -694,7 +700,11 @@ func (m Model) focusAtMouse(msg tea.MouseMsg) panelFocus {
 }
 
 func (m Model) treeMouseOverPanel(msg tea.MouseMsg) bool {
-	return m.ready && msg.X >= 0 && msg.X < m.treePanelWidth()
+	return m.ready && m.treeVisible() && msg.X >= 0 && msg.X < m.treePanelWidth()
+}
+
+func (m Model) treeVisible() bool {
+	return m.treeOpen && (!m.viewer.active() || m.treePanelWidth() < m.width)
 }
 
 func (m Model) treeRowAtMouse(y int) (int, bool) {

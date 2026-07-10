@@ -507,7 +507,7 @@ func (m Model) resizeViewport() Model {
 	m.viewport.Width = max(contentWidth, 0)
 	contentHeight := m.height
 	if m.chatPanelVisible() {
-		contentHeight -= 3
+		contentHeight -= 4
 	}
 	m.viewport.Height = max(contentHeight-m.reservedLines(), 0)
 	return m.syncViewport()

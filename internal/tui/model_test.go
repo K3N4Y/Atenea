@@ -3501,6 +3501,88 @@ func TestModel_TreeMouseWheelScrollsSelectionWithoutMovingTranscript(t *testing.
 	}
 }
 
+func TestModel_ViewerFocusWheelAtPointerOriginScrollsSplitExplorer(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).
+		WithCompletions(nil, func() ([]string, error) {
+			return []string{"file-00.go", "file-01.go", "file-02.go", "file-03.go", "file-04.go"}, nil
+		}).
+		WithFileReader(viewerReader(map[string][]byte{
+			"file-00.go": []byte("1\n2\n3\n4\n5\n6\n7\n8\n9\n"),
+		}))
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 8})
+	m = m.toggleTree()
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if got, want := m.focus, viewerFocus; got != want {
+		t.Fatalf("focus before wheel = %v, want %v", got, want)
+	}
+	treeCursor, viewerOffset := m.treeCursor, m.viewer.offset
+
+	m = apply(t, m, tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonWheelDown,
+		X:      0,
+		Y:      0,
+	})
+
+	if got, want := m.focus, viewerFocus; got != want {
+		t.Fatalf("focus after wheel = %v, want %v: wheel must not change keyboard focus", got, want)
+	}
+	if got := m.treeCursor; got <= treeCursor {
+		t.Fatalf("treeCursor = %d, want greater than %d: wheel at explorer origin must scroll the tree", got, treeCursor)
+	}
+	if got, want := m.viewer.offset, viewerOffset; got != want {
+		t.Fatalf("viewer offset = %d, want %d: wheel at explorer origin must not scroll the viewer", got, want)
+	}
+}
+
+func TestModel_NarrowFullWidthViewerWheelNeverScrollsHiddenTree(t *testing.T) {
+	const width, height = 20, 8
+
+	for _, x := range []int{0, width - 1} {
+		t.Run(fmt.Sprintf("x=%d", x), func(t *testing.T) {
+			m := NewModel(&fakeAgent{}, "s1", nil).
+				WithCompletions(nil, func() ([]string, error) {
+					return []string{"file-00.go", "file-01.go", "file-02.go", "file-03.go", "file-04.go"}, nil
+				}).
+				WithFileReader(viewerReader(map[string][]byte{
+					"file-00.go": []byte("1\n2\n3\n4\n5\n6\n7\n8\n9\n"),
+				}))
+			m = apply(t, m, tea.WindowSizeMsg{Width: width, Height: height})
+			m = m.toggleTree()
+			m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+			if got, want := m.treePanelWidth(), width; got != want {
+				t.Fatalf("treePanelWidth() = %d, want %d: narrow terminal must hide the tree", got, want)
+			}
+			if view := ansi.Strip(m.View()); !strings.Contains(view, "file-00.go") {
+				t.Fatalf("View() = %q, want the active viewer visibly rendered full-width", view)
+			}
+			if got, want := m.focus, viewerFocus; got != want {
+				t.Fatalf("focus before wheel = %v, want %v", got, want)
+			}
+			treeCursor, viewerOffset := m.treeCursor, m.viewer.offset
+
+			m = apply(t, m, tea.MouseMsg{
+				Action: tea.MouseActionPress,
+				Button: tea.MouseButtonWheelDown,
+				X:      x,
+				Y:      0,
+			})
+
+			if got, want := m.focus, viewerFocus; got != want {
+				t.Fatalf("focus after wheel = %v, want %v: wheel must not change keyboard focus", got, want)
+			}
+			if got := m.viewer.offset; got <= viewerOffset {
+				t.Fatalf("viewer offset = %d, want greater than %d: wheel over full-width viewer must scroll the viewer", got, viewerOffset)
+			}
+			if got, want := m.treeCursor, treeCursor; got != want {
+				t.Fatalf("treeCursor = %d, want %d: hidden tree must not receive wheel events", got, want)
+			}
+		})
+	}
+}
+
 func TestModel_TreeMouseClickOpensFileFromAnyColumnInRow(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil).
 		WithCompletions(nil, func() ([]string, error) { return []string{"hello.go"}, nil }).
@@ -3760,7 +3842,12 @@ func TestModel_FileViewerMouseWheelScrollsFileWithoutMovingHiddenTranscript(t *t
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyPgDown})
 	beforeOffset, beforeTranscriptOffset := m.viewer.offset, m.viewport.YOffset
-	m = apply(t, m, wheelUp)
+	m = apply(t, m, tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonWheelUp,
+		X:      m.treePanelWidth() + 2,
+		Y:      0,
+	})
 	if m.viewer.offset >= beforeOffset {
 		t.Fatalf("wheel up viewer offset = %d, want less than %d", m.viewer.offset, beforeOffset)
 	}
@@ -3778,7 +3865,12 @@ func TestModel_FileViewerTrackpadScrollKeepsTabbedRowsWithinLayout(t *testing.T)
 	m = m.toggleTree()
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	for range 12 {
-		m = apply(t, m, wheelDown)
+		m = apply(t, m, tea.MouseMsg{
+			Action: tea.MouseActionPress,
+			Button: tea.MouseButtonWheelDown,
+			X:      m.treePanelWidth() + 2,
+			Y:      0,
+		})
 	}
 	if got, want := m.viewer.offset, 7; got != want {
 		t.Fatalf("viewer offset after continuous wheel events = %d, want %d", got, want)
@@ -4099,6 +4191,179 @@ func TestModel_ClickChatAfterOpeningViewerRoutesMouseWheelToTranscript(t *testin
 	if got := m.viewport.YOffset; got <= transcriptOffset {
 		t.Fatalf("transcript offset = %d, want greater than %d: wheel after chat click must scroll chat transcript", got, transcriptOffset)
 	}
+}
+
+func TestModel_MouseWheelRoutesByPointerWithoutChangingKeyboardFocus(t *testing.T) {
+	t.Run("narrow split chat scrolls from its leftmost visible column while explorer keeps keyboard focus", func(t *testing.T) {
+		const width, height = 24, 4
+		m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+			return []string{"file.go"}, nil
+		})
+		m = apply(t, m, tea.WindowSizeMsg{Width: width, Height: height})
+		m = m.toggleTree()
+		for i := 0; i < 20; i++ {
+			m.entries = append(m.entries, entry{kind: entryUser, text: fmt.Sprintf("message-%d", i)})
+		}
+		m = m.syncViewport()
+		m.viewport.SetYOffset(0)
+
+		if !m.chatPanelVisible() {
+			t.Fatal("narrow split layout must keep a visible chat panel")
+		}
+		if got, want := m.chatContentWidth(), 1; got != want {
+			t.Fatalf("chatContentWidth() = %d, want %d: test must exercise the one-cell-wide chat panel", got, want)
+		}
+		if got, want := m.focus, explorerFocus; got != want {
+			t.Fatalf("focus before wheel = %v, want %v", got, want)
+		}
+		transcriptOffset := m.viewport.YOffset
+
+		m = apply(t, m, tea.MouseMsg{
+			Action: tea.MouseActionPress,
+			Button: tea.MouseButtonWheelDown,
+			X:      m.treePanelWidth() + 1,
+			Y:      1,
+		})
+
+		if got, want := m.focus, explorerFocus; got != want {
+			t.Fatalf("focus after narrow chat wheel = %v, want %v: wheel must not change keyboard focus", got, want)
+		}
+		if got := m.viewport.YOffset; got <= transcriptOffset {
+			t.Fatalf("transcript offset = %d, want greater than %d: wheel over the visible narrow chat panel must scroll chat", got, transcriptOffset)
+		}
+	})
+
+	t.Run("right transcript scrolls while viewer keeps keyboard focus", func(t *testing.T) {
+		m := NewModel(&fakeAgent{}, "s1", nil).
+			WithCompletions(nil, func() ([]string, error) { return []string{"many.txt"}, nil }).
+			WithFileReader(viewerReader(map[string][]byte{"many.txt": []byte("1\n2\n3\n4\n5\n6\n7\n8\n9\n")}))
+		m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 8})
+		m = m.toggleTree()
+		m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+		for i := 0; i < 20; i++ {
+			m.entries = append(m.entries, entry{kind: entryUser, text: fmt.Sprintf("message-%d", i)})
+		}
+		m = m.syncViewport()
+		m.viewport.SetYOffset(0)
+
+		if got, want := m.focus, viewerFocus; got != want {
+			t.Fatalf("focus before wheel = %v, want %v", got, want)
+		}
+		viewerOffset := m.viewer.offset
+		transcriptOffset := m.viewport.YOffset
+
+		m = apply(t, m, tea.MouseMsg{
+			Action: tea.MouseActionPress,
+			Button: tea.MouseButtonWheelDown,
+			X:      m.treePanelWidth() + 2,
+			Y:      m.fileViewerHeight(),
+		})
+
+		if got, want := m.focus, viewerFocus; got != want {
+			t.Fatalf("focus after right transcript wheel = %v, want %v: wheel must not change keyboard focus", got, want)
+		}
+		if got, want := m.viewer.offset, viewerOffset; got != want {
+			t.Fatalf("viewer offset = %d, want %d: wheel over the right transcript must not scroll the focused viewer", got, want)
+		}
+		if got := m.viewport.YOffset; got <= transcriptOffset {
+			t.Fatalf("transcript offset = %d, want greater than %d: wheel over the right transcript must scroll chat", got, transcriptOffset)
+		}
+	})
+
+	t.Run("right chat scrolls while explorer keeps keyboard focus", func(t *testing.T) {
+		const width, height = 80, 8
+		m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+			return []string{"file-00.go", "file-01.go", "file-02.go", "file-03.go"}, nil
+		})
+		m = apply(t, m, tea.WindowSizeMsg{Width: width, Height: height})
+		m = m.toggleTree()
+		for i := 0; i < 20; i++ {
+			m.entries = append(m.entries, entry{kind: entryUser, text: fmt.Sprintf("message-%d", i)})
+		}
+		m = m.syncViewport()
+		m.viewport.SetYOffset(0)
+
+		if got, want := m.focus, explorerFocus; got != want {
+			t.Fatalf("focus before wheel = %v, want %v", got, want)
+		}
+		transcriptOffset := m.viewport.YOffset
+
+		m = apply(t, m, tea.MouseMsg{
+			Action: tea.MouseActionPress,
+			Button: tea.MouseButtonWheelDown,
+			X:      m.treePanelWidth() + 2,
+			Y:      1,
+		})
+
+		if got, want := m.focus, explorerFocus; got != want {
+			t.Fatalf("focus after right chat wheel = %v, want %v: wheel must not change keyboard focus", got, want)
+		}
+		if got := m.viewport.YOffset; got <= transcriptOffset {
+			t.Fatalf("transcript offset = %d, want greater than %d: wheel over right chat must scroll chat", got, transcriptOffset)
+		}
+		view := m.View()
+		if !strings.Contains(view, "chat") {
+			t.Fatalf("View() = %q, split layout must keep the chat panel rendered", view)
+		}
+		assertNoLineWiderThan(t, view, width)
+		if lines := len(strings.Split(view, "\n")); lines > height {
+			t.Fatalf("View() has %d lines, want at most terminal height %d: %q", lines, height, view)
+		}
+	})
+
+	t.Run("right viewer scrolls even while explorer owns keyboard focus", func(t *testing.T) {
+		m := NewModel(&fakeAgent{}, "s1", nil).
+			WithCompletions(nil, func() ([]string, error) { return []string{"many.txt"}, nil }).
+			WithFileReader(viewerReader(map[string][]byte{"many.txt": []byte("1\n2\n3\n4\n5\n6\n7\n8\n9\n")}))
+		m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 8})
+		m = m.toggleTree()
+		m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+		m.focus = explorerFocus
+
+		viewerOffset := m.viewer.offset
+		m = apply(t, m, tea.MouseMsg{
+			Action: tea.MouseActionPress,
+			Button: tea.MouseButtonWheelDown,
+			X:      m.treePanelWidth() + 2,
+			Y:      1,
+		})
+
+		if got, want := m.focus, explorerFocus; got != want {
+			t.Fatalf("focus after viewer wheel = %v, want %v: wheel must not change keyboard focus", got, want)
+		}
+		if got := m.viewer.offset; got <= viewerOffset {
+			t.Fatalf("viewer offset = %d, want greater than %d: wheel over viewer must scroll the file even without viewer focus", got, viewerOffset)
+		}
+	})
+
+	t.Run("explorer scrolls even while viewer owns keyboard focus", func(t *testing.T) {
+		m := NewModel(&fakeAgent{}, "s1", nil).
+			WithCompletions(nil, func() ([]string, error) {
+				return []string{"file-00.go", "file-01.go", "file-02.go", "file-03.go", "file-04.go"}, nil
+			}).
+			WithFileReader(viewerReader(map[string][]byte{"file-00.go": []byte("package main\n")}))
+		m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 8})
+		m = m.toggleTree()
+		m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+		if got, want := m.focus, viewerFocus; got != want {
+			t.Fatalf("focus before wheel = %v, want %v", got, want)
+		}
+		treeCursor := m.treeCursor
+		m = apply(t, m, tea.MouseMsg{
+			Action: tea.MouseActionPress,
+			Button: tea.MouseButtonWheelDown,
+			X:      0,
+			Y:      3,
+		})
+
+		if got, want := m.focus, viewerFocus; got != want {
+			t.Fatalf("focus after explorer wheel = %v, want %v: wheel must not change keyboard focus", got, want)
+		}
+		if got := m.treeCursor; got <= treeCursor {
+			t.Fatalf("treeCursor = %d, want greater than %d: wheel over explorer must move the tree even without explorer focus", got, treeCursor)
+		}
+	})
 }
 
 func TestModel_ExplorerSelectionAfterOpeningViewerRoutesTreeKeysAndEsc(t *testing.T) {

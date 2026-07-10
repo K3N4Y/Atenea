@@ -32,12 +32,12 @@ mouse workflow for opening files from the explorer.
 - Left click inside a visible target sets focus to that target.
 - The focused panel title includes a cyan `*`; panel borders stay rounded and
   neutral.
-- When the explorer is focused, `j`/Down, `k`/Up, `h`, `l`, Enter, and wheel
-  navigation operate on the tree.
-- When the chat is focused, typing goes to the composer and the wheel scrolls
-  the transcript.
-- When the viewer is focused, `j`/Down, `k`/Up, PgUp, PgDn, and the wheel
-  scroll the file.
+- Keyboard navigation follows focus: explorer receives `j`/Down, `k`/Up, `h`,
+  `l`, and Enter; chat receives composer and transcript controls; viewer
+  receives `j`/Down, `k`/Up, PgUp, and PgDn.
+- Mouse-wheel scrolling follows the panel under the pointer without changing
+  keyboard focus: explorer moves the tree, chat moves the transcript, and
+  viewer moves the file.
 - Clicking a file row in the explorer opens or replaces the viewer and keeps
   focus in the explorer, so another file can be opened immediately.
 - Clicking the viewer explicitly transfers focus to it.
@@ -81,8 +81,8 @@ Mouse coordinates determine the clicked panel from the rendered layout:
 3. A click on explorer chrome (title, border, empty area) changes focus but
    does not activate a tree row.
 4. A click on chat or viewer chrome changes focus but does not alter content.
-5. Wheel events are delivered only to the focused target, except the explorer
-   retains its existing row activation behavior for an explicit click.
+5. Wheel events are delivered to the visible panel under the pointer without
+   changing focus. Explorer row activation remains an explicit click behavior.
 
 Keyboard routing follows focus after the current global priority rules:
 
@@ -122,6 +122,9 @@ Behavior tests remain in `internal/tui` and use the existing model helpers:
 | `TestModel_ClosingFocusedViewerReturnsChatFocus` | `Esc` closes viewer and normalizes focus to chat |
 | Existing `TestModel_Tab*` and `TestModel_TreeLeaderDoesNotInterceptPendingGates` | Build/plan `Tab` semantics and approval-gate priority remain covered |
 | `TestModel_ClickChatMarksOnlyChatActiveWithoutOverflow` | Chat click exposes the only `chat *` marker without overflowing split rows |
+| `TestModel_MouseWheelRoutesByPointerWithoutChangingKeyboardFocus` | Wheel follows the hovered explorer/chat/viewer panel, preserves keyboard focus, and keeps narrow split chat within bounds |
+| `TestModel_ViewerFocusWheelAtPointerOriginScrollsSplitExplorer` | A wheel event at the valid `(0,0)` explorer origin never falls through to the viewer |
+| `TestModel_NarrowFullWidthViewerWheelNeverScrollsHiddenTree` | In a narrow full-width viewer, wheel input targets the visible viewer instead of the hidden tree |
 | `TestTUI_FileTreeMouseWheelAndClickUnderPTY` | Actual SGR tree clicks replace files, then SGR panel clicks expose `viewer *` and `explorer *` |
 
 ## Implementation evidence
@@ -132,10 +135,10 @@ The verification below was executed after the implementation on 2026-07-09.
 | --- | --- |
 | Safety net | `go test ./internal/tui ./cmd/atenea-tui` passed before implementation work. |
 | Understand | The implementation, direct-focus plan, model contracts, and PTY test were inspected. |
-| RED | Direct-focus, resize/chrome, chat-marker, and post-click wheel/key routing tests failed first with behavioral assertions before production changes. |
-| GREEN | `go test -run 'TestModel_(ClickTreeFocusesExplorerAndCapturesKeys|ClickChatFocusesComposer|ClickViewerFocusesFileScroll|TreeFileClickKeepsExplorerFocus|ClosingFocusedViewerReturnsChatFocus|ResizeToFullWidthTreeNormalizesFocusAndKeepsItAfterSplitReturns|SplitFocusChromeMarksExactlyOneActivePanel|ClickChatMarksOnlyChatActiveWithoutOverflow|ClickChatAfterOpeningViewerRoutesMouseWheelToTranscript|ExplorerSelectionAfterOpeningViewerRoutesTreeKeysAndEsc)' -v ./internal/tui` passed. |
-| TRIANGULATE | The contracts cover all three focus targets, split/full-width transitions, tree file replacement, chat transcript wheel routing, viewer scrolling, `Esc`, `Tab`, and approval-gate precedence. |
-| REFACTOR | Focus dispatch was centralized through normalized state and all visible focusable panels share titled neutral chrome with exactly one cyan marker. |
+| RED | Direct-focus, resize/chrome, chat-marker, post-click wheel/key routing, and pointer-wheel routing tests failed first with behavioral assertions before production changes. |
+| GREEN | `go test -run 'TestModel_(ClickTreeFocusesExplorerAndCapturesKeys|ClickChatFocusesComposer|ClickViewerFocusesFileScroll|TreeFileClickKeepsExplorerFocus|ClosingFocusedViewerReturnsChatFocus|ResizeToFullWidthTreeNormalizesFocusAndKeepsItAfterSplitReturns|SplitFocusChromeMarksExactlyOneActivePanel|ClickChatMarksOnlyChatActiveWithoutOverflow|ClickChatAfterOpeningViewerRoutesMouseWheelToTranscript|ExplorerSelectionAfterOpeningViewerRoutesTreeKeysAndEsc|MouseWheelRoutesByPointerWithoutChangingKeyboardFocus)' -v ./internal/tui` passed. |
+| TRIANGULATE | The contracts cover all three focus targets, split/full-width transitions, tree file replacement, pointer-targeted wheel routing at normal and one-cell narrow widths, valid origin coordinates, visible full-width viewer routing, viewer scrolling, `Esc`, `Tab`, and approval-gate precedence. |
+| REFACTOR | Focus dispatch remains keyboard-only; wheel hit-testing follows the visible panel and all visible focusable panels share titled neutral chrome with exactly one cyan marker. |
 | PTY evidence | `go test -run 'TestTUI_(FileViewerFlowUnderPTY|FileTreeMouseWheelAndClickUnderPTY)' -v ./cmd/atenea-tui` passed, including actual SGR mouse sequences that replace the viewer file and expose the focus markers. |
 | Final gates | `gofmt -l .` had no output; `go vet ./...`, `go test -race ./internal/tui ./cmd/atenea-tui`, and `go test ./...` passed. |
 

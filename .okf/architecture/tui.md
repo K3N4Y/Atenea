@@ -73,11 +73,13 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
   explorer focuses its navigation; clicking the right side focuses the active
   file viewer, or the chat transcript/composer when no viewer is open. The
   focused panel title includes a cyan `*`; the chat remains the
-  composer/transcript input and scrolling surface when it owns focus. Explorer
-  focus keeps `j`/Down, `k`/Up, `h`, `l`, Enter, and wheel navigation in the
-  tree. A tree file click opens or replaces the viewer without moving focus
-  away from the explorer, while a focused viewer receives `j`/Down, `k`/Up,
-  PgUp, PgDn, and wheel scrolling. `Esc` from a focused viewer closes it and
+  composer/transcript input and scrolling surface when it owns focus. Keyboard
+  navigation follows focus: explorer receives `j`/Down, `k`/Up, `h`, `l`, and
+  Enter; viewer receives `j`/Down, `k`/Up, PgUp, and PgDn. Mouse-wheel
+  scrolling instead follows the panel under the pointer without changing
+  keyboard focus: explorer moves its tree, viewer moves the file, and chat
+  moves the transcript. A tree file click opens or replaces the viewer without
+  moving focus away from the explorer. `Esc` from a focused viewer closes it and
   returns focus to chat. Ctrl+C and pending permission/plan approval gates
   keep precedence over panel routing; `Tab` continues to control build/plan
   mode rather than panel focus.
@@ -109,7 +111,8 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
 - In split layout, direct mouse clicks focus explorer, chat, or viewer. The
   focused panel has the cyan `*` in its title; explorer row activation retains
   explorer focus, chat restores the transcript/composer target, and viewer
-  receives `j`/`k`, PgUp/PgDn, and wheel scrolling. `Tab` still switches
+  receives `j`/`k` and PgUp/PgDn. The mouse wheel follows the hovered panel
+  without changing keyboard focus. `Tab` still switches
   build/plan, permission and plan approval gates win, a full-width tree owns
   focus, and viewer `Esc` returns focus to chat.
 
