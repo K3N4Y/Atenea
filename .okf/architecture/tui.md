@@ -44,7 +44,9 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
  footer with agent/model, all with lipgloss styles; `reveal.go` is the smooth
  streaming of the text that arrives by deltas, assistant and thought (parity
  with `frontend/src/lib/reveal.ts`): the view reveals a prefix by runes that
- advances with a loop of ticks, with catch-up proportional to the backlog.
+ advances with a loop of ticks, with catch-up proportional to the backlog; an
+ assistant renders that revealed prefix as Markdown while live, then renders
+ its complete Markdown once the reveal drains.
 - `internal/wiring` — the shared assembly extracted from `app.go`: registry de
  tools, skills and slash-commands, catalog of subagents with the propagated gate,
  system prompts (normal/plan/local) and the configured runner. `App.wire` and

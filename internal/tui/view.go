@@ -98,7 +98,7 @@ var (
 // render produce la linea del bloque; los marcadores y el contenido son
 // estables para que los tests puedan asertar sobre ellos, los estilos solo
 // los envuelven. width es el ancho util del viewport (0 = sin envolver): solo
-// lo usa el render markdown del assistant cerrado, el resto de bloques deja
+// lo usa el render markdown del assistant, el resto de bloques deja
 // el envolvimiento a syncViewport.
 func (e entry) render(width int) string {
 	switch e.kind {
@@ -115,15 +115,12 @@ func (e entry) render(width int) string {
 	case entryError:
 		return errorStyle.Render("[error] " + e.text)
 	default: // entryAssistant: texto plano sin marcador
-		// Solo los bloques asentados (settled) se rinden como markdown: el
-		// streaming en vivo queda plano porque el markdown parcial de un
-		// stream flickea (un ** o un guion a medio llegar cambia de sentido
-		// con cada delta), y mientras el reveal no drene el backlog se sigue
-		// mostrando el prefijo plano.
+		// Los bloques asentados se rinden completos; durante el streaming se
+		// rinde solo el prefijo revelado para no filtrar el backlog pendiente.
 		if e.settled() {
 			return renderMarkdown(e.text, width)
 		}
-		return e.revealedText()
+		return renderMarkdown(e.revealedText(), width)
 	}
 }
 

@@ -157,14 +157,14 @@ func TestModel_FoldsStreamingAssistantText(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "Hola "})
 	m = drainReveal(t, m)
-	if got := m.View(); !strings.Contains(got, "Hola ") {
-		t.Fatalf("View() = %q, debe contener %q tras el primer delta", got, "Hola ")
+	if got := ansi.Strip(m.View()); !strings.Contains(got, "Hola") {
+		t.Fatalf("View() sin ANSI = %q, debe contener %q tras el primer delta", got, "Hola")
 	}
 
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "mundo"})
 	m = drainReveal(t, m)
-	if got := m.View(); !strings.Contains(got, "Hola mundo") {
-		t.Fatalf("View() = %q, debe contener %q tras acumular deltas", got, "Hola mundo")
+	if got := ansi.Strip(m.View()); !strings.Contains(got, "Hola mundo") {
+		t.Fatalf("View() sin ANSI = %q, debe contener %q tras acumular deltas", got, "Hola mundo")
 	}
 
 	m = apply(t, m, EventMsg{
@@ -215,11 +215,9 @@ func TestModel_RendersClosedAssistantAsMarkdown(t *testing.T) {
 	}
 }
 
-func TestModel_LiveAssistantStaysPlainUntilClosed(t *testing.T) {
-	// TRIANGULATE: una implementacion pobre rendiria markdown SIEMPRE, tambien
-	// sobre el bloque en vivo: el markdown parcial de un stream flickea (un **
-	// a medio llegar cambia de sentido con cada delta). Mientras el bloque esta
-	// vivo el texto debe verse plano tal cual llega; solo al cerrarse se rinde.
+func TestModel_LiveAssistantRendersMarkdownBeforeClosed(t *testing.T) {
+	// TRIANGULATE: el renderer debe aplicar Markdown tanto al prefijo revelado
+	// durante streaming como al contenido completo al asentarse el bloque.
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
@@ -228,9 +226,12 @@ func TestModel_LiveAssistantStaysPlainUntilClosed(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
 	m = drainReveal(t, m)
 
-	view := m.View()
-	if !strings.Contains(view, "**fuerte**") {
-		t.Fatalf("View() = %q, debe contener el marcador crudo %q mientras el bloque esta vivo: el streaming se muestra plano, no se rinde markdown parcial", view, "**fuerte**")
+	view := ansi.Strip(m.View())
+	if strings.Contains(view, "**") {
+		t.Fatalf("View() sin ANSI = %q, NO debe contener marcadores Markdown crudos mientras el bloque esta vivo", view)
+	}
+	if !strings.Contains(view, "fuerte") {
+		t.Fatalf("View() sin ANSI = %q, debe contener %q mientras el bloque esta vivo", view, "fuerte")
 	}
 
 	m = apply(t, m, EventMsg{
@@ -238,7 +239,7 @@ func TestModel_LiveAssistantStaysPlainUntilClosed(t *testing.T) {
 		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: text},
 	})
 
-	view = m.View()
+	view = ansi.Strip(m.View())
 	if strings.Contains(view, "**") {
 		t.Fatalf("View() = %q, NO debe contener %q tras cerrar el bloque: al cerrarse el turno el enfasis markdown se rinde, no se muestra crudo", view, "**")
 	}
@@ -306,6 +307,52 @@ func TestModel_StepEndedMessageRendersAsMarkdown(t *testing.T) {
 	}
 }
 
+func TestEntryAssistant_RenderRendersRevealedMarkdownWhileLive(t *testing.T) {
+	entry := entry{
+		kind:     entryAssistant,
+		text:     "**Hola** mundo",
+		live:     true,
+		revealed: len([]rune("**Hola**")),
+	}
+
+	rendered := ansi.Strip(entry.render(80))
+	if strings.Contains(rendered, "**Hola**") {
+		t.Fatalf("render(80) = %q, no debe contener el marcador markdown crudo mientras el assistant sigue en vivo", rendered)
+	}
+	if !strings.Contains(rendered, "Hola") {
+		t.Fatalf("render(80) = %q, debe contener el texto markdown ya revelado", rendered)
+	}
+	if strings.Contains(rendered, "mundo") {
+		t.Fatalf("render(80) = %q, no debe revelar el backlog pendiente %q", rendered, "mundo")
+	}
+}
+
+func TestEntryAssistant_RenderRendersRevealedListWhileLiveAndCompleteListWhenSettled(t *testing.T) {
+	entry := entry{
+		kind:     entryAssistant,
+		text:     "- item visible\n- item pendiente",
+		live:     true,
+		revealed: len([]rune("- item visible\n")),
+	}
+
+	live := ansi.Strip(entry.render(80))
+	if !strings.Contains(live, "•") || !strings.Contains(live, "item visible") {
+		t.Fatalf("render(80) vivo = %q, debe rendir el item revelado como lista Markdown", live)
+	}
+	if strings.Contains(live, "item pendiente") {
+		t.Fatalf("render(80) vivo = %q, no debe filtrar el item pendiente", live)
+	}
+
+	entry.live = false
+	entry.revealed = len([]rune(entry.text))
+	settled := ansi.Strip(entry.render(80))
+	for _, want := range []string{"•", "item visible", "item pendiente"} {
+		if !strings.Contains(settled, want) {
+			t.Fatalf("render(80) asentado = %q, debe contener %q", settled, want)
+		}
+	}
+}
+
 // Contrato del color del texto asentado del assistant: el markdown cerrado se
 // rinde con el color por defecto de la terminal, NO con el gris "252" que fija
 // Document.Color del estilo "dark" de glamour (el texto se ve apagado frente
@@ -327,7 +374,7 @@ func TestModel_AssistantMarkdownUsesDefaultForeground(t *testing.T) {
 	})
 	m = drainReveal(t, m)
 
-	view := m.View()
+	view := ansi.Strip(m.View())
 	if plain := ansi.Strip(view); !strings.Contains(plain, "texto-asentado") {
 		t.Fatalf("View() sin ANSI = %q, debe contener %q: quitar el gris del documento no debe perder el contenido del texto", plain, "texto-asentado")
 	}
@@ -981,8 +1028,10 @@ func TestModel_SecondTurnOpensNewBlock(t *testing.T) {
 	if strings.Contains(view, "Primera respuestaSegunda respuesta") {
 		t.Fatalf("View() = %q, el segundo turno NO debe concatenar al bloque anterior", view)
 	}
-	if !strings.Contains(view, "Primera respuesta\n\nSegunda respuesta") {
-		t.Fatalf("View() = %q, ambos textos deben verse como bloques separados", view)
+	first := strings.Index(view, "Primera respuesta")
+	second := strings.Index(view, "Segunda respuesta")
+	if first < 0 || second < 0 || first >= second {
+		t.Fatalf("View() sin ANSI = %q, ambos textos deben verse como bloques separados y ordenados", view)
 	}
 	if count := strings.Count(view, "Primera respuesta"); count != 1 {
 		t.Fatalf("View() = %q, %q debe aparecer exactamente una vez (count=%d)", view, "Primera respuesta", count)
@@ -1640,9 +1689,9 @@ func TestModel_WrapsUnbreakableLongToken(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: url})
 	m = drainReveal(t, m)
 
-	view := m.View()
-	if !strings.Contains(view, "sufijo-final") {
-		t.Fatalf("View() = %q, el final del token %q debe estar visible: un token sin espacios mas largo que el ancho debe partirse en varias lineas, no truncarse", view, "sufijo-final")
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "sufijo-") || !strings.Contains(view, "final") {
+		t.Fatalf("View() sin ANSI = %q, el sufijo final debe seguir visible aunque el renderer Markdown lo envuelva", view)
 	}
 	assertNoLineWiderThan(t, view, 40)
 }
@@ -2909,8 +2958,8 @@ func TestModel_RevealCatchUpDrainsHugeDeltaInBoundedTicks(t *testing.T) {
 // implementacion pobre rendiria markdown apenas el bloque se cierra (StepEnded)
 // aunque quede backlog: el texto completo flashearia de golpe a mitad de la
 // animacion. Cerrado el turno con backlog pendiente la vista debe seguir
-// mostrando el prefijo PLANO (sin la cola y con los ** crudos); recien al
-// drenar se rinde el markdown.
+// mostrando solo el prefijo revelado, ya rendido como Markdown; recien al
+// drenar se muestra el contenido completo.
 func TestModel_RevealMarkdownSwapWaitsForDrain(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -2921,10 +2970,10 @@ func TestModel_RevealMarkdownSwapWaitsForDrain(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
 
-	// Un tick antes del cierre: el prefijo con los marcadores crudos ya se ve.
+	// Un tick antes del cierre: el prefijo revelado ya se rinde como Markdown.
 	m = apply(t, m, revealTickMsg{})
-	if got := m.View(); !strings.Contains(got, "**fuerte**") {
-		t.Fatalf("View() = %q, debe contener el marcador crudo %q tras el primer tick: el streaming en vivo se muestra plano", got, "**fuerte**")
+	if got := ansi.Strip(m.View()); strings.Contains(got, "**") || !strings.Contains(got, "fuerte") {
+		t.Fatalf("View() sin ANSI = %q, debe rendir el Markdown revelado durante streaming", got)
 	}
 
 	// El turno se cierra con backlog pendiente.
@@ -2933,17 +2982,17 @@ func TestModel_RevealMarkdownSwapWaitsForDrain(t *testing.T) {
 		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: text},
 	})
 
-	view := m.View()
+	view := ansi.Strip(m.View())
 	if strings.Contains(view, "fin-drenado") {
 		t.Fatalf("View() = %q, NO debe contener %q inmediatamente tras StepEnded: cerrar el turno no debe revelar de golpe la cola pendiente, el reveal sigue su ritmo de ticks", view, "fin-drenado")
 	}
-	if !strings.Contains(view, "**") {
-		t.Fatalf("View() = %q, debe seguir mostrando los %q crudos tras StepEnded: mientras quede backlog el prefijo se rinde PLANO, saltar a markdown a mitad de la animacion flashearia el texto completo", view, "**")
+	if strings.Contains(view, "**") || !strings.Contains(view, "fuerte") {
+		t.Fatalf("View() sin ANSI = %q, debe conservar el Markdown del prefijo revelado tras StepEnded", view)
 	}
 
 	// Drenado el backlog, el bloque cerrado se rinde como markdown.
 	m = drainReveal(t, m)
-	view = m.View()
+	view = ansi.Strip(m.View())
 	if strings.Contains(view, "**") {
 		t.Fatalf("View() = %q, NO debe contener %q tras drenar: con el bloque cerrado y drenado el enfasis markdown se rinde, no se muestra crudo", view, "**")
 	}
@@ -2989,8 +3038,12 @@ func TestModel_RevealCutsByRunesNotBytes(t *testing.T) {
 	if ticks < 2 {
 		t.Fatalf("el backlog (%d runas) se dreno en %d tick(s), debe drenar en varios ticks para ejercitar los cortes intermedios", utf8.RuneCountInString(text), ticks)
 	}
-	if got := m.View(); !strings.Contains(got, text) {
-		t.Fatalf("View() = %q, debe contener el texto multibyte completo %q tras drenar: revelar por runas no debe perder ni corromper ningun caracter", got, text)
+	plain := ansi.Strip(m.View())
+	if got, want := strings.Count(plain, "日本語テキスト"), 8; got != want {
+		t.Fatalf("View() sin ANSI = %q, contiene %d ocurrencias de texto japonés, se esperaban %d tras drenar", plain, got, want)
+	}
+	if got, want := strings.Count(plain, "🚀🚀🚀"), 8; got != want {
+		t.Fatalf("View() sin ANSI = %q, contiene %d grupos de emoji, se esperaban %d tras drenar", plain, got, want)
 	}
 }
 

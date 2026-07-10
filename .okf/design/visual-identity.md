@@ -40,7 +40,7 @@ The application seeks to break the barrier between technical and creative profil
 ## 8. Anatomy of the Chat Message
 The conversation should feel like a continuous and flat canvas (see "Flat Structure"), differentiating the elements only when it provides clarity:
 - **User messages:** carry a **subtle background** that distinguishes them from the canvas, but **without a border**. The container respects the general rounding (24px).
-- **AI responses (Markdown rendering):** they are rendered **directly on the Paper White background**, without a background or its own container, so that the content flows integrated into the view.
+- **AI responses (Markdown rendering):** they are rendered **directly on the Paper White background**, without a background or its own container, so that the content flows integrated into the view. During streaming, render the revealed Markdown incrementally with an accent caret; once complete, render the full message without the caret.
 - **`edit` and `diff` tools:** these blocks **do have their own background** to visually separate the code and the changes of the conversational flow.
 
 ## 9. Thinking Streaming (Thinking Process)

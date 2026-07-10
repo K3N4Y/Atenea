@@ -6,8 +6,8 @@ import AssistantMessage from './AssistantMessage.vue'
 
 // El streaming visual (reveal caracter a caracter) vive en useSmoothText y se
 // prueba en aislamiento en lib/useSmoothText.test.ts. Aca lo mockeamos para
-// verificar solo el contrato de render del componente: que pinta `visible`
-// (texto parcial) durante la escritura y hace swap a Markdown cuando `done`.
+// verificar el contrato de render del componente: que pasa `visible` a
+// Markdown durante la escritura y conserva el caret hasta que `done`.
 const smooth = vi.hoisted(() => ({
   visible: null as unknown as Ref<string>,
   done: null as unknown as Ref<boolean>,
@@ -22,8 +22,8 @@ beforeEach(() => {
 })
 
 describe('AssistantMessage', () => {
-  it('mientras escribe muestra el texto parcial (visible) plano y un caret', () => {
-    smooth.visible.value = '**Hol'
+  it('mientras escribe renderiza Markdown del texto parcial visible y conserva el caret', () => {
+    smooth.visible.value = '**Hola**'
     smooth.done.value = false
 
     const wrapper = mount(AssistantMessage, {
@@ -31,16 +31,36 @@ describe('AssistantMessage', () => {
         item: {
           kind: 'assistant',
           id: 'a1',
-          text: '**Hola**',
+          text: '**Hola** mundo',
           streaming: true,
         },
       },
     })
 
-    // Pinta el parcial revelado, no el texto completo del store.
-    expect(wrapper.text()).not.toContain('Hola')
-    // Texto plano: no se reparsea Markdown en cada frame.
-    expect(wrapper.html()).not.toContain('<strong>')
+    // Pinta el parcial revelado, no el texto completo pendiente del store.
+    expect(wrapper.text()).not.toContain('mundo')
+    expect(wrapper.html()).toContain('<strong>Hola</strong>')
+    expect(wrapper.find('[aria-hidden="true"]').exists()).toBe(true)
+  })
+
+  it('mientras escribe renderiza una lista parcial sin revelar elementos pendientes', () => {
+    smooth.visible.value = '- primer elemento'
+    smooth.done.value = false
+
+    const wrapper = mount(AssistantMessage, {
+      props: {
+        item: {
+          kind: 'assistant',
+          id: 'a1',
+          text: '- primer elemento\n- segundo elemento',
+          streaming: true,
+        },
+      },
+    })
+
+    expect(wrapper.html()).toContain('<ul>')
+    expect(wrapper.html()).toContain('<li>primer elemento</li>')
+    expect(wrapper.text()).not.toContain('segundo elemento')
     expect(wrapper.find('[aria-hidden="true"]').exists()).toBe(true)
   })
 

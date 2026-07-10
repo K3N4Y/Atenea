@@ -1,14 +1,14 @@
 export namespace command {
-
+	
 	export class Command {
 	    Name: string;
 	    Description: string;
 	    Template: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Command(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Name = source["Name"];
@@ -20,15 +20,15 @@ export namespace command {
 }
 
 export namespace main {
-
+	
 	export class GitChange {
 	    path: string;
 	    status: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new GitChange(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.path = source["path"];
@@ -40,11 +40,11 @@ export namespace main {
 	    staged: GitChange[];
 	    unstaged: GitChange[];
 	    untracked: GitChange[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new GitStatus(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.isRepo = source["isRepo"];
@@ -52,7 +52,7 @@ export namespace main {
 	        this.unstaged = this.convertValues(source["unstaged"], GitChange);
 	        this.untracked = this.convertValues(source["untracked"], GitChange);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -75,11 +75,11 @@ export namespace main {
 	    kind: string;
 	    baseURL: string;
 	    model: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ProviderConfig(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.kind = source["kind"];
@@ -91,17 +91,17 @@ export namespace main {
 }
 
 export namespace session {
-
+	
 	export class ContextEpoch {
 	    Agent: string;
 	    Model: string;
 	    BaselineSeq: number;
 	    Revision: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ContextEpoch(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Agent = source["Agent"];
@@ -120,11 +120,11 @@ export namespace session {
 	    failures_and_attempts: string[];
 	    pending_and_next_step: string[];
 	    facts_not_to_reinterpret: string[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new StructuredSummary(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.current_goal = source["current_goal"];
@@ -148,11 +148,11 @@ export namespace session {
 	    reason: string;
 	    input_tokens_before: number;
 	    estimated_tokens_after: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CompactionCheckpoint(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.summary = this.convertValues(source["summary"], StructuredSummary);
@@ -165,7 +165,7 @@ export namespace session {
 	        this.input_tokens_before = source["input_tokens_before"];
 	        this.estimated_tokens_after = source["estimated_tokens_after"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -184,16 +184,16 @@ export namespace session {
 		    return a;
 		}
 	}
-
+	
 	export class ToolCall {
 	    ID: string;
 	    Name: string;
 	    Arguments: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ToolCall(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ID = source["ID"];
@@ -208,11 +208,11 @@ export namespace session {
 	    ToolCalls: ToolCall[];
 	    ToolCallID: string;
 	    Seq: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Message(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ID = source["ID"];
@@ -222,7 +222,7 @@ export namespace session {
 	        this.ToolCallID = source["ToolCallID"];
 	        this.Seq = source["Seq"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -247,11 +247,11 @@ export namespace session {
 	    ReasoningTokens: number;
 	    CacheReadTokens: number;
 	    CacheWriteTokens: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Usage(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.InputTokens = source["InputTokens"];
@@ -274,11 +274,11 @@ export namespace session {
 	    Error: string;
 	    Diff: string;
 	    Compaction?: CompactionCheckpoint;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SessionEvent(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.SessionID = source["SessionID"];
@@ -294,7 +294,7 @@ export namespace session {
 	        this.Diff = source["Diff"];
 	        this.Compaction = this.convertValues(source["Compaction"], CompactionCheckpoint);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -317,11 +317,11 @@ export namespace session {
 	    ID: string;
 	    Title: string;
 	    Cwd: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SessionSummary(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ID = source["ID"];
@@ -329,8 +329,8 @@ export namespace session {
 	        this.Cwd = source["Cwd"];
 	    }
 	}
-
-
+	
+	
 
 }
 
