@@ -1,12 +1,12 @@
 ---
 updated_at: 2026-07-09
-summary: Approved interaction design for direct mouse focus in the TUI explorer, chat, and file viewer.
+summary: Implemented interaction design for direct mouse focus in the TUI explorer, chat, and file viewer.
 ---
 
 # Design: direct mouse focus for TUI panels
 
 Date: 2026-07-09
-Status: approved in brainstorming; implementation plan pending
+Status: implemented
 
 ## Objective
 
@@ -30,8 +30,8 @@ mouse workflow for opening files from the explorer.
 
 - Three focus targets: explorer, chat, and file viewer.
 - Left click inside a visible target sets focus to that target.
-- The active target has an accent border and title; inactive visible targets
-  retain a muted border.
+- The focused panel title includes a cyan `*`; panel borders stay rounded and
+  neutral.
 - When the explorer is focused, `j`/Down, `k`/Up, `h`, `l`, Enter, and wheel
   navigation operate on the tree.
 - When the chat is focused, typing goes to the composer and the wheel scrolls
@@ -98,16 +98,16 @@ of the current focus.
 
 ## Visual treatment
 
-Each visible panel uses the same rounded border shape already used by the
-explorer and composer. The active panel receives the existing accent color in
-its border and title; inactive panels use a faint neutral border/title. The
-tree-row reverse highlight remains independent of panel focus, so its selected
-file remains legible when chat or viewer owns focus.
+The explorer, chat, and viewer use rounded neutral borders. Their title shows a
+cyan `*` only while that panel owns focus. Clicking chat routes typing to the
+composer and wheel events to the transcript. The tree-row reverse highlight
+remains independent of panel focus, so its selected file remains legible when
+chat or viewer owns focus.
 
-The right chat area gains a stable title/border treatment consistent with the
-tree and viewer so all three focusable areas are equally discoverable. The
-visual focus indication must not reduce the usable viewport height or cause
-line wrapping at narrow terminal widths.
+The split rendering preserves the existing narrow-terminal behavior: when the
+tree consumes the full width, it is the sole focus target and the title does
+not add a marker. Viewer rendering reserves its title inside the existing
+panel height, so direct focus does not add a new viewport row.
 
 ## Testing contract
 
@@ -120,8 +120,24 @@ Behavior tests remain in `internal/tui` and use the existing model helpers:
 | `TestModel_ClickViewerFocusesFileScroll` | Viewer click switches focus and scroll keys move the file |
 | `TestModel_TreeFileClickKeepsExplorerFocus` | Opening/replacing a file from the tree does not steal tree focus |
 | `TestModel_ClosingFocusedViewerReturnsChatFocus` | `Esc` closes viewer and normalizes focus to chat |
-| `TestModel_FocusBordersMarkOnlyActivePanel` | Visible output exposes exactly one active panel marker in split layouts |
-| E2E PTY | Actual SGR clicks switch focus and preserve existing tree-to-viewer replacement |
+| Existing `TestModel_Tab*` and `TestModel_TreeLeaderDoesNotInterceptPendingGates` | Build/plan `Tab` semantics and approval-gate priority remain covered |
+| `TestModel_ClickChatMarksOnlyChatActiveWithoutOverflow` | Chat click exposes the only `chat *` marker without overflowing split rows |
+| `TestTUI_FileTreeMouseWheelAndClickUnderPTY` | Actual SGR tree clicks replace files, then SGR panel clicks expose `viewer *` and `explorer *` |
+
+## Implementation evidence
+
+The verification below was executed after the implementation on 2026-07-09.
+
+| TDD phase | Evidence |
+| --- | --- |
+| Safety net | `go test ./internal/tui ./cmd/atenea-tui` passed before implementation work. |
+| Understand | The implementation, direct-focus plan, model contracts, and PTY test were inspected. |
+| RED | Direct-focus, resize/chrome, chat-marker, and post-click wheel/key routing tests failed first with behavioral assertions before production changes. |
+| GREEN | `go test -run 'TestModel_(ClickTreeFocusesExplorerAndCapturesKeys|ClickChatFocusesComposer|ClickViewerFocusesFileScroll|TreeFileClickKeepsExplorerFocus|ClosingFocusedViewerReturnsChatFocus|ResizeToFullWidthTreeNormalizesFocusAndKeepsItAfterSplitReturns|SplitFocusChromeMarksExactlyOneActivePanel|ClickChatMarksOnlyChatActiveWithoutOverflow|ClickChatAfterOpeningViewerRoutesMouseWheelToTranscript|ExplorerSelectionAfterOpeningViewerRoutesTreeKeysAndEsc)' -v ./internal/tui` passed. |
+| TRIANGULATE | The contracts cover all three focus targets, split/full-width transitions, tree file replacement, chat transcript wheel routing, viewer scrolling, `Esc`, `Tab`, and approval-gate precedence. |
+| REFACTOR | Focus dispatch was centralized through normalized state and all visible focusable panels share titled neutral chrome with exactly one cyan marker. |
+| PTY evidence | `go test -run 'TestTUI_(FileViewerFlowUnderPTY|FileTreeMouseWheelAndClickUnderPTY)' -v ./cmd/atenea-tui` passed, including actual SGR mouse sequences that replace the viewer file and expose the focus markers. |
+| Final gates | `gofmt -l .` had no output; `go vet ./...`, `go test -race ./internal/tui ./cmd/atenea-tui`, and `go test ./...` passed. |
 
 ## Success criteria
 

@@ -69,6 +69,18 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
  pending permission, and the composer footer reflects this live. In plan-mode the
  runner announces `present_plan` without `bash`/`write`; the next `SendPrompt`
  returns the session to normal mode.
+- With the explorer open, the split layout has direct mouse focus. Clicking the
+  explorer focuses its navigation; clicking the right side focuses the active
+  file viewer, or the chat transcript/composer when no viewer is open. The
+  focused panel title includes a cyan `*`; the chat remains the
+  composer/transcript input and scrolling surface when it owns focus. Explorer
+  focus keeps `j`/Down, `k`/Up, `h`, `l`, Enter, and wheel navigation in the
+  tree. A tree file click opens or replaces the viewer without moving focus
+  away from the explorer, while a focused viewer receives `j`/Down, `k`/Up,
+  PgUp, PgDn, and wheel scrolling. `Esc` from a focused viewer closes it and
+  returns focus to chat. Ctrl+C and pending permission/plan approval gates
+  keep precedence over panel routing; `Tab` continues to control build/plan
+  mode rather than panel focus.
 - A successful `present_plan` adds the offer `[plan] plan presentado
   (y ejecutar / n seguir en plan)` to the end; with the offer pending the keyboard does not
  feed the input. `y` accepts via `Agent.AcceptPlan` (the Engine returns the
@@ -94,6 +106,12 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
 - The explorer occupies a bounded left column and transcript, menus and
  composer are recalculated to the remaining width. If `listFiles` fails or the workspace
  is empty, the panel remains usable and displays the non-panic status.
+- In split layout, direct mouse clicks focus explorer, chat, or viewer. The
+  focused panel has the cyan `*` in its title; explorer row activation retains
+  explorer focus, chat restores the transcript/composer target, and viewer
+  receives `j`/`k`, PgUp/PgDn, and wheel scrolling. `Tab` still switches
+  build/plan, permission and plan approval gates win, a full-width tree owns
+  focus, and viewer `Esc` returns focus to chat.
 
 ### File Viewer
 

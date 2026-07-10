@@ -98,6 +98,16 @@ func TestTUI_FileTreeMouseWheelAndClickUnderPTY(t *testing.T) {
 	}
 	waitForPTYText(t, &output, "file-05.go · 1-1/1")
 	waitForPTYText(t, &output, "package file05")
+	if _, err := terminal.Write([]byte("\x1b[<0;50;4M")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, &output, "viewer *")
+	waitForPTYText(t, &output, "file-05.go · 1-1/1")
+	if _, err := terminal.Write([]byte("\x1b[<0;1;1M")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, &output, "explorer *")
+	waitForPTYText(t, &output, "file-05.go · 1-1/1")
 	if _, err := terminal.Write([]byte("\x03")); err != nil {
 		t.Fatal(err)
 	}
