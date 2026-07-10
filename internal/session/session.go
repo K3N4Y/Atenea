@@ -70,7 +70,7 @@ type SessionEvent struct {
 	// fragmento crudo de Tool.Input.Delta NO va aqui: json.RawMessage exige JSON
 	// valido y la frontera Wails marshalea el evento, asi que ese fragmento viaja en Text.
 	Input json.RawMessage
-	Usage *Usage // solo Step.Ended
+	Usage *Usage // estimated input on Step.Started; exact provider usage on Step.Ended
 	Error string // mensaje de fallo de una tool (Tool.Failed); M8 lo reutiliza para Step.Failed
 	// Diff es un diff unificado SOLO para la UI (Tool.Success de edit/write). No
 	// entra en Message, asi que el modelo no lo ve ni consume tokens; se persiste y

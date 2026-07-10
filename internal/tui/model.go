@@ -161,8 +161,13 @@ type Model struct {
 	// entran una sola vez via WithStatus. El modelo sigue fijo por corrida,
 	// pero el agente MOSTRADO cambia con Tab: en plan-mode el pie rinde "plan"
 	// en lugar de agentName (ver statusFooter y planMode).
-	agentName string
-	model     string
+	agentName      string
+	model          string
+	usage          *session.Usage
+	liveUsage      bool
+	outputBytes    int
+	reasoningBytes int
+	toolInputBytes int
 
 	// planMode indica el modo del agente: Tab lo alterna entre build (false)
 	// y plan (true). Es pegajoso entre envios: cada Enter envia por el camino

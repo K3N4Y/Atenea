@@ -35,13 +35,19 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
  `Run` in a session-cancellable goroutine (mirror of `App.start`); at
  finish publishes `RunDoneMsg`. Satisfies the `Agent` interface of Model.
 - `internal/tui/model.go` + `fold.go` + `view.go` + `reveal.go` — the Model of
- Bubble Tea. `fold.go` projects durable `SessionEvent` to
- conversation inputs (streaming assistant text, collapsible
- thought blocks, user messages, stateful tool calls, pending permissions,
- errors); `model.go` handles keyboard and channel event pump;
- `view.go` renders with high bounded viewport (follow queue, PgUp/PgDn),
- job status line, composer box with rounded edge and
- footer with agent/model, all with lipgloss styles; `reveal.go` is the smooth
+  Bubble Tea. `fold.go` projects durable `SessionEvent` to
+  conversation inputs (streaming assistant text, collapsible
+  thought blocks, user messages, stateful tool calls, pending permissions,
+  errors) and keeps live token usage: estimated request input from
+  `Step.Started`, generated tokens estimated from streaming deltas, and exact
+  provider usage from `Step.Ended`; `model.go` handles keyboard and channel
+  event pump;
+  `view.go` renders with high bounded viewport (follow queue, PgUp/PgDn),
+  job status line, composer box with rounded edge and a compact
+  `↑ input ↓ output ctx used/window` label in its top-left border, and
+  footer with agent/model, all with lipgloss styles. Live estimates carry a
+  `~` prefix and lose it when `Step.Ended` supplies exact provider usage;
+  `reveal.go` is the smooth
  streaming of the text that arrives by deltas, assistant and thought (parity
  with `frontend/src/lib/reveal.ts`): the view reveals a prefix by runes that
  advances with a loop of ticks, with catch-up proportional to the backlog; an

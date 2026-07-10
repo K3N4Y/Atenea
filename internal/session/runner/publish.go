@@ -30,27 +30,29 @@ type Publisher struct {
 	sessionID string
 	asstMsgID string // assistantMessageID del turno
 
-	mu            sync.Mutex
-	text          strings.Builder   // buffer del bloque de texto en curso
-	assistantText strings.Builder   // texto del assistant acumulado del turno (se materializa en Step.Ended)
-	reason        strings.Builder   // buffer del bloque de razonamiento en curso
-	input         map[string][]byte // input JSON acumulado por callID
-	tools         map[string]string // callID -> toolName (mapa de tool calls del turno)
-	order         []string          // orden de Tool.Called del turno
-	settled       map[string]bool   // callID -> ya tiene Tool.Success/Tool.Failed
+	mu                   sync.Mutex
+	text                 strings.Builder   // buffer del bloque de texto en curso
+	assistantText        strings.Builder   // texto del assistant acumulado del turno (se materializa en Step.Ended)
+	reason               strings.Builder   // buffer del bloque de razonamiento en curso
+	input                map[string][]byte // input JSON acumulado por callID
+	tools                map[string]string // callID -> toolName (mapa de tool calls del turno)
+	order                []string          // orden de Tool.Called del turno
+	settled              map[string]bool   // callID -> ya tiene Tool.Success/Tool.Failed
+	estimatedInputTokens int
 }
 
 // NewPublisher crea el publisher de un turno. assistantMessageID es el ID con el
 // que se materializa el Message coalescido del asistente (lo genera el runner en
 // M5; en los tests se pasa fijo para poder afirmarlo).
-func NewPublisher(store eventAppender, sessionID, assistantMessageID string) *Publisher {
+func NewPublisher(store eventAppender, sessionID, assistantMessageID string, estimatedInputTokens int) *Publisher {
 	return &Publisher{
-		store:     store,
-		sessionID: sessionID,
-		asstMsgID: assistantMessageID,
-		input:     make(map[string][]byte),
-		tools:     make(map[string]string),
-		settled:   make(map[string]bool),
+		store:                store,
+		sessionID:            sessionID,
+		asstMsgID:            assistantMessageID,
+		input:                make(map[string][]byte),
+		tools:                make(map[string]string),
+		settled:              make(map[string]bool),
+		estimatedInputTokens: estimatedInputTokens,
 	}
 }
 
@@ -64,7 +66,10 @@ func (p *Publisher) Publish(ctx context.Context, ev llm.Event) error {
 	defer p.mu.Unlock()
 	switch ev.Kind {
 	case llm.StepStarted:
-		return p.emit(ctx, session.SessionEvent{Kind: session.KindStepStarted})
+		return p.emit(ctx, session.SessionEvent{
+			Kind:  session.KindStepStarted,
+			Usage: &session.Usage{InputTokens: p.estimatedInputTokens},
+		})
 	case llm.StepEnded:
 		// Materializa aqui el unico Message del assistant del turno, coalesciendo el
 		// texto acumulado con los tool_calls (en orden de Tool.Called). Si no hubo

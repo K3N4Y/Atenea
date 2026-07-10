@@ -127,7 +127,9 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string) (bool, er
 	if err != nil {
 		return false, err
 	}
-	pub := NewPublisher(r.store, sessionID, r.nextID())
+	usageRequest := req
+	usageRequest.MaxOutputTokens = 0
+	pub := NewPublisher(r.store, sessionID, r.nextID(), llm.EstimateRequestTokens(usageRequest))
 	return r.consume(ctx, sessionID, in, pub, mat.Settle)
 }
 

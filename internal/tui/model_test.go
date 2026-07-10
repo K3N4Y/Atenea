@@ -1753,6 +1753,129 @@ func TestModel_ComposerFooterShowsAgentAndModel(t *testing.T) {
 	}
 }
 
+func TestModel_ComposerTopBorderShowsTokenUsage(t *testing.T) {
+	m := NewModel(nil, "s1", nil).WithStatus("build", "anthropic/claude-sonnet-4.5")
+	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 12})
+	m = apply(t, m, EventMsg{
+		Kind: session.KindStepEnded,
+		Usage: &session.Usage{
+			InputTokens:  1_234,
+			OutputTokens: 345,
+		},
+	})
+
+	plain := ansi.Strip(m.View())
+	var topBorder string
+	for _, line := range strings.Split(plain, "\n") {
+		if strings.HasPrefix(line, "╭") {
+			topBorder = line
+			break
+		}
+	}
+	if topBorder == "" {
+		t.Fatalf("View() = %q, want a composer top border", plain)
+	}
+	for _, want := range []string{"↑ 1.2k", "↓ 345", "ctx 1.2k/200k"} {
+		if !strings.Contains(topBorder, want) {
+			t.Fatalf("composer top border = %q, want it to contain %q", topBorder, want)
+		}
+	}
+	assertBoxLinesExactWidth(t, m.View(), 60)
+}
+
+func TestModel_ComposerTokenUsageUpdatesDuringStreaming(t *testing.T) {
+	m := NewModel(nil, "s1", nil).WithStatus("build", "anthropic/claude-sonnet-4.5")
+	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 12})
+	m = apply(t, m, EventMsg{
+		Kind:  session.KindStepStarted,
+		Usage: &session.Usage{InputTokens: 1_200},
+	})
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "↑ ~1.2k ↓ 0 ctx ~1.2k/200k") {
+		t.Fatalf("View() = %q, want live input usage at step start", view)
+	}
+
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: strings.Repeat("a", 3_000)})
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "↑ ~1.2k ↓ ~1k ctx ~1.2k/200k") {
+		t.Fatalf("View() = %q, want live output usage after text delta", view)
+	}
+
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: strings.Repeat("b", 1_500)})
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "↑ ~1.2k ↓ ~1.5k ctx ~1.2k/200k") {
+		t.Fatalf("View() = %q, want live output usage after reasoning delta", view)
+	}
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolInputDelta, Text: strings.Repeat("c", 1_500)})
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "↑ ~1.2k ↓ ~2k ctx ~1.2k/200k") {
+		t.Fatalf("View() = %q, want live output usage after tool input delta", view)
+	}
+
+	m = apply(t, m, EventMsg{
+		Kind: session.KindStepEnded,
+		Usage: &session.Usage{
+			InputTokens:     1_300,
+			OutputTokens:    900,
+			ReasoningTokens: 100,
+		},
+	})
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "↑ 1.3k ↓ 900 ctx 1.3k/200k") {
+		t.Fatalf("View() = %q, want exact provider usage after step end", view)
+	}
+}
+
+func TestModel_ComposerDistinguishesEstimatedAndExactInputUsage(t *testing.T) {
+	m := NewModel(nil, "s1", nil).WithStatus("build", "anthropic/claude-sonnet-4.5")
+	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 12})
+	m = apply(t, m, EventMsg{
+		Kind:  session.KindStepStarted,
+		Usage: &session.Usage{InputTokens: 10_000},
+	})
+
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "↑ ~10k") || !strings.Contains(view, "ctx ~10k/200k") {
+		t.Fatalf("live View() = %q, want the conservative 10k estimate marked as approximate", view)
+	}
+
+	m = apply(t, m, EventMsg{
+		Kind:  session.KindStepEnded,
+		Usage: &session.Usage{InputTokens: 9_100, OutputTokens: 250},
+	})
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "↑ 9.1k") || !strings.Contains(view, "ctx 9.1k/200k") {
+		t.Fatalf("completed View() = %q, want exact provider usage 9.1k", view)
+	}
+	if strings.Contains(view, "~9.1k") {
+		t.Fatalf("completed View() = %q, exact provider usage must not be marked approximate", view)
+	}
+}
+
+func TestModel_ComposerTokenUsageHandlesUnknownModelAndNarrowWidth(t *testing.T) {
+	m := NewModel(nil, "s1", nil).WithStatus("build", "custom/model")
+	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 12})
+	m = apply(t, m, EventMsg{
+		Kind:  session.KindStepEnded,
+		Usage: &session.Usage{InputTokens: 10_000, OutputTokens: 2_500},
+	})
+
+	plain := ansi.Strip(m.View())
+	if !strings.Contains(plain, "↑ 10k ↓ 2.5k") {
+		t.Fatalf("View() = %q, want compact input and output token counts", plain)
+	}
+	if strings.Contains(plain, "ctx") {
+		t.Fatalf("View() = %q, unknown models must not show a made-up context window", plain)
+	}
+
+	m = apply(t, m, EventMsg{
+		Kind:  session.KindStepEnded,
+		Usage: &session.Usage{InputTokens: 20_000, OutputTokens: 3_000},
+	})
+	if plain = ansi.Strip(m.View()); strings.Contains(plain, "↑ 10k") || !strings.Contains(plain, "↑ 20k ↓ 3k") {
+		t.Fatalf("View() = %q, want the latest completed step usage", plain)
+	}
+
+	m = apply(t, m, tea.WindowSizeMsg{Width: 16, Height: 8})
+	assertBoxLinesExactWidth(t, m.View(), 16)
+}
+
 func TestModel_ComposerBoxWrapsInput(t *testing.T) {
 	// TRIANGULATE: el input vive SIEMPRE dentro de una caja de borde redondeado
 	// que abarca el ancho de la terminal (estilo Claude Code), este o no fijado
