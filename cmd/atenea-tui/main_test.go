@@ -61,6 +61,48 @@ func TestTUI_FileViewerFlowUnderPTY(t *testing.T) {
 	}
 }
 
+func TestTUI_FileTreeMouseWheelAndClickUnderPTY(t *testing.T) {
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "atenea-tui")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea-tui")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, output)
+	}
+	cmd := exec.Command(binary)
+	cmd.Dir = filepath.Join(repoRoot, "cmd/atenea-tui/testdata/file-tree-mouse/project")
+	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY=", "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"))
+	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = terminal.Close(); _ = cmd.Wait() }()
+	var output lockedBuffer
+	done := make(chan struct{})
+	go func() { _, _ = io.Copy(&output, terminal); close(done) }()
+	waitForPTYText(t, &output, "build · demo")
+	if _, err := terminal.Write([]byte(" e")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, &output, "file-00.go")
+	if _, err := terminal.Write([]byte("\x1b[<65;1;4M\x1b[<65;1;4M\x1b[<0;25;4M")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, &output, "file-03.go · 1-1/1")
+	waitForPTYText(t, &output, "package file03")
+	if _, err := terminal.Write([]byte("\x03")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("TUI did not exit")
+	}
+}
+
 func waitForPTYText(t *testing.T, output *lockedBuffer, want string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)

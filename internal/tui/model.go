@@ -336,6 +336,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scrollFileViewerMouse(ev)
 			return m, nil
 		}
+		if m.treeOpen && m.handleTreeMouse(ev) {
+			return m, nil
+		}
 		// El clic izquierdo sobre un bloque de pensamiento asentado alterna su
 		// estado expandido (ver toggleThinkingAt): paridad con el ThinkingBlock
 		// del escritorio, que se expande/colapsa con un clic. Con WithMouseCellMotion
@@ -586,6 +589,75 @@ func (m Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	m.syncTreeViewport()
 	return m, nil
+}
+
+// handleTreeMouse captura los eventos que caen dentro del panel del explorer.
+// La rueda mueve la seleccion para conservar el mismo foco visual que el
+// teclado; un clic izquierdo selecciona la fila completa y la activa, igual
+// que Enter (carpeta expande/colapsa, archivo abre el visor).
+func (m *Model) handleTreeMouse(msg tea.MouseMsg) bool {
+	if !m.treeMouseOverPanel(msg) {
+		return false
+	}
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		if msg.Action != tea.MouseActionPress {
+			return true
+		}
+		m.moveTreeCursor(-3)
+		return true
+	case tea.MouseButtonWheelDown:
+		if msg.Action != tea.MouseActionPress {
+			return true
+		}
+		m.moveTreeCursor(3)
+		return true
+	case tea.MouseButtonLeft:
+		if msg.Action != tea.MouseActionPress {
+			return true
+		}
+		row, ok := m.treeRowAtMouse(msg.Y)
+		if !ok {
+			return true
+		}
+		m.treeCursor = row
+		rows := m.tree.visibleRows()
+		node := rows[row].node
+		if node.dir {
+			m.tree.toggle(node.path)
+			m.clampTreeCursor()
+			return true
+		}
+		*m = m.openTreeFile(node.path)
+		return true
+	}
+	return true
+}
+
+func (m Model) treeMouseOverPanel(msg tea.MouseMsg) bool {
+	return m.ready && msg.X >= 0 && msg.X < m.treePanelWidth()
+}
+
+func (m Model) treeRowAtMouse(y int) (int, bool) {
+	const treeRowsStartY = 3
+	if y < treeRowsStartY {
+		return 0, false
+	}
+	row := m.treeOffset + y - treeRowsStartY
+	rows := m.tree.visibleRows()
+	if row < 0 || row >= len(rows) || row >= m.treeOffset+m.treeVisibleRowCount() {
+		return 0, false
+	}
+	return row, true
+}
+
+func (m *Model) moveTreeCursor(delta int) {
+	rows := m.tree.visibleRows()
+	if len(rows) == 0 {
+		return
+	}
+	m.treeCursor = min(max(m.treeCursor+delta, 0), len(rows)-1)
+	m.syncTreeViewport()
 }
 
 func (m Model) fileViewerHeight() int {

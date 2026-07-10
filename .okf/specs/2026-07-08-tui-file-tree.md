@@ -29,7 +29,7 @@ agent already understands.
 - Left panel; transcript + composer on the right.
 - In-memory tree built from `listFiles` / `Engine.ProjectFiles`
  (gitignore + glob limit, same as the `@` menu).
-- Navigation j/k (and arrows), h/l, Enter, Esc, q.
+- Navigation j/k (and arrows), h/l, Enter, Esc, q, mouse wheel and click.
 - Insert `@ruta` when committing a file and **close** the panel.
 - Nerd Font icons by extension and by folder type.
 - Behavior tests in `internal/tui` (TDD with evidence).
@@ -152,6 +152,8 @@ Same idea as `applySelection` from the file menu:
 | Esc | Close panel without inserting |
 | q | Close panel without inserting |
 | Space+e | Close panel (toggle) |
+| Mouse wheel over explorer | Move the selection by three rows and keep it visible; the transcript does not scroll |
+| Left click anywhere on a visible row | Select and activate the complete row: folder toggles; file opens in the viewer |
 
 The composer does **not** receive keys while the tree is open.
 

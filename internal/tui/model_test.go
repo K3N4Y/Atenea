@@ -3465,6 +3465,86 @@ func TestModel_TreeNavigationScrollsBackAtTopAndAfterResize(t *testing.T) {
 	}
 }
 
+func TestModel_TreeMouseWheelScrollsSelectionWithoutMovingTranscript(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+		return []string{
+			"file-00.go",
+			"file-01.go",
+			"file-02.go",
+			"file-03.go",
+			"file-04.go",
+		}, nil
+	})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 50, Height: 6})
+	m = m.toggleTree()
+	for i := 0; i < 20; i++ {
+		m.entries = append(m.entries, entry{kind: entryUser, text: fmt.Sprintf("message-%d", i)})
+	}
+	m = m.syncViewport()
+	m.viewport.SetYOffset(2)
+
+	m = apply(t, m, tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonWheelDown,
+		X:      0,
+		Y:      3,
+	})
+
+	if got, want := m.treeCursor, 3; got != want {
+		t.Fatalf("treeCursor = %d, want %d", got, want)
+	}
+	if got, want := m.treeOffset, 2; got != want {
+		t.Fatalf("treeOffset = %d, want %d", got, want)
+	}
+	if got, want := m.viewport.YOffset, 2; got != want {
+		t.Fatalf("viewport.YOffset = %d, want %d", got, want)
+	}
+}
+
+func TestModel_TreeMouseClickOpensFileFromAnyColumnInRow(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).
+		WithCompletions(nil, func() ([]string, error) { return []string{"hello.go"}, nil }).
+		WithFileReader(viewerReader(map[string][]byte{"hello.go": []byte("package main\n")}))
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 12})
+	m = m.toggleTree()
+
+	m = apply(t, m, tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      m.treePanelWidth() - 1,
+		Y:      3,
+	})
+
+	if !m.viewer.active() {
+		t.Fatal("clicking anywhere on a file row must open the file viewer")
+	}
+	if got, want := m.viewer.path, "hello.go"; got != want {
+		t.Fatalf("viewer.path = %q, want %q", got, want)
+	}
+}
+
+func TestModel_TreeMouseClickFolderRowTogglesExpansion(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+		return []string{"internal/tui/model.go"}, nil
+	})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 12})
+	m = m.toggleTree()
+
+	m = apply(t, m, tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      m.treePanelWidth() - 1,
+		Y:      3,
+	})
+
+	if !m.tree.expanded["internal"] {
+		t.Fatal("clicking anywhere on a folder row must toggle its expansion")
+	}
+	if got := len(m.tree.visibleRows()); got != 2 {
+		t.Fatalf("visible rows = %d, want 2", got)
+	}
+}
+
 func TestModel_LeaderTimeoutCancelsWithoutInput(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeySpace})

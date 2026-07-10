@@ -87,8 +87,10 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
  or closes the `explorer` panel. The panel lists the workspace as a tree with
  Nerd Font icons; `j`/Down and `k`/Up move the cursor, `l`/Enter expands a
  folder or opens a file in the viewer, `h` collapses or moves up to the parent, and
- Esc/`q` closes without inserting. While the explorer is open its
- keys do not reach the composer; permissions and plan approval retain priority.
+ Esc/`q` closes without inserting. The mouse wheel over the explorer moves its
+ selection by three rows without moving the transcript; a left click anywhere in
+ a visible row activates it (toggle a folder or open a file). While the explorer is
+ open its keys do not reach the composer; permissions and plan approval retain priority.
 - The explorer occupies a bounded left column and transcript, menus and
  composer are recalculated to the remaining width. If `listFiles` fails or the workspace
  is empty, the panel remains usable and displays the non-panic status.
