@@ -47,6 +47,11 @@ const (
 	// ultimo Session.Cwd es el vigente. No materializa Message.
 	KindSessionCwd EventKind = "Session.Cwd"
 
+	// KindComposerPrompt lleva en Text el prompt literal enviado desde el
+	// composer TUI. No materializa Message ni entra al contexto del modelo: solo
+	// permite rehidratar el historial de Up/Down entre procesos.
+	KindComposerPrompt EventKind = "Composer.Prompt"
+
 	KindContextCompacted EventKind = "Context.Compacted"
 )
 

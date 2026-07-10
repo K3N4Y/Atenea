@@ -15,6 +15,47 @@ import (
 	"github.com/creack/pty"
 )
 
+func TestTUI_PromptHistorySurvivesRestartUnderPTY(t *testing.T) {
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "atenea-tui")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea-tui")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, output)
+	}
+	database := filepath.Join(t.TempDir(), "atenea.db")
+	workdir := filepath.Join(repoRoot, "cmd/atenea-tui/testdata/file-viewer/project")
+
+	firstCmd, firstTerminal, firstOutput, firstDone := startTUIUnderPTY(t, binary, workdir, database)
+	waitForPTYText(t, firstOutput, "build · demo")
+	if _, err := firstTerminal.Write([]byte("mensaje persistente\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, firstOutput, "mensaje persistente")
+	if _, err := firstTerminal.Write([]byte("\x03")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYExit(t, firstDone)
+	_ = firstTerminal.Close()
+	_ = firstCmd.Wait()
+
+	secondCmd, secondTerminal, secondOutput, secondDone := startTUIUnderPTY(t, binary, workdir, database)
+	defer stopPTYProcess(secondCmd, secondTerminal)
+	waitForPTYText(t, secondOutput, "build · demo")
+	before := secondOutput.String()
+	if _, err := secondTerminal.Write([]byte("\x1b[A")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYTextAfter(t, secondOutput, before, "mensaje persistente")
+	if _, err := secondTerminal.Write([]byte("\x03")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYExit(t, secondDone)
+}
+
 func TestTUI_FileViewerFlowUnderPTY(t *testing.T) {
 	repoRoot, err := filepath.Abs("../..")
 	if err != nil {
@@ -179,6 +220,43 @@ func waitForPTYText(t *testing.T, output *lockedBuffer, want string) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("PTY output did not contain %q:\n%s", want, ansi.Strip(output.String()))
+}
+
+func startTUIUnderPTY(t *testing.T, binary, workdir, database string) (*exec.Cmd, *os.File, *lockedBuffer, <-chan struct{}) {
+	t.Helper()
+	cmd := exec.Command(binary)
+	cmd.Dir = workdir
+	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY=", "ATENEA_DB="+database)
+	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := &lockedBuffer{}
+	done := make(chan struct{})
+	go func() { _, _ = io.Copy(output, terminal); close(done) }()
+	return cmd, terminal, output, done
+}
+
+func waitForPTYExit(t *testing.T, done <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("TUI did not exit")
+	}
+}
+
+func waitForPTYTextAfter(t *testing.T, output *lockedBuffer, previous, want string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		current := output.String()
+		if len(current) >= len(previous) && strings.Contains(ansi.Strip(current[len(previous):]), want) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("PTY output after restart did not contain %q:\n%s", want, ansi.Strip(output.String()))
 }
 
 func stopPTYProcess(cmd *exec.Cmd, terminal *os.File) func() {

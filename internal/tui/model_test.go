@@ -2906,10 +2906,11 @@ func TestModel_UpArrowRecallsPromptHistory(t *testing.T) {
 	}
 }
 
-// TRIANGULATE: al salir de la navegacion hacia adelante el input debe volver
-// al texto que habia ANTES de empezar a navegar. Tumba una implementacion que
-// restaura siempre "" en lugar del borrador tecleado sin enviar.
-func TestModel_HistoryPreservesDraftOnNavigation(t *testing.T) {
+// Con texto ya escrito, Up/Down no deben abrir el historial: el usuario debe
+// vaciar el composer antes de explorar prompts anteriores. Una vez dentro del
+// historial, Down sigue avanzando y al pasar el mas reciente deja el input
+// limpio.
+func TestModel_NonEmptyInputBlocksHistoryExploration(t *testing.T) {
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -2917,17 +2918,43 @@ func TestModel_HistoryPreservesDraftOnNavigation(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("primero")})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
-	// Un borrador tecleado sin enviar: navegar el historial no debe perderlo.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("borrador")})
-
-	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
-	if got := m.input.Value(); got != "primero" {
-		t.Fatalf("input.Value() = %q, la flecha arriba debe recuperar el prompt enviado (%q)", got, "primero")
-	}
-
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	if got := m.input.Value(); got != "borrador" {
-		t.Fatalf("input.Value() = %q, al salir de la navegacion la flecha abajo debe restaurar el borrador tecleado (%q), no perderlo ni dejar el input vacio", got, "borrador")
+		t.Fatalf("input.Value() = %q, con texto escrito la flecha abajo no debe abrir ni reemplazar con el historial", got)
+	}
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.input.Value(); got != "borrador" {
+		t.Fatalf("input.Value() = %q, con texto escrito la flecha arriba no debe abrir ni reemplazar con el historial", got)
+	}
+
+	// Vaciando el composer se habilita la navegacion.
+	m.input.SetValue("")
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.input.Value(); got != "primero" {
+		t.Fatalf("input.Value() = %q, con el composer vacio la flecha arriba debe recuperar %q", got, "primero")
+	}
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.input.Value(); got != "" {
+		t.Fatalf("input.Value() = %q, al avanzar despues del prompt mas reciente el composer debe quedar limpio", got)
+	}
+}
+
+func TestModel_HistoryKeepsOnlyLatestHundredPrompts(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	for i := 1; i <= 102; i++ {
+		m = typeRunes(t, m, fmt.Sprintf("prompt-%03d", i))
+		m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	}
+
+	for range 101 {
+		m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	}
+	if got := m.input.Value(); got != "prompt-003" {
+		t.Fatalf("input.Value() = %q, tras 102 envios el historial debe conservar solo los 100 mas recientes y detenerse en %q", got, "prompt-003")
 	}
 }
 

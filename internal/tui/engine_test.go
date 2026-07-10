@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -142,6 +143,65 @@ func resolveUntilStopped(e *Engine, sessionID, callID string, approved bool) (st
 		}
 	}()
 	return func() { close(done); wg.Wait() }
+}
+
+func TestEngine_PromptHistoryLoadsLatestTUIComposerPrompts(t *testing.T) {
+	store := session.NewMemoryStore()
+	ctx := context.Background()
+	for i := 1; i <= 102; i++ {
+		sessionID := "tui-old"
+		if i > 51 {
+			sessionID = "tui-new"
+		}
+		if _, err := store.AppendEvent(ctx, sessionID, session.SessionEvent{
+			Kind: session.KindComposerPrompt,
+			Text: "literal-" + strconv.Itoa(i),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.AppendEvent(ctx, "app-session", session.SessionEvent{
+		Kind: session.KindComposerPrompt,
+		Text: "no debe entrar",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := NewEngine(EngineConfig{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: store})
+	got, err := engine.PromptHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != historyLimit {
+		t.Fatalf("len(PromptHistory()) = %d, quiero %d", len(got), historyLimit)
+	}
+	if got[0] != "literal-3" || got[len(got)-1] != "literal-102" {
+		t.Fatalf("PromptHistory() = [%q ... %q], quiero los 100 prompts TUI mas recientes en orden", got[0], got[len(got)-1])
+	}
+}
+
+func TestEngine_PromptHistoryFallsBackToLegacyUserMessages(t *testing.T) {
+	store := session.NewMemoryStore()
+	ctx := context.Background()
+	for i, text := range []string{"viejo uno", acceptPlanPrompt, "viejo dos"} {
+		if _, err := store.AppendEvent(ctx, "tui-legacy", session.SessionEvent{Message: &session.Message{
+			ID:   "m" + strconv.Itoa(i),
+			Role: session.RoleUser,
+			Text: text,
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	engine := NewEngine(EngineConfig{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: store})
+	got, err := engine.PromptHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"viejo uno", "viejo dos"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("PromptHistory() = %q, quiero fallback legacy %q sin el prompt interno de AcceptPlan", got, want)
+	}
 }
 
 // gatedBashTurns arma el guion de dos turnos del escenario ask-before-run: el

@@ -66,6 +66,10 @@ func main() {
 		Provider: provider,
 		Store:    store,
 	})
+	history, err := engine.PromptHistory()
+	if err != nil {
+		log.Printf("atenea-tui: no se pudo cargar el historial del composer: %v", err)
+	}
 
 	// Una sesion nueva por corrida de la TUI; el id con timestamp evita chocar
 	// entre corridas: el store es durable y cada sesion queda persistida y
@@ -78,6 +82,7 @@ func main() {
 	// El autocompletado del composer sale del engine: los slash-commands de las
 	// skills para el menu "/" y el listado del workspace para el @-menu.
 	m := tui.NewModel(engine, sessionID, engine.Events()).
+		WithHistory(history).
 		WithStatus("build", model).
 		WithCompletions(engine.Commands(), engine.ProjectFiles).
 		WithFileReader(tui.WorkspaceFileReader(root))

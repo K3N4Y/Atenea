@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-09
+updated_at: 2026-07-10
 summary: Architecture and behavior of the Atenea terminal user interface.
 ---
 
@@ -105,6 +105,15 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
  (a prompt longer than the width scrolls horizontally within the input); the
  footer shows `<agente> · <modelo>`: the model enters once via
  `WithStatus` and the agent reflects the active mode (build/plan).
+- The composer keeps the latest 100 submitted TUI prompts in the shared durable
+ store, so Up/Down history survives process restarts and spans previous TUI
+ sessions. New prompts are recorded as non-conversation `Composer.Prompt`
+ events, preserving literal slash commands without adding them twice to model
+ context; older sessions fall back to their user-message projection. With an
+ empty composer, Up recalls older prompts and Down moves toward newer ones;
+ moving past the newest prompt clears the composer. History navigation does
+ not start while the composer already contains text, and autocomplete menus
+ retain priority over history keys.
 - With the composer empty, `Space` builds a one-second leader and `Space e` opens
  or closes the `explorer` panel. The panel lists the workspace as a tree with
  Nerd Font icons; `j`/Down and `k`/Up move the cursor, `l`/Enter expands a
