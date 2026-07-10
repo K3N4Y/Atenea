@@ -3523,6 +3523,24 @@ func TestModel_TreeMouseClickOpensFileFromAnyColumnInRow(t *testing.T) {
 	}
 }
 
+func TestModel_TreeMouseClickReplacesOpenFileViewer(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).
+		WithCompletions(nil, func() ([]string, error) { return []string{"first.go", "second.go"}, nil }).
+		WithFileReader(viewerReader(map[string][]byte{
+			"first.go":  []byte("package first\n"),
+			"second.go": []byte("package second\n"),
+		}))
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 12})
+	m = m.toggleTree()
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() - 1, Y: 3})
+
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() - 1, Y: 4})
+
+	if got, want := m.viewer.path, "second.go"; got != want {
+		t.Fatalf("viewer.path = %q, want %q", got, want)
+	}
+}
+
 func TestModel_TreeMouseClickFolderRowTogglesExpansion(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
 		return []string{"internal/tui/model.go"}, nil

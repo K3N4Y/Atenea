@@ -333,6 +333,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(ev)
 	case tea.MouseMsg:
 		if m.viewer.active() {
+			if m.treeOpen && ev.Action == tea.MouseActionPress && ev.Button == tea.MouseButtonLeft && m.handleTreeMouse(ev) {
+				return m, nil
+			}
 			m.scrollFileViewerMouse(ev)
 			return m, nil
 		}
