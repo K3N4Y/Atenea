@@ -44,6 +44,7 @@ uses Markdown and begins with `updated_at` and `summary` YAML metadata.
 - [Harness](research/harness.md)
 - [Harness and SkillOpt](research/harness2-skillopt.md)
 - [Harness subagents](research/harness-subagents.md)
+- [SLM tool-calling reliability](research/slm-tool-calling-reliability.md)
 
 ## Specifications
 
