@@ -267,16 +267,19 @@ terminal estrecha.
 
 ## TDD Cycle Evidence
 
-Este es un documento de diseno: aun no hay ejecucion de implementacion ni
-evidencia de comandos. La siguiente fase debe completar esta tabla con salidas
-reales, sin sustituirlas por afirmaciones.
+Implementacion validada el 2026-07-09. El safety net inicial del worktree
+ejecuto todos los paquetes salvo la raiz: `go test ./...` fallo al inicio porque
+`main.go` embebe `frontend/dist`, directorio que no existe en un worktree nuevo.
+Despues de `npm ci && npm run build` el gate completo paso. La advertencia de
+chunks grandes de Vite y sus dos vulnerabilidades reportadas por `npm audit` no
+fueron introducidas ni modificadas por esta feature.
 
 | Fase | Evidencia requerida | Estado actual |
 | --- | --- | --- |
-| Safety net | `go test ./...` verde antes de cambios | Pendiente de implementacion |
-| Understand | Lectura de modelo, arbol, viewport y harness PTY | Completado para este diseno |
-| RED | Test focal rojo por cada contrato nuevo | Pendiente de implementacion |
-| GREEN | Test focal verde con implementacion minima | Pendiente de implementacion |
-| TRIANGULATE | Casos binario, limite, CRLF, resize y PTY | Pendiente de implementacion |
-| REFACTOR | Simplificacion sin cambiar contratos; suite focal verde | Pendiente de implementacion |
-| Evidence | Suite, race, gofmt y vet limpios | Pendiente de implementacion |
+| Safety net | `go test ./internal/tui` PASS antes de cambios; el `go test ./...` inicial solo fallo por `frontend/dist` ausente en la raiz | PASS focal |
+| Understand | Lectura de `model.go`, `view.go`, `tree.go`, tests de explorer y wiring `cmd/atenea-tui` | PASS |
+| RED | `Test(OpenFileViewer|WorkspaceFileReader)` fallo por API ausente; `TestModel_(TreeEnterFile|FileViewer)` fallo por builder/estado ausentes | PASS verificado |
+| GREEN | Tests focales de contenido, viewport, modelo y layout verdes despues de implementar | PASS |
+| TRIANGULATE | CRLF, vacio, binario, >1 MiB, fallback plano, alto 0, ancho estrecho, error de lectura, permiso y PTY | PASS |
+| REFACTOR | `go test ./internal/tui` verde despues de separar `file_viewer.go`; E2E usa buffer sincronizado tras el hallazgo de `-race` | PASS |
+| Evidence | `go test -race ./internal/tui ./cmd/atenea-tui`, `go test ./...`, `gofmt -l .`, `go vet ./...` PASS tras `npm ci && npm run build` | PASS |
