@@ -501,10 +501,15 @@ func (m Model) resizeViewport() Model {
 	if !m.ready {
 		return m
 	}
-	contentWidth := m.contentWidth()
+	m.focus = m.normalizedFocus()
+	contentWidth := m.chatContentWidth()
 	m.input.Width = max(contentWidth-composerBoxBorderWidth-2*composerBoxPadding-ansi.StringWidth(inputPrompt)-inputCursorWidth, 0)
 	m.viewport.Width = max(contentWidth, 0)
-	m.viewport.Height = max(m.height-m.reservedLines(), 0)
+	contentHeight := m.height
+	if m.chatPanelVisible() {
+		contentHeight -= 3
+	}
+	m.viewport.Height = max(contentHeight-m.reservedLines(), 0)
 	return m.syncViewport()
 }
 
@@ -588,9 +593,20 @@ func (m Model) View() string {
 		if m.ready && m.treePanelWidth() >= m.width {
 			return content
 		}
-		return lipgloss.JoinHorizontal(lipgloss.Top, m.treeView(), " ", content)
+		return lipgloss.JoinHorizontal(lipgloss.Top, m.treeView(), " ", m.viewerView(contentWidth))
 	}
 
+	content := m.chatContent()
+	if !m.treeOpen {
+		return content
+	}
+	if m.ready && m.treePanelWidth() >= m.width {
+		return m.treeView()
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, m.treeView(), " ", m.chatView(content))
+}
+
+func (m Model) chatContent() string {
 	status := ""
 	if m.working {
 		// La linea de estado es "<glifo> trabajando": el glifo animado del
@@ -603,14 +619,37 @@ func (m Model) View() string {
 	if f := m.statusFooter(); f != "" {
 		footer = "\n" + statusStyle.Render(f)
 	}
-	content := m.transcriptView() + m.menuView() + status + m.composerBox() + footer
-	if !m.treeOpen {
-		return content
+	return m.transcriptView() + m.menuView() + status + m.composerBox() + footer
+}
+
+func (m Model) chatView(content string) string {
+	innerWidth := max(m.contentWidth()-2, 0)
+	content = panelTitle("chat", m.focus == chatFocus) + "\n" + content
+	style := treeBorderStyle
+	if m.ready {
+		style = style.Width(innerWidth).Height(max(m.height-2, 0))
 	}
-	if m.ready && m.treePanelWidth() >= m.width {
-		return m.treeView()
+	return style.Render(content)
+}
+
+func (m Model) viewerView(width int) string {
+	innerWidth := max(width-2, 0)
+	content := panelTitle("viewer", m.focus == viewerFocus)
+	if file := m.renderFileViewer(innerWidth, max(m.height-3, 0)); file != "" {
+		content += "\n" + file
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, m.treeView(), " ", content)
+	style := treeBorderStyle
+	if m.ready {
+		style = style.Width(innerWidth).Height(max(m.height-2, 0))
+	}
+	return style.Render(content)
+}
+
+func panelTitle(name string, active bool) string {
+	if active {
+		return name + " " + accentStyle.Render("*")
+	}
+	return name
 }
 
 func (m Model) renderFileViewer(width, height int) string {
@@ -648,7 +687,7 @@ func (m Model) menuView() string {
 		if item.description != "" {
 			line += "  " + statusStyle.Render(item.description)
 		}
-		if width := m.contentWidth(); m.ready && width > 0 {
+		if width := m.chatContentWidth(); m.ready && width > 0 {
 			line = ansi.Truncate(line, width, "…")
 		}
 		b.WriteString(line + "\n")
@@ -666,9 +705,21 @@ func (m Model) menuView() string {
 func (m Model) composerBox() string {
 	style := composerBoxStyle
 	if m.ready {
-		style = style.Width(max(m.contentWidth()-composerBoxBorderWidth, 0))
+		style = style.Width(max(m.chatContentWidth()-composerBoxBorderWidth, 0))
 	}
 	return style.Render(m.input.View())
+}
+
+func (m Model) chatContentWidth() int {
+	width := m.contentWidth()
+	if m.chatPanelVisible() {
+		width -= 2
+	}
+	return max(width, 0)
+}
+
+func (m Model) chatPanelVisible() bool {
+	return m.ready && m.treeOpen && m.treePanelWidth() < m.width
 }
 
 func (m Model) contentWidth() int {
@@ -694,7 +745,7 @@ func (m Model) treePanelWidth() int {
 func (m Model) treeView() string {
 	panelWidth := m.treePanelWidth()
 	innerWidth := max(panelWidth-2, 0)
-	lines := []string{"explorer", ""}
+	lines := []string{panelTitle("explorer", m.focus == explorerFocus && panelWidth < m.width), ""}
 	if m.treeError != "" {
 		lines = append(lines, statusStyle.Render(m.treeError))
 	} else {

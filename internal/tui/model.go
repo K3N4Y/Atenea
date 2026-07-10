@@ -55,6 +55,14 @@ const (
 	entryError                         // fallo duro del step (Step.Failed)
 )
 
+type panelFocus int
+
+const (
+	chatFocus panelFocus = iota
+	explorerFocus
+	viewerFocus
+)
+
 // toolStatus es el estado observable de un tool call en la conversacion.
 type toolStatus int
 
@@ -199,6 +207,7 @@ type Model struct {
 	fileReader       FileReader
 	viewer           fileViewer
 	viewerReturnY    int
+	focus            panelFocus
 }
 
 // NewModel construye el Model raiz de la TUI.
@@ -332,14 +341,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKey(ev)
 	case tea.MouseMsg:
-		if m.viewer.active() {
-			if m.treeOpen && ev.Action == tea.MouseActionPress && ev.Button == tea.MouseButtonLeft && m.handleTreeMouse(ev) {
+		m.focus = m.normalizedFocus()
+		if ev.Action == tea.MouseActionPress && (ev.Button == tea.MouseButtonWheelUp || ev.Button == tea.MouseButtonWheelDown) {
+			if m.focus == explorerFocus && m.treeOpen && m.treeMouseOverPanel(ev) {
+				if ev.Button == tea.MouseButtonWheelUp {
+					m.moveTreeCursor(-3)
+				} else {
+					m.moveTreeCursor(3)
+				}
 				return m, nil
 			}
+			if m.focus == viewerFocus {
+				m.scrollFileViewerMouse(ev)
+				return m, nil
+			}
+			return m.scrollViewport(ev)
+		}
+		if m.treeOpen && m.handleTreeMouse(ev) {
+			return m, nil
+		}
+		if ev.Action == tea.MouseActionPress && ev.Button == tea.MouseButtonLeft {
+			m.focus = m.focusAtMouse(ev)
+		}
+		if m.focus == viewerFocus {
 			m.scrollFileViewerMouse(ev)
 			return m, nil
 		}
-		if m.treeOpen && m.handleTreeMouse(ev) {
+		if m.viewer.active() && ev.Button == tea.MouseButtonLeft {
 			return m, nil
 		}
 		// El clic izquierdo sobre un bloque de pensamiento asentado alterna su
@@ -411,14 +439,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.hasPendingPlan() {
 		return m.resolvePlanKey(msg)
 	}
-	if m.viewer.active() {
+	m.focus = m.normalizedFocus()
+	if m.focus == viewerFocus {
 		return m.handleFileViewerKey(msg)
+	}
+	if m.focus == explorerFocus {
+		return m.handleTreeKey(msg)
 	}
 	if msg.Type == tea.KeyPgUp || msg.Type == tea.KeyPgDown {
 		return m.scrollViewport(msg)
-	}
-	if m.treeOpen {
-		return m.handleTreeKey(msg)
 	}
 	if msg.Type == tea.KeyEnter && m.input.Value() == "/new" {
 		return m.submitPrompt()
@@ -514,8 +543,10 @@ func (m Model) toggleTree() Model {
 	m.leaderPending = false
 	m.treeOpen = !m.treeOpen
 	if !m.treeOpen {
+		m.focus = m.normalizedFocus()
 		return m
 	}
+	m.focus = explorerFocus
 	m.treeCursor = 0
 	m.treeOffset = 0
 	m.treeError = ""
@@ -572,6 +603,7 @@ func (m Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			break
 		}
 		m = m.openTreeFile(node.path)
+		m.focus = viewerFocus
 	case keyRune(msg) == "h":
 		if len(rows) == 0 {
 			break
@@ -619,6 +651,7 @@ func (m *Model) handleTreeMouse(msg tea.MouseMsg) bool {
 		if msg.Action != tea.MouseActionPress {
 			return true
 		}
+		m.focus = explorerFocus
 		row, ok := m.treeRowAtMouse(msg.Y)
 		if !ok {
 			return true
@@ -635,6 +668,29 @@ func (m *Model) handleTreeMouse(msg tea.MouseMsg) bool {
 		return true
 	}
 	return true
+}
+
+func (m Model) normalizedFocus() panelFocus {
+	if m.treeOpen && m.ready && m.treePanelWidth() >= m.width {
+		return explorerFocus
+	}
+	if m.focus == explorerFocus && !m.treeOpen {
+		return chatFocus
+	}
+	if m.focus == viewerFocus && !m.viewer.active() {
+		return chatFocus
+	}
+	return m.focus
+}
+
+func (m Model) focusAtMouse(msg tea.MouseMsg) panelFocus {
+	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+		return m.normalizedFocus()
+	}
+	if m.viewer.active() && msg.Y >= 0 && msg.Y < m.fileViewerHeight() {
+		return viewerFocus
+	}
+	return chatFocus
 }
 
 func (m Model) treeMouseOverPanel(msg tea.MouseMsg) bool {
@@ -689,6 +745,7 @@ func (m Model) handleFileViewerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case msg.Type == tea.KeyEsc:
 		m.viewer = fileViewer{}
 		m.viewport.SetYOffset(m.viewerReturnY)
+		m.focus = chatFocus
 	case msg.Type == tea.KeyDown || keyRune(msg) == "j":
 		m.viewer.scroll(1, height)
 	case msg.Type == tea.KeyUp || keyRune(msg) == "k":
