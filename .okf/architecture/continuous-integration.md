@@ -23,12 +23,14 @@ Go checks, and vice versa.
 
 The Go job uses the version declared in `go.mod` and runs:
 
-1. Create `frontend/dist/.gitkeep` so the root package's `go:embed` directive
+1. Install `ripgrep`, which is a runtime dependency of workspace file discovery
+   exercised by the Go and PTY tests.
+2. Create `frontend/dist/.gitkeep` so the root package's `go:embed` directive
    has an input in clean checkouts without building the frontend.
-2. `test -z "$(gofmt -l .)"`
-3. `go vet ./...`
-4. `go test ./...`
-5. `go test -race ./...`
+3. `test -z "$(gofmt -l .)"`
+4. `go vet ./...`
+5. `go test ./...`
+6. `go test -race ./...`
 
 The race detector is a required gate because the runner, tools, and TUI use
 goroutines, channels, and shared state.

@@ -33,7 +33,7 @@ func TestTUI_FileViewerFlowUnderPTY(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = terminal.Close(); _ = cmd.Wait() }()
+	defer stopPTYProcess(cmd, terminal)
 	var output lockedBuffer
 	done := make(chan struct{})
 	go func() { _, _ = io.Copy(&output, terminal); close(done) }()
@@ -79,7 +79,7 @@ func TestTUI_FileTreeMouseWheelAndClickUnderPTY(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = terminal.Close(); _ = cmd.Wait() }()
+	defer stopPTYProcess(cmd, terminal)
 	var output lockedBuffer
 	done := make(chan struct{})
 	go func() { _, _ = io.Copy(&output, terminal); close(done) }()
@@ -136,7 +136,7 @@ func TestTUI_ExplorerLeaderRapidSequencesUnderPTY(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = terminal.Close(); _ = cmd.Wait() }()
+	defer stopPTYProcess(cmd, terminal)
 	var output lockedBuffer
 	done := make(chan struct{})
 	go func() { _, _ = io.Copy(&output, terminal); close(done) }()
@@ -179,6 +179,16 @@ func waitForPTYText(t *testing.T, output *lockedBuffer, want string) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("PTY output did not contain %q:\n%s", want, ansi.Strip(output.String()))
+}
+
+func stopPTYProcess(cmd *exec.Cmd, terminal *os.File) func() {
+	return func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		_ = terminal.Close()
+		_ = cmd.Wait()
+	}
 }
 
 func waitForStablePTYOutputAfter(t *testing.T, output *lockedBuffer, previous string) string {

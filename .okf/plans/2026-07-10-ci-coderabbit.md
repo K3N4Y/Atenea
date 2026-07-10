@@ -22,6 +22,7 @@ summary: Implementation plan for Atenea's CI and automated code review setup.
 
 - [x] Add pull request and `main` push triggers with `contents: read`.
 - [x] Add per-ref concurrency with cancellation.
+- [x] Install ripgrep for workspace and PTY tests.
 - [x] Prepare a placeholder embedded asset for clean checkouts.
 - [x] Add `go-quality` with checkout, Go setup/cache, `gofmt`, vet, tests, and race tests.
 - [x] Add `frontend-quality` with checkout, Node LTS/npm cache, `npm ci`, lint, formatting, and tests.

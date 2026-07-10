@@ -26,6 +26,9 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
+      - name: Install runtime test dependencies
+        run: sudo apt-get update && sudo apt-get install --yes ripgrep
+
       - name: Prepare embedded frontend assets
         run: mkdir -p frontend/dist && touch frontend/dist/.gitkeep
 

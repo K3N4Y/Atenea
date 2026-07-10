@@ -25,6 +25,7 @@ Two independent jobs run in parallel:
 - Check out the repository.
 - Install the Go version declared by `go.mod` and cache module/build data using
   `go.sum`.
+- Install `ripgrep` for workspace file discovery and its end-to-end tests.
 - Create a temporary file under `frontend/dist` so `go:embed` can compile the
   root package in a clean checkout without building the frontend.
 - Fail when `gofmt -l .` reports files.
