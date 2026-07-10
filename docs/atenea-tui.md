@@ -85,12 +85,22 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
 - Con el composer vacio, `Space` arma un leader de un segundo y `Space e` abre
   o cierra el panel `explorer`. El panel lista el workspace como arbol con
   iconos Nerd Font; `j`/Down y `k`/Up mueven el cursor, `l`/Enter expande una
-  carpeta o inserta `@ruta` para un archivo, `h` colapsa o sube al padre, y
+  carpeta o abre un archivo en el visor, `h` colapsa o sube al padre, y
   Esc/`q` cierran sin insertar. Mientras el explorer esta abierto sus teclas
   no llegan al composer; permisos y aprobacion de plan conservan prioridad.
 - El explorer ocupa una columna izquierda acotada y transcript, menus y
   composer se recalculan al ancho restante. Si `listFiles` falla o el workspace
   esta vacio, el panel sigue siendo usable y muestra el estado sin panic.
+
+### Visor de archivos
+
+- `Enter` sobre un archivo abre una vista de solo lectura en el area principal;
+  no agrega `@ruta` ni cierra el explorer.
+- `Esc` vuelve al chat y conserva cursor y scroll del explorer.
+- `j`/Down, `k`/Up, PgUp y PgDn desplazan el archivo. La vista muestra ruta,
+  numeros de linea y resaltado cuando Chroma reconoce el lenguaje.
+- No permite editar ni guardar. Binarios, archivos mayores de 1 MiB, vacios o
+  errores de lectura muestran un estado explicito.
 
 ## Persistencia compartida con la app
 
