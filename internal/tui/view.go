@@ -153,7 +153,7 @@ const thinkingPreviewLines = 4
 // render del pensamiento expandido, el resto de formas ignora el ancho.
 func (e entry) renderThinking(width int) string {
 	if !e.settled() {
-		lines := []string{statusStyle.Render("[pensando]")}
+		lines := []string{"  " + statusStyle.Render("[pensando]")}
 		for _, line := range lastNonEmptyLines(e.revealedText(), thinkingPreviewLines) {
 			lines = append(lines, statusStyle.Render(line))
 		}
@@ -164,7 +164,7 @@ func (e entry) renderThinking(width int) string {
 		// Resumen colapsado: una linea con el hint de la tecla que lo expande.
 		// El prefijo "[penso " es estable para los tests; el hint " ⇧Tab" va al
 		// final para no romperlos (asertan por substring).
-		return summary + statusStyle.Render(" ⇧Tab")
+		return "  " + summary + statusStyle.Render(" ⇧Tab")
 	}
 	// Expandido: cabecera de resumen seguida del texto completo del
 	// pensamiento, envuelto al ancho del viewport (0 = sin envolver) y en

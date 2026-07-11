@@ -116,10 +116,11 @@ Same idea as `applySelection` from the file menu:
 2. PgUp / PgDn (transcript scroll)
 3. Pending leave (y/n)
 4. Pending plan (y/n)
-5. **Open tree** (capture navigation; does not feed input)
-6. **Leader Space + e** (toggle tree)
-7. Open autocomplete menu (`/` / `@`)
-8. Esc / Enter / Tab / Shift+Tab / history / input
+5. **Settled thinking `Shift+Tab`** (global toggle; no effect while live)
+6. **Open tree** (capture navigation; does not feed input)
+7. **Leader Space + e** (toggle tree)
+8. Open autocomplete menu (`/` / `@`)
+9. Esc / Enter / Tab / history / input
 
 ##UX
 

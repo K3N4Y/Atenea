@@ -391,6 +391,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if ev.Action == tea.MouseActionPress && ev.Button == tea.MouseButtonLeft {
+			if viewportLine, ok := m.transcriptLineAtMouse(ev); ok {
+				if next, ok := m.toggleThinkingAt(viewportLine); ok {
+					return next.syncViewport(), nil
+				}
+			}
 			m.focus = m.focusAtMouse(ev)
 		}
 		if m.focus == viewerFocus {
@@ -408,15 +413,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// del viewport (scrollViewport) como hasta ahora. Sin tamano conocido
 		// (ready == false) el viewport no tiene coordenadas estables: el clic se
 		// ignora y la rueda igual va al scroll.
-		if m.ready && ev.Action == tea.MouseActionPress && ev.Button == tea.MouseButtonLeft {
-			// La fila clicada es global (0 = arriba de la terminal); el viewport
-			// es la primera seccion de View(), asi que esa fila es la del
-			// viewport, y la linea absoluta del contenido es YOffset + fila.
-			viewportLine := m.viewport.YOffset + ev.Y
-			if next, ok := m.toggleThinkingAt(viewportLine); ok {
-				return next.syncViewport(), nil
-			}
-		}
 		return m.scrollViewport(ev)
 	}
 	return m, nil
@@ -488,6 +484,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleKeyRuneBatch(msg)
 	}
 	m.focus = m.normalizedFocus()
+	if msg.Type == tea.KeyShiftTab {
+		m = m.toggleThinking()
+		return m.syncViewport(), nil
+	}
 	if m.focus == viewerFocus {
 		return m.handleFileViewerKey(msg)
 	}
@@ -547,16 +547,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// (no inserta el caracter de tabulacion en el prompt).
 		m.planMode = !m.planMode
 		return m, nil
-	case tea.KeyShiftTab:
-		// Shift+Tab alterna el estado expandido de TODOS los bloques de
-		// pensamiento asentados a la vez (ver toggleThinking): colapsa el
-		// resumen a la linea "[penso <dur>] ⇧Tab" o, si estaba expandido,
-		// vuelve a mostrar el texto completo. No toca el input ni el gate de
-		// permisos/plan/menu (esos gates ya capturaron la tecla arriva) y es
-		// inerte frente a un pensamiento en vivo: el preview del pensamiento
-		// en curso no participa del toggle.
-		m = m.toggleThinking()
-		return m.syncViewport(), nil
 	case tea.KeyUp:
 		if next, ok := m.recallHistory(-1); ok {
 			return next, nil
@@ -776,6 +766,24 @@ func (m Model) focusAtMouse(msg tea.MouseMsg) panelFocus {
 		return viewerFocus
 	}
 	return chatFocus
+}
+
+func (m Model) transcriptLineAtMouse(msg tea.MouseMsg) (int, bool) {
+	if !m.ready || m.viewer.active() || msg.Y < 0 {
+		return 0, false
+	}
+	y := msg.Y
+	if m.chatPanelVisible() {
+		chatLeft := m.treePanelWidth() + 1
+		if msg.X < chatLeft+1 || msg.X >= m.width-1 {
+			return 0, false
+		}
+		y -= 2
+	}
+	if y < 0 || y >= m.viewport.Height {
+		return 0, false
+	}
+	return m.viewport.YOffset + y, true
 }
 
 func (m Model) treeMouseOverPanel(msg tea.MouseMsg) bool {

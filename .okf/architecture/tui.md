@@ -98,9 +98,14 @@ the terminal's default background mid-line.
  closes without duplicating against the coalesced Message; tool-input is not transcribed.
 - The reasoning folds to its own thinking block (parity with the
  ThinkingBlock of the desktop): while it flows it shows the header
- `[pensando]` and the last 4 non-empty lines of the revealed text (
+ `[pensando]`, aligned with the chat message content, and the last 4 non-empty lines of the revealed text (
  sliding window, with the same smooth reveal of the assistant); closed and drained
- collapses to the line `[penso <duracion>]`.
+ collapses to the line `[penso <duracion>] ⇧Tab`, aligned with the chat
+ message content. `Shift+Tab` expands or collapses every settled thinking block
+ regardless of whether chat, explorer, or viewer owns panel focus; a left
+ click on a settled summary in the visible chat transcript toggles that block
+ without stealing explorer focus. Pending permission and plan-approval gates
+ retain precedence, and live thinking stays unchanged.
  resolves via the gate with the `SessionID` of the EVENT (a surface
  request from a subagent is resolved with the child id).
 - Enter sends via the active mode path (`Agent.SendPrompt` in build,
@@ -130,8 +135,9 @@ the terminal's default background mid-line.
   moves the transcript. A tree file click opens or replaces the viewer without
   moving focus away from the explorer. `Esc` from a focused viewer closes it and
   returns focus to chat. Ctrl+C and pending permission/plan approval gates
-  keep precedence over panel routing; `Tab` continues to control build/plan
-  mode rather than panel focus.
+  keep precedence over panel routing; `Shift+Tab` still toggles settled thinking
+  globally, and `Tab` continues to control build/plan mode rather than panel
+  focus.
 - A successful `present_plan` adds the offer `[plan] plan presentado
   (y ejecutar / n seguir en plan)` to the end; with the offer pending the keyboard does not
  feed the input. `y` accepts via `Agent.AcceptPlan` (the Engine returns the
