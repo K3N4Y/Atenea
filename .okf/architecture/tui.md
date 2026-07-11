@@ -47,7 +47,9 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
   `↑ input ↓ output ctx used/window` label in its top-left border, and
   footer with agent/model, all with lipgloss styles. Live estimates carry a
   `~` prefix and lose it when the step closes; when `Step.Ended` omits usage,
-  the last estimate remains visible without the approximation marker;
+  the last estimate remains visible without the approximation marker. The
+  built-in `/new` command clears both exact and live token usage so a new
+  session never inherits the previous session's counters;
   `reveal.go` is the smooth
  streaming of the text that arrives by deltas, assistant and thought (parity
  with `frontend/src/lib/reveal.ts`): the view reveals a prefix by runes that

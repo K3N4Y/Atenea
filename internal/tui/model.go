@@ -930,6 +930,11 @@ func (m Model) submitPrompt() (Model, tea.Cmd) {
 		m.planMode = false
 		m.working = false
 		m.revealing = false
+		m.usage = nil
+		m.liveUsage = false
+		m.outputBytes = 0
+		m.reasoningBytes = 0
+		m.toolInputBytes = 0
 		m.input.SetValue("")
 		return m.resizeViewport(), nil
 	}

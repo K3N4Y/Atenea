@@ -2732,6 +2732,46 @@ func TestModel_CommandMenuPrioritizesNewAndEnterCreatesSession(t *testing.T) {
 	}
 }
 
+func TestModel_NewSessionClearsTokenUsage(t *testing.T) {
+	fake := &fakeAgent{newSessionID: "s2"}
+	m := NewModel(fake, "s1", nil).WithStatus("build", "anthropic/claude-sonnet-4.5")
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = apply(t, m, EventMsg{
+		Kind: session.KindStepEnded,
+		Usage: &session.Usage{
+			InputTokens:  1_234,
+			OutputTokens: 345,
+		},
+	})
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "↑ 1.2k ↓ 345") {
+		t.Fatalf("View() antes de /new = %q, debe mostrar el uso de la sesion anterior", view)
+	}
+
+	m = typeRunes(t, m, "/new")
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if view := ansi.Strip(m.View()); strings.Contains(view, "↑") || strings.Contains(view, "↓") {
+		t.Fatalf("View() despues de /new = %q, la sesion nueva no debe heredar tokens de subida ni bajada", view)
+	}
+}
+
+func TestModel_NewSessionClearsLiveTokenEstimates(t *testing.T) {
+	fake := &fakeAgent{newSessionID: "s2"}
+	m := NewModel(fake, "s1", nil).WithStatus("build", "anthropic/claude-sonnet-4.5")
+	m = apply(t, m, EventMsg{
+		Kind:  session.KindStepStarted,
+		Usage: &session.Usage{InputTokens: 1_200},
+	})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: strings.Repeat("a", 900)})
+
+	m = typeRunes(t, m, "/new")
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.usage != nil || m.liveUsage || m.outputBytes != 0 || m.reasoningBytes != 0 || m.toolInputBytes != 0 {
+		t.Fatalf("estado de uso despues de /new = usage:%+v live:%v bytes:%d/%d/%d, debe arrancar limpio", m.usage, m.liveUsage, m.outputBytes, m.reasoningBytes, m.toolInputBytes)
+	}
+}
+
 func TestModel_ExactNewEnterBeatsFuzzySkillSelection(t *testing.T) {
 	// Aunque una skill fuzzy este seleccionada, escribir exactamente /new y
 	// pulsar Enter debe ejecutar el reservado, no completar la skill.
