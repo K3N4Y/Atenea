@@ -159,6 +159,21 @@ func TestRgSearcher_InvalidPatternError(t *testing.T) {
 	}
 }
 
+func TestRgSearcher_InvalidPatternErrorWithLargeStderr(t *testing.T) {
+	searcher := &RgSearcher{Binary: helperScript(t, "printf 'regex parse error: missing ]\\n' >&2\nhead -c 131072 /dev/zero | tr '\\000' x >&2\nexit 2")}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	_, err := searcher.Grep(ctx, GrepRequest{Root: t.TempDir(), Path: ".", Pattern: "["})
+	if err == nil {
+		t.Fatal("Grep returned nil error, want GrepInvalidPatternError")
+	}
+	var invalid *GrepInvalidPatternError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("Grep error = %T %[1]v, want GrepInvalidPatternError", err)
+	}
+}
+
 func TestRgSearcher_UnavailableBinary(t *testing.T) {
 	searcher := &RgSearcher{Binary: filepath.Join(t.TempDir(), "missing-rg")}
 
