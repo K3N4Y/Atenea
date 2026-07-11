@@ -10,9 +10,20 @@ import (
 // foldEvent aplica un evento durable a las entradas de la conversacion.
 func (m Model) foldEvent(ev EventMsg) Model {
 	switch ev.Kind {
+	case session.KindStepStarted:
+		if ev.Usage != nil {
+			usage := *ev.Usage
+			m.usage = &usage
+			m.liveUsage = true
+			m.outputBytes = 0
+			m.reasoningBytes = 0
+			m.toolInputBytes = 0
+		}
 	case session.KindTextStarted:
 		m = m.openAssistantBlock()
 	case session.KindTextDelta:
+		m.outputBytes += len(ev.Text)
+		m = m.updateLiveUsage()
 		// Apertura defensiva: el delta puede llegar sin Text.Started.
 		if !m.assistantOpen() {
 			m = m.openAssistantBlock()
@@ -21,6 +32,8 @@ func (m Model) foldEvent(ev EventMsg) Model {
 	case session.KindReasoningStarted:
 		m = m.openReasoningBlock()
 	case session.KindReasoningDelta:
+		m.reasoningBytes += len(ev.Text)
+		m = m.updateLiveUsage()
 		// Apertura defensiva: el delta puede llegar sin Reasoning.Started.
 		if !m.reasoningOpen() {
 			m = m.openReasoningBlock()
@@ -33,6 +46,11 @@ func (m Model) foldEvent(ev EventMsg) Model {
 			last.closeThinking()
 		}
 	case session.KindStepEnded:
+		if ev.Usage != nil {
+			usage := *ev.Usage
+			m.usage = &usage
+		}
+		m.liveUsage = false
 		// El fin del step cierra tambien un pensamiento que siga en vivo
 		// (cierre defensivo: el step puede morir pensando, por cancelacion o
 		// error del proveedor, sin Reasoning.Ended de por medio).
@@ -59,7 +77,11 @@ func (m Model) foldEvent(ev EventMsg) Model {
 			input: string(ev.Input), sessionID: ev.SessionID,
 		})
 	case session.KindStepFailed:
+		m.liveUsage = false
 		m = m.appendError(ev.Error)
+	case session.KindToolInputDelta:
+		m.toolInputBytes += len(ev.Text)
+		m = m.updateLiveUsage()
 	case "":
 		// Evento sin taxonomia: el runner promueve el prompt del usuario como
 		// Message{Role: user} sin Kind.
@@ -68,6 +90,19 @@ func (m Model) foldEvent(ev EventMsg) Model {
 		}
 	}
 	return m
+}
+
+func (m Model) updateLiveUsage() Model {
+	if !m.liveUsage || m.usage == nil {
+		return m
+	}
+	m.usage.OutputTokens = estimatedTokens(m.outputBytes + m.reasoningBytes + m.toolInputBytes)
+	m.usage.ReasoningTokens = 0
+	return m
+}
+
+func estimatedTokens(bytes int) int {
+	return (bytes + 2) / 3
 }
 
 // settleTool asienta el desenlace del tool call con ese callID (ok o fallo) y

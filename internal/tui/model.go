@@ -55,6 +55,8 @@ const (
 	entryError                         // fallo duro del step (Step.Failed)
 )
 
+const historyLimit = 100
+
 type panelFocus int
 
 const (
@@ -161,8 +163,13 @@ type Model struct {
 	// entran una sola vez via WithStatus. El modelo sigue fijo por corrida,
 	// pero el agente MOSTRADO cambia con Tab: en plan-mode el pie rinde "plan"
 	// en lugar de agentName (ver statusFooter y planMode).
-	agentName string
-	model     string
+	agentName      string
+	model          string
+	usage          *session.Usage
+	liveUsage      bool
+	outputBytes    int
+	reasoningBytes int
+	toolInputBytes int
 
 	// planMode indica el modo del agente: Tab lo alterna entre build (false)
 	// y plan (true). Es pegajoso entre envios: cada Enter envia por el camino
@@ -185,17 +192,13 @@ type Model struct {
 	files        []string
 	filesLoaded  bool
 
-	// history guarda cada prompt enviado (Enter con texto, camino build o
-	// plan) en orden de envio; las flechas Arriba/Abajo lo recorren con el
-	// menu cerrado y sin permiso/plan pendientes (ver recallHistory). histIdx
-	// es el cursor de esa navegacion con el sentinela histIdx == len(history)
-	// que significa "no navegando" (coherente con el zero value: 0 == len(nil)).
-	// draft preserva el texto que habia en el input al empezar a navegar: se
-	// restaura cuando la flecha abajo pasa del prompt mas reciente. Enviar un
-	// prompt resetea la navegacion (la proxima flecha arriba empieza del final).
+	// history guarda los ultimos historyLimit prompts enviados (Enter con
+	// texto, camino build o plan). Con el composer vacio, Arriba/Abajo los
+	// recorren; histIdx == len(history) significa "no navegando". Enviar un
+	// prompt resetea la navegacion y bajar despues del mas reciente limpia el
+	// composer.
 	history []string
 	histIdx int
-	draft   string
 
 	leaderPending    bool
 	leaderGeneration uint64
@@ -245,6 +248,17 @@ func (m Model) WithCompletions(commands []command.Command, listFiles func() ([]s
 // Builder de valor para que los tests inyecten un filesystem controlado.
 func (m Model) WithFileReader(read FileReader) Model {
 	m.fileReader = read
+	return m
+}
+
+// WithHistory precarga el historial durable del composer, conservando solo el
+// limite que la navegacion puede exponer.
+func (m Model) WithHistory(history []string) Model {
+	if len(history) > historyLimit {
+		history = history[len(history)-historyLimit:]
+	}
+	m.history = append([]string(nil), history...)
+	m.histIdx = len(m.history)
 	return m
 }
 
@@ -917,7 +931,6 @@ func (m Model) submitPrompt() (Model, tea.Cmd) {
 		m.entries = nil
 		m.history = nil
 		m.histIdx = 0
-		m.draft = ""
 		m.planMode = false
 		m.working = false
 		m.revealing = false
@@ -934,27 +947,27 @@ func (m Model) submitPrompt() (Model, tea.Cmd) {
 	// la proxima flecha arriba empieza desde el final (el sentinela
 	// histIdx == len(history) significa "no navegando").
 	m.history = append(m.history, text)
+	if len(m.history) > historyLimit {
+		m.history = m.history[len(m.history)-historyLimit:]
+	}
 	m.histIdx = len(m.history)
-	m.draft = ""
 	m.working = true
 	// La linea de estado ocupa una linea bajo el transcript: recalcular el alto.
 	return m.resizeViewport(), m.spinner.Tick
 }
 
 // recallHistory mueve un paso la navegacion del historial de prompts: dir < 0
-// retrocede (el mas reciente primero) y dir > 0 avanza. Al salir del estado
-// "no navegando" (histIdx == len(history)) preserva en draft el texto actual
-// del input; avanzar mas alla del prompt mas reciente lo restaura. El prompt
-// recuperado entra al input con el cursor al final. Devuelve ok=false cuando
-// el paso no aplica (sin historial, en el tope hacia atras o sin navegacion
-// activa hacia adelante): la tecla sigue entonces el camino normal del input.
+// retrocede (el mas reciente primero) y dir > 0 avanza. Solo permite empezar
+// a navegar con el composer vacio; avanzar mas alla del prompt mas reciente lo
+// limpia. El prompt recuperado entra al input con el cursor al final. Devuelve
+// ok=false cuando el paso no aplica.
 func (m Model) recallHistory(dir int) (Model, bool) {
 	if dir < 0 {
-		if m.histIdx == 0 {
+		if m.histIdx == len(m.history) && m.input.Value() != "" {
 			return m, false
 		}
-		if m.histIdx == len(m.history) {
-			m.draft = m.input.Value()
+		if m.histIdx == 0 {
+			return m, false
 		}
 		m.histIdx--
 		m.input.SetValue(m.history[m.histIdx])
@@ -964,7 +977,7 @@ func (m Model) recallHistory(dir int) (Model, bool) {
 		}
 		m.histIdx++
 		if m.histIdx == len(m.history) {
-			m.input.SetValue(m.draft)
+			m.input.SetValue("")
 		} else {
 			m.input.SetValue(m.history[m.histIdx])
 		}

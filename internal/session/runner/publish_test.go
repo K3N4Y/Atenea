@@ -50,7 +50,7 @@ func publishAll(t *testing.T, p *Publisher, evs ...llm.Event) {
 // Step.Ended, no en Text.Ended: un turno produce un solo Message de assistant.
 func TestPublisher_TextBlockEmitsDeltasAndFinalConcatenatedText(t *testing.T) {
 	spy := &recordingAppender{}
-	p := NewPublisher(spy, "s1", "a1")
+	p := NewPublisher(spy, "s1", "a1", 0)
 
 	publishAll(t, p,
 		llm.Event{Kind: llm.TextStarted},
@@ -115,6 +115,21 @@ func TestPublisher_TextBlockEmitsDeltasAndFinalConcatenatedText(t *testing.T) {
 	}
 }
 
+func TestPublisher_StepStartedCarriesEstimatedInputTokens(t *testing.T) {
+	spy := &recordingAppender{}
+	p := NewPublisher(spy, "s1", "a1", 1_234)
+
+	publishAll(t, p, llm.Event{Kind: llm.StepStarted})
+
+	if len(spy.events) != 1 {
+		t.Fatalf("persisted events = %d, want 1", len(spy.events))
+	}
+	got := spy.events[0]
+	if got.Kind != session.KindStepStarted || got.Usage == nil || got.Usage.InputTokens != 1_234 {
+		t.Fatalf("Step.Started = %+v, want estimated input tokens 1234", got)
+	}
+}
+
 // TestPublisher_ReasoningBuffersLikeText alimenta un bloque de razonamiento
 // (Started, Delta, Delta, Ended) y afirma que el publisher lo bufferiza igual
 // que el texto: persiste los cuatro eventos con su Kind Reasoning.*, y
@@ -123,7 +138,7 @@ func TestPublisher_TextBlockEmitsDeltasAndFinalConcatenatedText(t *testing.T) {
 // nil (no es contenido conversacional de la proyeccion).
 func TestPublisher_ReasoningBuffersLikeText(t *testing.T) {
 	spy := &recordingAppender{}
-	p := NewPublisher(spy, "s1", "a1")
+	p := NewPublisher(spy, "s1", "a1", 0)
 
 	publishAll(t, p,
 		llm.Event{Kind: llm.ReasoningStarted},
@@ -164,7 +179,7 @@ func TestPublisher_ReasoningBuffersLikeText(t *testing.T) {
 // debe seguir siendo json.Marshal-able (frontera Wails).
 func TestPublisher_ToolSuccessCarriesDiffNotInMessage(t *testing.T) {
 	spy := &recordingAppender{}
-	p := NewPublisher(spy, "s1", "a1")
+	p := NewPublisher(spy, "s1", "a1", 0)
 
 	if err := p.ToolSuccess(context.Background(), "c1", "out", "DIFF"); err != nil {
 		t.Fatalf("ToolSuccess: %v", err)
@@ -191,7 +206,7 @@ func TestPublisher_ToolSuccessCarriesDiffNotInMessage(t *testing.T) {
 // TestPublisher_ToolSuccessEmptyDiff: sin diff (bash) el campo queda vacio.
 func TestPublisher_ToolSuccessEmptyDiff(t *testing.T) {
 	spy := &recordingAppender{}
-	p := NewPublisher(spy, "s1", "a1")
+	p := NewPublisher(spy, "s1", "a1", 0)
 
 	if err := p.ToolSuccess(context.Background(), "c1", "ok", ""); err != nil {
 		t.Fatalf("ToolSuccess: %v", err)
@@ -207,7 +222,7 @@ func TestPublisher_ToolSuccessEmptyDiff(t *testing.T) {
 // frontera, sin acoplar session a llm).
 func TestPublisher_StepEndedCarriesUsageTokens(t *testing.T) {
 	spy := &recordingAppender{}
-	p := NewPublisher(spy, "s1", "a1")
+	p := NewPublisher(spy, "s1", "a1", 0)
 
 	publishAll(t, p,
 		llm.Event{Kind: llm.StepStarted},
@@ -252,7 +267,7 @@ func TestPublisher_StepEndedCarriesUsageTokens(t *testing.T) {
 // lugar de propagar el nil.
 func TestPublisher_StepEndedWithoutUsageIsNil(t *testing.T) {
 	spy := &recordingAppender{}
-	p := NewPublisher(spy, "s1", "a1")
+	p := NewPublisher(spy, "s1", "a1", 0)
 
 	publishAll(t, p, llm.Event{Kind: llm.StepEnded})
 
@@ -275,7 +290,7 @@ func TestPublisher_StepEndedWithoutUsageIsNil(t *testing.T) {
 // completo concatenado a partir de los deltas.
 func TestPublisher_ToolCallAndInputDeltasCoalesce(t *testing.T) {
 	spy := &recordingAppender{}
-	p := NewPublisher(spy, "s1", "a1")
+	p := NewPublisher(spy, "s1", "a1", 0)
 
 	publishAll(t, p,
 		llm.Event{Kind: llm.ToolCall, CallID: "c1", ToolName: "read", Input: nil},
@@ -326,7 +341,7 @@ func TestPublisher_ToolCallAndInputDeltasCoalesce(t *testing.T) {
 // error, y que el fragmento siga coalesciendo en Tool.Input.Ended.Input.
 func TestPublisher_ToolInputDeltaEventsAreJSONMarshalable(t *testing.T) {
 	spy := &recordingAppender{}
-	p := NewPublisher(spy, "s1", "a1")
+	p := NewPublisher(spy, "s1", "a1", 0)
 
 	publishAll(t, p,
 		llm.Event{Kind: llm.ToolInputStarted, CallID: "c1"},
@@ -368,7 +383,7 @@ func TestPublisher_ToolInputDeltaEventsAreJSONMarshalable(t *testing.T) {
 // Tool.Input.Ended conserva los bytes originales sin escapar.
 func TestPublisher_ToolInputDeltaFragmentWithSpecialCharsMarshalsLossless(t *testing.T) {
 	spy := &recordingAppender{}
-	p := NewPublisher(spy, "s1", "a1")
+	p := NewPublisher(spy, "s1", "a1", 0)
 
 	frag := `{"content":"a\"b\n` // comilla escapada + salto: invalido suelto, con chars especiales
 	publishAll(t, p,
@@ -404,7 +419,7 @@ func TestPublisher_ToolInputDeltaFragmentWithSpecialCharsMarshalsLossless(t *tes
 // que el fix solo saco de Input el fragmento del delta, no el input completo.
 func TestPublisher_ToolCalledKeepsCompleteInputAndMarshals(t *testing.T) {
 	spy := &recordingAppender{}
-	p := NewPublisher(spy, "s1", "a1")
+	p := NewPublisher(spy, "s1", "a1", 0)
 
 	full := json.RawMessage(`{"path":"new.go","content":"hi"}`)
 	publishAll(t, p, llm.Event{Kind: llm.ToolCall, CallID: "c1", ToolName: "write", Input: full})
@@ -430,7 +445,7 @@ func TestPublisher_ToolCalledKeepsCompleteInputAndMarshals(t *testing.T) {
 // de M1 sin tocarlo.
 func TestPublisher_ProjectsCoalescedAssistantMessage(t *testing.T) {
 	store := session.NewMemoryStore()
-	p := NewPublisher(store, "s1", "a1")
+	p := NewPublisher(store, "s1", "a1", 0)
 
 	publishAll(t, p,
 		llm.Event{Kind: llm.StepStarted},
@@ -470,7 +485,7 @@ func TestPublisher_ProjectsCoalescedAssistantMessage(t *testing.T) {
 // pierde el emparejamiento que el proveedor necesita.
 func TestPublisher_ProjectsAssistantToolCallsAndToolResultID(t *testing.T) {
 	store := session.NewMemoryStore()
-	p := NewPublisher(store, "s1", "a1")
+	p := NewPublisher(store, "s1", "a1", 0)
 
 	publishAll(t, p,
 		llm.Event{Kind: llm.StepStarted},
@@ -527,7 +542,7 @@ func TestPublisher_ProjectsAssistantToolCallsAndToolResultID(t *testing.T) {
 // tools" (uno pisa al otro).
 func TestPublisher_CoalescesTextAndToolCallsIntoOneAssistantMessage(t *testing.T) {
 	store := session.NewMemoryStore()
-	p := NewPublisher(store, "s1", "a1")
+	p := NewPublisher(store, "s1", "a1", 0)
 
 	publishAll(t, p,
 		llm.Event{Kind: llm.StepStarted},
@@ -577,7 +592,7 @@ func (failingAppender) AppendEvent(ctx context.Context, sessionID string, ev ses
 // TestPublisher_AppendErrorPropagates afirma que si el store falla al apender,
 // Publish devuelve ese mismo error (sin tragarlo ni reemplazarlo).
 func TestPublisher_AppendErrorPropagates(t *testing.T) {
-	p := NewPublisher(failingAppender{}, "s1", "a1")
+	p := NewPublisher(failingAppender{}, "s1", "a1", 0)
 	ctx := context.Background()
 
 	err := p.Publish(ctx, llm.Event{Kind: llm.StepStarted})

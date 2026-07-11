@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-09
+updated_at: 2026-07-10
 summary: Architecture and behavior of the Atenea terminal user interface.
 ---
 
@@ -35,13 +35,20 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
  `Run` in a session-cancellable goroutine (mirror of `App.start`); at
  finish publishes `RunDoneMsg`. Satisfies the `Agent` interface of Model.
 - `internal/tui/model.go` + `fold.go` + `view.go` + `reveal.go` — the Model of
- Bubble Tea. `fold.go` projects durable `SessionEvent` to
- conversation inputs (streaming assistant text, collapsible
- thought blocks, user messages, stateful tool calls, pending permissions,
- errors); `model.go` handles keyboard and channel event pump;
- `view.go` renders with high bounded viewport (follow queue, PgUp/PgDn),
- job status line, composer box with rounded edge and
- footer with agent/model, all with lipgloss styles; `reveal.go` is the smooth
+  Bubble Tea. `fold.go` projects durable `SessionEvent` to
+  conversation inputs (streaming assistant text, collapsible
+  thought blocks, user messages, stateful tool calls, pending permissions,
+  errors) and keeps live token usage: estimated request input from
+  `Step.Started`, generated tokens estimated from streaming deltas, and exact
+  provider usage from `Step.Ended`; `model.go` handles keyboard and channel
+  event pump;
+  `view.go` renders with high bounded viewport (follow queue, PgUp/PgDn),
+  job status line, composer box with rounded edge and a compact
+  `↑ input ↓ output ctx used/window` label in its top-left border, and
+  footer with agent/model, all with lipgloss styles. Live estimates carry a
+  `~` prefix and lose it when the step closes; when `Step.Ended` omits usage,
+  the last estimate remains visible without the approximation marker;
+  `reveal.go` is the smooth
  streaming of the text that arrives by deltas, assistant and thought (parity
  with `frontend/src/lib/reveal.ts`): the view reveals a prefix by runes that
  advances with a loop of ticks, with catch-up proportional to the backlog; an
@@ -99,6 +106,18 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
  (a prompt longer than the width scrolls horizontally within the input); the
  footer shows `<agente> · <modelo>`: the model enters once via
  `WithStatus` and the agent reflects the active mode (build/plan).
+- The composer keeps the latest 100 submitted TUI prompts in the shared durable
+ store, so Up/Down history survives process restarts and spans previous TUI
+ sessions. New prompts are recorded as non-conversation `Composer.Prompt`
+ events, preserving literal slash commands without adding them twice to model
+ context; older sessions fall back to their user-message projection. Startup
+ reads sessions from newest to oldest and stops after collecting 100 prompts;
+ failure to persist this auxiliary history does not cancel an already admitted
+ prompt. With an
+ empty composer, Up recalls older prompts and Down moves toward newer ones;
+ moving past the newest prompt clears the composer. History navigation does
+ not start while the composer already contains text, and autocomplete menus
+ retain priority over history keys.
 - With the composer empty, `Space` builds a one-second leader and `Space e` opens
  or closes the `explorer` panel. The panel lists the workspace as a tree with
  Nerd Font icons; `j`/Down and `k`/Up move the cursor, `l`/Enter expands a

@@ -3,10 +3,12 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -17,6 +19,26 @@ import (
 	"atenea/internal/llm"
 	"atenea/internal/session"
 )
+
+type promptHistoryStore struct {
+	session.Store
+	failComposerPrompt bool
+	blockedSession     string
+}
+
+func (s *promptHistoryStore) AppendEvent(ctx context.Context, sessionID string, ev session.SessionEvent) (session.Seq, error) {
+	if s.failComposerPrompt && ev.Kind == session.KindComposerPrompt {
+		return 0, errors.New("composer history unavailable")
+	}
+	return s.Store.AppendEvent(ctx, sessionID, ev)
+}
+
+func (s *promptHistoryStore) Events(ctx context.Context, sessionID string, sinceSeq session.Seq) ([]session.SessionEvent, error) {
+	if sessionID == s.blockedSession {
+		return nil, errors.New("older session should not be read")
+	}
+	return s.Store.Events(ctx, sessionID, sinceSeq)
+}
 
 // turnProvider implementa llm.Provider con un guion POR TURNO: la i-esima
 // llamada a Stream reproduce el i-esimo guion. Contrasta con llm.FakeProvider,
@@ -142,6 +164,104 @@ func resolveUntilStopped(e *Engine, sessionID, callID string, approved bool) (st
 		}
 	}()
 	return func() { close(done); wg.Wait() }
+}
+
+func TestEngine_PromptHistoryLoadsLatestTUIComposerPrompts(t *testing.T) {
+	store := session.NewMemoryStore()
+	ctx := context.Background()
+	for i := 1; i <= 102; i++ {
+		sessionID := "tui-old"
+		if i > 51 {
+			sessionID = "tui-new"
+		}
+		if _, err := store.AppendEvent(ctx, sessionID, session.SessionEvent{
+			Kind: session.KindComposerPrompt,
+			Text: "literal-" + strconv.Itoa(i),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.AppendEvent(ctx, "app-session", session.SessionEvent{
+		Kind: session.KindComposerPrompt,
+		Text: "no debe entrar",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := NewEngine(EngineConfig{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: store})
+	got, err := engine.PromptHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != historyLimit {
+		t.Fatalf("len(PromptHistory()) = %d, quiero %d", len(got), historyLimit)
+	}
+	if got[0] != "literal-3" || got[len(got)-1] != "literal-102" {
+		t.Fatalf("PromptHistory() = [%q ... %q], quiero los 100 prompts TUI mas recientes en orden", got[0], got[len(got)-1])
+	}
+}
+
+func TestEngine_PromptHistoryFallsBackToLegacyUserMessages(t *testing.T) {
+	store := session.NewMemoryStore()
+	ctx := context.Background()
+	for i, text := range []string{"viejo uno", acceptPlanPrompt, "viejo dos"} {
+		if _, err := store.AppendEvent(ctx, "tui-legacy", session.SessionEvent{Message: &session.Message{
+			ID:   "m" + strconv.Itoa(i),
+			Role: session.RoleUser,
+			Text: text,
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	engine := NewEngine(EngineConfig{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: store})
+	got, err := engine.PromptHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"viejo uno", "viejo dos"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("PromptHistory() = %q, quiero fallback legacy %q sin el prompt interno de AcceptPlan", got, want)
+	}
+}
+
+func TestEngine_PromptHistoryStopsAfterLatestHundredPrompts(t *testing.T) {
+	store := session.NewMemoryStore()
+	ctx := context.Background()
+	if _, err := store.AppendEvent(ctx, "tui-old", session.SessionEvent{Kind: session.KindComposerPrompt, Text: "too old"}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= historyLimit; i++ {
+		if _, err := store.AppendEvent(ctx, "tui-new", session.SessionEvent{
+			Kind: session.KindComposerPrompt,
+			Text: "latest-" + strconv.Itoa(i),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	guarded := &promptHistoryStore{Store: store, blockedSession: "tui-old"}
+	engine := NewEngine(EngineConfig{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: guarded})
+	got, err := engine.PromptHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != historyLimit || got[0] != "latest-1" || got[len(got)-1] != "latest-100" {
+		t.Fatalf("PromptHistory() = [%q ... %q] (%d), quiero solo los %d prompts mas recientes", got[0], got[len(got)-1], len(got), historyLimit)
+	}
+}
+
+func TestEngine_SendPromptContinuesWhenHistoryPersistenceFails(t *testing.T) {
+	store := &promptHistoryStore{Store: session.NewMemoryStore(), failComposerPrompt: true}
+	engine := NewEngine(EngineConfig{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: store})
+
+	if _, err := engine.SendPrompt("tui-session", "hola"); err != nil {
+		t.Fatalf("SendPrompt() error = %v, el prompt ya admitido debe ejecutarse aunque falle su historial", err)
+	}
+	_, done := collectUntilRunDone(t, engine.Events(), 3*time.Second, nil)
+	if done.Err != "" {
+		t.Fatalf("RunDoneMsg.Err = %q, se esperaba corrida limpia", done.Err)
+	}
 }
 
 // gatedBashTurns arma el guion de dos turnos del escenario ask-before-run: el

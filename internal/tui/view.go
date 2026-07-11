@@ -12,6 +12,8 @@ import (
 	"github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+
+	"atenea/internal/llm"
 )
 
 // composerBoxLines es el alto de la caja del composer bajo el viewport: borde
@@ -704,7 +706,49 @@ func (m Model) composerBox() string {
 	if m.ready {
 		style = style.Width(max(m.chatContentWidth()-composerBoxBorderWidth, 0))
 	}
-	return style.Render(m.input.View())
+	box := style.Render(m.input.View())
+	label := m.tokenUsageLabel()
+	if label == "" {
+		return box
+	}
+	lines := strings.Split(box, "\n")
+	width := ansi.StringWidth(lines[0])
+	prefix := "╭─ " + statusStyle.Render(label) + " "
+	remaining := width - ansi.StringWidth(prefix) - 1
+	if remaining < 1 {
+		return box
+	}
+	lines[0] = prefix + strings.Repeat("─", remaining) + "╮"
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) tokenUsageLabel() string {
+	if m.usage == nil {
+		return ""
+	}
+	input := formatTokenCount(m.usage.InputTokens)
+	output := formatTokenCount(m.usage.OutputTokens)
+	if m.liveUsage {
+		input = "~" + input
+		if m.usage.OutputTokens > 0 {
+			output = "~" + output
+		}
+	}
+	label := "↑ " + input + " ↓ " + output
+	if window, ok := llm.ContextWindow(m.model); ok {
+		label += " ctx " + input + "/" + formatTokenCount(window)
+	}
+	return label
+}
+
+func formatTokenCount(tokens int) string {
+	if tokens < 1_000 {
+		return strconv.Itoa(tokens)
+	}
+	if tokens%1_000 == 0 || tokens >= 10_000 {
+		return strconv.Itoa(tokens/1_000) + "k"
+	}
+	return strings.TrimSuffix(strconv.FormatFloat(float64(tokens)/1_000, 'f', 1, 64), ".0") + "k"
 }
 
 func (m Model) chatContentWidth() int {

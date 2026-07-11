@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -126,6 +127,52 @@ func (e *Engine) ProjectFiles() ([]string, error) {
 	return files, nil
 }
 
+// PromptHistory reconstruye los ultimos prompts literales enviados por TUI.
+func (e *Engine) PromptHistory() ([]string, error) {
+	ctx := context.Background()
+	sessions, err := e.store.Sessions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	history := make([]string, 0, historyLimit)
+	for _, summary := range sessions {
+		if len(history) >= historyLimit {
+			break
+		}
+		if !strings.HasPrefix(summary.ID, "tui-") {
+			continue
+		}
+		events, err := e.store.Events(ctx, summary.ID, 0)
+		if err != nil {
+			return nil, err
+		}
+		prompts := make([]string, 0)
+		foundComposerPrompts := false
+		for _, event := range events {
+			if event.Kind == session.KindComposerPrompt {
+				foundComposerPrompts = true
+				prompts = append(prompts, event.Text)
+			}
+		}
+		if !foundComposerPrompts {
+			messages, err := e.store.Messages(ctx, summary.ID, 0)
+			if err != nil {
+				return nil, err
+			}
+			for _, message := range messages {
+				if message.Role == session.RoleUser && message.Text != acceptPlanPrompt {
+					prompts = append(prompts, message.Text)
+				}
+			}
+		}
+		history = append(prompts, history...)
+	}
+	if len(history) > historyLimit {
+		history = history[len(history)-historyLimit:]
+	}
+	return history, nil
+}
+
 // modeFor devuelve el modo de la sesion (normal/plan). Es el hook Mode de
 // wiring.Build: el runner lo consulta al inicio de cada turno. Guarda e.modes
 // con mu, igual que runs (espejo de App.modeFor).
@@ -159,7 +206,7 @@ func (e *Engine) SendPrompt(sessionID, text string) (string, error) {
 		return newSessionID, nil
 	}
 	e.setMode(sessionID, session.ModeNormal)
-	if err := e.send(sessionID, text); err != nil {
+	if err := e.send(sessionID, text, text); err != nil {
 		return "", err
 	}
 	return sessionID, nil
@@ -170,7 +217,7 @@ func (e *Engine) SendPrompt(sessionID, text string) (string, error) {
 // ModePlan antes de arrancar (espejo de App.SendPlanPrompt).
 func (e *Engine) SendPlanPrompt(sessionID, text string) error {
 	e.setMode(sessionID, session.ModePlan)
-	return e.send(sessionID, text)
+	return e.send(sessionID, text, text)
 }
 
 // expandCommand resuelve un slash-command ("/name args") al prompt expandido
@@ -190,7 +237,7 @@ func (e *Engine) expandCommand(text string) string {
 // cancelacion deliberada (Stop, follow-up) es un cierre limpio, no un error.
 // Es el camino comun de SendPrompt y SendPlanPrompt: el modo de la sesion ya
 // quedo fijado antes de llamarlo.
-func (e *Engine) send(sessionID, text string) error {
+func (e *Engine) send(sessionID, text, composerPrompt string) error {
 	// La PRIMERA vez que se manda un prompt a la sesion (LoadSession aun da
 	// error) se graba la carpeta de trabajo como Session.Cwd, ANTES de admitir
 	// el prompt para que quede de primero en el log: la sidebar de la app Wails
@@ -206,6 +253,12 @@ func (e *Engine) send(sessionID, text string) error {
 	if err := e.inbox.Admit(context.Background(), sessionID,
 		session.Prompt{Text: e.expandCommand(text)}, session.DeliveryQueue); err != nil {
 		return err
+	}
+	if composerPrompt != "" {
+		if _, err := e.store.AppendEvent(context.Background(), sessionID,
+			session.SessionEvent{Kind: session.KindComposerPrompt, Text: composerPrompt}); err != nil {
+			log.Printf("atenea-tui: no se pudo guardar el prompt en el historial de %s: %v", sessionID, err)
+		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &engineRun{cancel: cancel}
@@ -236,7 +289,7 @@ const acceptPlanPrompt = "El plan fue aprobado. Implementalo ahora paso a paso s
 // arrancando la corrida (espejo de App.AcceptPlan).
 func (e *Engine) AcceptPlan(sessionID string) error {
 	e.setMode(sessionID, session.ModeNormal)
-	return e.send(sessionID, acceptPlanPrompt)
+	return e.send(sessionID, acceptPlanPrompt, "")
 }
 
 // ResolvePermission resuelve una solicitud de permiso pendiente (ask-before-run).
