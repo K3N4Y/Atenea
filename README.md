@@ -17,3 +17,33 @@ to this in your browser, and you can call your Go code from devtools.
 ## Building
 
 To build a redistributable, production mode package, use `wails build`.
+
+## TUI provider selection
+
+`atenea-tui` supports a local `/model` command. Type `/model ` followed by any
+provider or model fragment, select a result from the normal composer popup,
+then press Enter again to apply it. Provider definitions are read
+from `providers.json` inside the Atenea directory returned by
+`os.UserConfigDir()` (typically `~/.config/atenea/providers.json` on Linux).
+
+```json
+{
+  "providers": [{
+    "id": "local",
+    "name": "Local",
+    "type": "openai-compatible",
+    "base_url": "http://localhost:11434/v1",
+    "models": ["qwen3:14b"]
+  }],
+  "selected": {"provider": "local", "model": "qwen3:14b"}
+}
+```
+
+Authenticated providers use `api_key_env` for the environment-variable name;
+the key value is never stored. If the file is absent, the existing
+`OPENROUTER_API_KEY`/`OPENROUTER_MODEL` startup behavior remains, with the
+offline demo as the final fallback.
+
+The built-in OpenRouter catalog includes `tencent/hy3:free` (262K),
+`poolside/laguna-xs-2.1:free` (262K), and `cohere/north-mini-code:free` (256K).
+Their context sizes appear beside each model in the `/model` popup.

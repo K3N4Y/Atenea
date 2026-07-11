@@ -15,6 +15,7 @@ import (
 	"github.com/muesli/termenv"
 
 	"atenea/internal/command"
+	"atenea/internal/providerconfig"
 	"atenea/internal/session"
 )
 
@@ -27,9 +28,29 @@ type fakeAgent struct {
 		sessionID, callID string
 		approved          bool
 	}
-	stopped  []string
-	accepted []string
+	stopped   []string
+	accepted  []string
+	models    []providerconfig.ProviderModels
+	active    providerconfig.Active
+	selected  []struct{ providerID, model string }
+	refreshes int
 }
+
+func (f *fakeAgent) ModelCatalog() []providerconfig.ProviderModels {
+	return cloneProviderModels(f.models)
+}
+func (f *fakeAgent) CurrentModel() providerconfig.Active { return f.active }
+func (f *fakeAgent) SelectModel(providerID, model string) (providerconfig.Active, error) {
+	f.selected = append(f.selected, struct{ providerID, model string }{providerID, model})
+	for _, provider := range f.models {
+		if provider.ID == providerID {
+			f.active = providerconfig.Active{ProviderID: providerID, ProviderName: provider.Name, Model: model}
+			return f.active, nil
+		}
+	}
+	return providerconfig.Active{}, fmt.Errorf("unknown provider")
+}
+func (f *fakeAgent) RefreshModels() { f.refreshes++ }
 
 func (f *fakeAgent) SendPrompt(sessionID, text string) (string, error) {
 	f.sent = append(f.sent, struct{ sessionID, text string }{sessionID, text})
@@ -85,6 +106,68 @@ func drainReveal(t *testing.T, m Model) Model {
 	}
 	t.Fatalf("el backlog del reveal no se agoto tras 1000 ticks")
 	return m
+}
+
+func TestModel_ModelCommandCompletesInlineThenSelects(t *testing.T) {
+	agent := &fakeAgent{
+		models: []providerconfig.ProviderModels{
+			{ID: "openrouter", Name: "OpenRouter", Models: []string{"old", "openai/chatgpt5.5"}},
+			{ID: "openai", Name: "OpenAI", Models: []string{"chatgpt5.5"}},
+		},
+		active: providerconfig.Active{ProviderID: "openrouter", ProviderName: "OpenRouter", Model: "old"},
+	}
+	m := NewModel(agent, "s1", nil).WithStatus("build", "old")
+	m = typeRunes(t, m, "/model chatgpt5.5")
+	view := m.View()
+	lineWith(t, view, "openai/chatgpt5.5")
+	lineWith(t, view, "OpenRouter")
+	lineWith(t, view, "OpenAI")
+	lineWith(t, view, "chatgpt5.5")
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if got := m.input.Value(); got != "/model openrouter openai/chatgpt5.5 " {
+		t.Fatalf("first Enter completed %q", got)
+	}
+	m = apply(t, m, ModelsRefreshedMsg{Providers: agent.models})
+	if len(m.menuItems) != 0 {
+		t.Fatalf("refresh reopened popup over canonical command: %#v", m.menuItems)
+	}
+	if len(agent.sent) != 0 || len(m.history) != 0 {
+		t.Fatalf("/model leaked to prompts/history: sent=%v history=%v", agent.sent, m.history)
+	}
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if got := m.model; got != "openai/chatgpt5.5" {
+		t.Fatalf("footer model = %q", got)
+	}
+	if len(agent.selected) != 1 || agent.selected[0].providerID != "openrouter" || agent.selected[0].model != "openai/chatgpt5.5" {
+		t.Fatalf("selected = %#v", agent.selected)
+	}
+	if got := m.input.Value(); got != "" {
+		t.Fatalf("input after selection = %q", got)
+	}
+}
+
+func TestModel_ModelPopupKeepsDistinctProviderNameAndID(t *testing.T) {
+	agent := &fakeAgent{models: []providerconfig.ProviderModels{{ID: "ollama", Name: "Local", Models: []string{"qwen"}}}}
+	m := NewModel(agent, "s1", nil)
+	m = typeRunes(t, m, "/model qwen")
+	if view := m.View(); !strings.Contains(view, "Local · ollama") {
+		t.Fatalf("distinct provider identity missing:\n%s", view)
+	}
+}
+
+func TestModel_OpenRouterCuratedModelsShowContext(t *testing.T) {
+	agent := &fakeAgent{models: []providerconfig.ProviderModels{{ID: "openrouter", Name: "OpenRouter", Models: []string{"tencent/hy3:free", "poolside/laguna-xs-2.1:free", "cohere/north-mini-code:free"}}}}
+	m := NewModel(agent, "s1", nil)
+	m = typeRunes(t, m, "/model ")
+	view := m.View()
+	for _, want := range []string{"tencent/hy3:free", "262K context", "poolside/laguna-xs-2.1:free", "cohere/north-mini-code:free", "256K context"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("model popup missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(strings.ToLower(view), "openrouter · openrouter") {
+		t.Fatalf("provider should be shown once:\n%s", view)
+	}
 }
 
 // lineWith devuelve la primera linea de view que contiene needle, o falla.
@@ -2897,6 +2980,19 @@ func TestModel_SlashOpensCommandMenu(t *testing.T) {
 	newLine := lineWith(t, view, "/new")
 	if plain := ansi.Strip(newLine); !strings.HasPrefix(plain, "❯ ") {
 		t.Fatalf("linea de /new sin ANSI = %q, el comando integrado debe arrancar seleccionado con el prefijo %q", plain, "❯ ")
+	}
+}
+
+func TestModel_CommandMenuAlwaysIncludesModelBuiltin(t *testing.T) {
+	commands := make([]command.Command, 10)
+	for i := range commands {
+		commands[i] = command.Command{Name: fmt.Sprintf("skill-%02d", i), Description: "skill"}
+	}
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(commands, nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = typeRunes(t, m, "/")
+	if view := m.View(); !strings.Contains(view, "/model") {
+		t.Fatalf("slash menu must reserve a row for /model even when skills fill the limit:\n%s", view)
 	}
 }
 

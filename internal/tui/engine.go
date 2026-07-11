@@ -14,6 +14,7 @@ import (
 	"atenea/internal/command"
 	"atenea/internal/event"
 	"atenea/internal/llm"
+	"atenea/internal/providerconfig"
 	"atenea/internal/session"
 	"atenea/internal/session/runner"
 	"atenea/internal/tool"
@@ -27,6 +28,19 @@ type EngineConfig struct {
 	Provider llm.Provider
 	Store    session.Store
 	Local    bool
+	Models   ModelService
+}
+
+type ModelService interface {
+	Active() providerconfig.Active
+	Catalog() []providerconfig.ProviderModels
+	Refresh(context.Context) ([]providerconfig.ProviderModels, error)
+	Select(context.Context, string, string) (providerconfig.Active, error)
+}
+
+type ModelsRefreshedMsg struct {
+	Providers []providerconfig.ProviderModels
+	Err       string
 }
 
 // Engine es el agente headless que arma runner + tools + permisos sin Wails y
@@ -50,8 +64,10 @@ type Engine struct {
 	// del workspace y el store DECORADO con EmittingStore (el mismo que recibe
 	// wiring.Build). send los usa para grabar Session.Cwd en el primer prompt
 	// de cada sesion. Inmutables tras NewEngine: se leen sin mu.
-	root  string
-	store session.Store
+	root             string
+	store            session.Store
+	models           ModelService
+	refreshingModels bool
 
 	mu    sync.Mutex
 	runs  map[string]*engineRun   // sessionID -> corrida en vuelo (identidad por puntero)
@@ -92,6 +108,7 @@ func NewEngine(cfg EngineConfig) *Engine {
 	bus := event.NewBus(emit)
 	e.root = cfg.Root
 	e.store = event.NewEmittingStore(cfg.Store, bus)
+	e.models = cfg.Models
 	built := wiring.Build(wiring.Config{
 		Root:     cfg.Root,
 		Provider: cfg.Provider,
@@ -108,6 +125,58 @@ func NewEngine(cfg EngineConfig) *Engine {
 	e.commands = built.Commands
 	e.glob = built.Glob
 	return e
+}
+
+func (e *Engine) ModelCatalog() []providerconfig.ProviderModels {
+	if e.models == nil {
+		return nil
+	}
+	providers := e.models.Catalog()
+	return cloneProviderModels(providers)
+}
+
+func (e *Engine) CurrentModel() providerconfig.Active {
+	if e.models == nil {
+		return providerconfig.Active{}
+	}
+	return e.models.Active()
+}
+
+func (e *Engine) SelectModel(providerID, model string) (providerconfig.Active, error) {
+	if e.models == nil {
+		return providerconfig.Active{}, errors.New("model selection is unavailable")
+	}
+	return e.models.Select(context.Background(), providerID, model)
+}
+
+func (e *Engine) RefreshModels() {
+	e.mu.Lock()
+	if e.models == nil || e.refreshingModels {
+		e.mu.Unlock()
+		return
+	}
+	e.refreshingModels = true
+	e.mu.Unlock()
+	go func() {
+		providers, err := e.models.Refresh(context.Background())
+		e.mu.Lock()
+		e.refreshingModels = false
+		e.mu.Unlock()
+		msg := ModelsRefreshedMsg{Providers: cloneProviderModels(providers)}
+		if err != nil {
+			msg.Err = err.Error()
+		}
+		e.events <- msg
+	}()
+}
+
+func cloneProviderModels(in []providerconfig.ProviderModels) []providerconfig.ProviderModels {
+	out := make([]providerconfig.ProviderModels, len(in))
+	for i, provider := range in {
+		out[i] = provider
+		out[i].Models = append([]string(nil), provider.Models...)
+	}
+	return out
 }
 
 // Commands lista los slash-commands disponibles (nombre + descripcion) para el

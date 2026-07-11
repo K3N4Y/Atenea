@@ -17,6 +17,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"atenea/internal/command"
+	"atenea/internal/providerconfig"
 	"atenea/internal/session"
 )
 
@@ -39,6 +40,13 @@ type Agent interface {
 	AcceptPlan(sessionID string) error
 	ResolvePermission(sessionID, callID string, approved bool)
 	Stop(sessionID string)
+}
+
+type modelAgent interface {
+	ModelCatalog() []providerconfig.ProviderModels
+	CurrentModel() providerconfig.Active
+	SelectModel(providerID, model string) (providerconfig.Active, error)
+	RefreshModels()
 }
 
 // entryKind distingue los tipos de bloque de la conversacion.
@@ -196,6 +204,7 @@ type Model struct {
 	listFiles    func() ([]string, error)
 	menuItems    []menuItem
 	menuSelected int
+	modelSearch  bool
 	files        []string
 	filesLoaded  bool
 
@@ -324,6 +333,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Al apagar working la linea de estado desaparece: recalcular el alto.
 		return m.resizeViewport(), waitForEvent(m.events)
+	case ModelsRefreshedMsg:
+		return m.refreshMenu(), waitForEvent(m.events)
 	case revealTickMsg:
 		// El loop de reveal muere solo: con el backlog agotado el tick no se
 		// reagenda (cmd nil) y un delta posterior lo reinicia. Siempre se
@@ -504,7 +515,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// Tab aplica la seleccion; no alterna el modo build/plan.
 			return m.applySelection(), nil
 		case tea.KeyEnter:
-			if m.menuItems[m.menuSelected].builtin {
+			if m.menuItems[m.menuSelected].builtin && m.menuItems[m.menuSelected].label == "/new" {
 				m.input.SetValue(m.menuItems[m.menuSelected].label)
 				m.input.SetCursor(len([]rune(m.menuItems[m.menuSelected].label)))
 				return m.closeMenu().submitPrompt()
@@ -946,6 +957,24 @@ func (m Model) submitPrompt() (Model, tea.Cmd) {
 	text := m.input.Value()
 	if text == "" || m.agent == nil {
 		return m, nil
+	}
+	if strings.HasPrefix(strings.TrimSpace(text), "/model") {
+		controller, ok := m.agent.(modelAgent)
+		if !ok {
+			return m.appendError("model selection is unavailable"), nil
+		}
+		parts := strings.Fields(text)
+		if len(parts) != 3 || parts[0] != "/model" {
+			return m.appendError("usage: /model <provider-id> <model-id>"), nil
+		}
+		active, err := controller.SelectModel(parts[1], parts[2])
+		if err != nil {
+			return m.appendError(err.Error()), nil
+		}
+		m.model = active.Model
+		m.input.SetValue("")
+		m.menuItems = nil
+		return m.resizeViewport(), nil
 	}
 	if text == "/new" {
 		newSessionID, err := m.agent.SendPrompt(m.sessionID, text)

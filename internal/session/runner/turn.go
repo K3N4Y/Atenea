@@ -99,9 +99,14 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string) (bool, er
 		}
 	}
 	mat := r.registry.Materialize(perms)
-	req := llm.Request{Model: before.Model, Messages: toLLMMessages(msgs), Tools: mat.Definitions}
+	providerSnapshot := llm.Acquire(r.provider)
+	model := before.Model
+	if providerSnapshot.Model != "" {
+		model = providerSnapshot.Model
+	}
+	req := llm.Request{Model: model, Messages: toLLMMessages(msgs), Tools: mat.Definitions}
 	if sys != nil {
-		req.System = sys(before.Model)
+		req.System = sys(model)
 	}
 
 	// Overflow antes del mensaje del asistente: compactar y reintentar una vez.
@@ -123,7 +128,7 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string) (bool, er
 	}
 
 	// Epoch vigente: una sola llamada al proveedor y consumo del stream (M5).
-	in, err := r.provider.Stream(ctx, req)
+	in, err := providerSnapshot.Provider.Stream(ctx, req)
 	if err != nil {
 		return false, err
 	}

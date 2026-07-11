@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-09
+updated_at: 2026-07-10
 summary: Design for testing LLM integration through OpenCode and the OpenAI SDK.
 ---
 
@@ -186,6 +186,19 @@ starting with OpenCode Go and migrating to Claude later does not touch the runne
 3. **Version/import path** of the `github.com/openai/openai-go` SDK.
 4. **Exact constructors** of the SDK for messages/tools/params.
 5. If the chosen model exposes reasoning, and `MaxTokens` vs `MaxCompletionTokens`.
+
+## Runtime provider snapshots
+
+`internal/llm.SwitchableProvider` keeps one stable provider reference for
+wiring while publishing immutable provider/model snapshots. The runner acquires
+one snapshot per logical LLM call and uses its model for system-prompt
+selection, compaction, request construction, and streaming. A swap affects only
+future calls; an active stream finishes on its acquired provider. Direct calls
+through the switcher force the snapshot model over stale request values.
+
+OpenAI-compatible discovery remains provider-neutral through
+`llm.ListModels(ctx, baseURL, apiKey)`. Authenticated providers receive a Bearer
+header; keyless local endpoints omit it.
 
 ## Sources
 
