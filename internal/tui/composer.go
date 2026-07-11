@@ -23,6 +23,7 @@ func newComposerInput() composerInput {
 	input.SetHeight(1)
 	input.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("ctrl+j"))
 	input.FocusedStyle.Prompt = accentStyle
+	input.FocusedStyle.CursorLine = input.FocusedStyle.CursorLine.UnsetBackground()
 	input.BlurredStyle.Prompt = accentStyle
 	input.Focus()
 	return composerInput{Model: input}
