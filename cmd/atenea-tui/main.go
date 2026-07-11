@@ -17,6 +17,7 @@ import (
 
 	"atenea/internal/dotenv"
 	"atenea/internal/llm"
+	"atenea/internal/providerconfig"
 	"atenea/internal/session"
 	"atenea/internal/tui"
 )
@@ -59,12 +60,17 @@ func main() {
 
 	// El provider y la etiqueta del modelo se resuelven UNA vez: el mismo valor
 	// alimenta al engine y al pie del composer (no duplicar la resolucion).
-	provider, model := providerFromEnv()
+	providerService, warning := openProviderService()
+	if warning != nil {
+		log.Printf("atenea-tui: provider config: %v", warning)
+	}
+	active := providerService.Active()
 
 	engine := tui.NewEngine(tui.EngineConfig{
 		Root:     root,
-		Provider: provider,
+		Provider: providerService.Provider(),
 		Store:    store,
+		Models:   providerService,
 	})
 	history, err := engine.PromptHistory()
 	if err != nil {
@@ -83,7 +89,7 @@ func main() {
 	// skills para el menu "/" y el listado del workspace para el @-menu.
 	m := tui.NewModel(engine, sessionID, engine.Events()).
 		WithHistory(history).
-		WithStatus("build", model).
+		WithStatus("build", active.Model).
 		WithCompletions(engine.Commands(), engine.ProjectFiles).
 		WithFileReader(tui.WorkspaceFileReader(root))
 	// WithMouseCellMotion habilita el mouse tracking: sin el, la terminal nunca
@@ -101,16 +107,33 @@ func main() {
 // etiqueta del modelo para el pie del composer: "demo" con el provider fake, o
 // el modelo real de OpenRouter.
 func providerFromEnv() (llm.Provider, string) {
+	snapshot := environmentFallbackSnapshot()
+	return snapshot.Provider, snapshot.Model
+}
+
+func environmentFallbackSnapshot() llm.ProviderSnapshot {
 	key := os.Getenv("OPENROUTER_API_KEY")
 	if key == "" {
 		log.Print("atenea-tui: sin OPENROUTER_API_KEY; usando provider de demo (sin red)")
-		return demoProvider(), "demo"
+		return llm.ProviderSnapshot{ProviderID: "demo", ProviderName: "Demo", BaseURL: "demo://local", Model: "demo", Provider: demoProvider()}
 	}
 	model := os.Getenv("OPENROUTER_MODEL")
 	if model == "" {
 		model = defaultModel
 	}
-	return llm.NewOpenAIProvider(key, openRouterBaseURL, model), model
+	return llm.ProviderSnapshot{ProviderID: "openrouter", ProviderName: "OpenRouter", BaseURL: openRouterBaseURL, Model: model, Provider: llm.NewOpenAIProvider(key, openRouterBaseURL, model)}
+}
+
+func openProviderService() (*providerconfig.Service, error) {
+	return providerconfig.Open(providerconfig.DefaultPath(), providerconfig.DefaultCachePath(), environmentFallbackSnapshot(), os.Getenv, nil, nil, nil, defaultProviderConfig())
+}
+
+func defaultProviderConfig() providerconfig.Config {
+	return providerconfig.Config{Providers: []providerconfig.Provider{{
+		ID: "openrouter", Name: "OpenRouter", Type: providerconfig.OpenAICompatible,
+		BaseURL: openRouterBaseURL, APIKeyEnv: "OPENROUTER_API_KEY", OpenRouterReasoning: true,
+		Models: []string{"tencent/hy3:free", "poolside/laguna-xs-2.1:free", "cohere/north-mini-code:free"},
+	}}}
 }
 
 // demoProvider arma un FakeProvider con un guion corto (texto + Step.Ended) para

@@ -57,6 +57,92 @@ func TestTUI_PromptHistorySurvivesRestartUnderPTY(t *testing.T) {
 	waitForPTYExit(t, secondDone)
 }
 
+func TestTUI_ModelSelectorPersistsSelectionUnderPTY(t *testing.T) {
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "atenea-tui")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea-tui")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, output)
+	}
+
+	configRoot := t.TempDir()
+	configDir := filepath.Join(configRoot, "atenea")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(configDir, "providers.json")
+	config := `{"providers":[{"id":"local","name":"Local","type":"openai-compatible","base_url":"http://127.0.0.1:1/v1","models":["old","new"]}],"selected":{"provider":"local","model":"old"}}`
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(binary)
+	cmd.Dir = t.TempDir()
+	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+configRoot, "OPENROUTER_API_KEY=", "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"))
+	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stopPTYProcess(cmd, terminal)
+	output := &lockedBuffer{}
+	go func() { _, _ = io.Copy(output, terminal) }()
+	waitForPTYText(t, output, "build · old")
+	if _, err := terminal.Write([]byte("/")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, output, "/model")
+	if _, err := terminal.Write([]byte("model new\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, output, "/model local new")
+	if _, err := terminal.Write([]byte("\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, output, "build · new")
+
+	persisted, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(persisted), `"model": "new"`) {
+		t.Fatalf("selection was not persisted:\n%s", persisted)
+	}
+}
+
+func TestTUI_DefaultOpenRouterModelsShowContextUnderPTY(t *testing.T) {
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "atenea-tui")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea-tui")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, output)
+	}
+	cmd := exec.Command(binary)
+	cmd.Dir = t.TempDir()
+	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+t.TempDir(), "OPENROUTER_API_KEY=test", "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"))
+	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 120, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stopPTYProcess(cmd, terminal)
+	output := &lockedBuffer{}
+	go func() { _, _ = io.Copy(output, terminal) }()
+	waitForPTYText(t, output, "build · openrouter/free")
+	if _, err := terminal.Write([]byte("/model ")); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"tencent/hy3:free", "poolside/laguna-xs-2.1:free", "cohere/north-mini-code:free", "262K context", "256K context"} {
+		waitForPTYText(t, output, want)
+	}
+}
+
 func TestTUI_CtrlJCreatesMultilineComposerUnderPTY(t *testing.T) {
 	repoRoot, err := filepath.Abs("../..")
 	if err != nil {
