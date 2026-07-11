@@ -32,6 +32,8 @@ const composerBoxPadding = 1
 // cursor cuando tiene Width fijado.
 const inputCursorWidth = 1
 
+const canvasBackground = "#141414"
+
 // inputPrompt es el caracter de prompt de la linea de input; distingue a
 // simple vista donde se teclea frente al marcador "> " del historial.
 const inputPrompt = "❯ "
@@ -66,6 +68,7 @@ const toolDiffPrefix = "  "
 // ningun assert busca substrings contiguos), asi el contenido plano que fijan
 // los tests nunca se parte con codigos ANSI.
 var (
+	canvasStyle      = lipgloss.NewStyle().Background(lipgloss.Color(canvasBackground))
 	accentStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("6")) // marcador de usuario y prompt del input
 	userTextStyle    = lipgloss.NewStyle().Bold(true)
 	toolRunningStyle = lipgloss.NewStyle().Faint(true)
@@ -591,6 +594,7 @@ func (m Model) entryLines() []entryLine {
 // pie tenue con el agente y el modelo la sigue. El alto sigue acotado porque
 // reservedLines ya las descuenta del viewport.
 func (m Model) View() string {
+	var content string
 	if m.viewer.active() {
 		contentWidth := m.contentWidth()
 		if !m.ready {
@@ -599,24 +603,39 @@ func (m Model) View() string {
 		if m.ready && m.treeOpen && m.treePanelWidth() >= m.width {
 			contentWidth = m.width
 		}
-		content := m.renderFileViewer(contentWidth, max(m.height, 0))
-		if !m.treeOpen {
-			return content
+		content = m.renderFileViewer(contentWidth, max(m.height, 0))
+		if m.treeOpen && (!m.ready || m.treePanelWidth() < m.width) {
+			content = lipgloss.JoinHorizontal(lipgloss.Top, m.treeView(), " ", m.viewerView(contentWidth))
 		}
-		if m.ready && m.treePanelWidth() >= m.width {
-			return content
+	} else {
+		content = m.chatContent()
+		if m.treeOpen {
+			if m.ready && m.treePanelWidth() >= m.width {
+				content = m.treeView()
+			} else {
+				content = lipgloss.JoinHorizontal(lipgloss.Top, m.treeView(), " ", m.chatView(content))
+			}
 		}
-		return lipgloss.JoinHorizontal(lipgloss.Top, m.treeView(), " ", m.viewerView(contentWidth))
 	}
+	return m.renderCanvas(content)
+}
 
-	content := m.chatContent()
-	if !m.treeOpen {
+func (m Model) renderCanvas(content string) string {
+	style := canvasStyle
+	if m.ready {
+		style = style.Width(max(m.width, 0)).Height(max(m.height, 0))
+	}
+	return style.Render(restoreCanvasBackground(content))
+}
+
+func restoreCanvasBackground(content string) string {
+	styledMarker := canvasStyle.Render("x")
+	background, _, found := strings.Cut(styledMarker, "x")
+	if !found || background == "" {
 		return content
 	}
-	if m.ready && m.treePanelWidth() >= m.width {
-		return m.treeView()
-	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, m.treeView(), " ", m.chatView(content))
+	content = strings.ReplaceAll(content, "\x1b[0m", "\x1b[0m"+background)
+	return strings.ReplaceAll(content, "\x1b[m", "\x1b[m"+background)
 }
 
 func (m Model) chatContent() string {
