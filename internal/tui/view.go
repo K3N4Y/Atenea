@@ -28,6 +28,8 @@ const composerBoxBorderWidth = 2
 // celdas al fijar el ancho del textarea.
 const composerBoxPadding = 1
 
+const composerOuterMargin = 2
+
 // inputCursorWidth es la celda extra que bubbles/textarea reserva para el
 // cursor cuando tiene Width fijado.
 const inputCursorWidth = 1
@@ -454,7 +456,7 @@ func (m Model) renderTranscript() string {
 // (alto del textarea + bordes), con menu abierto una linea por item y con
 // corrida en curso la linea de estado del indicador de trabajo.
 func (m Model) reservedLines() int {
-	reserved := m.input.Height() + 2 + len(m.menuItems)
+	reserved := m.input.Height() + 2 + composerOuterMargin + len(m.menuItems)
 	if m.working {
 		reserved++
 	}
@@ -480,7 +482,7 @@ func (m Model) resizeViewport() Model {
 	}
 	m.focus = m.normalizedFocus()
 	contentWidth := m.chatContentWidth()
-	m.input.SetWidth(max(contentWidth-composerBoxBorderWidth-2*composerBoxPadding-inputCursorWidth, 1))
+	m.input.SetWidth(max(contentWidth-2*composerOuterMargin-composerBoxBorderWidth-2*composerBoxPadding-inputCursorWidth, 1))
 	m.viewport.Width = max(contentWidth, 0)
 	contentHeight := m.height
 	if m.chatPanelVisible() {
@@ -630,7 +632,7 @@ func (m Model) chatContent() string {
 		// contenido plano siga siendo asertable por los tests.
 		status = m.spinner.View() + statusStyle.Render(" trabajando") + "\n"
 	}
-	return m.transcriptView() + m.menuView() + status + m.composerBox()
+	return m.transcriptView() + m.menuView() + status + m.composerView()
 }
 
 func (m Model) chatView(content string) string {
@@ -714,9 +716,21 @@ func (m Model) menuView() string {
 // Width 0 de lipgloss significa "sin fijar" y la caja queda a ancho natural
 // (con su padding), igual que sin tamano conocido.
 func (m Model) composerBox() string {
+	return m.composerBoxWithWidth(m.chatContentWidth())
+}
+
+func (m Model) composerView() string {
+	if !m.ready {
+		return m.composerBox()
+	}
+	box := m.composerBoxWithWidth(max(m.chatContentWidth()-2*composerOuterMargin, 0))
+	return lipgloss.NewStyle().Margin(0, composerOuterMargin, composerOuterMargin).Render(box)
+}
+
+func (m Model) composerBoxWithWidth(width int) string {
 	style := composerBoxStyle
 	if m.ready {
-		style = style.Width(max(m.chatContentWidth()-composerBoxBorderWidth, 0))
+		style = style.Width(max(width-composerBoxBorderWidth, 0))
 	}
 	box := style.Render(m.input.View())
 	box = decorateComposerBorder(box, 0, m.tokenUsageLabel(), "╭", "╮", true, false)
@@ -885,6 +899,9 @@ func (m Model) treeVisibleRowCount() int {
 // conocido, o el render completo como fallback mientras no lo es.
 func (m Model) transcriptView() string {
 	if m.ready {
+		if m.viewport.Height <= 0 {
+			return ""
+		}
 		view := m.viewport.View()
 		if m.hasNewActivity {
 			view = renderNewActivityIndicator(view, m.viewport.Width)

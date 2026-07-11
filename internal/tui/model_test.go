@@ -194,15 +194,16 @@ func assertNoLineWiderThan(t *testing.T, view string, width int) {
 }
 
 // assertBoxLinesExactWidth falla si alguna linea de la caja del composer (las
-// que empiezan con un caracter de borde ╭/│/╰) no mide exactamente width
+// que contienen un caracter de borde ╭/│/╰ tras el margen) no mide exactamente width
 // celdas visibles, o si la vista no contiene ninguna. Mide con
 // ansi.StringWidth para ignorar codigos ANSI.
 func assertBoxLinesExactWidth(t *testing.T, view string, width int) {
 	t.Helper()
 	found := false
 	for _, line := range strings.Split(view, "\n") {
+		trimmed := strings.TrimLeft(line, " ")
 		for _, prefix := range []string{"╭", "│", "╰"} {
-			if strings.HasPrefix(line, prefix) {
+			if strings.HasPrefix(trimmed, prefix) {
 				found = true
 				if w := ansi.StringWidth(line); w != width {
 					t.Fatalf("View() = %q, la linea de la caja %q mide %d celdas visibles, cada linea de la caja debe medir exactamente el ancho de la terminal (%d)", view, line, w, width)
@@ -2073,7 +2074,7 @@ func TestModel_ComposerBottomBorderShowsModel(t *testing.T) {
 	lines := strings.Split(plain, "\n")
 	var bottomBorder string
 	for _, line := range lines {
-		if strings.HasPrefix(line, "╰") {
+		if strings.HasPrefix(strings.TrimLeft(line, " "), "╰") {
 			bottomBorder = line
 		}
 	}
@@ -2087,6 +2088,28 @@ func TestModel_ComposerBottomBorderShowsModel(t *testing.T) {
 		t.Fatalf("View() = %q, agent/model status must not render as a standalone footer", plain)
 	}
 	assertBoxLinesExactWidth(t, m.View(), 60)
+}
+
+func TestModel_ComposerHasTwoCellOuterMargin(t *testing.T) {
+	m := NewModel(nil, "s1", nil).WithStatus("build", "model")
+	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 8})
+
+	lines := strings.Split(ansi.Strip(m.View()), "\n")
+	bottom := -1
+	for index, line := range lines {
+		if strings.Contains(line, "╰") {
+			bottom = index
+			if !strings.HasPrefix(line, "  ") || !strings.HasSuffix(line, "  ") {
+				t.Fatalf("composer border = %q, want two-cell left and right margins", line)
+			}
+		}
+	}
+	if bottom == -1 {
+		t.Fatalf("View() = %q, want composer bottom border", ansi.Strip(m.View()))
+	}
+	if bottom+2 >= len(lines) || strings.TrimSpace(lines[bottom+1]) != "" || strings.TrimSpace(lines[bottom+2]) != "" {
+		t.Fatalf("lines after composer = %q, want two empty bottom rows", lines[bottom+1:])
+	}
 }
 
 func TestModel_ComposerBottomBorderTruncatesLongModel(t *testing.T) {
@@ -2217,7 +2240,7 @@ func TestModel_ComposerTopBorderShowsTokenUsage(t *testing.T) {
 	plain := ansi.Strip(m.View())
 	var topBorder string
 	for _, line := range strings.Split(plain, "\n") {
-		if strings.HasPrefix(line, "╭") {
+		if strings.HasPrefix(strings.TrimLeft(line, " "), "╭") {
 			topBorder = line
 			break
 		}
@@ -2419,10 +2442,11 @@ func TestModel_ComposerBoxWrapsInput(t *testing.T) {
 
 	topAt, inputAt, bottomAt := -1, -1, -1
 	for i, line := range strings.Split(view, "\n") {
+		trimmed := strings.TrimLeft(line, " ")
 		switch {
-		case strings.HasPrefix(line, "╭"):
+		case strings.HasPrefix(trimmed, "╭"):
 			topAt = i
-		case strings.HasPrefix(line, "╰"):
+		case strings.HasPrefix(trimmed, "╰"):
 			bottomAt = i
 		case strings.Contains(line, inputPrompt):
 			inputAt = i
@@ -2506,7 +2530,7 @@ func TestModel_LongTypedPromptKeepsBoxSingleLine(t *testing.T) {
 	}
 	interior := 0
 	for _, line := range strings.Split(view, "\n") {
-		if strings.HasPrefix(line, "│") {
+		if strings.HasPrefix(strings.TrimLeft(line, " "), "│") {
 			interior++
 		}
 	}

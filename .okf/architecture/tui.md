@@ -233,7 +233,8 @@ OPENROUTER_API_KEY=... ./build/bin/atenea-tui
 - Plan-mode now alternates with Tab, the AcceptPlan flow now executes the approved
  plan and the composer now autocompletes slash-commands and @-files. The composer
  keeps token usage in its upper border and the active model in its lower-right
- border; plan mode appends `· plan` to that model label. Changing the model
+ border, with two cells of outer spacing on its sides and below; plan mode appends
+ `· plan` to that model label. Changing the model
  from the TUI is still pending, so the label reflects the environment model fixed
  per run.
 - A new prompt while an activity is running cancels the previous run
