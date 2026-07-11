@@ -625,7 +625,17 @@ func (m Model) renderCanvas(content string) string {
 	if m.ready {
 		style = style.Width(max(m.width, 0)).Height(max(m.height, 0))
 	}
-	return style.Render(content)
+	return style.Render(restoreCanvasBackground(content))
+}
+
+func restoreCanvasBackground(content string) string {
+	styledMarker := canvasStyle.Render("x")
+	background, _, found := strings.Cut(styledMarker, "x")
+	if !found || background == "" {
+		return content
+	}
+	content = strings.ReplaceAll(content, "\x1b[0m", "\x1b[0m"+background)
+	return strings.ReplaceAll(content, "\x1b[m", "\x1b[m"+background)
 }
 
 func (m Model) chatContent() string {

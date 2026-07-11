@@ -30,7 +30,9 @@ fills every cell rather than painting only cells already occupied by content.
 Keeping the background at the root avoids duplicating the color across child
 views and ensures future layouts inherit the canvas automatically. Child
 styles with explicit backgrounds continue to override the canvas where visual
-state must remain distinct.
+state must remain distinct. Because child styles may emit complete ANSI resets,
+the root canvas restores `#141414` immediately after those resets before
+rendering any following cells.
 
 ## Acceptance Criteria
 
@@ -40,6 +42,8 @@ state must remain distinct.
 3. The plain-text layout retains the requested terminal width and height.
 4. Existing selection, diff, status, and navigation behavior remains intact.
 5. Zero-sized or not-yet-sized terminals continue to render without panic.
+6. ANSI resets emitted by child styles do not expose the terminal's default
+   background before the end of a rendered line.
 
 ## Verification
 

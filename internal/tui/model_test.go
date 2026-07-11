@@ -492,6 +492,71 @@ func TestModel_ViewPaintsCompleteDarkCanvas(t *testing.T) {
 	}
 }
 
+func TestModel_ViewRestoresDarkCanvasAfterChildStyleResets(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(previousProfile)
+	})
+
+	background := "\x1b[48;2;20;20;20m"
+	leadingANSI := func(value string) string {
+		var prefix strings.Builder
+		for strings.HasPrefix(value, "\x1b[") {
+			end := -1
+			for i := 2; i < len(value); i++ {
+				if value[i] >= 0x40 && value[i] <= 0x7e {
+					end = i + 1
+					break
+				}
+			}
+			if end < 0 {
+				break
+			}
+			prefix.WriteString(value[:end])
+			value = value[end:]
+		}
+		return prefix.String()
+	}
+	tests := []struct {
+		name  string
+		model func() Model
+	}{
+		{name: "chat", model: func() Model { return NewModel(nil, "s1", nil) }},
+		{name: "explorer", model: func() Model {
+			m := NewModel(nil, "s1", nil)
+			m.treeOpen = true
+			return m
+		}},
+		{name: "file viewer", model: func() Model {
+			m := NewModel(nil, "s1", nil)
+			m.viewer = openFileViewer("example.go", []byte("package example\n"))
+			return m
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := apply(t, tt.model(), tea.WindowSizeMsg{Width: 40, Height: 12})
+			for lineNumber, line := range strings.Split(m.View(), "\n") {
+				for _, reset := range []string{"\x1b[0m", "\x1b[m"} {
+					remaining := line
+					for {
+						_, after, found := strings.Cut(remaining, reset)
+						if !found {
+							break
+						}
+						if ansi.Strip(after) != "" && !strings.Contains(leadingANSI(after), background) {
+							t.Fatalf("line %d = %q, reset %q must restore the canvas background before rendering more cells", lineNumber+1, line, reset)
+						}
+						remaining = after
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestModel_ViewPaintsDarkCanvasAcrossLayouts(t *testing.T) {
 	previousProfile := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)

@@ -79,6 +79,10 @@ the first `WindowSizeMsg`, the canvas fills the complete reported width and
 height so empty terminal cells cannot fall back to the user's terminal theme.
 Child styles remain responsible for explicit functional highlights such as
 the tree cursor, diffs, statuses, and selection states.
+Child styles can emit complete SGR resets inside the root render, so the
+canvas immediately restores `#141414` after each reset before any following
+cells. Styled prompts, cursors, panels, and Markdown therefore cannot expose
+the terminal's default background mid-line.
 
 ## Contracts that the TUI establishes with tests
 
