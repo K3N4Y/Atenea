@@ -9,12 +9,14 @@ package tui
 // listFiles) cablean esos tokens al estado del popup.
 
 import (
+	"fmt"
 	"path"
 	"sort"
 	"strings"
 	"unicode"
 
 	"atenea/internal/command"
+	"atenea/internal/providerconfig"
 )
 
 // menuLimit acota cuantos items muestra el popup de autocompletado.
@@ -27,6 +29,9 @@ type menuItem struct {
 	label       string
 	description string
 	builtin     bool
+	providerID  string
+	model       string
+	empty       bool
 }
 
 // tokenQuery es el token de autocompletado vigente bajo el caret, la forma
@@ -65,6 +70,64 @@ func detectCommand(text string, caret int) tokenQuery {
 		}
 	}
 	return tokenQuery{active: true, query: string(runes[1:caret]), start: 0, end: caret}
+}
+
+func detectModelQuery(text string, caret int) tokenQuery {
+	runes := []rune(text)
+	const prefix = "/model "
+	if caret < len([]rune(prefix)) || caret > len(runes) || !strings.HasPrefix(string(runes[:caret]), prefix) {
+		return inactiveToken
+	}
+	return tokenQuery{active: true, query: strings.TrimSpace(string(runes[len([]rune(prefix)):caret])), start: 0, end: caret}
+}
+
+func filterModels(providers []providerconfig.ProviderModels, query string, limit int) []menuItem {
+	query = strings.ToLower(strings.ReplaceAll(query, " ", ""))
+	var items []menuItem
+	for _, provider := range providers {
+		for _, model := range provider.Models {
+			haystack := strings.ToLower(strings.ReplaceAll(provider.ID+provider.Name+model, " ", ""))
+			if query != "" && !strings.Contains(haystack, query) {
+				continue
+			}
+			description := provider.Name
+			if !strings.EqualFold(strings.ReplaceAll(provider.Name, " ", ""), strings.ReplaceAll(provider.ID, "-", "")) {
+				description = fmt.Sprintf("%s · %s", provider.Name, provider.ID)
+			}
+			if context := curatedModelContext[model]; context != "" {
+				description += " · " + context + " context"
+			}
+			items = append(items, menuItem{label: model, description: description, providerID: provider.ID, model: model})
+			if len(items) == limit {
+				return items
+			}
+		}
+	}
+	return items
+}
+
+var curatedModelContext = map[string]string{
+	"tencent/hy3:free":            "262K",
+	"poolside/laguna-xs-2.1:free": "262K",
+	"cohere/north-mini-code:free": "256K",
+}
+
+func isCanonicalModelCommand(text string, providers []providerconfig.ProviderModels) bool {
+	parts := strings.Fields(text)
+	if len(parts) != 3 || parts[0] != "/model" {
+		return false
+	}
+	for _, provider := range providers {
+		if provider.ID != parts[1] {
+			continue
+		}
+		for _, model := range provider.Models {
+			if model == parts[2] {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // filterCommands ordena comandos contra una query (sin distinguir mayusculas),
@@ -223,6 +286,15 @@ func (m Model) applySelection() Model {
 		return m
 	}
 	item := m.menuItems[m.menuSelected]
+	if item.empty {
+		return m
+	}
+	if item.model != "" {
+		value := "/model " + item.providerID + " " + item.model + " "
+		m.input.SetValue(value)
+		m.input.SetCursor(len([]rune(value)))
+		return m.closeMenu()
+	}
 	runes := []rune(m.input.Value())
 	if q := detectCommand(m.input.Value(), m.input.Position()); q.active {
 		insert := item.label + " "
@@ -249,23 +321,69 @@ func (m Model) refreshMenu() Model {
 	m.menuItems = nil
 	m.menuSelected = 0
 	text, caret := m.input.Value(), m.input.Position()
-	if q := detectCommand(text, caret); q.active {
+	if q := detectModelQuery(text, caret); q.active {
 		m = m.dropFileCache()
-		if strings.HasPrefix("new", strings.ToLower(q.query)) {
+		controller, ok := m.agent.(modelAgent)
+		if ok && isCanonicalModelCommand(text, controller.ModelCatalog()) {
+			m.modelSearch = false
+			return m.resizeViewport()
+		}
+		if ok {
+			m.menuItems = filterModels(controller.ModelCatalog(), q.query, menuLimit)
+			if !m.modelSearch {
+				controller.RefreshModels()
+			}
+		}
+		m.modelSearch = true
+		if len(m.menuItems) == 0 {
+			label := "No matches"
+			if ok && len(controller.ModelCatalog()) == 0 {
+				label = "No models available"
+			}
+			m.menuItems = []menuItem{{label: label, empty: true}}
+		}
+	} else if q := detectCommand(text, caret); q.active {
+		m.modelSearch = false
+		m = m.dropFileCache()
+		query := strings.ToLower(q.query)
+		includeNew := strings.HasPrefix("new", query)
+		includeModel := strings.HasPrefix("model", query)
+		if includeNew {
 			m.menuItems = append(m.menuItems, menuItem{label: "/new", builtin: true})
 		}
-		for _, cmd := range filterCommands(m.commands, q.query, menuLimit) {
-			if len(m.menuItems) == menuLimit {
-				break
-			}
+		reserved := len(m.menuItems)
+		if includeModel {
+			reserved++
+		}
+		for _, cmd := range filterCommands(m.commands, q.query, menuLimit-reserved) {
 			m.menuItems = append(m.menuItems, menuItem{label: "/" + cmd.Name, description: cmd.Description})
 		}
+		if includeModel {
+			item := menuItem{label: "/model", description: "Select provider and model", builtin: true}
+			if query != "" {
+				insertAt := 0
+				if includeNew {
+					insertAt = 1
+				}
+				m.menuItems = append(m.menuItems, menuItem{})
+				copy(m.menuItems[insertAt+1:], m.menuItems[insertAt:])
+				m.menuItems[insertAt] = item
+			} else if len(m.menuItems) > 1 {
+				last := m.menuItems[len(m.menuItems)-1]
+				m.menuItems[len(m.menuItems)-1] = item
+				m.menuItems = append(m.menuItems, last)
+			} else {
+				m.menuItems = append(m.menuItems, item)
+			}
+		}
 	} else if q := detectMention(text, caret); q.active {
+		m.modelSearch = false
 		m = m.loadFilesOnce()
 		for _, f := range filterFiles(m.files, q.query, menuLimit) {
 			m.menuItems = append(m.menuItems, menuItem{label: f})
 		}
 	} else {
+		m.modelSearch = false
 		m = m.dropFileCache()
 	}
 	return m.resizeViewport()
