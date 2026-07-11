@@ -86,15 +86,15 @@ func (s *RgSearcher) Grep(ctx context.Context, req GrepRequest) (GrepResult, err
 
 	cmd := exec.CommandContext(ctx, binary, buildRipgrepArgs(req)...)
 	cmd.Dir = req.Root
+	setProcessGroup(cmd)
+	cmd.Cancel = func() error { return killProcessGroup(cmd) }
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return GrepResult{}, err
 	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return GrepResult{}, err
-	}
+	stderr := &boundedWriter{limit: maxRgStderrRunes * 4}
+	cmd.Stderr = stderr
 
 	if err := cmd.Start(); err != nil {
 		if isUnavailableError(err) || errors.Is(err, exec.ErrNotFound) {
@@ -103,21 +103,15 @@ func (s *RgSearcher) Grep(ctx context.Context, req GrepRequest) (GrepResult, err
 		return GrepResult{}, err
 	}
 
-	stderrCh := make(chan string, 1)
-	go func() {
-		b, _ := io.ReadAll(io.LimitReader(stderr, int64(maxRgStderrRunes*4+1)))
-		stderrCh <- boundedString(strings.TrimSpace(string(b)), maxRgStderrRunes)
-	}()
-
 	result, scanErr := parseRipgrepJSON(stdout, req.Limit, true)
 	if result.Truncated && cmd.Process != nil {
-		_ = cmd.Process.Kill()
+		_ = killProcessGroup(cmd)
 	}
 	if scanErr != nil && cmd.Process != nil {
-		_ = cmd.Process.Kill()
+		_ = killProcessGroup(cmd)
 	}
 	waitErr := cmd.Wait()
-	stderrText := <-stderrCh
+	stderrText := boundedString(strings.TrimSpace(stderr.String()), maxRgStderrRunes)
 
 	if scanErr != nil {
 		return GrepResult{}, scanErr
@@ -132,6 +126,24 @@ func (s *RgSearcher) Grep(ctx context.Context, req GrepRequest) (GrepResult, err
 		return result, nil
 	}
 	return handleRipgrepWaitError(waitErr, stderrText, req.Pattern, binary)
+}
+
+type boundedWriter struct {
+	buf   bytes.Buffer
+	limit int
+}
+
+func (w *boundedWriter) Write(p []byte) (int, error) {
+	written := len(p)
+	remaining := w.limit - w.buf.Len()
+	if remaining > 0 {
+		_, _ = w.buf.Write(p[:min(len(p), remaining)])
+	}
+	return written, nil
+}
+
+func (w *boundedWriter) String() string {
+	return w.buf.String()
 }
 
 func ParseRipgrepJSON(stdout []byte, limit int) (GrepResult, error) {

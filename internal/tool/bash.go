@@ -107,8 +107,8 @@ func (bt *BashTool) Execute(ctx context.Context, input json.RawMessage) (Result,
 
 	// Mata el GRUPO de procesos (no solo el hijo) al cancelar: sin esto un
 	// "sleep 5 &" dejaria huerfanos y el Wait colgaria hasta WaitDelay.
-	setBashProcessGroup(cmd)
-	cmd.Cancel = func() error { return killBashProcessGroup(cmd) }
+	setProcessGroup(cmd)
+	cmd.Cancel = func() error { return killProcessGroup(cmd) }
 
 	runErr := cmd.Run()
 	out := strings.TrimRight(buf.String(), "\n")

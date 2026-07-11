@@ -167,18 +167,16 @@ type Model struct {
 	// ready se activa con el primer tea.WindowSizeMsg (sin tamano conocido la
 	// vista usa el render completo como fallback). width/height guardan el
 	// ultimo tamano anunciado para recalcular el alto cuando cambian las
-	// lineas reservadas bajo el transcript (caja del composer, indicador de
-	// trabajo y pie con agente/modelo).
+	// lineas reservadas bajo el transcript (caja del composer e indicador de
+	// trabajo).
 	viewport viewport.Model
 	ready    bool
 	width    int
 	height   int
 
-	// agentName y model alimentan el pie del composer (agente y modelo de IA);
-	// entran una sola vez via WithStatus. El modelo sigue fijo por corrida,
-	// pero el agente MOSTRADO cambia con Tab: en plan-mode el pie rinde "plan"
-	// en lugar de agentName (ver statusFooter y planMode).
-	agentName      string
+	// model alimenta la etiqueta del borde inferior del composer; entra una
+	// sola vez via WithStatus y sigue fijo por corrida. planMode alterna con
+	// Tab y agrega el prefijo "plan ·" a esa etiqueta.
 	model          string
 	usage          *session.Usage
 	liveUsage      bool
@@ -239,11 +237,10 @@ func NewModel(agent Agent, sessionID string, events <-chan tea.Msg) Model {
 	return Model{agent: agent, sessionID: sessionID, events: events, input: input, spinner: sp, followAgent: true}
 }
 
-// WithStatus fija el agente base y el modelo de IA a mostrar en el pie del
-// composer. Builder de valor: la info entra una sola vez al construir el Model
-// (en plan-mode el pie muestra "plan" en lugar del agente base).
-func (m Model) WithStatus(agentName, model string) Model {
-	m.agentName = agentName
+// WithStatus fija el modelo de IA a mostrar en el borde inferior del composer.
+// El nombre del agente se conserva en la firma por compatibilidad con quienes
+// construyen el modelo, pero el modo normal ya no agrega una etiqueta propia.
+func (m Model) WithStatus(_ string, model string) Model {
 	m.model = model
 	return m
 }

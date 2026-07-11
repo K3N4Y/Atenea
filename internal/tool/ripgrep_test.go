@@ -159,6 +159,21 @@ func TestRgSearcher_InvalidPatternError(t *testing.T) {
 	}
 }
 
+func TestRgSearcher_InvalidPatternErrorWithLargeStderr(t *testing.T) {
+	searcher := &RgSearcher{Binary: helperScript(t, "printf 'regex parse error: missing ]\\n' >&2\nhead -c 131072 /dev/zero | tr '\\000' x >&2\nexit 2")}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	_, err := searcher.Grep(ctx, GrepRequest{Root: t.TempDir(), Path: ".", Pattern: "["})
+	if err == nil {
+		t.Fatal("Grep returned nil error, want GrepInvalidPatternError")
+	}
+	var invalid *GrepInvalidPatternError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("Grep error = %T %[1]v, want GrepInvalidPatternError", err)
+	}
+}
+
 func TestRgSearcher_UnavailableBinary(t *testing.T) {
 	searcher := &RgSearcher{Binary: filepath.Join(t.TempDir(), "missing-rg")}
 
@@ -220,14 +235,19 @@ func TestRgSearcher_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 
+	start := time.Now()
 	_, err := searcher.Grep(ctx, GrepRequest{Root: t.TempDir(), Path: ".", Pattern: "needle"})
+	elapsed := time.Since(start)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Grep error = %v, want context deadline exceeded", err)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("Grep took %v after cancellation, want process group stopped promptly", elapsed)
 	}
 }
 
 func TestRgSearcher_StopsProcessOnJSONParseError(t *testing.T) {
-	searcher := &RgSearcher{Binary: helperScript(t, "printf '{not-json}\\n'\nsleep 5")}
+	searcher := &RgSearcher{Binary: helperScript(t, "printf '{not-json}\\n'\nsleep 5 &\nwait")}
 
 	start := time.Now()
 	_, err := searcher.Grep(context.Background(), GrepRequest{Root: t.TempDir(), Path: ".", Pattern: "needle"})

@@ -31,7 +31,7 @@ func TestTUI_PromptHistorySurvivesRestartUnderPTY(t *testing.T) {
 	workdir := filepath.Join(repoRoot, "cmd/atenea-tui/testdata/file-viewer/project")
 
 	firstCmd, firstTerminal, firstOutput, firstDone := startTUIUnderPTY(t, binary, workdir, database)
-	waitForPTYText(t, firstOutput, "build · demo")
+	waitForPTYText(t, firstOutput, " demo ─╯")
 	if _, err := firstTerminal.Write([]byte("mensaje persistente\r")); err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestTUI_PromptHistorySurvivesRestartUnderPTY(t *testing.T) {
 
 	secondCmd, secondTerminal, secondOutput, secondDone := startTUIUnderPTY(t, binary, workdir, database)
 	defer stopPTYProcess(secondCmd, secondTerminal)
-	waitForPTYText(t, secondOutput, "build · demo")
+	waitForPTYText(t, secondOutput, " demo ─╯")
 	before := secondOutput.String()
 	if _, err := secondTerminal.Write([]byte("\x1b[A")); err != nil {
 		t.Fatal(err)
@@ -90,7 +90,7 @@ func TestTUI_ModelSelectorPersistsSelectionUnderPTY(t *testing.T) {
 	defer stopPTYProcess(cmd, terminal)
 	output := &lockedBuffer{}
 	go func() { _, _ = io.Copy(output, terminal) }()
-	waitForPTYText(t, output, "build · old")
+	waitForPTYText(t, output, " old ─╯")
 	if _, err := terminal.Write([]byte("/")); err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestTUI_ModelSelectorPersistsSelectionUnderPTY(t *testing.T) {
 	if _, err := terminal.Write([]byte("\r")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYText(t, output, "build · new")
+	waitForPTYText(t, output, " new ─╯")
 
 	persisted, err := os.ReadFile(configPath)
 	if err != nil {
@@ -134,7 +134,7 @@ func TestTUI_DefaultOpenRouterModelsShowContextUnderPTY(t *testing.T) {
 	defer stopPTYProcess(cmd, terminal)
 	output := &lockedBuffer{}
 	go func() { _, _ = io.Copy(output, terminal) }()
-	waitForPTYText(t, output, "build · openrouter/free")
+	waitForPTYText(t, output, " openrouter/free ─╯")
 	if _, err := terminal.Write([]byte("/model ")); err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestTUI_CtrlJCreatesMultilineComposerUnderPTY(t *testing.T) {
 	workdir := filepath.Join(repoRoot, "cmd/atenea-tui/testdata/file-viewer/project")
 	cmd, terminal, output, _ := startTUIUnderPTY(t, binary, workdir, filepath.Join(t.TempDir(), "atenea.db"))
 	defer stopPTYProcess(cmd, terminal)
-	waitForPTYText(t, output, "build · demo")
+	waitForPTYText(t, output, " demo ─╯")
 
 	if _, err := terminal.Write([]byte("primera linea")); err != nil {
 		t.Fatal(err)
@@ -194,7 +194,7 @@ func TestTUI_FileViewerFlowUnderPTY(t *testing.T) {
 	var output lockedBuffer
 	done := make(chan struct{})
 	go func() { _, _ = io.Copy(&output, terminal); close(done) }()
-	waitForPTYText(t, &output, "build · demo")
+	waitForPTYText(t, &output, " demo ─╯")
 	if _, err := terminal.Write([]byte(" e\r")); err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestTUI_FileViewerFlowUnderPTY(t *testing.T) {
 	if _, err := terminal.Write([]byte("\x1b")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYText(t, &output, "build · demo")
+	waitForPTYText(t, &output, " demo ─╯")
 	if _, err := terminal.Write([]byte("\x03")); err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +241,7 @@ func TestTUI_FileViewerScrollsToLastLineUnderPTY(t *testing.T) {
 
 	cmd, terminal, output, _ := startTUIUnderPTY(t, binary, workdir, filepath.Join(t.TempDir(), "atenea.db"))
 	defer stopPTYProcess(cmd, terminal)
-	waitForPTYText(t, output, "build · demo")
+	waitForPTYText(t, output, " demo ─╯")
 	if _, err := terminal.Write([]byte(" e\r")); err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +275,7 @@ func TestTUI_FileTreeMouseWheelAndClickUnderPTY(t *testing.T) {
 	var output lockedBuffer
 	done := make(chan struct{})
 	go func() { _, _ = io.Copy(&output, terminal); close(done) }()
-	waitForPTYText(t, &output, "build · demo")
+	waitForPTYText(t, &output, " demo ─╯")
 	if _, err := terminal.Write([]byte(" e")); err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +332,7 @@ func TestTUI_ExplorerLeaderRapidSequencesUnderPTY(t *testing.T) {
 	var output lockedBuffer
 	done := make(chan struct{})
 	go func() { _, _ = io.Copy(&output, terminal); close(done) }()
-	waitForPTYText(t, &output, "build · demo")
+	waitForPTYText(t, &output, " demo ─╯")
 
 	before := output.String()
 	if _, err := terminal.Write(bytes.Repeat([]byte(" e"), 2001)); err != nil {
