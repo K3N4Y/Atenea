@@ -16,12 +16,6 @@ import (
 	"atenea/internal/llm"
 )
 
-// composerBoxLines es el alto de la caja del composer bajo el viewport: borde
-// superior, la linea de input y borde inferior. La caja nunca crece: un prompt
-// mas largo que el ancho scrollea horizontal dentro del textinput (ver
-// resizeViewport) en vez de envolver a mas lineas.
-const composerBoxLines = 3
-
 // composerBoxBorderWidth es el ancho que los dos bordes laterales de la caja
 // suman al contenido (Style.Width de lipgloss fija el ancho del CONTENIDO).
 const composerBoxBorderWidth = 2
@@ -31,11 +25,11 @@ const composerBoxBorderWidth = 2
 // interior renda "│ ❯" (estilo Claude Code) en vez del prompt pegado al
 // borde. Style.Width de lipgloss INCLUYE el padding, asi que composerBox no
 // lo descuenta del ancho, pero resizeViewport si resta las 2*composerBoxPadding
-// celdas al fijar el ancho del textinput.
+// celdas al fijar el ancho del textarea.
 const composerBoxPadding = 1
 
-// inputCursorWidth es la celda extra que bubbles/textinput rende siempre para
-// el cursor cuando tiene Width fijado (ademas del prompt y el texto visible).
+// inputCursorWidth es la celda extra que bubbles/textarea reserva para el
+// cursor cuando tiene Width fijado.
 const inputCursorWidth = 1
 
 // inputPrompt es el caracter de prompt de la linea de input; distingue a
@@ -452,11 +446,11 @@ func (m Model) renderTranscript() string {
 }
 
 // reservedLines es el alto reservado bajo el transcript: la caja del composer
-// (3 lineas), con menu de autocompletado abierto una linea por item, con
+// (alto del textarea + bordes), con menu abierto una linea por item, con
 // corrida en curso la linea de estado del indicador de trabajo, y con status
 // fijado la linea de pie del composer (agente y modelo).
 func (m Model) reservedLines() int {
-	reserved := composerBoxLines + len(m.menuItems)
+	reserved := m.input.Height() + 2 + len(m.menuItems)
 	if m.working {
 		reserved++
 	}
@@ -489,20 +483,18 @@ func (m Model) statusFooter() string {
 // of range en visibleLines al hacer GotoBottom); con 0 el corte queda vacio y
 // no paniquea. Sin tamano conocido (ready == false) es no-op.
 //
-// Tambien fija el ancho visible del textinput al interior de la caja del
+// Tambien fija el ancho visible del textarea al interior de la caja del
 // composer: ancho de la terminal menos los bordes laterales, el padding
 // horizontal, el prompt y la celda del cursor que bubbles agrega siempre al
-// final. Con Width > 0 el textinput scrollea horizontal en vez de crecer, y la
-// caja se mantiene en 3 lineas. Acotado a >= 0: en terminales minusculas
-// Width 0 desactiva el scroll (textinput a ancho natural, vista degradada pero
-// sin panic).
+// final. El textarea crece verticalmente hasta composerMaxLines y luego
+// scrollea; el ancho se acota a una celda para terminales minusculas.
 func (m Model) resizeViewport() Model {
 	if !m.ready {
 		return m
 	}
 	m.focus = m.normalizedFocus()
 	contentWidth := m.chatContentWidth()
-	m.input.Width = max(contentWidth-composerBoxBorderWidth-2*composerBoxPadding-ansi.StringWidth(inputPrompt)-inputCursorWidth, 0)
+	m.input.SetWidth(max(contentWidth-composerBoxBorderWidth-2*composerBoxPadding-inputCursorWidth, 1))
 	m.viewport.Width = max(contentWidth, 0)
 	contentHeight := m.height
 	if m.chatPanelVisible() {

@@ -72,7 +72,9 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
  request from a subagent is resolved with the child id).
 - Enter sends via the active mode path (`Agent.SendPrompt` in build,
  `Agent.SendPlanPrompt` in plan); Ctrl+C cuts and exits; Esc only shorts;
- `RunDoneMsg` turns off the work flag.
+ `RunDoneMsg` turns off the work flag. `Ctrl+J` inserts a newline without
+ submitting; the composer grows to five visible lines and then scrolls while
+ preserving literal newlines in the submitted prompt.
 - Tab toggles the build/plan agent mode: it's sticky between submissions (each
  Enter routes down the active mode path, without resetting it) and inert with a
  pending permission, and the composer footer reflects this live. In plan-mode the
@@ -102,8 +104,10 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
 - The viewport respects the height of the terminal, follows the queue with new events and
  survives lowercase terminals (0x0/1 line: dimensions bounded to >= 0;
  real bubbles/viewport panic found in smoke E2E under pty).
-- The composer box measures the width of the terminal and never grows larger than 3 lines
- (a prompt longer than the width scrolls horizontally within the input); the
+- The composer box measures the terminal width, starts at three total rows
+ including borders, and grows to seven total rows for five visible input
+ lines. Longer multiline prompts scroll vertically; long individual lines
+ scroll horizontally within the input. The
  footer shows `<agente> · <modelo>`: the model enters once via
  `WithStatus` and the agent reflects the active mode (build/plan).
 - The composer keeps the latest 100 submitted TUI prompts in the shared durable

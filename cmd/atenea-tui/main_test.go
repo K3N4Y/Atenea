@@ -56,6 +56,35 @@ func TestTUI_PromptHistorySurvivesRestartUnderPTY(t *testing.T) {
 	waitForPTYExit(t, secondDone)
 }
 
+func TestTUI_CtrlJCreatesMultilineComposerUnderPTY(t *testing.T) {
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "atenea-tui")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea-tui")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, output)
+	}
+	workdir := filepath.Join(repoRoot, "cmd/atenea-tui/testdata/file-viewer/project")
+	cmd, terminal, output, _ := startTUIUnderPTY(t, binary, workdir, filepath.Join(t.TempDir(), "atenea.db"))
+	defer stopPTYProcess(cmd, terminal)
+	waitForPTYText(t, output, "build · demo")
+
+	if _, err := terminal.Write([]byte("primera linea")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, output, "❯ primera linea")
+	before := output.String()
+	if _, err := terminal.Write([]byte("\x0asegunda linea")); err != nil {
+		t.Fatal(err)
+	}
+	if latest := waitForStablePTYOutputAfter(t, output, before); !strings.Contains(ansi.Strip(latest), "❯ segunda linea") {
+		t.Fatalf("Ctrl+J debe crear una segunda fila visible del composer; salida PTY:\n%s", ansi.Strip(latest))
+	}
+}
+
 func TestTUI_FileViewerFlowUnderPTY(t *testing.T) {
 	repoRoot, err := filepath.Abs("../..")
 	if err != nil {

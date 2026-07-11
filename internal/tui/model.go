@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -131,7 +130,7 @@ type Model struct {
 	sessionID string
 	events    <-chan tea.Msg
 	entries   []entry
-	input     textinput.Model
+	input     composerInput
 	working   bool // true desde que arranca una corrida (Enter o aceptar el plan) hasta RunDoneMsg
 
 	// spinner anima el glifo del indicador de trabajo. Su loop de ticks nace
@@ -216,10 +215,7 @@ type Model struct {
 
 // NewModel construye el Model raiz de la TUI.
 func NewModel(agent Agent, sessionID string, events <-chan tea.Msg) Model {
-	input := textinput.New()
-	input.Prompt = inputPrompt
-	input.PromptStyle = accentStyle
-	input.Focus()
+	input := newComposerInput()
 	// El spinner comparte el estilo tenue de la linea de estado: el glifo es
 	// parte del indicador de trabajo, no un protagonista aparte.
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(statusStyle))

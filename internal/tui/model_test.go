@@ -1753,6 +1753,48 @@ func TestModel_ComposerFooterShowsAgentAndModel(t *testing.T) {
 	}
 }
 
+func TestModel_ComposerCtrlJInsertsNewlineAndEnterSubmitsMultilinePrompt(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 20})
+	m = typeRunes(t, m, "primera linea")
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyCtrlJ})
+	m = typeRunes(t, m, "segunda linea")
+
+	if got, want := m.input.Value(), "primera linea\nsegunda linea"; got != want {
+		t.Fatalf("input.Value() = %q, Ctrl+J debe insertar un salto de linea y conservar el borrador %q", got, want)
+	}
+	if got := strings.Count(ansi.Strip(m.composerBox()), "\n"); got != 3 {
+		t.Fatalf("composerBox() tiene %d saltos, con dos lineas debe crecer a cuatro lineas incluyendo bordes", got)
+	}
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(fake.sent) != 1 {
+		t.Fatalf("SendPrompt fue llamado %d veces, Enter debe enviar el prompt multilinea exactamente una vez", len(fake.sent))
+	}
+	if got, want := fake.sent[0].text, "primera linea\nsegunda linea"; got != want {
+		t.Fatalf("SendPrompt text = %q, want %q", got, want)
+	}
+}
+
+func TestModel_ComposerGrowthStopsAtFiveLines(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 20})
+	for line := 0; line < composerMaxLines+2; line++ {
+		m = typeRunes(t, m, fmt.Sprintf("linea %d", line))
+		if line < composerMaxLines+1 {
+			m = apply(t, m, tea.KeyMsg{Type: tea.KeyCtrlJ})
+		}
+	}
+
+	if got := m.input.Height(); got != composerMaxLines {
+		t.Fatalf("input.Height() = %d, el composer debe dejar de crecer en %d lineas", got, composerMaxLines)
+	}
+	if got := strings.Count(ansi.Strip(m.composerBox()), "\n"); got != composerMaxLines+1 {
+		t.Fatalf("composerBox() tiene %d saltos, con el limite debe renderizar %d lineas incluyendo bordes", got, composerMaxLines+1)
+	}
+}
+
 func TestModel_ComposerTopBorderShowsTokenUsage(t *testing.T) {
 	m := NewModel(nil, "s1", nil).WithStatus("build", "anthropic/claude-sonnet-4.5")
 	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 12})
