@@ -46,7 +46,8 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
   job status line, composer box with rounded edge and a compact
   `↑ input ↓ output ctx used/window` label in its top-left border, and
   footer with agent/model, all with lipgloss styles. Live estimates carry a
-  `~` prefix and lose it when `Step.Ended` supplies exact provider usage;
+  `~` prefix and lose it when the step closes; when `Step.Ended` omits usage,
+  the last estimate remains visible without the approximation marker;
   `reveal.go` is the smooth
  streaming of the text that arrives by deltas, assistant and thought (parity
  with `frontend/src/lib/reveal.ts`): the view reveals a prefix by runes that
@@ -109,7 +110,10 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
  store, so Up/Down history survives process restarts and spans previous TUI
  sessions. New prompts are recorded as non-conversation `Composer.Prompt`
  events, preserving literal slash commands without adding them twice to model
- context; older sessions fall back to their user-message projection. With an
+ context; older sessions fall back to their user-message projection. Startup
+ reads sessions from newest to oldest and stops after collecting 100 prompts;
+ failure to persist this auxiliary history does not cancel an already admitted
+ prompt. With an
  empty composer, Up recalls older prompts and Down moves toward newer ones;
  moving past the newest prompt clears the composer. History navigation does
  not start while the composer already contains text, and autocomplete menus

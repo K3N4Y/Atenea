@@ -248,10 +248,11 @@ func waitForPTYExit(t *testing.T, done <-chan struct{}) {
 
 func waitForPTYTextAfter(t *testing.T, output *lockedBuffer, previous, want string) {
 	t.Helper()
+	previous = ansi.Strip(previous)
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		current := output.String()
-		if len(current) >= len(previous) && strings.Contains(ansi.Strip(current[len(previous):]), want) {
+		current := ansi.Strip(output.String())
+		if len(current) >= len(previous) && strings.Contains(current[len(previous):], want) {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)

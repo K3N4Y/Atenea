@@ -1822,6 +1822,51 @@ func TestModel_ComposerTokenUsageUpdatesDuringStreaming(t *testing.T) {
 	}
 }
 
+func TestModel_LiveUsageTransitions(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m.outputBytes = 9
+	m.reasoningBytes = 12
+	m.toolInputBytes = 15
+	m = m.foldEvent(EventMsg{Kind: session.KindStepStarted, Usage: &session.Usage{InputTokens: 20}})
+	if !m.liveUsage || m.outputBytes != 0 || m.reasoningBytes != 0 || m.toolInputBytes != 0 {
+		t.Fatalf("StepStarted = live:%v bytes:%d/%d/%d, quiero uso vivo con contadores reiniciados", m.liveUsage, m.outputBytes, m.reasoningBytes, m.toolInputBytes)
+	}
+
+	m = m.foldEvent(EventMsg{Kind: session.KindTextDelta, Text: "abcdef"})
+	estimated := *m.usage
+	m = m.foldEvent(EventMsg{Kind: session.KindStepEnded})
+	if m.liveUsage || *m.usage != estimated {
+		t.Fatalf("StepEnded sin Usage = live:%v usage:%+v, quiero conservar estimacion %+v y cerrar uso vivo", m.liveUsage, *m.usage, estimated)
+	}
+
+	m.liveUsage = true
+	m = m.foldEvent(EventMsg{Kind: session.KindStepFailed, Error: "boom"})
+	if m.liveUsage {
+		t.Fatal("StepFailed debe cerrar el uso vivo")
+	}
+}
+
+func TestModel_UpdateLiveUsageRequiresActiveUsage(t *testing.T) {
+	for _, m := range []Model{
+		{liveUsage: false, usage: &session.Usage{OutputTokens: 7}, outputBytes: 30},
+		{liveUsage: true, usage: nil, outputBytes: 30},
+	} {
+		beforeUsage := m.usage
+		m = m.updateLiveUsage()
+		if m.usage != beforeUsage || m.outputBytes != 30 {
+			t.Fatalf("updateLiveUsage() modifico un modelo sin uso activo: %+v", m)
+		}
+	}
+}
+
+func TestEstimatedTokens(t *testing.T) {
+	for _, tc := range []struct{ bytes, want int }{{0, 0}, {1, 1}, {2, 1}, {3, 1}, {30_000, 10_000}} {
+		if got := estimatedTokens(tc.bytes); got != tc.want {
+			t.Errorf("estimatedTokens(%d) = %d, quiero %d", tc.bytes, got, tc.want)
+		}
+	}
+}
+
 func TestModel_ComposerDistinguishesEstimatedAndExactInputUsage(t *testing.T) {
 	m := NewModel(nil, "s1", nil).WithStatus("build", "anthropic/claude-sonnet-4.5")
 	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 12})
@@ -1872,8 +1917,32 @@ func TestModel_ComposerTokenUsageHandlesUnknownModelAndNarrowWidth(t *testing.T)
 		t.Fatalf("View() = %q, want the latest completed step usage", plain)
 	}
 
-	m = apply(t, m, tea.WindowSizeMsg{Width: 16, Height: 8})
-	assertBoxLinesExactWidth(t, m.View(), 16)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 10, Height: 8})
+	assertBoxLinesExactWidth(t, m.View(), 10)
+	if plain := ansi.Strip(m.composerBox()); strings.Contains(plain, "↑") {
+		t.Fatalf("composerBox() = %q, una caja demasiado estrecha debe omitir la etiqueta", plain)
+	}
+}
+
+func TestModel_ComposerBoxWithoutUsageHasNoTokenLabel(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	if plain := ansi.Strip(m.composerBox()); strings.Contains(plain, "↑") || strings.Contains(plain, "↓") {
+		t.Fatalf("composerBox() = %q, sin usage no debe mostrar tokens", plain)
+	}
+}
+
+func TestFormatTokenCount(t *testing.T) {
+	for _, tc := range []struct {
+		tokens int
+		want   string
+	}{
+		{0, "0"}, {999, "999"}, {1_000, "1k"}, {1_500, "1.5k"},
+		{9_999, "10k"}, {10_000, "10k"}, {128_000, "128k"},
+	} {
+		if got := formatTokenCount(tc.tokens); got != tc.want {
+			t.Errorf("formatTokenCount(%d) = %q, quiero %q", tc.tokens, got, tc.want)
+		}
+	}
 }
 
 func TestModel_ComposerBoxWrapsInput(t *testing.T) {

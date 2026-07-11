@@ -748,7 +748,7 @@ func formatTokenCount(tokens int) string {
 	if tokens%1_000 == 0 || tokens >= 10_000 {
 		return strconv.Itoa(tokens/1_000) + "k"
 	}
-	return strconv.FormatFloat(float64(tokens)/1_000, 'f', 1, 64) + "k"
+	return strings.TrimSuffix(strconv.FormatFloat(float64(tokens)/1_000, 'f', 1, 64), ".0") + "k"
 }
 
 func (m Model) chatContentWidth() int {

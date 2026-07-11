@@ -127,8 +127,7 @@ func (e *Engine) ProjectFiles() ([]string, error) {
 	return files, nil
 }
 
-// PromptHistory reconstruye los ultimos prompts literales enviados por TUI,
-// atravesando sus sesiones durables de la mas antigua a la mas reciente.
+// PromptHistory reconstruye los ultimos prompts literales enviados por TUI.
 func (e *Engine) PromptHistory() ([]string, error) {
 	ctx := context.Background()
 	sessions, err := e.store.Sessions(ctx)
@@ -136,33 +135,37 @@ func (e *Engine) PromptHistory() ([]string, error) {
 		return nil, err
 	}
 	history := make([]string, 0, historyLimit)
-	for i := len(sessions) - 1; i >= 0; i-- {
-		if !strings.HasPrefix(sessions[i].ID, "tui-") {
+	for _, summary := range sessions {
+		if len(history) >= historyLimit {
+			break
+		}
+		if !strings.HasPrefix(summary.ID, "tui-") {
 			continue
 		}
-		events, err := e.store.Events(ctx, sessions[i].ID, 0)
+		events, err := e.store.Events(ctx, summary.ID, 0)
 		if err != nil {
 			return nil, err
 		}
+		prompts := make([]string, 0)
 		foundComposerPrompts := false
 		for _, event := range events {
 			if event.Kind == session.KindComposerPrompt {
 				foundComposerPrompts = true
-				history = append(history, event.Text)
+				prompts = append(prompts, event.Text)
 			}
 		}
-		if foundComposerPrompts {
-			continue
-		}
-		messages, err := e.store.Messages(ctx, sessions[i].ID, 0)
-		if err != nil {
-			return nil, err
-		}
-		for _, message := range messages {
-			if message.Role == session.RoleUser && message.Text != acceptPlanPrompt {
-				history = append(history, message.Text)
+		if !foundComposerPrompts {
+			messages, err := e.store.Messages(ctx, summary.ID, 0)
+			if err != nil {
+				return nil, err
+			}
+			for _, message := range messages {
+				if message.Role == session.RoleUser && message.Text != acceptPlanPrompt {
+					prompts = append(prompts, message.Text)
+				}
 			}
 		}
+		history = append(prompts, history...)
 	}
 	if len(history) > historyLimit {
 		history = history[len(history)-historyLimit:]
@@ -254,7 +257,7 @@ func (e *Engine) send(sessionID, text, composerPrompt string) error {
 	if composerPrompt != "" {
 		if _, err := e.store.AppendEvent(context.Background(), sessionID,
 			session.SessionEvent{Kind: session.KindComposerPrompt, Text: composerPrompt}); err != nil {
-			return err
+			log.Printf("atenea-tui: no se pudo guardar el prompt en el historial de %s: %v", sessionID, err)
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
