@@ -133,6 +133,14 @@ type Model struct {
 	input     composerInput
 	working   bool // true desde que arranca una corrida (Enter o aceptar el plan) hasta RunDoneMsg
 
+	// followAgent mantiene el viewport pegado a la cola solo mientras el
+	// usuario siga al fondo. Al desplazarse hacia arriba se apaga hasta que el
+	// usuario vuelve manualmente al final; hasNewActivity enciende entonces la
+	// flecha pasiva que avisa que el transcript siguio creciendo fuera de vista.
+	followAgent    bool
+	hasNewActivity bool
+	lastTranscript string
+
 	// spinner anima el glifo del indicador de trabajo. Su loop de ticks nace
 	// donde la corrida arranca (submitPrompt y resolvePlanKey devuelven
 	// spinner.Tick como cmd) y muere solo cuando working se apaga: el caso
@@ -219,7 +227,7 @@ func NewModel(agent Agent, sessionID string, events <-chan tea.Msg) Model {
 	// El spinner comparte el estilo tenue de la linea de estado: el glifo es
 	// parte del indicador de trabajo, no un protagonista aparte.
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(statusStyle))
-	return Model{agent: agent, sessionID: sessionID, events: events, input: input, spinner: sp}
+	return Model{agent: agent, sessionID: sessionID, events: events, input: input, spinner: sp, followAgent: true}
 }
 
 // WithStatus fija el agente base y el modelo de IA a mostrar en el pie del
@@ -306,9 +314,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// batcheado con la bomba de eventos.
 		if !m.revealing && m.hasBacklog() {
 			m.revealing = true
-			return m.syncViewport(), tea.Batch(pump, revealTick())
+			return m.syncViewportActivity(), tea.Batch(pump, revealTick())
 		}
-		return m.syncViewport(), pump
+		return m.syncViewportActivity(), pump
 	case RunDoneMsg:
 		m.working = false
 		if ev.Err != "" {
@@ -323,10 +331,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m = m.advanceReveal()
 		if !m.hasBacklog() {
 			m.revealing = false
-			return m.syncViewport(), nil
+			return m.syncViewportActivity(), nil
 		}
 		m.revealing = true
-		return m.syncViewport(), revealTick()
+		return m.syncViewportActivity(), revealTick()
 	case leaderTimeoutMsg:
 		if ev.generation == 0 || ev.generation == m.leaderGeneration {
 			m.leaderPending = false
@@ -352,6 +360,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKey(ev)
 	case tea.MouseMsg:
+		if m.newActivityIndicatorHit(ev) {
+			return m, nil
+		}
 		if ev.Action == tea.MouseActionPress && (ev.Button == tea.MouseButtonWheelUp || ev.Button == tea.MouseButtonWheelDown) {
 			if m.treeOpen && m.treeMouseOverPanel(ev) {
 				if ev.Button == tea.MouseButtonWheelUp {
@@ -403,12 +414,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) newActivityIndicatorHit(msg tea.MouseMsg) bool {
+	if !m.hasNewActivity || !m.ready || msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+		return false
+	}
+	if m.treeOpen {
+		return false
+	}
+	return msg.X == m.viewport.Width-1 && msg.Y == m.viewport.Height-1
+}
+
 // scrollViewport reenvia msg al viewport para paginar el historial (rueda o
-// PgUp/PgDn): nunca escribe en el input ni toca el gate de permisos; los
-// eventos nuevos re-siguen la cola via GotoBottom en syncViewport (v1).
+// PgUp/PgDn): nunca escribe en el input ni toca el gate de permisos. Alejarse
+// del fondo pausa el seguimiento; volver manualmente al final lo reactiva y
+// limpia el indicador de actividad nueva.
 func (m Model) scrollViewport(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.viewport, cmd = m.viewport.Update(msg)
+	m.followAgent = m.viewport.AtBottom()
+	if m.followAgent {
+		m.hasNewActivity = false
+	}
 	return m, cmd
 }
 

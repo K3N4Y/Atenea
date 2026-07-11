@@ -42,7 +42,12 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
   `Step.Started`, generated tokens estimated from streaming deltas, and exact
   provider usage from `Step.Ended`; `model.go` handles keyboard and channel
   event pump;
-  `view.go` renders with high bounded viewport (follow queue, PgUp/PgDn),
+  `view.go` renders with a height-bounded viewport and smart following:
+  incoming events and reveal ticks follow the queue only while the user is at
+  the bottom; scrolling upward preserves the reading position during streaming
+  and shows a passive `↓` at the lower-right when new agent activity arrives;
+  returning manually to the bottom clears the indicator and resumes following.
+  PgUp/PgDn and the mouse wheel navigate the transcript,
   job status line, composer box with rounded edge and a compact
   `↑ input ↓ output ctx used/window` label in its top-left border, and
   footer with agent/model, all with lipgloss styles. Live estimates carry a
@@ -103,8 +108,10 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
  `App.AcceptPlan`), turns off the plan-mode and marks the run as working;
  `n` discards the offer and the mode remains as is. A failed `present_plan`
  offers nothing.
-- The viewport respects the height of the terminal, follows the queue with new events and
- survives lowercase terminals (0x0/1 line: dimensions bounded to >= 0;
+- The viewport respects the height of the terminal, follows new events only
+  while it remains at the bottom, preserves the user's offset while reading
+  history during streaming, and survives lowercase terminals (0x0/1 line:
+  dimensions bounded to >= 0;
  real bubbles/viewport panic found in smoke E2E under pty).
 - The composer box measures the terminal width, starts at three total rows
  including borders, and grows to seven total rows for five visible input

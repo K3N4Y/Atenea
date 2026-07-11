@@ -1430,10 +1430,7 @@ func TestModel_MouseWheelSurvivesTinyOrUnsizedTerminal(t *testing.T) {
 	})
 }
 
-func TestModel_NewEventRefollowsTailWhileScrolledUp(t *testing.T) {
-	// TRIANGULATE: pin del comportamiento v1 documentado en Update: aunque el
-	// usuario haya scrolleado hacia atras con la rueda, cada evento nuevo
-	// re-sigue la cola via GotoBottom en syncViewport.
+func TestModel_NewEventPreservesReadingPositionWhileScrolledUp(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
 
@@ -1448,18 +1445,108 @@ func TestModel_NewEventRefollowsTailWhileScrolledUp(t *testing.T) {
 	// Dos ruedas arriba: la cola deja de verse (precondicion del caso).
 	m = apply(t, m, wheelUp)
 	m = apply(t, m, wheelUp)
+	offset := m.viewport.YOffset
 	if got := m.View(); strings.Contains(got, "mensaje-29") {
 		t.Fatalf("View() = %q, tras rueda arriba la cola %q NO debe seguir visible", got, "mensaje-29")
 	}
 
-	// Llega un evento nuevo: la vista vuelve a seguir la cola.
+	// Llega actividad nueva: conserva la posicion de lectura y muestra una
+	// flecha pasiva en vez de arrastrar al usuario hacia la cola.
 	m = apply(t, m, EventMsg{Message: &session.Message{
 		ID:   "u30",
 		Role: session.RoleUser,
 		Text: "mensaje-30",
 	}})
-	if got := m.View(); !strings.Contains(got, "mensaje-30") {
-		t.Fatalf("View() = %q, un evento nuevo debe re-seguir la cola: %q debe estar visible aunque el usuario haya scrolleado hacia atras", got, "mensaje-30")
+	if got := m.viewport.YOffset; got != offset {
+		t.Fatalf("viewport.YOffset = %d, want %d: la actividad nueva no debe mover la posicion de lectura", got, offset)
+	}
+	view := ansi.Strip(m.View())
+	if strings.Contains(view, "mensaje-30") {
+		t.Fatalf("View() = %q, la actividad nueva no debe volver a mostrar la cola", view)
+	}
+	if !strings.Contains(view, "↓") {
+		t.Fatalf("View() = %q, debe mostrar una flecha pasiva cuando hay actividad nueva fuera de vista", view)
+	}
+}
+
+func TestModel_StreamingRevealPreservesReadingPositionAndMarksActivity(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
+	for i := 0; i < 30; i++ {
+		m = apply(t, m, EventMsg{Message: &session.Message{
+			ID: fmt.Sprintf("u%02d", i), Role: session.RoleUser, Text: fmt.Sprintf("mensaje-%02d", i),
+		}})
+	}
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: strings.Repeat("stream ", 20)})
+	m = apply(t, m, wheelUp)
+	m = apply(t, m, wheelUp)
+	offset := m.viewport.YOffset
+
+	m = apply(t, m, revealTickMsg{})
+
+	if got := m.viewport.YOffset; got != offset {
+		t.Fatalf("viewport.YOffset = %d, want %d: el reveal no debe arrastrar la lectura", got, offset)
+	}
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "↓") {
+		t.Fatalf("View() = %q, el reveal fuera de vista debe marcar actividad nueva", view)
+	}
+}
+
+func TestModel_ReturningToBottomClearsNewActivityIndicatorAndResumesFollowing(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
+	for i := 0; i < 30; i++ {
+		m = apply(t, m, EventMsg{Message: &session.Message{
+			ID: fmt.Sprintf("u%02d", i), Role: session.RoleUser, Text: fmt.Sprintf("mensaje-%02d", i),
+		}})
+	}
+	m = apply(t, m, wheelUp)
+	m = apply(t, m, EventMsg{Message: &session.Message{ID: "u30", Role: session.RoleUser, Text: "mensaje-30"}})
+
+	for !m.viewport.AtBottom() {
+		m = apply(t, m, wheelDown)
+	}
+	if view := ansi.Strip(m.View()); strings.Contains(view, "↓") {
+		t.Fatalf("View() = %q, al volver al fondo debe ocultar el indicador", view)
+	}
+
+	m = apply(t, m, EventMsg{Message: &session.Message{ID: "u31", Role: session.RoleUser, Text: "mensaje-31"}})
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "mensaje-31") {
+		t.Fatalf("View() = %q, al volver al fondo debe reanudar el seguimiento", view)
+	}
+}
+
+func TestModel_NewActivityIndicatorIsPassiveAndAgentOnly(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
+	for i := 0; i < 30; i++ {
+		m = apply(t, m, EventMsg{Message: &session.Message{
+			ID: fmt.Sprintf("u%02d", i), Role: session.RoleUser, Text: fmt.Sprintf("mensaje-%02d", i),
+		}})
+	}
+	m = apply(t, m, wheelUp)
+
+	// Un cambio local de presentacion no es actividad nueva del agente.
+	m = m.syncViewport()
+	if view := ansi.Strip(m.View()); strings.Contains(view, "↓") {
+		t.Fatalf("View() = %q, un cambio local no debe mostrar el indicador", view)
+	}
+
+	m = apply(t, m, EventMsg{Message: &session.Message{ID: "u30", Role: session.RoleUser, Text: "mensaje-30"}})
+	beforeOffset := m.viewport.YOffset
+	beforeView := m.View()
+	m = apply(t, m, tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      m.viewport.Width - 1,
+		Y:      m.viewport.Height - 1,
+	})
+	if got := m.viewport.YOffset; got != beforeOffset {
+		t.Fatalf("viewport.YOffset = %d, want %d: la flecha debe ser pasiva", got, beforeOffset)
+	}
+	if got := m.View(); got != beforeView {
+		t.Fatalf("View() cambio tras clicar la flecha pasiva:\nantes=%q\ndespues=%q", beforeView, got)
 	}
 }
 

@@ -504,22 +504,44 @@ func (m Model) resizeViewport() Model {
 	return m.syncViewport()
 }
 
-// syncViewport vuelca el transcript al viewport y sigue la cola (auto-scroll
-// al fondo). El transcript se envuelve al ancho del viewport antes de
+// syncViewport vuelca el transcript al viewport y sigue la cola solo mientras
+// followAgent siga activo. Si el usuario esta leyendo historial, conserva el
+// offset y marca actividad nueva cuando cambia el transcript. El transcript se
+// envuelve al ancho del viewport antes de
 // SetContent porque el viewport trunca horizontalmente cada linea (ansi.Cut),
 // no envuelve; pre-envolver ademas deja correcto el conteo de lineas que usa
 // GotoBottom. Con ancho <= 0 (terminal minuscula) no se envuelve. Sin tamano
 // conocido (ready == false) es no-op.
 func (m Model) syncViewport() Model {
+	return m.syncViewportContent(false)
+}
+
+func (m Model) syncViewportActivity() Model {
+	return m.syncViewportContent(true)
+}
+
+func (m Model) syncViewportContent(agentActivity bool) Model {
 	if !m.ready {
 		return m
 	}
-	transcript := m.renderTranscript()
+	rawTranscript := m.renderTranscript()
+	contentChanged := rawTranscript != m.lastTranscript
+	offset := m.viewport.YOffset
+	transcript := rawTranscript
 	if m.viewport.Width > 0 {
 		transcript = ansi.Wrap(transcript, m.viewport.Width, "")
 	}
 	m.viewport.SetContent(transcript)
-	m.viewport.GotoBottom()
+	if m.followAgent {
+		m.viewport.GotoBottom()
+		m.hasNewActivity = false
+	} else {
+		m.viewport.SetYOffset(offset)
+		if agentActivity && contentChanged {
+			m.hasNewActivity = true
+		}
+	}
+	m.lastTranscript = rawTranscript
 	return m
 }
 
@@ -830,10 +852,28 @@ func (m Model) treeVisibleRowCount() int {
 // conocido, o el render completo como fallback mientras no lo es.
 func (m Model) transcriptView() string {
 	if m.ready {
-		return m.viewport.View() + "\n"
+		view := m.viewport.View()
+		if m.hasNewActivity {
+			view = renderNewActivityIndicator(view, m.viewport.Width)
+		}
+		return view + "\n"
 	}
 	if transcript := m.renderTranscript(); transcript != "" {
 		return transcript + "\n\n"
 	}
 	return ""
+}
+
+// renderNewActivityIndicator coloca una flecha pasiva en el borde inferior
+// derecho del transcript sin agregar filas ni cambiar el alto del viewport.
+func renderNewActivityIndicator(view string, width int) string {
+	if view == "" || width <= 0 {
+		return view
+	}
+	lines := strings.Split(view, "\n")
+	last := len(lines) - 1
+	line := ansi.Truncate(lines[last], max(width-1, 0), "")
+	line += strings.Repeat(" ", max(width-1-lipgloss.Width(line), 0)) + "↓"
+	lines[last] = line
+	return strings.Join(lines, "\n")
 }
