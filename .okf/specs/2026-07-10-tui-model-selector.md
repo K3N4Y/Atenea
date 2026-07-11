@@ -106,6 +106,7 @@ must never rewrite provider definitions supplied by the user.
       "type": "openai-compatible",
       "base_url": "https://openrouter.ai/api/v1",
       "api_key_env": "OPENROUTER_API_KEY",
+      "openrouter_reasoning": true,
       "models": ["anthropic/claude-sonnet-4"]
     },
     {
@@ -133,6 +134,9 @@ must never rewrite provider definitions supplied by the user.
   slashes before constructing `/models` and provider requests.
 - `api_key_env`: optional environment-variable name. The secret value is read
   from the process environment only when needed and is never persisted.
+- `openrouter_reasoning`: optional boolean, false by default. When true, Atenea
+  enables the OpenRouter-specific top-level `reasoning` request extension. It
+  is explicit rather than inferred from the provider ID or endpoint.
 - `models`: optional list of model identifiers. Blank identifiers are invalid;
   duplicate identifiers within one provider are collapsed while preserving the
   first occurrence.

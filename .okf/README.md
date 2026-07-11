@@ -40,6 +40,7 @@ uses Markdown and begins with `updated_at` and `summary` YAML metadata.
 - [Agent context compaction](plans/2026-07-09-agent-context-compaction.md)
 - [CI and CodeRabbit](plans/2026-07-10-ci-coderabbit.md)
 - [TUI file viewer](plans/2026-07-09-tui-file-viewer.md)
+- [TUI provider and model selector](plans/2026-07-10-tui-model-selector.md)
 
 ## Research
 
