@@ -172,6 +172,28 @@ func TestTUI_CtrlJCreatesMultilineComposerUnderPTY(t *testing.T) {
 	}
 }
 
+func TestTUI_PlanModeAppearsAfterModelUnderPTY(t *testing.T) {
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "atenea-tui")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea-tui")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, output)
+	}
+	workdir := filepath.Join(repoRoot, "cmd/atenea-tui/testdata/file-viewer/project")
+	cmd, terminal, output, _ := startTUIUnderPTY(t, binary, workdir, filepath.Join(t.TempDir(), "atenea.db"))
+	defer stopPTYProcess(cmd, terminal)
+	waitForPTYText(t, output, " demo ─╯")
+
+	if _, err := terminal.Write([]byte("\t")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, output, " demo · plan ─╯")
+}
+
 func TestTUI_FileViewerFlowUnderPTY(t *testing.T) {
 	repoRoot, err := filepath.Abs("../..")
 	if err != nil {
@@ -430,7 +452,7 @@ func waitForStablePTYOutputAfter(t *testing.T, output *lockedBuffer, previous st
 		time.Sleep(50 * time.Millisecond)
 		current := output.String()
 		if current == last {
-			if len(current) > len(previous) && time.Since(quietSince) >= 200*time.Millisecond {
+			if len(current) > len(previous) && time.Since(quietSince) >= 500*time.Millisecond {
 				return ansi.Strip(current[len(previous):])
 			}
 			continue

@@ -2105,6 +2105,19 @@ func TestModel_ComposerBottomBorderTruncatesLongModel(t *testing.T) {
 	assertBoxLinesExactWidth(t, m.composerBox(), 32)
 }
 
+func TestModel_ComposerBottomBorderKeepsPlanVisibleWhenModelIsTruncated(t *testing.T) {
+	m := NewModel(nil, "s1", nil).WithStatus("build", "anthropic/claude-sonnet-4.5-very-long-model-name")
+	m = apply(t, m, tea.WindowSizeMsg{Width: 32, Height: 12})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyTab})
+
+	plain := ansi.Strip(m.composerBox())
+	bottomBorder := strings.Split(plain, "\n")[2]
+	if !strings.Contains(bottomBorder, "… · plan") {
+		t.Fatalf("composer bottom border = %q, truncated model must keep the active plan mode visible", bottomBorder)
+	}
+	assertBoxLinesExactWidth(t, m.composerBox(), 32)
+}
+
 func TestModel_ComposerBottomBorderOmitsModelWhenTerminalIsTooNarrow(t *testing.T) {
 	m := NewModel(nil, "s1", nil).WithStatus("build", "model")
 	m = apply(t, m, tea.WindowSizeMsg{Width: 6, Height: 8})
@@ -2514,8 +2527,8 @@ func TestModel_TabTogglesAgentModeToPlan(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyTab})
 
 	view := m.View()
-	if !strings.Contains(view, "plan · openrouter/free") {
-		t.Fatalf("View() = %q, tras Tab el pie del composer debe mostrar %q", view, "plan · openrouter/free")
+	if !strings.Contains(view, "openrouter/free · plan") {
+		t.Fatalf("View() = %q, tras Tab el pie del composer debe mostrar %q", view, "openrouter/free · plan")
 	}
 	if strings.Contains(view, "build ·") {
 		t.Fatalf("View() = %q, tras Tab el pie NO debe seguir mostrando %q", view, "build ·")
@@ -2550,8 +2563,8 @@ func TestModel_TabTogglesBackToBuild(t *testing.T) {
 	if !strings.Contains(view, " m ─╯") {
 		t.Fatalf("View() = %q, tras Tab Tab el borde del composer debe volver a mostrar solo el modelo %q", view, "m")
 	}
-	if strings.Contains(view, "plan ·") {
-		t.Fatalf("View() = %q, tras Tab Tab el pie NO debe seguir mostrando %q", view, "plan ·")
+	if strings.Contains(view, "· plan") {
+		t.Fatalf("View() = %q, tras Tab Tab el pie NO debe seguir mostrando %q", view, "· plan")
 	}
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hazlo")})
@@ -2583,7 +2596,7 @@ func TestModel_TabIsInertWhilePermissionPending(t *testing.T) {
 	if !strings.Contains(view, " m ─╯") {
 		t.Fatalf("View() = %q, con permiso pendiente Tab NO debe cambiar el borde: debe seguir mostrando el modelo %q", view, "m")
 	}
-	if strings.Contains(view, "plan ·") {
+	if strings.Contains(view, "· plan") {
 		t.Fatalf("View() = %q, con permiso pendiente Tab NO debe activar el modo plan", view)
 	}
 }
@@ -2644,8 +2657,8 @@ func TestModel_PlanApprovalNRejectsAndStaysInPlanMode(t *testing.T) {
 	if len(fake.accepted) != 0 {
 		t.Fatalf("AcceptPlan fue llamado %d veces, 'n' NO debe aceptar el plan", len(fake.accepted))
 	}
-	if got := m.View(); !strings.Contains(got, "plan · m") {
-		t.Fatalf("View() = %q, tras 'n' el pie debe seguir mostrando %q: rechazar la oferta no cambia el modo", got, "plan · m")
+	if got := m.View(); !strings.Contains(got, "m · plan") {
+		t.Fatalf("View() = %q, tras 'n' el pie debe seguir mostrando %q: rechazar la oferta no cambia el modo", got, "m · plan")
 	}
 
 	// El siguiente envio sigue yendo por el camino de plan: el modo no cambio.
@@ -2692,8 +2705,8 @@ func TestModel_PlanApprovalCapturesKeyboard(t *testing.T) {
 	if !strings.Contains(view, " m ─╯") {
 		t.Fatalf("View() = %q, tras aceptar el plan el borde debe volver a mostrar solo el modelo %q", view, "m")
 	}
-	if strings.Contains(view, "plan ·") {
-		t.Fatalf("View() = %q, tras aceptar el plan el pie NO debe seguir mostrando %q", view, "plan ·")
+	if strings.Contains(view, "· plan") {
+		t.Fatalf("View() = %q, tras aceptar el plan el pie NO debe seguir mostrando %q", view, "· plan")
 	}
 	if !strings.Contains(view, "trabajando") {
 		t.Fatalf("View() = %q, tras aceptar el plan la corrida queda en curso: debe verse el indicador %q", view, "trabajando")
@@ -2904,7 +2917,7 @@ func TestModel_TabAppliesSelectedCommand(t *testing.T) {
 	if got := menuSelectedLine(view); got != "" {
 		t.Fatalf("linea seleccionada del menu = %q, aplicar el comando debe cerrar el menu (el recomputo ve el espacio)", got)
 	}
-	if !strings.Contains(view, " m ─╯") || strings.Contains(view, "plan ·") {
+	if !strings.Contains(view, " m ─╯") || strings.Contains(view, "· plan") {
 		t.Fatalf("View() = %q, Tab con menu abierto NO debe alternar el plan-mode: el borde debe seguir mostrando el modelo %q", view, "m")
 	}
 }

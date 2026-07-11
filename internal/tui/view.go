@@ -725,7 +725,7 @@ func (m Model) composerBox() string {
 
 func (m Model) composerModelLabel() string {
 	if m.planMode && m.model != "" {
-		return "plan · " + m.model
+		return m.model + " · plan"
 	}
 	return m.model
 }
@@ -748,7 +748,13 @@ func decorateComposerBorder(box string, lineIndex int, label, leftCorner, rightC
 		if !truncate {
 			return box
 		}
-		label = ansi.Truncate(label, labelWidth, "…")
+		const planSuffix = " · plan"
+		if strings.HasSuffix(label, planSuffix) && labelWidth > ansi.StringWidth(planSuffix)+1 {
+			model := strings.TrimSuffix(label, planSuffix)
+			label = ansi.Truncate(model, labelWidth-ansi.StringWidth(planSuffix), "…") + planSuffix
+		} else {
+			label = ansi.Truncate(label, labelWidth, "…")
+		}
 	}
 	styledLabel := statusStyle.Render(label)
 	remaining := width - ansi.StringWidth(styledLabel) - fixedBorderWidth

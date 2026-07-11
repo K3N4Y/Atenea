@@ -176,7 +176,7 @@ type Model struct {
 
 	// model alimenta la etiqueta del borde inferior del composer; entra una
 	// sola vez via WithStatus y sigue fijo por corrida. planMode alterna con
-	// Tab y agrega el prefijo "plan ·" a esa etiqueta.
+	// Tab y agrega el sufijo "· plan" a esa etiqueta.
 	model          string
 	usage          *session.Usage
 	liveUsage      bool
