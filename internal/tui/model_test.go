@@ -383,6 +383,109 @@ func TestModel_AssistantMarkdownUsesDefaultForeground(t *testing.T) {
 	}
 }
 
+func TestModel_ViewPaintsCompleteDarkCanvas(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(previousProfile)
+	})
+
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 32, Height: 10})
+
+	view := m.View()
+	if !strings.Contains(view, "\x1b[48;2;20;20;20m") {
+		t.Fatalf("View() = %q, want #141414 true-color background", view)
+	}
+
+	lines := strings.Split(ansi.Strip(view), "\n")
+	if len(lines) != 10 {
+		t.Fatalf("View() has %d lines, want 10", len(lines))
+	}
+	for i, line := range lines {
+		if got := lipgloss.Width(line); got != 32 {
+			t.Fatalf("line %d width = %d, want 32", i, got)
+		}
+	}
+}
+
+func TestModel_ViewPaintsDarkCanvasAcrossLayouts(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(previousProfile)
+	})
+
+	tests := []struct {
+		name  string
+		model func() Model
+	}{
+		{
+			name: "chat",
+			model: func() Model {
+				return NewModel(nil, "s1", nil)
+			},
+		},
+		{
+			name: "explorer",
+			model: func() Model {
+				m := NewModel(nil, "s1", nil)
+				m.treeOpen = true
+				return m
+			},
+		},
+		{
+			name: "file viewer",
+			model: func() Model {
+				m := NewModel(nil, "s1", nil)
+				m.viewer = openFileViewer("example.go", []byte("package example\n"))
+				return m
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := apply(t, tt.model(), tea.WindowSizeMsg{Width: 40, Height: 12})
+			view := m.View()
+			if !strings.Contains(view, "\x1b[48;2;20;20;20m") {
+				t.Fatalf("View() = %q, want #141414 true-color background", view)
+			}
+
+			lines := strings.Split(ansi.Strip(view), "\n")
+			if len(lines) != 12 {
+				t.Fatalf("View() has %d lines, want 12", len(lines))
+			}
+			for i, line := range lines {
+				if got := lipgloss.Width(line); got != 40 {
+					t.Fatalf("line %d width = %d, want 40", i, got)
+				}
+			}
+		})
+	}
+}
+
+func TestModel_ViewDarkCanvasWithoutWindowSizeDoesNotPad(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(previousProfile)
+	})
+
+	view := NewModel(nil, "s1", nil).View()
+	if view == "" {
+		t.Fatal("View() must remain non-empty before the first WindowSizeMsg")
+	}
+	if !strings.Contains(view, "\x1b[48;2;20;20;20m") {
+		t.Fatalf("View() = %q, want #141414 true-color background", view)
+	}
+	for i, line := range strings.Split(ansi.Strip(view), "\n") {
+		if got := lipgloss.Width(line); got >= 80 {
+			t.Fatalf("line %d width = %d, unknown-size view must not assume an 80-column terminal", i, got)
+		}
+	}
+}
+
 func TestModel_AssistantMarkdownKeepsDarkThemeAccents(t *testing.T) {
 	// TRIANGULATE: una implementacion pobre "arregla" el gris del documento
 	// cambiando al estilo notty/ascii o quitando TODOS los colores del tema:
@@ -852,7 +955,11 @@ func TestModel_ThinkingPreviewSkipsBlankLines(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "r1\n\nr2\n\nr3\n\nr4\n\nr5"})
 	m = drainReveal(t, m)
 
-	view := m.View()
+	lines := strings.Split(ansi.Strip(m.View()), "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimRight(line, " ")
+	}
+	view := strings.Join(lines, "\n")
 	if !strings.Contains(view, "[pensando]\nr2\nr3\nr4\nr5") {
 		t.Fatalf("View() = %q, el preview debe ser exactamente las ultimas 4 lineas NO vacias pegadas a la cabecera (%q): ni blancos intercalados ni lineas de contenido perdidas", view, "[pensando]\nr2\nr3\nr4\nr5")
 	}

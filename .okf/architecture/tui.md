@@ -59,12 +59,21 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
  streaming of the text that arrives by deltas, assistant and thought (parity
  with `frontend/src/lib/reveal.ts`): the view reveals a prefix by runes that
  advances with a loop of ticks, with catch-up proportional to the backlog; an
- assistant renders that revealed prefix as Markdown while live, then renders
- its complete Markdown once the reveal drains.
+  assistant renders that revealed prefix as Markdown while live, then renders
+  its complete Markdown once the reveal drains.
 - `internal/wiring` — the shared assembly extracted from `app.go`: registry de
  tools, skills and slash-commands, catalog of subagents with the propagated gate,
  system prompts (normal/plan/local) and the configured runner. `App.wire` and
  `NewEngine` consume it; a tools/skills change reaches both frontends.
+
+### Root Canvas
+
+`Model.View` routes every chat, explorer, and file-viewer layout through one
+root Lip Gloss canvas. Its background is the exact dark color `#141414`; after
+the first `WindowSizeMsg`, the canvas fills the complete reported width and
+height so empty terminal cells cannot fall back to the user's terminal theme.
+Child styles remain responsible for explicit functional highlights such as
+the tree cursor, diffs, statuses, and selection states.
 
 ## Contracts that the TUI establishes with tests
 
