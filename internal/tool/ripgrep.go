@@ -86,6 +86,8 @@ func (s *RgSearcher) Grep(ctx context.Context, req GrepRequest) (GrepResult, err
 
 	cmd := exec.CommandContext(ctx, binary, buildRipgrepArgs(req)...)
 	cmd.Dir = req.Root
+	setProcessGroup(cmd)
+	cmd.Cancel = func() error { return killProcessGroup(cmd) }
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -103,10 +105,10 @@ func (s *RgSearcher) Grep(ctx context.Context, req GrepRequest) (GrepResult, err
 
 	result, scanErr := parseRipgrepJSON(stdout, req.Limit, true)
 	if result.Truncated && cmd.Process != nil {
-		_ = cmd.Process.Kill()
+		_ = killProcessGroup(cmd)
 	}
 	if scanErr != nil && cmd.Process != nil {
-		_ = cmd.Process.Kill()
+		_ = killProcessGroup(cmd)
 	}
 	waitErr := cmd.Wait()
 	stderrText := boundedString(strings.TrimSpace(stderr.String()), maxRgStderrRunes)

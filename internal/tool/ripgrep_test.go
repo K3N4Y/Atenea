@@ -235,14 +235,19 @@ func TestRgSearcher_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 
+	start := time.Now()
 	_, err := searcher.Grep(ctx, GrepRequest{Root: t.TempDir(), Path: ".", Pattern: "needle"})
+	elapsed := time.Since(start)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Grep error = %v, want context deadline exceeded", err)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("Grep took %v after cancellation, want process group stopped promptly", elapsed)
 	}
 }
 
 func TestRgSearcher_StopsProcessOnJSONParseError(t *testing.T) {
-	searcher := &RgSearcher{Binary: helperScript(t, "printf '{not-json}\\n'\nsleep 5")}
+	searcher := &RgSearcher{Binary: helperScript(t, "printf '{not-json}\\n'\nsleep 5 &\nwait")}
 
 	start := time.Now()
 	_, err := searcher.Grep(context.Background(), GrepRequest{Root: t.TempDir(), Path: ".", Pattern: "needle"})
