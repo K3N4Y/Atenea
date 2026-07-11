@@ -18,8 +18,11 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
 ## Pieces
 
 - `cmd/atenea-tui/main.go` — the thin border (equivalent to `main.go` from
- Wails): loads `.env`, chooses the provider from the environment (`OPENROUTER_API_KEY`
- present = OpenRouter with `OPENROUTER_MODEL`; absent = demo without network), diverts
+ Wails): loads `.env`, opens the global provider service from
+ `os.UserConfigDir()/atenea/providers.json`, and preserves the previous
+ environment fallback (`OPENROUTER_API_KEY` present = OpenRouter with
+ `OPENROUTER_MODEL`; absent = demo without network) when no valid global
+ selection is available. It diverts
  the standard log to a temporary file (do not paint over the alternative screen),
  opens the SQLite SHARED with the app via `session.OpenDefault` (fallback to
  memory if it fails, with `Close` on exit) and runs `tea.NewProgram` with
@@ -33,7 +36,9 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
  sets normal mode and `SendPlanPrompt` sets plan-mode before queuing, mirror
  of `App.SendPrompt`/`App.SendPlanPrompt`. Both support inbox and run
  `Run` in a session-cancellable goroutine (mirror of `App.start`); at
- finish publishes `RunDoneMsg`. Satisfies the `Agent` interface of Model.
+ finish publishes `RunDoneMsg`. Satisfies the `Agent` interface of Model and
+ exposes catalog, refresh, current-selection, and transactional selection
+ operations to the optional model-selector boundary.
 - `internal/tui/model.go` + `fold.go` + `view.go` + `reveal.go` — the Model of
   Bubble Tea. `fold.go` projects durable `SessionEvent` to
   conversation inputs (streaming assistant text, collapsible
@@ -82,6 +87,11 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
  `RunDoneMsg` turns off the work flag. `Ctrl+J` inserts a newline without
  submitting; the composer grows to five visible lines and then scrolls while
  preserving literal newlines in the submitted prompt.
+- `/model` is a local command intercepted before slash expansion, prompt
+  history, inbox admission, and durable events. `/model <query>` reuses the
+  composer popup to search every provider/model pair. The first Enter or Tab
+  completes `/model <provider-id> <model-id> `; the next Enter persists and
+  applies that pair.
 - Tab toggles the build/plan agent mode: it's sticky between submissions (each
  Enter routes down the active mode path, without resetting it) and inert with a
  pending permission, and the composer footer reflects this live. In plan-mode the
@@ -119,6 +129,20 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
  scroll horizontally within the input. The
  footer shows `<agente> · <modelo>`: the model enters once via
  `WithStatus` and the agent reflects the active mode (build/plan).
+
+## Global provider configuration
+
+Provider declarations live in `providers.json` under Atenea's user config
+directory. Each provider has a stable `id`, display `name`,
+`type: "openai-compatible"`, normalized `base_url`, optional `api_key_env`,
+optional `openrouter_reasoning`, and configured model identifiers. Only the
+environment-variable name is persisted; secret values never enter the file.
+
+The selected pair is saved by atomic rename before the running provider
+snapshot is swapped. Missing keys, provider-construction errors, and save
+failures leave both runtime and persisted state unchanged. Discovered models
+are stored separately in `models-cache.json`; refresh failures retain selected,
+configured, and previously cached models.
 - The composer keeps the latest 100 submitted TUI prompts in the shared durable
  store, so Up/Down history survives process restarts and spans previous TUI
  sessions. New prompts are recorded as non-conversation `Composer.Prompt`
