@@ -218,8 +218,10 @@ OPENROUTER_API_KEY=... ./build/bin/atenea-tui
 ## Known Pending (v1)
 
 - Plan-mode now alternates with Tab, the AcceptPlan flow now executes the approved
- plan and the composer now autocompletes slash-commands and @-files, but
- is still pending changing the MODEL from the TUI: the footer shows the model of the
- environment, fixed per run.
+ plan and the composer now autocompletes slash-commands and @-files. The composer
+ keeps token usage in its upper border and the active model in its lower-right
+ border; plan mode prefixes that model label with `plan ·`. Changing the model
+ from the TUI is still pending, so the label reflects the environment model fixed
+ per run.
 - A new prompt while an activity is running cancels the previous run
  (same behavior as the Wails app today).

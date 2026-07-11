@@ -12,7 +12,7 @@ The change is visual only and preserves the current composer behavior.
 - Make the composer frame lighter and less visually dominant than the input.
 - Keep the `❯` prompt and cursor clearly aligned inside the frame.
 - Render the active model as a label interrupting the lower-right border.
-- Preserve the existing token usage display below the composer.
+- Preserve the existing token usage display in the upper composer border.
 - Keep multiline input, autocomplete, focus, submission, and mouse behavior
   unchanged.
 - Render safely without horizontal overflow in narrow terminals.
@@ -54,19 +54,19 @@ last fallback. The rounded corners and total frame width remain valid.
 
 ### Token usage
 
-The existing token usage text remains below the framed composer. It keeps its
-current content and subdued presentation. No shortcut or mode hints are added
-beside it.
+The existing token usage text remains embedded in the upper-left composer
+border. It keeps its current content and subdued presentation. No shortcut
+hints are added beside it.
 
 ## Layout behavior
 
-- Reserved viewport lines continue to account for the dynamic textarea height,
-  the two composer border rows, and the token status row.
+- Reserved viewport lines continue to account for the dynamic textarea height
+  and the two composer border rows.
 - Moving the model into the frame does not add another row.
 - Autocomplete remains positioned relative to the composer and retains its
   existing available-height calculations.
-- The composer and status row must not exceed the chat pane width after ANSI
-  styling is stripped.
+- The composer must not exceed the chat pane width after ANSI styling is
+  stripped.
 
 ## Testing strategy
 

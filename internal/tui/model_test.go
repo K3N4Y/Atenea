@@ -1893,34 +1893,87 @@ func TestModel_FollowsTailOfWrappedResponse(t *testing.T) {
 	}
 }
 
-func TestModel_ComposerFooterShowsAgentAndModel(t *testing.T) {
-	// El composer debe mostrar, en una linea de pie tenue DEBAJO del input,
-	// el agente activo y el modelo en uso (estilo Claude Code). La info entra
-	// una sola vez al construir el Model via WithStatus; la TUI no la cambia.
+func TestModel_ComposerBottomBorderShowsModel(t *testing.T) {
 	m := NewModel(nil, "s1", nil).WithStatus("build", "openrouter/free")
-
-	// Sin tamano de terminal conocido (fallback sin viewport) el pie ya se ve.
-	view := m.View()
-	for _, want := range []string{"build", "openrouter/free"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("View() = %q, debe contener %q en el pie del composer (agente y modelo)", view, want)
-		}
-	}
-	if promptAt, footerAt := strings.Index(view, inputPrompt), strings.Index(view, "openrouter/free"); promptAt >= footerAt {
-		t.Fatalf("View() = %q, el pie (openrouter/free en %d) debe aparecer DESPUES del input (%q en %d)", view, footerAt, inputPrompt, promptAt)
-	}
-
-	// Con tamano de terminal conocido (viewport activo) el pie sigue visible.
 	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 20})
-	view = m.View()
-	for _, want := range []string{"build", "openrouter/free"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("View() = %q, tras WindowSizeMsg debe seguir conteniendo %q en el pie del composer", view, want)
+
+	plain := ansi.Strip(m.View())
+	lines := strings.Split(plain, "\n")
+	var bottomBorder string
+	for _, line := range lines {
+		if strings.HasPrefix(line, "╰") {
+			bottomBorder = line
 		}
 	}
-	if promptAt, footerAt := strings.Index(view, inputPrompt), strings.Index(view, "openrouter/free"); promptAt >= footerAt {
-		t.Fatalf("View() = %q, tras WindowSizeMsg el pie (openrouter/free en %d) debe aparecer DESPUES del input (%q en %d)", view, footerAt, inputPrompt, promptAt)
+	if bottomBorder == "" {
+		t.Fatalf("View() = %q, want a composer bottom border", plain)
 	}
+	if !strings.Contains(bottomBorder, "openrouter/free") {
+		t.Fatalf("composer bottom border = %q, want model label %q", bottomBorder, "openrouter/free")
+	}
+	if strings.Contains(plain, "\nbuild · openrouter/free") {
+		t.Fatalf("View() = %q, agent/model status must not render as a standalone footer", plain)
+	}
+	assertBoxLinesExactWidth(t, m.View(), 60)
+}
+
+func TestModel_ComposerBottomBorderTruncatesLongModel(t *testing.T) {
+	m := NewModel(nil, "s1", nil).WithStatus("build", "anthropic/claude-sonnet-4.5-very-long-model-name")
+	m = apply(t, m, tea.WindowSizeMsg{Width: 32, Height: 12})
+
+	plain := ansi.Strip(m.composerBox())
+	lines := strings.Split(plain, "\n")
+	bottomBorder := lines[len(lines)-1]
+	if !strings.Contains(bottomBorder, "…") {
+		t.Fatalf("composer bottom border = %q, want a truncated model label", bottomBorder)
+	}
+	if strings.Contains(bottomBorder, "very-long-model-name") {
+		t.Fatalf("composer bottom border = %q, long model label must be truncated", bottomBorder)
+	}
+	assertBoxLinesExactWidth(t, m.composerBox(), 32)
+}
+
+func TestModel_ComposerBottomBorderOmitsModelWhenTerminalIsTooNarrow(t *testing.T) {
+	m := NewModel(nil, "s1", nil).WithStatus("build", "model")
+	m = apply(t, m, tea.WindowSizeMsg{Width: 6, Height: 8})
+
+	plain := ansi.Strip(m.composerBox())
+	lines := strings.Split(plain, "\n")
+	bottomBorder := lines[len(lines)-1]
+	if strings.Contains(bottomBorder, "model") || strings.Contains(bottomBorder, "…") {
+		t.Fatalf("composer bottom border = %q, terminal too narrow must omit the model label", bottomBorder)
+	}
+	if !strings.HasPrefix(bottomBorder, "╰") || !strings.HasSuffix(bottomBorder, "╯") {
+		t.Fatalf("composer bottom border = %q, rounded corners must remain intact", bottomBorder)
+	}
+	assertBoxLinesExactWidth(t, m.composerBox(), 6)
+}
+
+func TestModel_ComposerBordersKeepTokensAndModelWithoutShortcuts(t *testing.T) {
+	m := NewModel(nil, "s1", nil).WithStatus("build", "openrouter/free")
+	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 12})
+	m = apply(t, m, EventMsg{
+		Kind: session.KindStepEnded,
+		Usage: &session.Usage{
+			InputTokens:  1_234,
+			OutputTokens: 345,
+		},
+	})
+
+	plain := ansi.Strip(m.composerBox())
+	lines := strings.Split(plain, "\n")
+	if !strings.Contains(lines[0], "↑ 1.2k ↓ 345") {
+		t.Fatalf("composer top border = %q, want token usage", lines[0])
+	}
+	if !strings.Contains(lines[len(lines)-1], "openrouter/free") {
+		t.Fatalf("composer bottom border = %q, want model label", lines[len(lines)-1])
+	}
+	for _, shortcut := range []string{"Shift+Tab", "Ctrl+.", "shortcuts"} {
+		if strings.Contains(plain, shortcut) {
+			t.Fatalf("composerBox() = %q, must not add shortcut hint %q", plain, shortcut)
+		}
+	}
+	assertBoxLinesExactWidth(t, m.composerBox(), 60)
 }
 
 func TestModel_ComposerCtrlJInsertsNewlineAndEnterSubmitsMultilinePrompt(t *testing.T) {
@@ -2217,8 +2270,8 @@ func TestModel_ComposerBoxFollowsResize(t *testing.T) {
 	assertBoxLinesExactWidth(t, m.View(), 60)
 }
 
-func TestModel_ViewFitsHeightWithBoxFooterAndIndicator(t *testing.T) {
-	// TRIANGULATE: con la caja (3 lineas), el pie de status y el indicador de
+func TestModel_ViewFitsHeightWithBoxModelAndIndicator(t *testing.T) {
+	// TRIANGULATE: con la caja (3 lineas), el modelo en el borde y el indicador de
 	// trabajo encendidos a la vez, el alto sigue acotado al de la terminal y la
 	// vista sigue la cola del transcript.
 	fake := &fakeAgent{}
@@ -2242,7 +2295,7 @@ func TestModel_ViewFitsHeightWithBoxFooterAndIndicator(t *testing.T) {
 	if lines := strings.Count(view, "\n") + 1; lines > 12 {
 		t.Fatalf("View() tiene %d lineas, caja + pie + indicador no deben romper el alto acotado (<= 12)", lines)
 	}
-	for _, want := range []string{"mensaje-29", "trabajando", "build", "openrouter/free"} {
+	for _, want := range []string{"mensaje-29", "trabajando", "openrouter/free"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("View() = %q, debe contener %q (cola del transcript, indicador de trabajo y pie de status)", view, want)
 		}
@@ -2322,8 +2375,8 @@ func TestModel_TabTogglesBackToBuild(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyTab})
 
 	view := m.View()
-	if !strings.Contains(view, "build · m") {
-		t.Fatalf("View() = %q, tras Tab Tab el pie del composer debe volver a mostrar %q", view, "build · m")
+	if !strings.Contains(view, " m ─╯") {
+		t.Fatalf("View() = %q, tras Tab Tab el borde del composer debe volver a mostrar solo el modelo %q", view, "m")
 	}
 	if strings.Contains(view, "plan ·") {
 		t.Fatalf("View() = %q, tras Tab Tab el pie NO debe seguir mostrando %q", view, "plan ·")
@@ -2355,8 +2408,8 @@ func TestModel_TabIsInertWhilePermissionPending(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyTab})
 
 	view := m.View()
-	if !strings.Contains(view, "build · m") {
-		t.Fatalf("View() = %q, con permiso pendiente Tab NO debe cambiar el pie: debe seguir mostrando %q", view, "build · m")
+	if !strings.Contains(view, " m ─╯") {
+		t.Fatalf("View() = %q, con permiso pendiente Tab NO debe cambiar el borde: debe seguir mostrando el modelo %q", view, "m")
 	}
 	if strings.Contains(view, "plan ·") {
 		t.Fatalf("View() = %q, con permiso pendiente Tab NO debe activar el modo plan", view)
@@ -2464,8 +2517,8 @@ func TestModel_PlanApprovalCapturesKeyboard(t *testing.T) {
 		t.Fatalf("accepted = %v, 'y' debe llamar AcceptPlan(%q) exactamente una vez", fake.accepted, "s1")
 	}
 	view := m.View()
-	if !strings.Contains(view, "build · m") {
-		t.Fatalf("View() = %q, tras aceptar el plan el pie debe volver a %q", view, "build · m")
+	if !strings.Contains(view, " m ─╯") {
+		t.Fatalf("View() = %q, tras aceptar el plan el borde debe volver a mostrar solo el modelo %q", view, "m")
 	}
 	if strings.Contains(view, "plan ·") {
 		t.Fatalf("View() = %q, tras aceptar el plan el pie NO debe seguir mostrando %q", view, "plan ·")
@@ -2679,8 +2732,8 @@ func TestModel_TabAppliesSelectedCommand(t *testing.T) {
 	if got := menuSelectedLine(view); got != "" {
 		t.Fatalf("linea seleccionada del menu = %q, aplicar el comando debe cerrar el menu (el recomputo ve el espacio)", got)
 	}
-	if !strings.Contains(view, "build · m") || strings.Contains(view, "plan ·") {
-		t.Fatalf("View() = %q, Tab con menu abierto NO debe alternar el plan-mode: el pie debe seguir mostrando %q", view, "build · m")
+	if !strings.Contains(view, " m ─╯") || strings.Contains(view, "plan ·") {
+		t.Fatalf("View() = %q, Tab con menu abierto NO debe alternar el plan-mode: el borde debe seguir mostrando el modelo %q", view, "m")
 	}
 }
 

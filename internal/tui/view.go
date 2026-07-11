@@ -66,19 +66,20 @@ const toolDiffPrefix = "  "
 // ningun assert busca substrings contiguos), asi el contenido plano que fijan
 // los tests nunca se parte con codigos ANSI.
 var (
-	accentStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("6")) // marcador de usuario y prompt del input
-	userTextStyle    = lipgloss.NewStyle().Bold(true)
-	toolRunningStyle = lipgloss.NewStyle().Faint(true)
-	toolOKStyle      = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("2"))
-	toolFailedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-	toolOutputStyle  = lipgloss.NewStyle().Faint(true)                     // preview del output de la tool (detalle, no protagonista)
-	diffAddStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("2")) // lineas agregadas del diff (+)
-	diffDelStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("1")) // lineas quitadas del diff (-)
-	permissionStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
-	errorStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-	statusStyle      = lipgloss.NewStyle().Faint(true)
-	treeCursorStyle  = lipgloss.NewStyle().Reverse(true)
-	treeBorderStyle  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder())
+	accentStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("6")) // marcador de usuario y prompt del input
+	userTextStyle       = lipgloss.NewStyle().Bold(true)
+	toolRunningStyle    = lipgloss.NewStyle().Faint(true)
+	toolOKStyle         = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("2"))
+	toolFailedStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	toolOutputStyle     = lipgloss.NewStyle().Faint(true)                     // preview del output de la tool (detalle, no protagonista)
+	diffAddStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("2")) // lineas agregadas del diff (+)
+	diffDelStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("1")) // lineas quitadas del diff (-)
+	permissionStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
+	errorStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	statusStyle         = lipgloss.NewStyle().Faint(true)
+	composerBorderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	treeCursorStyle     = lipgloss.NewStyle().Reverse(true)
+	treeBorderStyle     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder())
 
 	// composerBoxStyle es la caja de borde redondeado del composer (estilo
 	// Claude Code). Es la excepcion deliberada a la regla de arriba: agrega las
@@ -88,6 +89,7 @@ var (
 	// contenido plano asertable por los tests.
 	composerBoxStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("8")).
 				Padding(0, composerBoxPadding)
 )
 
@@ -446,33 +448,14 @@ func (m Model) renderTranscript() string {
 }
 
 // reservedLines es el alto reservado bajo el transcript: la caja del composer
-// (alto del textarea + bordes), con menu abierto una linea por item, con
-// corrida en curso la linea de estado del indicador de trabajo, y con status
-// fijado la linea de pie del composer (agente y modelo).
+// (alto del textarea + bordes), con menu abierto una linea por item y con
+// corrida en curso la linea de estado del indicador de trabajo.
 func (m Model) reservedLines() int {
 	reserved := m.input.Height() + 2 + len(m.menuItems)
 	if m.working {
 		reserved++
 	}
-	if m.statusFooter() != "" {
-		reserved++
-	}
 	return reserved
-}
-
-// statusFooter es la linea de pie del composer con el agente activo y el
-// modelo de IA (formato "<agente> · <modelo>"). En modo plan el agente
-// mostrado es "plan" (el pie refleja en vivo el modo alternado con Tab). Sin
-// status fijado devuelve "" y la vista no agrega ninguna linea.
-func (m Model) statusFooter() string {
-	if m.agentName == "" && m.model == "" {
-		return ""
-	}
-	agent := m.agentName
-	if m.planMode {
-		agent = "plan"
-	}
-	return agent + " · " + m.model
 }
 
 // resizeViewport recalcula el alto del viewport con el ultimo tamano anunciado
@@ -628,11 +611,7 @@ func (m Model) chatContent() string {
 		// contenido plano siga siendo asertable por los tests.
 		status = m.spinner.View() + statusStyle.Render(" trabajando") + "\n"
 	}
-	footer := ""
-	if f := m.statusFooter(); f != "" {
-		footer = "\n" + statusStyle.Render(f)
-	}
-	return m.transcriptView() + m.menuView() + status + m.composerBox() + footer
+	return m.transcriptView() + m.menuView() + status + m.composerBox()
 }
 
 func (m Model) chatView(content string) string {
@@ -721,18 +700,47 @@ func (m Model) composerBox() string {
 		style = style.Width(max(m.chatContentWidth()-composerBoxBorderWidth, 0))
 	}
 	box := style.Render(m.input.View())
-	label := m.tokenUsageLabel()
+	box = decorateComposerBorder(box, 0, m.tokenUsageLabel(), "╭", "╮", true, false)
+	return decorateComposerBorder(box, -1, m.composerModelLabel(), "╰", "╯", false, true)
+}
+
+func (m Model) composerModelLabel() string {
+	if m.planMode && m.model != "" {
+		return "plan · " + m.model
+	}
+	return m.model
+}
+
+func decorateComposerBorder(box string, lineIndex int, label, leftCorner, rightCorner string, alignLeft, truncate bool) string {
 	if label == "" {
 		return box
 	}
 	lines := strings.Split(box, "\n")
-	width := ansi.StringWidth(lines[0])
-	prefix := "╭─ " + statusStyle.Render(label) + " "
-	remaining := width - ansi.StringWidth(prefix) - 1
+	if lineIndex < 0 {
+		lineIndex = len(lines) + lineIndex
+	}
+	width := ansi.StringWidth(lines[lineIndex])
+	const fixedBorderWidth = 5
+	labelWidth := width - fixedBorderWidth - 1
+	if labelWidth < 2 {
+		return box
+	}
+	if ansi.StringWidth(label) > labelWidth {
+		if !truncate {
+			return box
+		}
+		label = ansi.Truncate(label, labelWidth, "…")
+	}
+	styledLabel := statusStyle.Render(label)
+	remaining := width - ansi.StringWidth(styledLabel) - fixedBorderWidth
 	if remaining < 1 {
 		return box
 	}
-	lines[0] = prefix + strings.Repeat("─", remaining) + "╮"
+	if alignLeft {
+		lines[lineIndex] = composerBorderStyle.Render(leftCorner+"─ ") + styledLabel + composerBorderStyle.Render(" "+strings.Repeat("─", remaining)+rightCorner)
+	} else {
+		lines[lineIndex] = composerBorderStyle.Render(leftCorner+strings.Repeat("─", remaining)+" ") + styledLabel + composerBorderStyle.Render(" ─"+rightCorner)
+	}
 	return strings.Join(lines, "\n")
 }
 
