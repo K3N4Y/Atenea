@@ -41,6 +41,7 @@ uses Markdown and begins with `updated_at` and `summary` YAML metadata.
 - [CI and CodeRabbit](plans/2026-07-10-ci-coderabbit.md)
 - [TUI file viewer](plans/2026-07-09-tui-file-viewer.md)
 - [TUI provider and model selector](plans/2026-07-10-tui-model-selector.md)
+- [TUI dark canvas](plans/2026-07-10-tui-dark-canvas.md)
 
 ## Research
 
@@ -56,6 +57,7 @@ uses Markdown and begins with `updated_at` and `summary` YAML metadata.
 - [CI and CodeRabbit](specs/2026-07-10-ci-coderabbit.md)
 - [TUI file viewer](specs/2026-07-09-tui-file-viewer.md)
 - [TUI provider and model selector](specs/2026-07-10-tui-model-selector.md)
+- [TUI dark canvas](specs/2026-07-10-tui-dark-canvas.md)
 - [Milestone M0: scaffolding](specs/atenea-m0-scaffolding-spec.md)
 - [Milestone M1: types and in-memory store](specs/atenea-m1-tipos-store-spec.md)
 - [Milestone M2: provider and scriptable fake](specs/atenea-m2-provider-fake-spec.md)
