@@ -801,6 +801,9 @@ func (m *Model) moveTreeCursor(delta int) {
 }
 
 func (m Model) fileViewerHeight() int {
+	if m.ready && m.treeOpen && m.treePanelWidth() < m.width {
+		return max(m.height-4, 0)
+	}
 	return max(m.height-1, 0)
 }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -129,6 +130,41 @@ func TestTUI_FileViewerFlowUnderPTY(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("TUI did not exit")
 	}
+}
+
+func TestTUI_FileViewerScrollsToLastLineUnderPTY(t *testing.T) {
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "atenea-tui")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea-tui")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, output)
+	}
+
+	workdir := t.TempDir()
+	var content strings.Builder
+	for line := 1; line <= 31; line++ {
+		fmt.Fprintf(&content, "line %02d\n", line)
+	}
+	if err := os.WriteFile(filepath.Join(workdir, "long.txt"), []byte(content.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd, terminal, output, _ := startTUIUnderPTY(t, binary, workdir, filepath.Join(t.TempDir(), "atenea.db"))
+	defer stopPTYProcess(cmd, terminal)
+	waitForPTYText(t, output, "build · demo")
+	if _, err := terminal.Write([]byte(" e\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, output, "long.txt")
+	if _, err := terminal.Write([]byte("\r\x1b[6~")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, output, "long.txt · 12-31/31")
+	waitForPTYText(t, output, "line 31")
 }
 
 func TestTUI_FileTreeMouseWheelAndClickUnderPTY(t *testing.T) {

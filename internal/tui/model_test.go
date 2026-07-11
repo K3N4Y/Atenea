@@ -4370,7 +4370,7 @@ func TestModel_FileViewerTrackpadScrollKeepsTabbedRowsWithinLayout(t *testing.T)
 			Y:      0,
 		})
 	}
-	if got, want := m.viewer.offset, 7; got != want {
+	if got, want := m.viewer.offset, 10; got != want {
 		t.Fatalf("viewer offset after continuous wheel events = %d, want %d", got, want)
 	}
 	for _, line := range strings.Split(m.View(), "\n") {
@@ -4380,6 +4380,31 @@ func TestModel_FileViewerTrackpadScrollKeepsTabbedRowsWithinLayout(t *testing.T)
 		if width := ansi.StringWidth(line); width > 80 {
 			t.Fatalf("View() overflows terminal width %d: %q", width, line)
 		}
+	}
+}
+
+func TestModel_FileViewerHeightMatchesRenderedLayout(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		width    int
+		height   int
+		openTree bool
+		wantRows int
+	}{
+		{name: "full screen", width: 12, height: 24, openTree: true, wantRows: 23},
+		{name: "split panels", width: 80, height: 24, openTree: true, wantRows: 20},
+		{name: "without explorer", width: 80, height: 24, wantRows: 23},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			m := NewModel(&fakeAgent{}, "s1", nil)
+			m = apply(t, m, tea.WindowSizeMsg{Width: test.width, Height: test.height})
+			if test.openTree {
+				m = m.toggleTree()
+			}
+			if got := m.fileViewerHeight(); got != test.wantRows {
+				t.Fatalf("fileViewerHeight() = %d, want %d", got, test.wantRows)
+			}
+		})
 	}
 }
 
