@@ -1180,11 +1180,61 @@ func TestModel_ThinkingPreviewSkipsBlankLines(t *testing.T) {
 		lines[i] = strings.TrimRight(line, " ")
 	}
 	view := strings.Join(lines, "\n")
-	if !strings.Contains(view, "[pensando]\nr2\nr3\nr4\nr5") {
-		t.Fatalf("View() = %q, el preview debe ser exactamente las ultimas 4 lineas NO vacias pegadas a la cabecera (%q): ni blancos intercalados ni lineas de contenido perdidas", view, "[pensando]\nr2\nr3\nr4\nr5")
+	if !strings.Contains(view, "  [pensando]\n  r2\n  r3\n  r4\n  r5") {
+		t.Fatalf("View() = %q, el preview debe contener las ultimas 4 lineas NO vacias con el inset uniforme (%q): ni blancos intercalados ni lineas de contenido perdidas", view, "  [pensando]\n  r2\n  r3\n  r4\n  r5")
 	}
 	if strings.Contains(view, "r1") {
 		t.Fatalf("View() = %q, %q ya salio de la ventana de 4 lineas no vacias", view, "r1")
+	}
+}
+
+func TestModel_ThinkingKeepsChatInsetWhileStreamingAndExpanded(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 44, Height: 18})
+
+	text := "streaming-inset-a\nstreaming-inset-b"
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: text})
+	m = drainReveal(t, m)
+
+	assertThinkingInset(t, m.View(), "[pensando]", "streaming-inset-a", "streaming-inset-b")
+
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: text})
+	m = drainReveal(t, m)
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
+
+	assertThinkingInset(t, m.View(), "[penso ", "streaming-inset-a", "streaming-inset-b")
+}
+
+func TestEntry_RenderThinkingInsetsEveryWrappedLine(t *testing.T) {
+	e := entry{
+		kind:     entryReasoning,
+		text:     strings.Repeat("pensamiento-largo ", 8),
+		revealed: len(strings.Repeat("pensamiento-largo ", 8)),
+		expanded: true,
+	}
+
+	lines := strings.Split(ansi.Strip(e.renderThinking(24)), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("renderThinking() produjo %d lineas, want cabecera y multiples lineas envueltas: %q", len(lines), lines)
+	}
+	for _, line := range lines {
+		if !strings.HasPrefix(line, thinkingInset) {
+			t.Fatalf("linea envuelta = %q, want inset %q", line, thinkingInset)
+		}
+		if got, want := ansi.StringWidth(line), 24; got > want {
+			t.Fatalf("ancho de linea envuelta = %d, want <= %d: %q", got, want, line)
+		}
+	}
+}
+
+func assertThinkingInset(t *testing.T, view string, needles ...string) {
+	t.Helper()
+	for _, needle := range needles {
+		line := strings.TrimRight(lineWith(t, ansi.Strip(view), needle), " ")
+		if !strings.HasPrefix(line, "  ") {
+			t.Fatalf("linea de pensamiento %q = %q, want inset de dos celdas", needle, line)
+		}
 	}
 }
 

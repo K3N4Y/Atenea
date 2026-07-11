@@ -98,10 +98,12 @@ the terminal's default background mid-line.
  closes without duplicating against the coalesced Message; tool-input is not transcribed.
 - The reasoning folds to its own thinking block (parity with the
  ThinkingBlock of the desktop): while it flows it shows the header
- `[pensando]`, aligned with the chat message content, and the last 4 non-empty lines of the revealed text (
- sliding window, with the same smooth reveal of the assistant); closed and drained
- collapses to the line `[penso <duracion>] ⇧Tab`, aligned with the chat
- message content. `Shift+Tab` expands or collapses every settled thinking block
+ `[pensando]` and the last 4 non-empty lines of the revealed text (sliding
+ window, with the same smooth reveal of the assistant). Every rendered
+ thinking line keeps the two-cell chat inset, including physical lines created
+ by wrapping an expanded block. Closed and drained collapses to the line
+ `[penso <duracion>] ⇧Tab` with that same inset. `Shift+Tab` expands or
+ collapses every settled thinking block
  regardless of whether chat, explorer, or viewer owns panel focus; a left
  click on a settled summary in the visible chat transcript toggles that block
  without stealing explorer focus. Pending permission and plan-approval gates
