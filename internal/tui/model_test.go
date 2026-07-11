@@ -235,6 +235,77 @@ func forceANSI256Profile(t *testing.T) {
 	})
 }
 
+func TestEntry_UserMessageMatchesReferenceWithoutTimestamp(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(previousProfile) })
+
+	view := entry{kind: entryUser, text: "quien eres y que eres capaz de hacer?"}.render(80)
+	plain := ansi.Strip(view)
+	lines := strings.Split(plain, "\n")
+
+	if len(lines) != 3 {
+		t.Fatalf("user message lines = %d, want 3:\n%q", len(lines), plain)
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if got := ansi.StringWidth(line); got != 80 {
+			t.Fatalf("user message line width = %d, want 80:\n%q", got, view)
+		}
+	}
+	if got, want := lines[1], "     ❯ quien eres y que eres capaz de hacer?"; !strings.HasPrefix(got, want) {
+		t.Fatalf("middle line = %q, want prefix %q", got, want)
+	}
+	if !strings.Contains(view, "\x1b[48;2;36;36;36m") {
+		t.Fatalf("user message must use reference background #242424:\n%q", view)
+	}
+	if strings.Contains(view, "\x1b[1m") {
+		t.Fatalf("user message text must not be bold:\n%q", view)
+	}
+	if strings.Contains(plain, "12:50 AM") {
+		t.Fatalf("user message must not render a timestamp:\n%q", plain)
+	}
+}
+
+func TestModel_UserMessageWrapsInsideReferenceBlock(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(previousProfile) })
+
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 32, Height: 12})
+	m = apply(t, m, EventMsg{Message: &session.Message{
+		ID:   "u1",
+		Role: session.RoleUser,
+		Text: "un mensaje suficientemente largo para envolver dentro del bloque",
+	}})
+
+	view := m.View()
+	for _, line := range strings.Split(view, "\n") {
+		if width := ansi.StringWidth(line); width > 32 {
+			t.Fatalf("user message line width = %d, want <= 32:\n%q", width, view)
+		}
+	}
+	if got := strings.Count(view, "\x1b[48;2;36;36;36m"); got < 3 {
+		t.Fatalf("reference background rows = %d, want at least 3:\n%q", got, view)
+	}
+}
+
+func TestModel_UserMessageKeepsGrayBackgroundAfterFaintMarker(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(previousProfile) })
+
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
+	m = apply(t, m, EventMsg{Message: &session.Message{ID: "u1", Role: session.RoleUser, Text: "hola"}})
+
+	view := m.View()
+	grayText := "\x1b[48;2;36;36;36mhola"
+	if !strings.Contains(view, grayText) {
+		t.Fatalf("user text must restore #242424 after the faint marker; want %q in:\n%q", grayText, view)
+	}
+}
+
 func TestModel_FoldsStreamingAssistantText(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
@@ -680,13 +751,13 @@ func TestModel_RendersUserMessages(t *testing.T) {
 	m = drainReveal(t, m)
 
 	view := m.View()
-	userLine := lineWith(t, view, "hola atenea")
-	if !strings.HasPrefix(userLine, "> ") {
-		t.Fatalf("linea del usuario = %q, debe llevar el marcador %q para distinguirse del assistant", userLine, "> ")
+	userLine := lineWith(t, ansi.Strip(view), "hola atenea")
+	if !strings.HasPrefix(userLine, "     ❯ ") {
+		t.Fatalf("linea del usuario = %q, debe llevar el marcador %q y la sangria visual de referencia", userLine, "     ❯ ")
 	}
-	assistantLine := lineWith(t, view, "hola humano")
-	if strings.HasPrefix(assistantLine, "> ") {
-		t.Fatalf("linea del assistant = %q, NO debe llevar el marcador de usuario %q", assistantLine, "> ")
+	assistantLine := lineWith(t, ansi.Strip(view), "hola humano")
+	if strings.Contains(assistantLine, "❯ ") {
+		t.Fatalf("linea del assistant = %q, NO debe llevar el marcador de usuario %q", assistantLine, "❯ ")
 	}
 }
 

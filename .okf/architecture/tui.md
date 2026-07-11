@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-10
+updated_at: 2026-07-11
 summary: Architecture and behavior of the Atenea terminal user interface.
 ---
 
@@ -66,10 +66,18 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
  advances with a loop of ticks, with catch-up proportional to the backlog; an
   assistant renders that revealed prefix as Markdown while live, then renders
   its complete Markdown once the reveal drains.
+
 - `internal/wiring` — the shared assembly extracted from `app.go`: registry de
  tools, skills and slash-commands, catalog of subagents with the propagated gate,
  system prompts (normal/plan/local) and the configured runner. `App.wire` and
  `NewEngine` consume it; a tools/skills change reaches both frontends.
+
+### User messages
+
+User prompts render as full-width `#242424` transcript blocks inset two cells
+from the chat edges. Each block has one blank row of vertical padding and three
+cells of inner horizontal padding; its content starts with a faint `❯` marker
+and normal-weight text. The TUI does not render message timestamps.
 
 ### Root Canvas
 

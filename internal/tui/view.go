@@ -36,8 +36,10 @@ const inputCursorWidth = 1
 
 const canvasBackground = "#141414"
 
-// inputPrompt es el caracter de prompt de la linea de input; distingue a
-// simple vista donde se teclea frente al marcador "> " del historial.
+const userMessageBackground = "#242424"
+
+// inputPrompt es el caracter de prompt de la linea de input; el historial usa
+// el mismo glifo dentro de un bloque gris para distinguir ambos contextos.
 const inputPrompt = "❯ "
 
 // toolInputSummaryWidth es el ancho maximo (en celdas) del resumen del Input
@@ -72,7 +74,9 @@ const toolDiffPrefix = "  "
 var (
 	canvasStyle         = lipgloss.NewStyle().Background(lipgloss.Color(canvasBackground))
 	accentStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("6")) // marcador de usuario y prompt del input
-	userTextStyle       = lipgloss.NewStyle().Bold(true)
+	userMessageStyle    = lipgloss.NewStyle().Background(lipgloss.Color(userMessageBackground)).Padding(1, 3)
+	userMarkerStyle     = lipgloss.NewStyle().Faint(true)
+	userTextStyle       = lipgloss.NewStyle().Background(lipgloss.Color(userMessageBackground))
 	toolRunningStyle    = lipgloss.NewStyle().Faint(true)
 	toolOKStyle         = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("2"))
 	toolFailedStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
@@ -106,7 +110,11 @@ var (
 func (e entry) render(width int) string {
 	switch e.kind {
 	case entryUser:
-		return accentStyle.Render("> ") + userTextStyle.Render(e.text)
+		style := userMessageStyle
+		if width > 2*composerOuterMargin {
+			style = style.Width(width - 2*composerOuterMargin)
+		}
+		return lipgloss.NewStyle().Margin(0, composerOuterMargin).Render(style.Render(userMarkerStyle.Render("❯ ") + userTextStyle.Render(e.text)))
 	case entryReasoning:
 		return e.renderThinking(width)
 	case entryTool:
