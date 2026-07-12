@@ -66,6 +66,38 @@ type turnProvider struct {
 	delayStepEnded time.Duration
 }
 
+type blockingAfterToolProvider struct {
+	started  chan struct{}
+	canceled chan struct{}
+	mu       sync.Mutex
+	next     int
+}
+
+func (p *blockingAfterToolProvider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Event, error) {
+	p.mu.Lock()
+	turn := p.next
+	p.next++
+	p.mu.Unlock()
+	out := make(chan llm.Event)
+	go func() {
+		defer close(out)
+		if turn == 0 {
+			for _, event := range []llm.Event{{Kind: llm.StepStarted}, {Kind: llm.ToolCall, CallID: "write-1", ToolName: "write", Input: json.RawMessage(`{"path":"created.txt","content":"created\n"}`)}, {Kind: llm.StepEnded}} {
+				select {
+				case <-ctx.Done():
+					return
+				case out <- event:
+				}
+			}
+			return
+		}
+		close(p.started)
+		<-ctx.Done()
+		close(p.canceled)
+	}()
+	return out, nil
+}
+
 var _ llm.Provider = (*turnProvider)(nil)
 
 func newTurnProvider(turns ...[]llm.Event) *turnProvider {
@@ -1004,22 +1036,12 @@ func TestEngine_SendPromptNewWithArgumentsRemainsRegularPrompt(t *testing.T) {
 }
 
 func TestEngine_UndoRestoresPrePromptWorkspaceAndEffectiveConversation(t *testing.T) {
-	root := t.TempDir()
-	git := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, output)
-		}
-	}
-	git("init")
-	git("config", "user.name", "Atenea Test")
-	git("config", "user.email", "atenea@example.test")
+	root := newUndoWorkspace(t)
 	if err := os.WriteFile(filepath.Join(root, "tracked.txt"), []byte("committed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	git("add", "tracked.txt")
-	git("commit", "-m", "base")
+	runUndoGit(t, root, "add", "tracked.txt")
+	runUndoGit(t, root, "commit", "-m", "base")
 	if err := os.WriteFile(filepath.Join(root, "tracked.txt"), []byte("preexisting-change\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1067,6 +1089,177 @@ func TestEngine_UndoRestoresPrePromptWorkspaceAndEffectiveConversation(t *testin
 	if len(messages) != 0 {
 		t.Fatalf("effective messages = %+v, want none", messages)
 	}
+}
+
+func TestEngine_UndoTwiceRestoresEachPromptBoundary(t *testing.T) {
+	root := newUndoWorkspace(t)
+	provider := newTurnProvider(
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.ToolCall, CallID: "write-1", ToolName: "write", Input: json.RawMessage(`{"path":"first.txt","content":"first\n"}`)}, {Kind: llm.StepEnded}},
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.StepEnded}},
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.ToolCall, CallID: "write-2", ToolName: "write", Input: json.RawMessage(`{"path":"second.txt","content":"second\n"}`)}, {Kind: llm.StepEnded}},
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.StepEnded}},
+	)
+	store := session.NewMemoryStore()
+	engine := NewEngine(EngineConfig{Root: root, Provider: provider, Store: store, Checkpoints: checkpoint.NewGitStore(t.TempDir())})
+	for _, prompt := range []string{"first prompt", "second prompt"} {
+		if _, err := engine.SendPrompt("s1", prompt); err != nil {
+			t.Fatal(err)
+		}
+		if _, done := collectUntilRunDone(t, engine.Events(), 10*time.Second, nil); done.Err != "" {
+			t.Fatal(done.Err)
+		}
+	}
+
+	result, err := engine.Undo("s1")
+	if err != nil || result.Prompt != "second prompt" {
+		t.Fatalf("first undo = %+v, err = %v", result, err)
+	}
+	assertUndoFile(t, root, "first.txt", "first\n")
+	assertUndoMissing(t, root, "second.txt")
+	result, err = engine.Undo("s1")
+	if err != nil || result.Prompt != "first prompt" {
+		t.Fatalf("second undo = %+v, err = %v", result, err)
+	}
+	assertUndoMissing(t, root, "first.txt")
+	if messages, err := store.Messages(context.Background(), "s1", 0); err != nil || len(messages) != 0 {
+		t.Fatalf("Messages = %+v, err = %v", messages, err)
+	}
+}
+
+func TestEngine_UndoRejectsWorkspaceDivergence(t *testing.T) {
+	root := newUndoWorkspace(t)
+	engine := newWritingUndoEngine(t, root, session.NewMemoryStore(), t.TempDir())
+	if _, err := engine.SendPrompt("s1", "create file"); err != nil {
+		t.Fatal(err)
+	}
+	collectUntilRunDone(t, engine.Events(), 10*time.Second, nil)
+	if err := os.WriteFile(filepath.Join(root, "outside.txt"), []byte("user change\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.Undo("s1"); !errors.Is(err, ErrWorkspaceDiverged) {
+		t.Fatalf("Undo error = %v", err)
+	}
+	assertUndoFile(t, root, "created.txt", "created\n")
+	assertUndoFile(t, root, "outside.txt", "user change\n")
+}
+
+func TestEngine_UndoIgnoresIgnoredFileDivergence(t *testing.T) {
+	root := newUndoWorkspace(t)
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("ignored.txt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runUndoGit(t, root, "add", ".gitignore")
+	runUndoGit(t, root, "commit", "-m", "ignore")
+	engine := newWritingUndoEngine(t, root, session.NewMemoryStore(), t.TempDir())
+	if _, err := engine.SendPrompt("s1", "create file"); err != nil {
+		t.Fatal(err)
+	}
+	collectUntilRunDone(t, engine.Events(), 10*time.Second, nil)
+	if err := os.WriteFile(filepath.Join(root, "ignored.txt"), []byte("preserve me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.Undo("s1"); err != nil {
+		t.Fatal(err)
+	}
+	assertUndoMissing(t, root, "created.txt")
+	assertUndoFile(t, root, "ignored.txt", "preserve me\n")
+}
+
+func TestEngine_UndoCancelsActiveRunBeforeRestore(t *testing.T) {
+	root := newUndoWorkspace(t)
+	provider := &blockingAfterToolProvider{started: make(chan struct{}), canceled: make(chan struct{})}
+	engine := NewEngine(EngineConfig{Root: root, Provider: provider, Store: session.NewMemoryStore(), Checkpoints: checkpoint.NewGitStore(t.TempDir())})
+	if _, err := engine.SendPrompt("s1", "create file"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-provider.started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("provider did not block on second turn")
+	}
+	if _, err := engine.Undo("s1"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-provider.canceled:
+	case <-time.After(time.Second):
+		t.Fatal("provider context was not canceled")
+	}
+	assertUndoMissing(t, root, "created.txt")
+}
+
+func TestEngine_UndoPersistsAcrossSQLiteReopen(t *testing.T) {
+	root := newUndoWorkspace(t)
+	dbPath := filepath.Join(t.TempDir(), "sessions.db")
+	checkpointRoot := t.TempDir()
+	store, err := session.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := newWritingUndoEngine(t, root, store, checkpointRoot)
+	if _, err := engine.SendPrompt("s1", "create file"); err != nil {
+		t.Fatal(err)
+	}
+	collectUntilRunDone(t, engine.Events(), 10*time.Second, nil)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err = session.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine = NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store, Checkpoints: checkpoint.NewGitStore(checkpointRoot)})
+	if _, err := engine.Undo("s1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err = session.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if messages, err := store.Messages(context.Background(), "s1", 0); err != nil || len(messages) != 0 {
+		t.Fatalf("Messages = %+v, err = %v", messages, err)
+	}
+	if events, err := store.Events(context.Background(), "s1", 0); err != nil || len(events) != 0 {
+		t.Fatalf("Events = %+v, err = %v", events, err)
+	}
+	if contextResult, err := store.ContextForRunner(context.Background(), "s1"); err != nil || len(contextResult.Messages) != 0 {
+		t.Fatalf("ContextForRunner = %+v, err = %v", contextResult, err)
+	}
+	if _, err := store.LatestPromptCheckpoint(context.Background(), "s1"); !errors.Is(err, session.ErrNothingToUndo) {
+		t.Fatalf("LatestPromptCheckpoint error = %v", err)
+	}
+}
+
+func newUndoWorkspace(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	runUndoGit(t, root, "init")
+	runUndoGit(t, root, "config", "user.name", "Atenea Test")
+	runUndoGit(t, root, "config", "user.email", "atenea@example.test")
+	return root
+}
+
+func runUndoGit(t *testing.T, root string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, output)
+	}
+}
+
+func newWritingUndoEngine(t *testing.T, root string, store session.Store, checkpointRoot string) *Engine {
+	t.Helper()
+	provider := newTurnProvider(
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.ToolCall, CallID: "write-1", ToolName: "write", Input: json.RawMessage(`{"path":"created.txt","content":"created\n"}`)}, {Kind: llm.StepEnded}},
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.StepEnded}},
+	)
+	return NewEngine(EngineConfig{Root: root, Provider: provider, Store: store, Checkpoints: checkpoint.NewGitStore(checkpointRoot)})
 }
 
 func assertUndoFile(t *testing.T, root, name, want string) {
