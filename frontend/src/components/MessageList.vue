@@ -2,12 +2,12 @@
 import { ref, computed, watch } from 'vue'
 import type { Component } from 'vue'
 import gsap from 'gsap'
-import type { TurnItem } from '../stores/chat'
+import type { ToolItem, TurnItem } from '../stores/chat'
 import { prefersReducedMotion } from '../lib/motion'
 import UserMessage from './UserMessage.vue'
 import AssistantMessage from './AssistantMessage.vue'
 import ThinkingBlock from './ThinkingBlock.vue'
-import ToolCall from './ToolCall.vue'
+import ActivityGroup from './ActivityGroup.vue'
 
 // Flujo continuo y plano de la conversacion (identidad §8). Despacha cada item
 // del log a su componente segun el tipo. Recibe los items del store via prop
@@ -18,12 +18,39 @@ const props = defineProps<{ items: TurnItem[] }>()
 // ChatView); the other components of the registry do not emit these events.
 const emit = defineEmits<{ approve: [string]; deny: [string] }>()
 
-const registry: Record<TurnItem['kind'], Component> = {
+type NonToolItem = Exclude<TurnItem, ToolItem>
+type TranscriptGroup =
+  | { kind: 'activity'; id: string; items: ToolItem[] }
+  | { kind: 'item'; id: string; item: NonToolItem }
+
+const registry: Record<NonToolItem['kind'], Component> = {
   user: UserMessage,
   assistant: AssistantMessage,
   reasoning: ThinkingBlock,
-  tool: ToolCall,
 }
+
+const groups = computed<TranscriptGroup[]>(() => {
+  const result: TranscriptGroup[] = []
+
+  for (const item of props.items) {
+    const previous = result.at(-1)
+    if (item.kind === 'tool') {
+      if (previous?.kind === 'activity') {
+        previous.items.push(item)
+      } else {
+        result.push({
+          kind: 'activity',
+          id: `activity-${item.id}`,
+          items: [item],
+        })
+      }
+    } else {
+      result.push({ kind: 'item', id: item.id, item })
+    }
+  }
+
+  return result
+})
 
 const scroller = ref<HTMLElement | null>(null)
 const shouldFollowAgent = ref(true)
@@ -108,10 +135,18 @@ function onEnter(el: Element, done: () => void) {
           @enter="onEnter"
         >
           <component
-            :is="registry[item.kind]"
-            v-for="item in props.items"
-            :key="item.id"
-            :item="item"
+            v-for="group in groups"
+            :is="
+              group.kind === 'activity'
+                ? ActivityGroup
+                : registry[group.item.kind]
+            "
+            :key="group.id"
+            v-bind="
+              group.kind === 'activity'
+                ? { items: group.items }
+                : { item: group.item }
+            "
             @approve="emit('approve', $event)"
             @deny="emit('deny', $event)"
           />
