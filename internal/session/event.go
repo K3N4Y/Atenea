@@ -52,6 +52,10 @@ const (
 	// permite rehidratar el historial de Up/Down entre procesos.
 	KindComposerPrompt EventKind = "Composer.Prompt"
 
+	KindPromptCheckpointStarted  EventKind = "Prompt.Checkpoint.Started"
+	KindPromptCheckpointFinished EventKind = "Prompt.Checkpoint.Finished"
+	KindPromptCheckpointReverted EventKind = "Prompt.Checkpoint.Reverted"
+
 	KindContextCompacted EventKind = "Context.Compacted"
 )
 

@@ -36,8 +36,12 @@ CREATE TABLE IF NOT EXISTS events (
   tool_calls  BLOB,
   tool_call_id TEXT,
   ev_text     TEXT,
-  diff        TEXT,
+	diff        TEXT,
 	compaction  BLOB,
+	checkpoint_id TEXT,
+	checkpoint_prompt TEXT,
+	checkpoint_before_tree TEXT,
+	checkpoint_after_tree TEXT,
   PRIMARY KEY (session_id, seq)
 );
 
@@ -58,6 +62,7 @@ type SQLiteStore struct {
 
 var _ Store = (*SQLiteStore)(nil)
 var _ CompactionStore = (*SQLiteStore)(nil)
+var _ UndoStore = (*SQLiteStore)(nil)
 
 // NewSQLiteStore abre (o crea) la base en dsn y asegura el esquema. dsn puede ser
 // ":memory:" o una ruta de archivo. Para archivo construye un DSN URI del driver
@@ -121,6 +126,10 @@ func migrateSQLiteSchema(db *sql.DB) error {
 		{"ev_text", "TEXT"},
 		{"diff", "TEXT"},
 		{"compaction", "BLOB"},
+		{"checkpoint_id", "TEXT"},
+		{"checkpoint_prompt", "TEXT"},
+		{"checkpoint_before_tree", "TEXT"},
+		{"checkpoint_after_tree", "TEXT"},
 	} {
 		if columns[column.name] {
 			continue
@@ -291,20 +300,42 @@ func (s *SQLiteStore) AppendEvent(ctx context.Context, sessionID string, ev Sess
 		}
 		compaction = b
 	}
+	var checkpointID, checkpointPrompt, checkpointBefore, checkpointAfter sql.NullString
+	if ev.Checkpoint != nil {
+		checkpointID = sql.NullString{String: ev.Checkpoint.ID, Valid: true}
+		checkpointPrompt = sql.NullString{String: ev.Checkpoint.Prompt, Valid: true}
+		checkpointBefore = sql.NullString{String: ev.Checkpoint.BeforeTree, Valid: true}
+		checkpointAfter = sql.NullString{String: ev.Checkpoint.AfterTree, Valid: true}
+	}
 
 	// ev_text guarda el Text top-level del SessionEvent (Reasoning/Text.*,
 	// Tool.Input.Delta), independiente de la columna text (que es Message.Text).
 	// Sin esto la rehidratacion pierde el razonamiento y la respuesta del asistente,
 	// que viajan en ev.Text y no en un Message.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
 	var seq int64
-	if err := s.db.QueryRowContext(ctx,
+	if err := tx.QueryRowContext(ctx,
 		`INSERT INTO events
-		   (session_id, seq, kind, has_message, msg_id, role, text, call_id, tool_name, input, usage, error, tool_calls, tool_call_id, ev_text, diff, compaction)
-		 VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM events WHERE session_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		   (session_id, seq, kind, has_message, msg_id, role, text, call_id, tool_name, input, usage, error, tool_calls, tool_call_id, ev_text, diff, compaction, checkpoint_id, checkpoint_prompt, checkpoint_before_tree, checkpoint_after_tree)
+		 VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM events WHERE session_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 RETURNING seq`,
 		sessionID, sessionID, string(ev.Kind), hasMessage, msgID, role, text,
 		ev.CallID, ev.ToolName, []byte(ev.Input), usage, ev.Error, toolCalls, toolCallID, ev.Text, ev.Diff, compaction,
+		checkpointID, checkpointPrompt, checkpointBefore, checkpointAfter,
 	).Scan(&seq); err != nil {
+		return 0, err
+	}
+	if ev.Kind == KindPromptCheckpointReverted {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO session_context(session_id, revision) VALUES (?, 1)
+			ON CONFLICT(session_id) DO UPDATE SET revision = revision + 1`, sessionID); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
 	return Seq(seq), nil
@@ -344,51 +375,11 @@ func (s *SQLiteStore) LoadSession(ctx context.Context, sessionID string) (Sessio
 // los materializados por eventos con Seq > sinceSeq. ErrSessionNotFound si la
 // sesion no existe; una sesion existente sin mensajes devuelve un slice vacio.
 func (s *SQLiteStore) Messages(ctx context.Context, sessionID string, sinceSeq Seq) ([]Message, error) {
-	ok, err := s.exists(ctx, sessionID)
+	events, err := s.rawEvents(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
-	if !ok {
-		return nil, ErrSessionNotFound
-	}
-
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT msg_id, role, text, seq, tool_calls, tool_call_id
-		   FROM events
-		  WHERE session_id = ? AND has_message = 1 AND seq > ?
-		  ORDER BY seq`,
-		sessionID, int64(sinceSeq),
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	out := make([]Message, 0)
-	for rows.Next() {
-		var (
-			id         string
-			role       string
-			text       string
-			seq        int64
-			toolCalls  []byte
-			toolCallID sql.NullString
-		)
-		if err := rows.Scan(&id, &role, &text, &seq, &toolCalls, &toolCallID); err != nil {
-			return nil, err
-		}
-		msg := Message{ID: id, Role: Role(role), Text: text, Seq: Seq(seq), ToolCallID: toolCallID.String}
-		if len(toolCalls) > 0 {
-			if err := json.Unmarshal(toolCalls, &msg.ToolCalls); err != nil {
-				return nil, err
-			}
-		}
-		out = append(out, msg)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return out, nil
+	return foldMessages(EffectiveEvents(events), sinceSeq), nil
 }
 
 // Sessions devuelve un resumen por sesion con al menos un evento, ordenado por
@@ -397,50 +388,51 @@ func (s *SQLiteStore) Messages(ctx context.Context, sessionID string, sinceSeq S
 // sesion toma como Title el texto del primer mensaje del usuario (menor seq,
 // role=user, has_message=1), truncado. Title "" si la sesion no tiene aun uno.
 func (s *SQLiteStore) Sessions(ctx context.Context) ([]SessionSummary, error) {
-	// El titulo generado (ultimo Session.Title) gana sobre el primer mensaje del
-	// usuario, que queda como fallback via COALESCE si aun no se genero ninguno.
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT e.session_id,
-		        COALESCE(
-		          (SELECT g.ev_text
-		             FROM events g
-		            WHERE g.session_id = e.session_id
-		              AND g.kind = 'Session.Title'
-		            ORDER BY g.seq DESC
-		            LIMIT 1),
-		          (SELECT u.text
-		             FROM events u
-		            WHERE u.session_id = e.session_id
-		              AND u.has_message = 1
-		              AND u.role = 'user'
-		            ORDER BY u.seq
-		            LIMIT 1)) AS title,
-		        (SELECT c.ev_text
-		           FROM events c
-		          WHERE c.session_id = e.session_id
-		            AND c.kind = 'Session.Cwd'
-		          ORDER BY c.seq DESC
-		          LIMIT 1) AS cwd
-		   FROM events e
-		  GROUP BY e.session_id
-		  ORDER BY MAX(e.rowid) DESC`,
+		`SELECT session_id FROM events GROUP BY session_id ORDER BY MAX(rowid) DESC`,
 	)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	out := make([]SessionSummary, 0)
+	ids := make([]string, 0)
 	for rows.Next() {
 		var id string
-		var title, cwd sql.NullString
-		if err := rows.Scan(&id, &title, &cwd); err != nil {
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
 			return nil, err
 		}
-		out = append(out, SessionSummary{ID: id, Title: truncateTitle(title.String), Cwd: cwd.String})
+		ids = append(ids, id)
 	}
 	if err := rows.Err(); err != nil {
+		rows.Close()
 		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+
+	out := make([]SessionSummary, 0, len(ids))
+	for _, id := range ids {
+		events, err := s.rawEvents(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		firstUser, title, cwd := "", "", ""
+		for _, event := range EffectiveEvents(events) {
+			if event.Kind == KindSessionTitle {
+				title = event.Text
+			}
+			if event.Kind == KindSessionCwd {
+				cwd = event.Text
+			}
+			if firstUser == "" && event.Message != nil && event.Message.Role == RoleUser {
+				firstUser = event.Message.Text
+			}
+		}
+		if title == "" {
+			title = firstUser
+		}
+		out = append(out, SessionSummary{ID: id, Title: truncateTitle(title), Cwd: cwd})
 	}
 	return out, nil
 }
@@ -450,6 +442,21 @@ func (s *SQLiteStore) Sessions(ctx context.Context) ([]SessionSummary, error) {
 // evento como el inverso de AppendEvent: rehidrata Kind, Message (con ToolCalls /
 // ToolCallID), payload de streaming (Text, CallID, ToolName, Input, Error) y Usage.
 func (s *SQLiteStore) Events(ctx context.Context, sessionID string, sinceSeq Seq) ([]SessionEvent, error) {
+	events, err := s.rawEvents(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	effective := EffectiveEvents(events)
+	out := effective[:0]
+	for _, event := range effective {
+		if event.Seq > sinceSeq {
+			out = append(out, event)
+		}
+	}
+	return out, nil
+}
+
+func (s *SQLiteStore) rawEvents(ctx context.Context, sessionID string) ([]SessionEvent, error) {
 	ok, err := s.exists(ctx, sessionID)
 	if err != nil {
 		return nil, err
@@ -458,13 +465,18 @@ func (s *SQLiteStore) Events(ctx context.Context, sessionID string, sinceSeq Seq
 		return nil, ErrSessionNotFound
 	}
 
-	rows, err := s.db.QueryContext(ctx,
+	return sqliteRawEvents(ctx, s.db, sessionID)
+}
+
+func sqliteRawEvents(ctx context.Context, queryer sqliteQueryer, sessionID string) ([]SessionEvent, error) {
+	rows, err := queryer.QueryContext(ctx,
 		`SELECT seq, kind, has_message, msg_id, role, text, call_id, tool_name,
-		        input, usage, error, tool_calls, tool_call_id, ev_text, diff, compaction
+		        input, usage, error, tool_calls, tool_call_id, ev_text, diff, compaction,
+		        checkpoint_id, checkpoint_prompt, checkpoint_before_tree, checkpoint_after_tree
 		   FROM events
-		  WHERE session_id = ? AND seq > ?
+		  WHERE session_id = ?
 		  ORDER BY seq`,
-		sessionID, int64(sinceSeq),
+		sessionID,
 	)
 	if err != nil {
 		return nil, err
@@ -474,15 +486,17 @@ func (s *SQLiteStore) Events(ctx context.Context, sessionID string, sinceSeq Seq
 	out := make([]SessionEvent, 0)
 	for rows.Next() {
 		var (
-			seq                                       int64
-			kind                                      string
-			hasMessage                                int
-			msgID, role, text, callID, toolName, tcID sql.NullString
-			errText, evText, diff                     sql.NullString
-			input, usage, toolCalls, compaction       []byte
+			seq                                                               int64
+			kind                                                              string
+			hasMessage                                                        int
+			msgID, role, text, callID, toolName, tcID                         sql.NullString
+			errText, evText, diff                                             sql.NullString
+			checkpointID, checkpointPrompt, checkpointBefore, checkpointAfter sql.NullString
+			input, usage, toolCalls, compaction                               []byte
 		)
 		if err := rows.Scan(&seq, &kind, &hasMessage, &msgID, &role, &text,
-			&callID, &toolName, &input, &usage, &errText, &toolCalls, &tcID, &evText, &diff, &compaction); err != nil {
+			&callID, &toolName, &input, &usage, &errText, &toolCalls, &tcID, &evText, &diff, &compaction,
+			&checkpointID, &checkpointPrompt, &checkpointBefore, &checkpointAfter); err != nil {
 			return nil, err
 		}
 
@@ -534,12 +548,23 @@ func (s *SQLiteStore) Events(ctx context.Context, sessionID string, sinceSeq Seq
 			}
 			ev.Compaction = &checkpoint
 		}
+		if checkpointID.Valid {
+			ev.Checkpoint = &PromptCheckpoint{ID: checkpointID.String, Prompt: checkpointPrompt.String, BeforeTree: checkpointBefore.String, AfterTree: checkpointAfter.String}
+		}
 		out = append(out, ev)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+func (s *SQLiteStore) LatestPromptCheckpoint(ctx context.Context, sessionID string) (EffectiveCheckpoint, error) {
+	events, err := s.rawEvents(ctx, sessionID)
+	if err != nil {
+		return EffectiveCheckpoint{}, err
+	}
+	return LatestEffectiveCheckpoint(events)
 }
 
 // Epoch devuelve la foto del contexto vigente de la sesion. Igual que MemoryStore,
@@ -603,11 +628,11 @@ func (s *SQLiteStore) ContextForRunner(ctx context.Context, sessionID string) (r
 		return RunnerContext{}, err
 	}
 	if len(checkpointRaw) == 0 {
-		messages, err := sqliteMessages(ctx, tx, sessionID, result.Epoch.BaselineSeq)
+		events, err := sqliteRawEvents(ctx, tx, sessionID)
 		if err != nil {
 			return RunnerContext{}, err
 		}
-		result.Messages = messages
+		result.Messages = foldMessages(EffectiveEvents(events), result.Epoch.BaselineSeq)
 		return result, tx.Commit()
 	}
 
@@ -622,16 +647,20 @@ func (s *SQLiteStore) ContextForRunner(ctx context.Context, sessionID string) (r
 		return RunnerContext{}, err
 	}
 	result.Checkpoint = &checkpoint
-	result.Messages, err = sqliteMessages(ctx, tx, sessionID, checkpoint.PreservedFromSeq-1)
+	events, err := sqliteRawEvents(ctx, tx, sessionID)
 	if err != nil {
 		return RunnerContext{}, err
 	}
+	effective := EffectiveEvents(events)
+	result.Messages = foldMessages(effective, checkpoint.PreservedFromSeq-1)
 	if checkpoint.AnchorUserSeq <= result.Epoch.BaselineSeq {
-		anchor, err := sqliteMessageAt(ctx, tx, sessionID, checkpoint.AnchorUserSeq)
-		if err != nil {
-			return RunnerContext{}, err
+		for _, message := range foldMessages(effective, 0) {
+			if message.Seq == checkpoint.AnchorUserSeq {
+				anchor := message
+				result.Anchor = &anchor
+				break
+			}
 		}
-		result.Anchor = &anchor
 	}
 	return result, tx.Commit()
 }
@@ -758,45 +787,23 @@ func (s *SQLiteStore) CommitCompaction(ctx context.Context, sessionID string, ch
 // Tool.Success/Tool.Failed posterior, en orden de llamada. ErrSessionNotFound si
 // la sesion no existe. Aplica el mismo fold que MemoryStore sobre el log ordenado.
 func (s *SQLiteStore) PendingToolCalls(ctx context.Context, sessionID string) ([]PendingTool, error) {
-	ok, err := s.exists(ctx, sessionID)
+	events, err := s.rawEvents(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
-	if !ok {
-		return nil, ErrSessionNotFound
-	}
-
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT kind, call_id, tool_name
-		   FROM events
-		  WHERE session_id = ?
-		  ORDER BY seq`,
-		sessionID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 
 	pending := make(map[string]PendingTool)
 	order := make([]string, 0)
-	for rows.Next() {
-		var kind, callID, toolName string
-		if err := rows.Scan(&kind, &callID, &toolName); err != nil {
-			return nil, err
-		}
-		switch EventKind(kind) {
+	for _, event := range EffectiveEvents(events) {
+		switch event.Kind {
 		case KindToolCalled:
-			if _, ok := pending[callID]; !ok {
-				order = append(order, callID)
+			if _, ok := pending[event.CallID]; !ok {
+				order = append(order, event.CallID)
 			}
-			pending[callID] = PendingTool{CallID: callID, ToolName: toolName}
+			pending[event.CallID] = PendingTool{CallID: event.CallID, ToolName: event.ToolName}
 		case KindToolSuccess, KindToolFailed:
-			delete(pending, callID)
+			delete(pending, event.CallID)
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
 	}
 
 	out := make([]PendingTool, 0, len(pending))

@@ -78,6 +78,7 @@ type SessionEvent struct {
 	Diff string
 
 	Compaction *CompactionCheckpoint
+	Checkpoint *PromptCheckpoint
 }
 
 // Session es el agregado durable de una conversacion. En M1 es minimo: solo el
