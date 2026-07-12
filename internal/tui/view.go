@@ -731,7 +731,18 @@ func (m Model) chatContent() string {
 		// spinner (ya estilizado por su propio Style) seguido del texto en
 		// estilo tenue, con " trabajando" como UN segmento para que el
 		// contenido plano siga siendo asertable por los tests.
-		status = m.spinner.View() + statusStyle.Render(" trabajando") + "\n"
+		// Se antepone composerOuterMargin espacios como prefijo plano (no
+		// lipgloss.Margin, que tambien agregaria relleno a la derecha) para
+		// que el glifo del spinner arranque en la misma columna que el
+		// borde "╭" de la caja del composer. El margen se acota al ancho del
+		// panel de chat (mismo patron que topBarLine) para que en terminales
+		// minusculas el prefijo no ensanche la linea mas alla de la terminal;
+		// sin tamano conocido (m.ready == false) queda el margen fijo.
+		margin := composerOuterMargin
+		if m.ready {
+			margin = min(composerOuterMargin, m.chatContentWidth()/2)
+		}
+		status = strings.Repeat(" ", margin) + m.spinner.View() + statusStyle.Render(" trabajando") + "\n"
 	}
 	return m.transcriptView() + m.menuView() + status + m.composerView()
 }

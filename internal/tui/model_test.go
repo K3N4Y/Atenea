@@ -2361,6 +2361,143 @@ func TestModel_ViewFitsHeightWithIndicator(t *testing.T) {
 	}
 }
 
+// TestModel_WorkingIndicatorAlignsWithComposerLeftMargin cubre el margen
+// izquierdo de la linea de estado "trabajando": el resto de la vista (la caja
+// del composer y la barra superior) arranca a composerOuterMargin columnas del
+// borde izquierdo de la terminal, pero la linea del spinner arranca en la
+// columna 0 (pegada al borde). El glifo del spinner debe alinearse con el
+// borde "╭" de la caja del composer, ambos a composerOuterMargin columnas.
+func TestModel_WorkingIndicatorAlignsWithComposerLeftMargin(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = typeRunes(t, m, "hola")
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := m.View()
+	// La linea de estado se ubica por el glifo del spinner, no por la palabra
+	// "trabajando": esta prueba es sobre alineacion de columnas, no sobre el
+	// texto exacto de la linea (ese es un bug preexistente no relacionado, se
+	// arregla aparte en la fase GREEN).
+	lines := strings.Split(view, "\n")
+	spinnerCol := -1
+	for _, line := range lines {
+		plain := ansi.Strip(line)
+		if strings.Contains(plain, m.spinner.View()) {
+			spinnerCol = len(plain) - len(strings.TrimLeft(plain, " "))
+			break
+		}
+	}
+	if spinnerCol == -1 {
+		t.Fatalf("View() = %q, no se encontro ninguna linea con el spinner %q", view, m.spinner.View())
+	}
+
+	composerCol := -1
+	for _, line := range lines {
+		plain := ansi.Strip(line)
+		trimmed := strings.TrimLeft(plain, " ")
+		if strings.HasPrefix(trimmed, "╭") {
+			composerCol = len(plain) - len(trimmed)
+			break
+		}
+	}
+	if composerCol == -1 {
+		t.Fatalf("View() = %q, no se encontro la linea del borde superior (╭) de la caja del composer", view)
+	}
+
+	if spinnerCol != composerCol {
+		t.Fatalf("columna del spinner = %d, columna del borde ╭ del composer = %d; ambas deben coincidir (mismo margen izquierdo)", spinnerCol, composerCol)
+	}
+	if spinnerCol != composerOuterMargin {
+		t.Fatalf("columna del spinner+%q = %d, se esperaba composerOuterMargin (%d)", "trabajando", spinnerCol, composerOuterMargin)
+	}
+}
+
+// TestModel_WorkingIndicatorAlignsWithComposerLeftMargin_WiderTerminal repite
+// la aserción de alineación de columnas con un ancho de terminal distinto
+// (100, no 40/80) para descartar que el margen observado sea un valor
+// hardcodeado que solo coincide por casualidad con una corrida particular:
+// si la implementación calculara la columna del spinner a partir del ancho de
+// la terminal (p.ej. relativa o proporcional) en lugar de un prefijo fijo de
+// composerOuterMargin espacios, este caso lo detectaría porque seguiria
+// esperando exactamente composerOuterMargin sin importar el ancho. También
+// confirma que ninguna línea de la vista excede el ancho de la terminal.
+func TestModel_WorkingIndicatorAlignsWithComposerLeftMargin_WiderTerminal(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 100, Height: 24})
+
+	m = typeRunes(t, m, "hola")
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := m.View()
+	assertNoLineWiderThan(t, view, 100)
+
+	lines := strings.Split(view, "\n")
+	spinnerCol := -1
+	for _, line := range lines {
+		plain := ansi.Strip(line)
+		if strings.Contains(plain, m.spinner.View()) {
+			spinnerCol = len(plain) - len(strings.TrimLeft(plain, " "))
+			break
+		}
+	}
+	if spinnerCol == -1 {
+		t.Fatalf("View() = %q, no se encontro ninguna linea con el spinner %q", view, m.spinner.View())
+	}
+
+	composerCol := -1
+	for _, line := range lines {
+		plain := ansi.Strip(line)
+		trimmed := strings.TrimLeft(plain, " ")
+		if strings.HasPrefix(trimmed, "╭") {
+			composerCol = len(plain) - len(trimmed)
+			break
+		}
+	}
+	if composerCol == -1 {
+		t.Fatalf("View() = %q, no se encontro la linea del borde superior (╭) de la caja del composer", view)
+	}
+
+	if spinnerCol != composerCol {
+		t.Fatalf("columna del spinner = %d, columna del borde ╭ del composer = %d; ambas deben coincidir con ancho 100", spinnerCol, composerCol)
+	}
+	if spinnerCol != composerOuterMargin {
+		t.Fatalf("columna del spinner+%q con ancho 100 = %d, se esperaba composerOuterMargin (%d), no un valor dependiente del ancho", "trabajando", spinnerCol, composerOuterMargin)
+	}
+}
+
+// TestModel_WorkingIndicatorDoesNotOverflowTinyTerminal cubre una terminal muy
+// chica (Width 10): chatContent() acota el margen de la línea de estado con
+// `min(composerOuterMargin, m.chatContentWidth()/2)`, el mismo patrón que
+// topBarLine usa para su margen, así que ninguna línea de View() debe exceder
+// el ancho de la terminal (10 celdas) ni producir una sangría negativa. Si una
+// implementación futura volviera a un prefijo fijo sin acotar, este test lo
+// detectaría.
+func TestModel_WorkingIndicatorDoesNotOverflowTinyTerminal(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 10, Height: 24})
+
+	m = typeRunes(t, m, "hola")
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := m.View()
+	assertNoLineWiderThan(t, view, 10)
+
+	lines := strings.Split(view, "\n")
+	for _, line := range lines {
+		plain := ansi.Strip(line)
+		if strings.Contains(plain, m.spinner.View()) {
+			indent := len(plain) - len(strings.TrimLeft(plain, " "))
+			if indent < 0 {
+				t.Fatalf("View() = %q, la linea de estado tiene sangria negativa/corrupta (%d) en terminal minuscula", view, indent)
+			}
+		}
+	}
+}
+
 func TestModel_SurvivesTinyTerminal(t *testing.T) {
 	// Bug real (E2E bajo pty): una terminal diminuta (0x0 al crear el pty, o de
 	// 1 linea) deja el alto del viewport NEGATIVO en resizeViewport
