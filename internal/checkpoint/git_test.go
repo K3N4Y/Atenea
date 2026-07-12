@@ -13,11 +13,15 @@ func TestGitStore_CaptureAndRestoreNonIgnoredWorkspace(t *testing.T) {
 	root := newGitWorkspace(t)
 	writeFile(t, root, ".gitignore", "ignored.txt\n")
 	writeFile(t, root, "tracked.txt", "committed\n")
+	writeFile(t, root, "tracked-ignored.txt", "committed ignored\n")
 	writeFile(t, root, "deleted.txt", "delete me\n")
+	runGit(t, root, "add", "tracked-ignored.txt")
 	runGit(t, root, "add", ".gitignore", "tracked.txt", "deleted.txt")
 	runGit(t, root, "commit", "-m", "base")
+	writeFile(t, root, ".gitignore", "ignored.txt\ntracked-ignored.txt\n")
 
 	writeFile(t, root, "tracked.txt", "captured tracked\n")
+	writeFile(t, root, "tracked-ignored.txt", "captured tracked ignored\n")
 	writeFile(t, root, "notes.txt", "captured untracked\n")
 	writeFile(t, root, "ignored.txt", "captured ignored\n")
 	writeFile(t, root, "script.sh", "#!/bin/sh\necho captured\n")
@@ -40,6 +44,7 @@ func TestGitStore_CaptureAndRestoreNonIgnoredWorkspace(t *testing.T) {
 	}
 
 	writeFile(t, root, "tracked.txt", "later tracked\n")
+	writeFile(t, root, "tracked-ignored.txt", "later tracked ignored\n")
 	writeFile(t, root, "notes.txt", "later notes\n")
 	writeFile(t, root, "ignored.txt", "later ignored\n")
 	writeFile(t, root, "created.txt", "remove me\n")
@@ -56,6 +61,7 @@ func TestGitStore_CaptureAndRestoreNonIgnoredWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertFile(t, root, "tracked.txt", "captured tracked\n")
+	assertFile(t, root, "tracked-ignored.txt", "captured tracked ignored\n")
 	assertFile(t, root, "notes.txt", "captured untracked\n")
 	assertFile(t, root, "ignored.txt", "later ignored\n")
 	assertFile(t, root, "script.sh", "#!/bin/sh\necho captured\n")

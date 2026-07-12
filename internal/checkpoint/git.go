@@ -89,7 +89,7 @@ func (s *GitStore) capturePrepared(ctx context.Context, workspace, private strin
 	}
 	if len(paths) > 0 {
 		stdin := []byte(strings.Join(paths, "\x00") + "\x00")
-		if _, err := privateGit(ctx, private, workspace, stdin, "add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"); err != nil {
+		if _, err := privateGit(ctx, private, workspace, stdin, "add", "-A", "-f", "--pathspec-from-file=-", "--pathspec-file-nul"); err != nil {
 			return "", err
 		}
 	}
@@ -127,8 +127,12 @@ func (s *GitStore) prepare(ctx context.Context, workspace string) (string, strin
 }
 
 func nonIgnoredPaths(ctx context.Context, workspace string) ([]string, error) {
+	tracked, err := trackedPaths(ctx, workspace)
+	if err != nil {
+		return nil, err
+	}
 	var paths []string
-	err := filepath.WalkDir(workspace, func(path string, entry fs.DirEntry, err error) error {
+	err = filepath.WalkDir(workspace, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -157,7 +161,17 @@ func nonIgnoredPaths(ctx context.Context, workspace string) ([]string, error) {
 	if len(paths) == 0 {
 		return nil, nil
 	}
-	stdin := []byte(strings.Join(paths, "\x00") + "\x00")
+	candidates := make([]string, 0, len(paths))
+	for _, name := range paths {
+		if _, ok := tracked[name]; !ok {
+			candidates = append(candidates, name)
+		}
+	}
+	if len(candidates) == 0 {
+		sort.Strings(paths)
+		return paths, nil
+	}
+	stdin := []byte(strings.Join(candidates, "\x00") + "\x00")
 	cmd := exec.CommandContext(ctx, "git", "-C", workspace, "-c", "core.quotepath=false", "check-ignore", "--no-index", "--stdin", "-z")
 	cmd.Stdin = bytes.NewReader(stdin)
 	out, err := cmd.Output()
@@ -181,6 +195,21 @@ func nonIgnoredPaths(ctx context.Context, workspace string) ([]string, error) {
 	}
 	sort.Strings(filtered)
 	return filtered, nil
+}
+
+func trackedPaths(ctx context.Context, workspace string) (map[string]struct{}, error) {
+	cmd := exec.CommandContext(ctx, "git", "-C", workspace, "-c", "core.quotepath=false", "ls-files", "-z")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git ls-files: %w", err)
+	}
+	tracked := make(map[string]struct{})
+	for _, name := range bytes.Split(out, []byte{0}) {
+		if len(name) > 0 {
+			tracked[string(name)] = struct{}{}
+		}
+	}
+	return tracked, nil
 }
 
 func treePaths(ctx context.Context, private, workspace string, tree Tree) (map[string]struct{}, error) {

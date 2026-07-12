@@ -39,6 +39,13 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
  finish publishes `RunDoneMsg`. Satisfies the `Agent` interface of Model and
  exposes catalog, refresh, current-selection, and transactional selection
  operations to the optional model-selector boundary.
+- `internal/checkpoint/git.go` — prompt-level workspace snapshots for the TUI.
+  It stores Git trees in a private bare repository below
+  `session.DefaultCheckpointPath()` (`ATENEA_CHECKPOINTS` overrides it), using
+  the user's workspace only as `--work-tree`. Snapshots include tracked files
+  and non-ignored untracked files, executable modes, and symlinks. Ignored
+  files remain untouched, and the workspace's main `.git` directory, index,
+  branch, HEAD, refs, and staged changes are never mutated.
 - `internal/tui/model.go` + `fold.go` + `view.go` + `reveal.go` — the Model of
   Bubble Tea. `fold.go` projects durable `SessionEvent` to
   conversation inputs (streaming assistant text, collapsible
@@ -120,6 +127,17 @@ the terminal's default background mid-line.
   composer popup to search every provider/model pair. The first Enter or Tab
   completes `/model <provider-id> <model-id> `; the next Enter persists and
   applies that pair.
+- `/undo` is a local command intercepted before prompt history, inbox
+  admission, and durable user-message events. It cancels and finalizes an
+  active run, restores the latest prompt's pre-run workspace tree, removes the
+  prompt range from effective session projections, rebuilds the transcript,
+  and returns the reverted literal prompt to the composer. Repeated `/undo`
+  walks backward through prompt boundaries. A finished prompt is undoable only
+  while the current non-ignored workspace still matches its captured after
+  tree; later workspace changes make undo fail without changing files or the
+  effective conversation. Ignored-file changes do not block undo and survive
+  restore. This control exists only in `atenea-tui`; the desktop frontend has
+  no undo control.
 - Tab toggles the build/plan agent mode: it's sticky between submissions (each
  Enter routes down the active mode path, without resetting it) and inert with a
  pending permission, and the composer footer reflects this live. In plan-mode the
@@ -237,6 +255,11 @@ writes from ANOTHER connection) and emits `sessions:changed`, and the frontend r
 `ListSessions` upon receipt. If opening SQLite fails, `OpenDefault` returns
 a store in usable memory along with the error: the TUI still works, just
 without persisting.
+
+Prompt checkpoint metadata shares that SQLite event log, while workspace tree
+objects live separately under `session.DefaultCheckpointPath`. The feature has
+no redo, retention service, background cleanup, transaction framework, or
+desktop adapter.
 
 ## Run
 
