@@ -3051,6 +3051,75 @@ func TestModel_CommandMenuFiltersAsYouType(t *testing.T) {
 	}
 }
 
+func TestModel_SlashMenuIncludesCompactBuiltin(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(menuCommands, nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = typeRunes(t, m, "/comp")
+	line := lineWith(t, m.View(), "/compact")
+	if !strings.Contains(line, "Compact conversation context") {
+		t.Fatalf("compact line = %q", line)
+	}
+}
+
+func TestModel_CompactSubmitsWithoutPromptHistoryOrWorkingSpinner(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil).WithCompletions(menuCommands, nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = typeRunes(t, m, "/compact")
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if len(fake.sent) != 1 || fake.sent[0].text != "/compact" {
+		t.Fatalf("sent = %+v", fake.sent)
+	}
+	if len(m.history) != 0 {
+		t.Fatalf("history = %v, /compact must not enter prompt history", m.history)
+	}
+	if m.Working() {
+		t.Fatal("Working() = true, compact status must own progress")
+	}
+	if got := m.input.Value(); got != "" {
+		t.Fatalf("input = %q, want cleared", got)
+	}
+}
+
+func TestModel_CompactStatusDeduplicatesAndResolves(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = apply(t, m, CompactionStatusMsg{SessionID: "s1", State: CompactionQueued})
+	m = apply(t, m, CompactionStatusMsg{SessionID: "s1", State: CompactionQueued})
+	if got := strings.Count(ansi.Strip(m.View()), "Compaction queued"); got != 1 {
+		t.Fatalf("queued count = %d, view = %q", got, m.View())
+	}
+	m = apply(t, m, CompactionStatusMsg{SessionID: "s1", State: CompactionRunning})
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "Compacting context") || strings.Contains(view, "Compaction queued") {
+		t.Fatalf("running view = %q", view)
+	}
+	m = apply(t, m, EventMsg{SessionID: "s1", Kind: session.KindContextCompacted, Compaction: &session.CompactionCheckpoint{
+		Summary: session.StructuredSummary{CurrentGoal: "continue"},
+	}})
+	view = ansi.Strip(m.View())
+	if !strings.Contains(view, "Context compacted") || strings.Contains(view, "Compacting context") {
+		t.Fatalf("completed view = %q", view)
+	}
+}
+
+func TestModel_CompactStatusNotNeededAndFailure(t *testing.T) {
+	notNeeded := NewModel(nil, "s1", nil)
+	notNeeded = apply(t, notNeeded, CompactionStatusMsg{SessionID: "s1", State: CompactionQueued})
+	notNeeded = apply(t, notNeeded, CompactionStatusMsg{SessionID: "s1", State: CompactionNotNeeded})
+	if view := ansi.Strip(notNeeded.View()); !strings.Contains(view, "Not enough context to compact") {
+		t.Fatalf("not-needed view = %q", view)
+	}
+
+	failed := NewModel(nil, "s1", nil)
+	failed = apply(t, failed, CompactionStatusMsg{SessionID: "s1", State: CompactionRunning})
+	failed = apply(t, failed, CompactionStatusMsg{SessionID: "s1", State: CompactionFailed, Err: "provider unavailable"})
+	if view := ansi.Strip(failed.View()); !strings.Contains(view, "provider unavailable") || !strings.Contains(view, "[error]") {
+		t.Fatalf("failed view = %q", view)
+	}
+}
+
 func TestModel_CommandMenuClosesOnSpace(t *testing.T) {
 	// El primer espacio cierra el menu: lo que sigue al nombre son los args del
 	// comando y el popup ya no debe tapar la conversacion.

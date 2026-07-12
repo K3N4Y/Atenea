@@ -82,6 +82,7 @@ const (
 	entryPermission                    // solicitud de aprobacion pendiente (ask-before-run)
 	entryPlanApproval                  // oferta de aprobacion del plan presentado (present_plan)
 	entryError                         // fallo duro del step (Step.Failed)
+	entryCompaction                    // estado transitorio o resultado de compactacion manual
 )
 
 const historyLimit = 100
@@ -355,6 +356,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.syncViewportActivity(), tea.Batch(pump, revealTick())
 		}
 		return m.syncViewportActivity(), pump
+	case CompactionStatusMsg:
+		if ev.SessionID == m.sessionID {
+			m = m.foldCompactionStatus(ev)
+		}
+		return m.syncViewportActivity(), waitForEvent(m.events)
 	case RunDoneMsg:
 		m.working = false
 		if ev.Err != "" {
@@ -547,7 +553,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyPgUp || msg.Type == tea.KeyPgDown {
 		return m.scrollViewport(msg)
 	}
-	if msg.Type == tea.KeyEnter && m.input.Value() == "/new" {
+	if msg.Type == tea.KeyEnter && (m.input.Value() == "/new" || m.input.Value() == "/compact") {
 		return m.submitPrompt()
 	}
 	if len(m.menuItems) > 0 {
@@ -562,7 +568,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// Tab aplica la seleccion; no alterna el modo build/plan.
 			return m.applySelection(), nil
 		case tea.KeyEnter:
-			if m.menuItems[m.menuSelected].builtin && m.menuItems[m.menuSelected].label == "/new" {
+			if m.menuItems[m.menuSelected].builtin && (m.menuItems[m.menuSelected].label == "/new" || m.menuItems[m.menuSelected].label == "/compact") {
 				m.input.SetValue(m.menuItems[m.menuSelected].label)
 				m.input.SetCursor(len([]rune(m.menuItems[m.menuSelected].label)))
 				return m.closeMenu().submitPrompt()
@@ -1076,6 +1082,14 @@ func (m Model) submitPrompt() (Model, tea.Cmd) {
 		m.reasoningBytes = 0
 		m.toolInputBytes = 0
 		m.input.SetValue("")
+		return m.resizeViewport(), nil
+	}
+	if text == "/compact" {
+		if _, err := m.agent.SendPrompt(m.sessionID, text); err != nil {
+			return m.appendError(err.Error()).syncViewport(), nil
+		}
+		m.input.SetValue("")
+		m.menuItems = nil
 		return m.resizeViewport(), nil
 	}
 	if m.planMode {

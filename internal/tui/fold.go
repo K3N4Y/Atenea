@@ -82,6 +82,8 @@ func (m Model) foldEvent(ev EventMsg) Model {
 	case session.KindToolInputDelta:
 		m.toolInputBytes += len(ev.Text)
 		m = m.updateLiveUsage()
+	case session.KindContextCompacted:
+		m = m.resolveCompaction("Context compacted", false)
 	case "":
 		// Evento sin taxonomia: el runner promueve el prompt del usuario como
 		// Message{Role: user} sin Kind.
@@ -104,6 +106,44 @@ func (m Model) replaceEvents(events []session.SessionEvent) Model {
 		m = m.foldEvent(EventMsg(event))
 	}
 	return m
+}
+
+func (m Model) foldCompactionStatus(status CompactionStatusMsg) Model {
+	switch status.State {
+	case CompactionQueued:
+		return m.upsertCompaction("Compaction queued", false)
+	case CompactionRunning:
+		return m.upsertCompaction("Compacting context", false)
+	case CompactionNotNeeded:
+		return m.resolveCompaction("Not enough context to compact", false)
+	case CompactionFailed:
+		return m.resolveCompaction(status.Err, true)
+	default:
+		return m
+	}
+}
+
+func (m Model) upsertCompaction(text string, failed bool) Model {
+	for i := range m.entries {
+		if m.entries[i].kind == entryCompaction && m.entries[i].sessionID == m.sessionID {
+			m.entries[i].text = text
+			m.entries[i].err = ""
+			if failed {
+				m.entries[i].err = text
+			}
+			return m
+		}
+	}
+	entry := entry{kind: entryCompaction, text: text, sessionID: m.sessionID}
+	if failed {
+		entry.err = text
+	}
+	m.entries = append(m.entries, entry)
+	return m
+}
+
+func (m Model) resolveCompaction(text string, failed bool) Model {
+	return m.upsertCompaction(text, failed)
 }
 
 func (m Model) updateLiveUsage() Model {

@@ -347,16 +347,31 @@ func (m Model) refreshMenu() Model {
 		m = m.dropFileCache()
 		query := strings.ToLower(q.query)
 		includeNew := strings.HasPrefix("new", query)
+		includeCompact := strings.HasPrefix("compact", query)
 		includeModel := strings.HasPrefix("model", query)
 		if includeNew {
 			m.menuItems = append(m.menuItems, menuItem{label: "/new", builtin: true})
 		}
 		reserved := len(m.menuItems)
+		if includeCompact {
+			reserved++
+		}
 		if includeModel {
 			reserved++
 		}
 		for _, cmd := range filterCommands(m.commands, q.query, menuLimit-reserved) {
 			m.menuItems = append(m.menuItems, menuItem{label: "/" + cmd.Name, description: cmd.Description})
+		}
+		if includeCompact {
+			item := menuItem{label: "/compact", description: "Compact conversation context", builtin: true}
+			if query == "" && len(m.menuItems) > 1 {
+				insertAt := len(m.menuItems) - 1
+				m.menuItems = append(m.menuItems, menuItem{})
+				copy(m.menuItems[insertAt+1:], m.menuItems[insertAt:])
+				m.menuItems[insertAt] = item
+			} else {
+				m.menuItems = append(m.menuItems, item)
+			}
 		}
 		if includeModel {
 			item := menuItem{label: "/model", description: "Select provider and model", builtin: true}
