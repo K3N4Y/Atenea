@@ -1,7 +1,10 @@
-# TUI transcript activity hierarchy
+---
+updated_at: 2026-07-11
+summary: TUI transcript activity hierarchy — activity-rail formatting, compact grouping, diff stats, and pre-size canvas rendering.
+status: implemented
+---
 
-Date: 2026-07-11
-Status: implemented
+# TUI transcript activity hierarchy
 
 ## Problem
 
@@ -20,7 +23,7 @@ taxonomy in the interface it was meant for, the TUI (`internal/tui`).
 Activity entries (tool calls, pending permissions, step errors) render with a
 continuous visual column at column 0 of the transcript:
 
-```
+```text
 ✓ bash     ls
 │ 18 matches
 ● grep     auth middleware
@@ -53,7 +56,7 @@ plain-text substrings stay assertable):
 Every detail line under a header opens with the rail `│ ` at column 0
 (`activityRailPrefix`): output preview lines (up to 4), diff lines (up to 16,
 `+`/`-` colored), the failure reason (`│ error: <msg>`), and the truncation
-mark (`│ … +N lineas`).
+mark (`│ … +N lines`).
 
 ### File-change stat
 
@@ -83,9 +86,19 @@ viewport content line by line to map mouse clicks back to entries.
   column identifies it); nested permission requests from the child session
   surface as their own `?` rows keyed by the event `SessionID`.
 - Permission (`entryPermission`): `? <tool> <summarized input> (aprobar/denegar)`.
+- Plan approval (`entryPlanApproval`): the same `?` grammar with `plan` as the
+  name and `presentado` as the summary, plus the resolving suffix
+  (`? plan     presentado (y ejecutar / n seguir en plan)`). It is a decision
+  gate like a permission, so it keeps its own paragraph and is not part of
+  compact grouping.
 - Step error (`entryError`): `✗ error    <message>`.
 - Compaction (`entryCompaction`): unchanged (`[context]`/`[error]` status
   lines); it is a transient state, not an activity row.
+
+User-facing strings stay Spanish (`(aprobar/denegar)`, `presentado`, the plan
+suffix) to match the rest of the TUI; migrating them to English is a separate,
+gradual effort. The truncation marker was migrated to `lines` here as the
+first step, aligned with the English documentation convention.
 
 ### Deferred
 

@@ -511,6 +511,53 @@ func answerTerminalStatusQueries(terminal io.Writer, pending []byte) []byte {
 	return pending
 }
 
+// El contrato de answerTerminalStatusQueries es sutil: retiene la cola sin
+// emparejar para cazar una consulta partida entre dos lecturas de la PTY, y no
+// debe re-responder una consulta ya consumida. Los tests PTY end-to-end solo lo
+// ejercitan de forma indirecta; este lo fija de forma directa.
+func TestAnswerTerminalStatusQueries(t *testing.T) {
+	const (
+		bgQuery     = "\x1b]11;?"
+		bgResponse  = "\x1b]11;rgb:1414/1414/1414\x1b\\"
+		fgQuery     = "\x1b]10;?"
+		fgResponse  = "\x1b]10;rgb:c0c0/c0c0/c0c0\x1b\\"
+		curQuery    = "\x1b[6n"
+		curResponse = "\x1b[1;1R"
+	)
+
+	cases := []struct {
+		name   string
+		chunks []string // se alimentan en orden, arrastrando el pending devuelto
+		want   string   // respuestas escritas, concatenadas en orden
+	}{
+		{"consulta completa en un chunk", []string{bgQuery}, bgResponse},
+		{"consulta partida entre dos lecturas", []string{"\x1b]11;", "?"}, bgResponse},
+		{"consulta partida tras ruido largo", []string{"mucho ruido\x1b]11;", "?"}, bgResponse},
+		{"dos consultas distintas seguidas", []string{bgQuery + curQuery}, bgResponse + curResponse},
+		{"bytes ajenos alrededor de la consulta", []string{"ruido" + fgQuery + "mas ruido"}, fgResponse},
+		{"sin consulta no responde", []string{"texto suelto de la TUI"}, ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var written strings.Builder
+			var pending []byte
+			for _, chunk := range tc.chunks {
+				pending = answerTerminalStatusQueries(&written, append(pending, chunk...))
+			}
+			if got := written.String(); got != tc.want {
+				t.Fatalf("respuestas escritas = %q, want %q", got, tc.want)
+			}
+			// Una consulta ya consumida no debe re-responder al llegar mas bytes.
+			before := written.Len()
+			answerTerminalStatusQueries(&written, append(pending, []byte("cola")...))
+			if extra := written.Len() - before; extra != 0 {
+				t.Fatalf("una consulta ya consumida no debe re-responder: %d bytes extra", extra)
+			}
+		})
+	}
+}
+
 func waitForPTYExit(t *testing.T, done <-chan struct{}) {
 	t.Helper()
 	select {

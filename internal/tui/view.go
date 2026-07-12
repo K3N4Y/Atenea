@@ -73,7 +73,7 @@ func activityHeader(marker, name, summary string) string {
 
 // toolOutputPreviewLines es el tope de lineas del preview del output de una
 // tool exitosa: acota el detalle para no inundar el transcript; el resto se
-// resume en la marca "│ … +N lineas".
+// resume en la marca "│ … +N lines".
 const toolOutputPreviewLines = 4
 
 // activityRailPrefix es el rail de detalle de las entradas de actividad: cada
@@ -85,7 +85,7 @@ const activityRailPrefix = "│ "
 // toolDiffPreviewLines es el tope de lineas del diff mostrado bajo el header
 // de una tool exitosa de edit/write: mas generoso que el preview del output
 // (el diff ES el resultado que se quiere revisar) pero acotado igual; el resto
-// se resume en la misma marca "│ … +N lineas".
+// se resume en la misma marca "│ … +N lines".
 const toolDiffPreviewLines = 16
 
 // Estilos de presentacion. Solo envuelven lineas o segmentos ya renderizados,
@@ -147,7 +147,9 @@ func (e entry) render(width int) string {
 		// gesto que lo resuelve.
 		return permissionStyle.Render(activityHeader(activityAskMarker, e.tool, summarizeToolInput(e.input)) + " (aprobar/denegar)")
 	case entryPlanApproval:
-		return permissionStyle.Render("[plan] plan presentado (y ejecutar / n seguir en plan)")
+		// Misma gramatica de actividad que el permiso (marcador de pregunta y
+		// "plan" como nombre), con el gesto que lo resuelve como sufijo.
+		return permissionStyle.Render(activityHeader(activityAskMarker, "plan", "presentado") + " (y ejecutar / n seguir en plan)")
 	case entryError:
 		// El fallo duro del step usa la misma gramatica de actividad, con
 		// "error" como nombre y el mensaje como resumen.
@@ -357,7 +359,7 @@ func summarizeToolInput(raw string) string {
 // renderCappedLines es el esqueleto comun de los previews de detalle de una
 // tool: parte el texto en lineas, rinde cada una con renderLine (UN segmento
 // contiguo por linea, siguiendo la convencion de los estilos de arriba) hasta
-// maxLines lineas y, con mas, cierra con la marca de rail "│ … +N lineas"
+// maxLines lineas y, con mas, cierra con la marca de rail "│ … +N lines"
 // (N = ocultas) que acota el detalle para no inundar el transcript. Texto
 // vacio o solo whitespace devuelve "" (sin preview).
 func renderCappedLines(text string, maxLines int, renderLine func(line string) string) string {
@@ -374,7 +376,7 @@ func renderCappedLines(text string, maxLines int, renderLine func(line string) s
 		rendered = append(rendered, renderLine(line))
 	}
 	if hidden := len(lines) - len(shown); hidden > 0 {
-		rendered = append(rendered, toolOutputStyle.Render(activityRailPrefix+"… +"+strconv.Itoa(hidden)+" lineas"))
+		rendered = append(rendered, toolOutputStyle.Render(activityRailPrefix+"… +"+strconv.Itoa(hidden)+" lines"))
 	}
 	return strings.Join(rendered, "\n")
 }

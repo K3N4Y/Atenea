@@ -980,7 +980,7 @@ func TestModel_SkillToolWithoutNameRendersBareHeader(t *testing.T) {
 // (`✓ <name>     <resumen>`; con un solo campo string el resumen es su valor)
 // y Tool.Success trae el output en ev.Text, que se muestra bajo el header con
 // cada linea de rail `│ ` hasta 4 lineas; con mas lineas aparece una marca
-// final `│ … +N lineas`. Con 3 lineas de output caben todas: no debe aparecer
+// final `│ … +N lines`. Con 3 lineas de output caben todas: no debe aparecer
 // ninguna marca de truncado.
 func TestModel_ToolSuccessShowsOutputPreview(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
@@ -1001,8 +1001,8 @@ func TestModel_ToolSuccessShowsOutputPreview(t *testing.T) {
 			t.Fatalf("View() = %q, debe contener %q: cada linea del output de Tool.Success se muestra bajo el header prefijada con la barra", view, want)
 		}
 	}
-	if strings.Contains(view, "lineas") {
-		t.Fatalf("View() = %q, NO debe contener la marca de truncado %q: 3 lineas de output caben en el tope de 4 y se muestran completas", view, "lineas")
+	if strings.Contains(view, "lines") {
+		t.Fatalf("View() = %q, NO debe contener la marca de truncado %q: 3 lineas de output caben en el tope de 4 y se muestran completas", view, "lines")
 	}
 }
 
@@ -1051,8 +1051,8 @@ func TestModel_ToolOutputPreviewTruncatesLongOutput(t *testing.T) {
 			t.Fatalf("View() = %q, debe contener %q: las primeras 4 lineas del output se muestran bajo el header", view, want)
 		}
 	}
-	if !strings.Contains(view, "+2 lineas") {
-		t.Fatalf("View() = %q, debe contener la marca %q: las 2 lineas que exceden el tope se resumen", view, "+2 lineas")
+	if !strings.Contains(view, "+2 lines") {
+		t.Fatalf("View() = %q, debe contener la marca %q: las 2 lineas que exceden el tope se resumen", view, "+2 lines")
 	}
 	for _, banned := range []string{"│ l5", "│ l6"} {
 		if strings.Contains(view, banned) {
@@ -3098,7 +3098,7 @@ func TestModel_PresentPlanOffersAcceptAndYExecutes(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindToolSuccess, CallID: "p1"})
 
 	view := m.View()
-	planLine := lineWith(t, view, "[plan]")
+	planLine := lineWith(t, view, "? plan")
 	if !strings.Contains(planLine, "(y ejecutar / n seguir en plan)") {
 		t.Fatalf("oferta de aprobacion = %q, debe contener %q", planLine, "(y ejecutar / n seguir en plan)")
 	}
@@ -3112,7 +3112,7 @@ func TestModel_PresentPlanOffersAcceptAndYExecutes(t *testing.T) {
 	if got := fake.accepted[0]; got != "s1" {
 		t.Fatalf("AcceptPlan(%q), se esperaba AcceptPlan(%q)", got, "s1")
 	}
-	if got := m.View(); strings.Contains(got, "[plan]") {
+	if got := m.View(); strings.Contains(got, "? plan") {
 		t.Fatalf("View() = %q, aceptar el plan debe retirar la oferta de aprobacion", got)
 	}
 	if len(fake.sent) != 0 {
@@ -3137,7 +3137,7 @@ func TestModel_PlanApprovalNRejectsAndStaysInPlanMode(t *testing.T) {
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
 
-	if got := m.View(); strings.Contains(got, "[plan]") {
+	if got := m.View(); strings.Contains(got, "? plan") {
 		t.Fatalf("View() = %q, 'n' debe retirar la oferta de aprobacion del plan", got)
 	}
 	if len(fake.accepted) != 0 {
@@ -3208,7 +3208,7 @@ func TestModel_PresentPlanFailedDoesNotOfferApproval(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "p1", ToolName: "present_plan"})
 	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "p1", Error: "plan invalido"})
 
-	if got := m.View(); strings.Contains(got, "[plan]") {
+	if got := m.View(); strings.Contains(got, "? plan") {
 		t.Fatalf("View() = %q, un present_plan fallido NO debe ofrecer la aprobacion del plan", got)
 	}
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
