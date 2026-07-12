@@ -126,10 +126,11 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string) (bool, er
 
 	// Overflow antes del mensaje del asistente: compactar y reintentar una vez.
 	if r.compactor != nil && r.compactor.NeedsCompaction(req) {
-		if err := r.compactor.Compact(ctx, sessionID); err != nil {
+		if err := r.compactor.Compact(ctx, sessionID); err != nil && !errors.Is(err, session.ErrNoCompactableHistory) {
 			return false, err
+		} else if err == nil {
+			return false, errContinueAfterCompaction
 		}
-		return false, errContinueAfterCompaction
 	}
 
 	// Re-leer el epoch antes de llamar al proveedor: si cambio, el request quedo

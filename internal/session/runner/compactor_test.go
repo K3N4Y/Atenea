@@ -183,3 +183,30 @@ func TestRunner_CompactNowPreservesAssistantToolGroupAfterCurrentUser(t *testing
 		t.Fatalf("preserved messages = %+v, want user + complete assistant/tool group", runnerContext.Messages)
 	}
 }
+
+type alwaysNeedsCompaction struct{ calls int }
+
+func (c *alwaysNeedsCompaction) NeedsCompaction(llm.Request) bool { return true }
+func (c *alwaysNeedsCompaction) Compact(context.Context, string) error {
+	c.calls++
+	return session.ErrNoCompactableHistory
+}
+
+func TestRunner_AutomaticCompactionWithoutCompactablePrefixStillStreams(t *testing.T) {
+	store := session.NewMemoryStore()
+	if _, err := store.AppendEvent(context.Background(), "s1", session.SessionEvent{
+		Message: &session.Message{ID: "u1", Role: session.RoleUser, Text: "current"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	provider := &compactionProvider{events: []llm.Event{{Kind: llm.StepEnded}}}
+	r := newCompactionRunner(t, store, provider)
+	compactor := &alwaysNeedsCompaction{}
+	r.SetCompactor(compactor)
+	if _, err := r.runTurn(context.Background(), "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if compactor.calls != 1 || provider.callCount() != 1 {
+		t.Fatalf("compactor calls = %d, provider calls = %d", compactor.calls, provider.callCount())
+	}
+}
