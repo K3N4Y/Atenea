@@ -89,7 +89,7 @@ func TestTUI_ModelSelectorPersistsSelectionUnderPTY(t *testing.T) {
 	}
 	defer stopPTYProcess(cmd, terminal)
 	output := &lockedBuffer{}
-	go func() { _, _ = io.Copy(output, terminal) }()
+	copyPTYAnsweringTerminalQueries(terminal, output)
 	waitForPTYText(t, output, " old ─╯")
 	if _, err := terminal.Write([]byte("/")); err != nil {
 		t.Fatal(err)
@@ -133,7 +133,7 @@ func TestTUI_DefaultOpenRouterModelsShowContextUnderPTY(t *testing.T) {
 	}
 	defer stopPTYProcess(cmd, terminal)
 	output := &lockedBuffer{}
-	go func() { _, _ = io.Copy(output, terminal) }()
+	copyPTYAnsweringTerminalQueries(terminal, output)
 	waitForPTYText(t, output, " openrouter/free ─╯")
 	if _, err := terminal.Write([]byte("/model ")); err != nil {
 		t.Fatal(err)
@@ -169,10 +169,7 @@ func TestTUI_FocusedComposerShowsBlinkingCursorUnderPTY(t *testing.T) {
 	}
 	defer stopPTYProcess(cmd, terminal)
 	output := &lockedBuffer{}
-	go func() { _, _ = io.Copy(output, terminal) }()
-	if _, err := terminal.Write([]byte("\x1b]11;rgb:0000/0000/0000\x1b\\\x1b[1;1R")); err != nil {
-		t.Fatal(err)
-	}
+	copyPTYAnsweringTerminalQueries(terminal, output)
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -271,39 +268,27 @@ func TestTUI_FileViewerFlowUnderPTY(t *testing.T) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, output)
 	}
-	cmd := exec.Command(binary)
-	cmd.Dir = filepath.Join(repoRoot, "cmd/atenea-tui/testdata/file-viewer/project")
-	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY=", "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
-	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 24})
-	if err != nil {
-		t.Fatal(err)
-	}
+	workdir := filepath.Join(repoRoot, "cmd/atenea-tui/testdata/file-viewer/project")
+	cmd, terminal, output, done := startTUIUnderPTY(t, binary, workdir, filepath.Join(t.TempDir(), "atenea.db"))
 	defer stopPTYProcess(cmd, terminal)
-	var output lockedBuffer
-	done := make(chan struct{})
-	go func() { _, _ = io.Copy(&output, terminal); close(done) }()
-	waitForPTYText(t, &output, " demo ─╯")
+	waitForPTYText(t, output, " demo ─╯")
 	if _, err := terminal.Write([]byte(" e\r")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYText(t, &output, "hello.go")
+	waitForPTYText(t, output, "hello.go")
 	if _, err := terminal.Write([]byte("\r")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYText(t, &output, "hello.go · 1-3/3")
-	waitForPTYText(t, &output, "hello from file viewer")
+	waitForPTYText(t, output, "hello.go · 1-3/3")
+	waitForPTYText(t, output, "hello from file viewer")
 	if _, err := terminal.Write([]byte("\x1b")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYText(t, &output, " demo ─╯")
+	waitForPTYText(t, output, " demo ─╯")
 	if _, err := terminal.Write([]byte("\x03")); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("TUI did not exit")
-	}
+	waitForPTYExit(t, done)
 }
 
 func TestTUI_FileViewerScrollsToLastLineUnderPTY(t *testing.T) {
@@ -360,42 +345,37 @@ func TestTUI_FileTreeMouseWheelAndClickUnderPTY(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer stopPTYProcess(cmd, terminal)
-	var output lockedBuffer
-	done := make(chan struct{})
-	go func() { _, _ = io.Copy(&output, terminal); close(done) }()
-	waitForPTYText(t, &output, " demo ─╯")
+	output := &lockedBuffer{}
+	done := copyPTYAnsweringTerminalQueries(terminal, output)
+	waitForPTYText(t, output, " demo ─╯")
 	if _, err := terminal.Write([]byte(" e")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYText(t, &output, "file-00.go")
+	waitForPTYText(t, output, "file-00.go")
 	if _, err := terminal.Write([]byte("\x1b[<65;1;4M\x1b[<65;1;4M\x1b[<0;25;4M")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYText(t, &output, "file-03.go · 1-1/1")
-	waitForPTYText(t, &output, "package file03")
+	waitForPTYText(t, output, "file-03.go · 1-1/1")
+	waitForPTYText(t, output, "package file03")
 	if _, err := terminal.Write([]byte("\x1b[<0;25;6M")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYText(t, &output, "file-05.go · 1-1/1")
-	waitForPTYText(t, &output, "package file05")
+	waitForPTYText(t, output, "file-05.go · 1-1/1")
+	waitForPTYText(t, output, "package file05")
 	if _, err := terminal.Write([]byte("\x1b[<0;50;4M")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYText(t, &output, "viewer *")
-	waitForPTYText(t, &output, "file-05.go · 1-1/1")
+	waitForPTYText(t, output, "viewer *")
+	waitForPTYText(t, output, "file-05.go · 1-1/1")
 	if _, err := terminal.Write([]byte("\x1b[<0;1;1M")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYText(t, &output, "explorer *")
-	waitForPTYText(t, &output, "file-05.go · 1-1/1")
+	waitForPTYText(t, output, "explorer *")
+	waitForPTYText(t, output, "file-05.go · 1-1/1")
 	if _, err := terminal.Write([]byte("\x03")); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("TUI did not exit")
-	}
+	waitForPTYExit(t, done)
 }
 
 func TestTUI_ExplorerLeaderRapidSequencesUnderPTY(t *testing.T) {
@@ -409,24 +389,16 @@ func TestTUI_ExplorerLeaderRapidSequencesUnderPTY(t *testing.T) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, output)
 	}
-	cmd := exec.Command(binary)
-	cmd.Dir = filepath.Join(repoRoot, "cmd/atenea-tui/testdata/file-viewer/project")
-	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY=", "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
-	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 24})
-	if err != nil {
-		t.Fatal(err)
-	}
+	workdir := filepath.Join(repoRoot, "cmd/atenea-tui/testdata/file-viewer/project")
+	cmd, terminal, output, done := startTUIUnderPTY(t, binary, workdir, filepath.Join(t.TempDir(), "atenea.db"))
 	defer stopPTYProcess(cmd, terminal)
-	var output lockedBuffer
-	done := make(chan struct{})
-	go func() { _, _ = io.Copy(&output, terminal); close(done) }()
-	waitForPTYText(t, &output, " demo ─╯")
+	waitForPTYText(t, output, " demo ─╯")
 
 	before := output.String()
 	if _, err := terminal.Write(bytes.Repeat([]byte(" e"), 2001)); err != nil {
 		t.Fatal(err)
 	}
-	latest := waitForStablePTYOutputAfter(t, &output, before)
+	latest := waitForStablePTYOutputAfter(t, output, before)
 	if !strings.Contains(latest, "explorer *") || !strings.Contains(latest, "hello.go") {
 		t.Fatalf("rapid Space+e sequences should leave explorer open after an odd count; latest PTY output:\n%s", latest)
 	}
@@ -435,18 +407,14 @@ func TestTUI_ExplorerLeaderRapidSequencesUnderPTY(t *testing.T) {
 	if _, err := terminal.Write([]byte(" e")); err != nil {
 		t.Fatal(err)
 	}
-	latest = waitForStablePTYOutputAfter(t, &output, before)
+	latest = waitForStablePTYOutputAfter(t, output, before)
 	if strings.Contains(latest, "explorer") || strings.Contains(latest, "hello.go") {
 		t.Fatalf("one more Space+e sequence should close the explorer after the rapid burst; latest PTY output:\n%s", latest)
 	}
 	if _, err := terminal.Write([]byte("\x03")); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("TUI did not exit")
-	}
+	waitForPTYExit(t, done)
 }
 
 func waitForPTYText(t *testing.T, output *lockedBuffer, want string) {
@@ -471,9 +439,76 @@ func startTUIUnderPTY(t *testing.T, binary, workdir, database string) (*exec.Cmd
 		t.Fatal(err)
 	}
 	output := &lockedBuffer{}
-	done := make(chan struct{})
-	go func() { _, _ = io.Copy(output, terminal); close(done) }()
+	done := copyPTYAnsweringTerminalQueries(terminal, output)
 	return cmd, terminal, output, done
+}
+
+// Consultas de estado que el TUI emite al arrancar: el init de bubbletea
+// (via termenv) pregunta al terminal el color de fondo (OSC 11), a veces el
+// de primer plano (OSC 10) y la posicion del cursor (DSR \x1b[6n), y se
+// bloquea hasta 5 segundos esperando cada respuesta.
+var terminalStatusQueries = []struct {
+	query    string
+	response string
+}{
+	{"\x1b]11;?", "\x1b]11;rgb:1414/1414/1414\x1b\\"},
+	{"\x1b]10;?", "\x1b]10;rgb:c0c0/c0c0/c0c0\x1b\\"},
+	{"\x1b[6n", "\x1b[1;1R"},
+}
+
+// copyPTYAnsweringTerminalQueries vuelca en output todo lo que el TUI escribe
+// en la PTY y ademas responde las terminalStatusQueries como lo haria un
+// terminal real. Sin esas respuestas el TUI queda bloqueado 5 segundos sin
+// renderizar nada y los tests solo ven una pantalla vacia. Devuelve un canal
+// que se cierra cuando la PTY deja de poder leerse.
+func copyPTYAnsweringTerminalQueries(terminal io.ReadWriter, output *lockedBuffer) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		var pending []byte
+		buffer := make([]byte, 4096)
+		for {
+			n, err := terminal.Read(buffer)
+			if n > 0 {
+				_, _ = output.Write(buffer[:n])
+				pending = answerTerminalStatusQueries(terminal, append(pending, buffer[:n]...))
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return done
+}
+
+// answerTerminalStatusQueries contesta cada consulta completa presente en
+// pending y devuelve la cola de bytes sin emparejar, por si una consulta
+// llega partida entre dos lecturas de la PTY.
+func answerTerminalStatusQueries(terminal io.Writer, pending []byte) []byte {
+	for {
+		matchIndex, matchLength, response := -1, 0, ""
+		for _, status := range terminalStatusQueries {
+			index := bytes.Index(pending, []byte(status.query))
+			if index >= 0 && (matchIndex < 0 || index < matchIndex) {
+				matchIndex, matchLength, response = index, len(status.query), status.response
+			}
+		}
+		if matchIndex < 0 {
+			break
+		}
+		_, _ = terminal.Write([]byte(response))
+		pending = pending[matchIndex+matchLength:]
+	}
+	longestQuery := 0
+	for _, status := range terminalStatusQueries {
+		if len(status.query) > longestQuery {
+			longestQuery = len(status.query)
+		}
+	}
+	if len(pending) >= longestQuery {
+		pending = append([]byte(nil), pending[len(pending)-longestQuery+1:]...)
+	}
+	return pending
 }
 
 func waitForPTYExit(t *testing.T, done <-chan struct{}) {
