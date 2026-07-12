@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import ToolCall from './ToolCall.vue'
 
@@ -19,97 +19,138 @@ const tool = (over: Record<string, unknown> = {}) => ({
 })
 
 const EDIT_DIFF = [
-  '--- a/foo.go',
-  '+++ b/foo.go',
-  '@@ -1 +1 @@',
-  '-a',
-  '+b',
+  '--- a/internal/auth.go',
+  '+++ b/internal/auth.go',
+  '@@ -1 +1,2 @@',
+  '-old',
+  '+new',
+  '+extra',
   '',
 ].join('\n')
 
 describe('ToolCall', () => {
-  it('read en curso: "Reading" + solo el nombre del archivo (§10)', () => {
+  it('shows the action, complete target, and running marker', () => {
     const wrapper = mount(ToolCall, {
       props: tool({
         name: 'read',
         status: 'running',
-        input: { path: '/home/a/b/c.go' },
+        input: { path: 'internal/auth.go' },
       }),
     })
 
-    expect(wrapper.text()).toContain('Reading')
-    expect(wrapper.text()).toContain('c.go')
-    expect(wrapper.text()).not.toContain('/home/a/b')
+    expect(wrapper.text()).toContain('read')
+    expect(wrapper.text()).toContain('internal/auth.go')
+    expect(wrapper.get('[data-status="running"]').exists()).toBe(true)
   })
 
-  it('read finalizado: "Read" + nombre del archivo', () => {
+  it('collapses successful output by default and expands it independently', async () => {
+    const wrapper = mount(ToolCall, {
+      props: tool({ name: 'echo', output: 'full output' }),
+    })
+
+    const summary = wrapper.get('[data-test="activity-summary"]')
+    expect(summary.attributes('aria-expanded')).toBe('false')
+    expect(wrapper.text()).not.toContain('full output')
+
+    await summary.trigger('click')
+
+    expect(summary.attributes('aria-expanded')).toBe('true')
+    expect(wrapper.text()).toContain('full output')
+  })
+
+  it('shows diff counts before expansion and DiffView after expansion', async () => {
     const wrapper = mount(ToolCall, {
       props: tool({
-        name: 'read',
-        status: 'success',
-        input: { file_path: '/x/y/z.ts' },
+        name: 'edit',
+        input: { path: 'internal/auth.go' },
+        output: '[internal/auth.go#ab12]',
+        diff: EDIT_DIFF,
       }),
     })
 
-    expect(wrapper.text()).toContain('Read')
-    expect(wrapper.text()).toContain('z.ts')
-  })
+    expect(wrapper.text()).toContain('edit')
+    expect(wrapper.text()).toContain('internal/auth.go')
+    expect(wrapper.text()).toContain('+2 -1')
+    expect(wrapper.findAll('[data-type="add"]')).toHaveLength(0)
 
-  it('tool generica: muestra nombre y output', () => {
-    const wrapper = mount(ToolCall, {
-      props: tool({ name: 'echo', output: 'hola' }),
-    })
+    await wrapper.get('[data-test="activity-summary"]').trigger('click')
 
-    expect(wrapper.text()).toContain('echo')
-    expect(wrapper.text()).toContain('hola')
-  })
-
-  it('edit con diff: renderiza el diff coloreado, no el <pre> plano', () => {
-    const wrapper = mount(ToolCall, {
-      props: tool({ name: 'edit', output: '[foo.go#ab12]', diff: EDIT_DIFF }),
-    })
-
-    // DiffView renderiza filas con data-type y el nombre del archivo.
-    expect(wrapper.findAll('[data-type="add"]')).toHaveLength(1)
+    expect(wrapper.findAll('[data-type="add"]')).toHaveLength(2)
     expect(wrapper.findAll('[data-type="del"]')).toHaveLength(1)
-    expect(wrapper.text()).toContain('foo.go')
-    // No debe mostrar el header crudo como output plano.
     expect(wrapper.find('pre').exists()).toBe(false)
   })
 
-  it('write con diff: renderiza el diff', () => {
-    const diff = [
-      '--- a/n.txt',
-      '+++ b/n.txt',
-      '@@ -0,0 +1 @@',
-      '+nuevo',
-      '',
-    ].join('\n')
+  it('falls back to collapsed plain output for legacy edit events without diff', async () => {
     const wrapper = mount(ToolCall, {
-      props: tool({ name: 'write', output: '[n.txt#cd34]', diff }),
+      props: tool({
+        name: 'edit',
+        input: { path: 'foo.go' },
+        output: '[foo.go#ab12]',
+      }),
     })
 
-    expect(wrapper.findAll('[data-type="add"]')).toHaveLength(1)
+    expect(wrapper.find('pre').exists()).toBe(false)
+    await wrapper.get('[data-test="activity-summary"]').trigger('click')
+    expect(wrapper.get('pre').text()).toContain('[foo.go#ab12]')
   })
 
-  it('edit sin diff (sesion vieja): cae al <pre> con el output', () => {
+  it('shows a failed marker and excerpt while collapsing the full error', async () => {
     const wrapper = mount(ToolCall, {
-      props: tool({ name: 'edit', output: '[foo.go#ab12]', diff: '' }),
+      props: tool({
+        status: 'failed',
+        error: 'permission denied\nfull stack trace',
+      }),
     })
 
-    expect(wrapper.findAll('[data-type="add"]')).toHaveLength(0)
-    expect(wrapper.find('pre').text()).toContain('[foo.go#ab12]')
+    expect(wrapper.get('[data-status="failed"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('permission denied full stack trace')
+    expect(wrapper.text()).not.toContain('permission denied\nfull stack trace')
+
+    await wrapper.get('[data-test="activity-summary"]').trigger('click')
+    expect(wrapper.text()).toContain('permission denied\nfull stack trace')
   })
 
-  it('tool fallida: muestra la causa del error', () => {
+  it('keeps long errors compact until the row is expanded', async () => {
+    const error = `permission denied: ${'stack frame '.repeat(40).trim()}`
     const wrapper = mount(ToolCall, {
-      props: tool({ status: 'failed', error: 'boom' }),
+      props: tool({ status: 'failed', error }),
     })
 
-    expect(wrapper.text()).toContain('boom')
+    const summary = wrapper.get('[data-test="activity-summary"]')
+    expect(summary.text().length).toBeLessThan(220)
+    expect(summary.text()).toContain('…')
+
+    await summary.trigger('click')
+    expect(wrapper.text()).toContain(error)
   })
 
-  it('pending: shows the command and Approve/Deny buttons', () => {
+  it('uses a status-rich accessible label and title for the full target', () => {
+    const wrapper = mount(ToolCall, {
+      props: tool({
+        name: 'bash',
+        input: { command: 'go test ./internal/auth' },
+        output: 'ok',
+      }),
+    })
+
+    const summary = wrapper.get('[data-test="activity-summary"]')
+    expect(summary.attributes('aria-label')).toContain(
+      'bash, go test ./internal/auth, succeeded',
+    )
+    expect(
+      wrapper.get('[data-test="activity-target"]').attributes('title'),
+    ).toBe('go test ./internal/auth')
+  })
+
+  it('renders an empty successful tool as a non-interactive summary row', () => {
+    const wrapper = mount(ToolCall, { props: tool({ name: 'custom' }) })
+
+    expect(wrapper.text()).toContain('custom')
+    expect(wrapper.find('[data-test="activity-summary"]').exists()).toBe(false)
+    expect(wrapper.find('[data-status="success"]').exists()).toBe(true)
+  })
+
+  it('pending permission keeps command and Approve/Deny actions visible', () => {
     const wrapper = mount(ToolCall, {
       props: tool({
         name: 'bash',
@@ -118,12 +159,14 @@ describe('ToolCall', () => {
       }),
     })
 
+    expect(wrapper.get('[data-status="pending"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('ls -la')
+    expect(wrapper.find('[data-test="activity-summary"]').exists()).toBe(false)
     expect(wrapper.get('[data-action="approve"]').text()).toContain('Aprobar')
     expect(wrapper.get('[data-action="deny"]').text()).toContain('Denegar')
   })
 
-  it('pending: approving emits approve with the callID', async () => {
+  it('pending approval emits approve with the callID', async () => {
     const wrapper = mount(ToolCall, {
       props: tool({ name: 'bash', status: 'pending', callID: 'c1' }),
     })
@@ -133,7 +176,7 @@ describe('ToolCall', () => {
     expect(wrapper.emitted('approve')?.[0]).toEqual(['c1'])
   })
 
-  it('pending: denying emits deny with the callID', async () => {
+  it('pending denial emits deny with the callID', async () => {
     const wrapper = mount(ToolCall, {
       props: tool({ name: 'bash', status: 'pending', callID: 'c1' }),
     })

@@ -1,185 +1,148 @@
 <script lang="ts" setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import {
-  PhFile,
-  PhCircleNotch,
+  PhCaretRight,
   PhCheck,
+  PhCircleNotch,
+  PhDiamond,
   PhX,
-  PhWarning,
 } from '@phosphor-icons/vue'
 import type { ToolItem } from '../stores/chat'
-import { basename } from '../lib/path'
+import { activityPresentation } from '../lib/activityPresentation'
 import DiffView from './DiffView.vue'
 
 const props = defineProps<{ item: ToolItem }>()
+const emit = defineEmits<{ approve: [string]; deny: [string] }>()
 
-// edit/write traen un diff unificado (solo-UI): se renderiza coloreado con
-// DiffView en vez del output plano. Sin diff (sesiones viejas, bash) cae al <pre>.
+const expanded = ref(false)
+const presentation = computed(() => activityPresentation(props.item))
+const isPending = computed(() => props.item.status === 'pending')
 const isDiff = computed(
   () =>
     (props.item.name === 'edit' || props.item.name === 'write') &&
-    !!props.item.diff,
+    Boolean(props.item.diff),
 )
 
-// approve/deny carry the callID up (MessageList -> ChatView -> store): the
-// component stays presentational, without touching the store.
-const emit = defineEmits<{ approve: [string]; deny: [string] }>()
-
-// Tool Read (identidad §10): "Reading"/"Read" + solo el nombre del archivo.
-const isRead = computed(() => props.item.name === 'read')
-
-function inputPath(input: unknown): string {
-  if (!input || typeof input !== 'object') return ''
-  const o = input as Record<string, unknown>
-  const v = o.path ?? o.file_path ?? o.filename ?? o.file
-  return typeof v === 'string' ? v : ''
+function toggleExpanded(): void {
+  if (presentation.value.expandable) expanded.value = !expanded.value
 }
-const fileName = computed(() => basename(inputPath(props.item.input)))
-const readLabel = computed(() =>
-  props.item.status === 'running' ? 'Reading' : 'Read',
-)
-
-// Tool Skill: muestra solo el nombre, no el contenido completo del SKILL.md.
-const isSkill = computed(() => props.item.name === 'skill')
-
-function inputName(input: unknown): string {
-  if (!input || typeof input !== 'object') return ''
-  const o = input as Record<string, unknown>
-  return typeof o.name === 'string' ? o.name : ''
-}
-const skillName = computed(() => inputName(props.item.input))
-
-// Tool Glob: muestra solo el patron, no la lista de archivos.
-const isGlob = computed(() => props.item.name === 'glob')
-
-function inputPattern(input: unknown): string {
-  if (!input || typeof input !== 'object') return ''
-  const o = input as Record<string, unknown>
-  return typeof o.pattern === 'string' ? o.pattern : ''
-}
-const globPattern = computed(() => inputPattern(props.item.input))
-
-// Command the model wants to run (bash): shown next to the permission buttons
-// so the user knows what they are approving.
-function inputCommand(input: unknown): string {
-  if (!input || typeof input !== 'object') return ''
-  const v = (input as Record<string, unknown>).command
-  return typeof v === 'string' ? v : ''
-}
-const command = computed(() => inputCommand(props.item.input))
-const isPending = computed(() => props.item.status === 'pending')
 </script>
 
 <template>
-  <div v-if="isRead" class="flex items-center gap-2 text-sm opacity-70">
-    <PhFile :size="16" weight="regular" />
-    <span>{{ readLabel }}</span>
-    <span v-if="fileName" class="opacity-90">{{ fileName }}</span>
-  </div>
+  <article
+    class="relative min-w-0 py-1.5 pl-8 text-sm"
+    data-test="activity-row"
+  >
+    <span
+      class="absolute left-0 top-2.5 z-10 flex size-5 items-center justify-center rounded-full bg-paper"
+      :class="{
+        'text-red-600': item.status === 'failed',
+        'text-amber-600': item.status === 'pending',
+        'text-black/55': item.status === 'success',
+        'text-accent': item.status === 'running',
+      }"
+      :data-status="item.status"
+      aria-hidden="true"
+    >
+      <PhCircleNotch
+        v-if="item.status === 'running'"
+        :size="14"
+        weight="bold"
+        class="animate-spin [animation-duration:0.7s]"
+      />
+      <PhDiamond
+        v-else-if="item.status === 'pending'"
+        :size="13"
+        weight="fill"
+      />
+      <PhCheck v-else-if="item.status === 'success'" :size="14" weight="bold" />
+      <PhX v-else :size="14" weight="bold" />
+    </span>
 
-  <div v-else-if="isSkill" class="flex items-center gap-2 text-sm opacity-70">
-    <PhCheck
-      v-if="item.status === 'success'"
-      :size="16"
-      weight="bold"
-      class="opacity-50"
-    />
-    <PhCircleNotch
-      v-else-if="item.status === 'running'"
-      :size="16"
-      weight="bold"
-      class="animate-spin text-accent [animation-duration:0.7s]"
-    />
-    <PhX v-else :size="16" weight="bold" class="text-accent" />
-    <span class="font-medium">skill</span>
-    <span v-if="skillName" class="opacity-90">{{ skillName }}</span>
-  </div>
+    <button
+      v-if="presentation.expandable && !isPending"
+      type="button"
+      data-test="activity-summary"
+      class="group flex w-full min-w-0 items-center gap-2 rounded px-1 py-0.5 text-left outline-none transition hover:bg-black/[0.035] focus-visible:ring-2 focus-visible:ring-accent/60"
+      :aria-expanded="expanded"
+      :aria-label="presentation.accessibleLabel"
+      @click="toggleExpanded"
+    >
+      <PhCaretRight
+        :size="12"
+        weight="bold"
+        class="shrink-0 opacity-35 transition-transform duration-150 ease-snappy group-hover:opacity-65"
+        :class="{ 'rotate-90': expanded }"
+        aria-hidden="true"
+      />
+      <span class="shrink-0 font-semibold">{{ presentation.action }}</span>
+      <span
+        v-if="presentation.target"
+        data-test="activity-target"
+        class="min-w-0 truncate opacity-75"
+        :title="presentation.target"
+        >{{ presentation.target }}</span
+      >
+      <span
+        v-if="presentation.compactResult"
+        class="ml-auto shrink-0 text-xs opacity-50"
+        >{{ presentation.compactResult }}</span
+      >
+    </button>
 
-  <div v-else-if="isGlob" class="flex items-center gap-2 text-sm opacity-70">
-    <span class="font-medium">glob</span>
-    <span v-if="globPattern" class="opacity-90">{{ globPattern }}</span>
-  </div>
-
-  <!-- Resto de tools (edit/diff/echo...): bloque con su propio fondo (§8). -->
-  <div v-else class="rounded-soft bg-black/[0.04] px-4 py-3 text-sm">
-    <div class="flex items-center gap-2">
-      <!-- Crossfade corto del icono de estado (~120ms): el swap instantaneo entre
-           spinner/warning/check/x se siente brusco. mode="out-in" sobre un unico
-           icono por estado (gateado por :key) mantiene un solo nodo en el flex. -->
-      <Transition name="tool-icon" mode="out-in">
-        <PhCircleNotch
-          v-if="item.status === 'running'"
-          key="running"
-          :size="16"
-          weight="bold"
-          class="animate-spin text-accent [animation-duration:0.7s]"
-        />
-        <PhWarning
-          v-else-if="isPending"
-          key="pending"
-          :size="16"
-          weight="bold"
-          class="text-accent"
-        />
-        <PhCheck
-          v-else-if="item.status === 'success'"
-          key="success"
-          :size="16"
-          weight="bold"
-          class="opacity-50"
-        />
-        <PhX v-else key="fail" :size="16" weight="bold" class="text-accent" />
-      </Transition>
-      <span class="font-medium">{{ item.name || 'tool' }}</span>
-      <span class="opacity-50">{{ item.status }}</span>
+    <div
+      v-else
+      class="flex min-w-0 items-center gap-2 px-1 py-0.5"
+      :aria-label="presentation.accessibleLabel"
+    >
+      <span class="w-3 shrink-0" aria-hidden="true"></span>
+      <span class="shrink-0 font-semibold">{{ presentation.action }}</span>
+      <span
+        v-if="presentation.target"
+        data-test="activity-target"
+        class="min-w-0 truncate opacity-75"
+        :title="presentation.target"
+        >{{ presentation.target }}</span
+      >
+      <span
+        v-if="presentation.compactResult"
+        class="ml-auto shrink-0 text-xs opacity-50"
+        >{{ presentation.compactResult }}</span
+      >
     </div>
 
-    <!-- Ask-before-run: shows the command and asks for approval before running. -->
-    <template v-if="isPending">
-      <pre
-        v-if="command"
-        class="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-xs opacity-80"
-        >{{ command }}</pre
+    <div v-if="isPending" class="mt-2 flex flex-wrap gap-2 pl-6">
+      <button
+        type="button"
+        data-action="approve"
+        class="rounded-soft bg-accent px-3 py-1 text-xs font-medium text-white transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 active:scale-[0.97]"
+        @click="emit('approve', item.callID)"
       >
-      <div class="mt-3 flex gap-2">
-        <button
-          type="button"
-          data-action="approve"
-          class="rounded-soft bg-accent px-3 py-1 text-xs font-medium text-white transition hover:opacity-90 active:scale-[0.97]"
-          @click="emit('approve', item.callID)"
-        >
-          Aprobar
-        </button>
-        <button
-          type="button"
-          data-action="deny"
-          class="rounded-soft bg-black/[0.06] px-3 py-1 text-xs font-medium transition hover:bg-black/[0.1] active:scale-[0.97]"
-          @click="emit('deny', item.callID)"
-        >
-          Denegar
-        </button>
-      </div>
-    </template>
+        Aprobar
+      </button>
+      <button
+        type="button"
+        data-action="deny"
+        class="rounded-soft bg-black/[0.06] px-3 py-1 text-xs font-medium transition hover:bg-black/[0.1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/30 focus-visible:ring-offset-2 active:scale-[0.97]"
+        @click="emit('deny', item.callID)"
+      >
+        Denegar
+      </button>
+    </div>
 
-    <DiffView v-if="isDiff" :diff="item.diff" class="mt-2" />
-    <pre
-      v-else-if="item.output"
-      class="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-xs opacity-80"
-      >{{ item.output }}</pre
-    >
-    <p v-if="item.error" class="mt-2 text-xs text-accent">{{ item.error }}</p>
-  </div>
+    <div v-if="expanded" class="mt-2 pl-6">
+      <DiffView v-if="isDiff" :diff="item.diff" />
+      <p
+        v-else-if="item.error"
+        class="whitespace-pre-wrap break-words text-xs text-red-700"
+      >
+        {{ item.error }}
+      </p>
+      <pre
+        v-else-if="item.output"
+        class="overflow-x-auto whitespace-pre-wrap break-words text-xs opacity-80"
+        >{{ item.output }}</pre
+      >
+    </div>
+  </article>
 </template>
-
-<style scoped>
-/* Crossfade del icono de estado (ver template): solo opacidad, sin blur (caro en
-   webkit). ease-snappy = misma curva que el resto de la app. */
-.tool-icon-enter-active,
-.tool-icon-leave-active {
-  transition: opacity 0.12s var(--ease-snappy);
-}
-.tool-icon-enter-from,
-.tool-icon-leave-to {
-  opacity: 0;
-}
-</style>
