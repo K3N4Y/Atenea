@@ -55,7 +55,10 @@ func TestApp_EmitsSessionsChangedOnExternalDBWrite(t *testing.T) {
 		t.Fatalf("AppendEvent (otro proceso): %v", err)
 	}
 
-	deadline := time.After(2 * time.Second)
+	// Margen holgado: bajo la suite completa (los tests PTY lanzan binarios
+	// TUI reales en paralelo) el watcher puede quedar hambriento de CPU y 2s
+	// no alcanzan; el caso feliz retorna apenas ve la emision, sin esperar.
+	deadline := time.After(10 * time.Second)
 	for {
 		if rec.sawChannel("sessions:changed") {
 			return
