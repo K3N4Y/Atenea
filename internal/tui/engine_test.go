@@ -16,8 +16,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"atenea/internal/checkpoint"
 	"atenea/internal/llm"
 	"atenea/internal/session"
+	"atenea/internal/tool/hashline"
 )
 
 type promptHistoryStore struct {
@@ -998,5 +1000,89 @@ func TestEngine_SendPromptNewWithArgumentsRemainsRegularPrompt(t *testing.T) {
 	}
 	if len(messages) != 1 || messages[0].Text != "/new algo" {
 		t.Fatalf("mensajes de s1 = %+v, se esperaba el prompt literal /new algo", messages)
+	}
+}
+
+func TestEngine_UndoRestoresPrePromptWorkspaceAndEffectiveConversation(t *testing.T) {
+	root := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, output)
+		}
+	}
+	git("init")
+	git("config", "user.name", "Atenea Test")
+	git("config", "user.email", "atenea@example.test")
+	if err := os.WriteFile(filepath.Join(root, "tracked.txt"), []byte("committed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "tracked.txt")
+	git("commit", "-m", "base")
+	if err := os.WriteFile(filepath.Join(root, "tracked.txt"), []byte("preexisting-change\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("preexisting-untracked\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	hash := hashline.ComputeFileHash("preexisting-change\n")
+	provider := newTurnProvider(
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.ToolCall, CallID: "read-1", ToolName: "read", Input: json.RawMessage(`{"path":"tracked.txt"}`)}, {Kind: llm.StepEnded}},
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.ToolCall, CallID: "edit-1", ToolName: "edit", Input: json.RawMessage(`{"patch":"[tracked.txt#` + hash + `]\nSWAP 1.=1:\n+agent-change"}`)}, {Kind: llm.StepEnded}},
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.ToolCall, CallID: "write-1", ToolName: "write", Input: json.RawMessage(`{"path":"created.txt","content":"created by agent\n"}`)}, {Kind: llm.StepEnded}},
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.StepEnded}},
+	)
+	store := session.NewMemoryStore()
+	engine := NewEngine(EngineConfig{
+		Root:        root,
+		Provider:    provider,
+		Store:       store,
+		Checkpoints: checkpoint.NewGitStore(t.TempDir()),
+	})
+
+	if _, err := engine.SendPrompt("s1", "cambia los archivos"); err != nil {
+		t.Fatal(err)
+	}
+	if _, done := collectUntilRunDone(t, engine.Events(), 10*time.Second, nil); done.Err != "" {
+		t.Fatalf("RunDoneMsg.Err = %q", done.Err)
+	}
+
+	result, err := engine.Undo("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Prompt != "cambia los archivos" {
+		t.Fatalf("Prompt = %q", result.Prompt)
+	}
+	assertUndoFile(t, root, "tracked.txt", "preexisting-change\n")
+	assertUndoFile(t, root, "notes.txt", "preexisting-untracked\n")
+	assertUndoMissing(t, root, "created.txt")
+
+	messages, err := store.Messages(context.Background(), "s1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 0 {
+		t.Fatalf("effective messages = %+v, want none", messages)
+	}
+}
+
+func assertUndoFile(t *testing.T, root, name, want string) {
+	t.Helper()
+	got, err := os.ReadFile(filepath.Join(root, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Fatalf("%s = %q, want %q", name, got, want)
+	}
+}
+
+func assertUndoMissing(t *testing.T, root, name string) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(root, name)); !os.IsNotExist(err) {
+		t.Fatalf("%s still exists or stat failed: %v", name, err)
 	}
 }
