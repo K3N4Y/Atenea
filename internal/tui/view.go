@@ -3,6 +3,7 @@ package tui
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -47,24 +48,45 @@ const inputPrompt = "❯ "
 // que un input largo desborde la linea del header.
 const toolInputSummaryWidth = 48
 
+// Marcadores de estado de las entradas de actividad (tools, skills, permisos
+// y errores de step): un glifo en la columna 0 del transcript dice el estado
+// de un vistazo; el detalle va debajo como lineas de rail (activityRailPrefix).
+const (
+	activityRunMarker  = "●" // actividad en ejecucion
+	activityOKMarker   = "✓" // actividad terminada con exito
+	activityFailMarker = "✗" // actividad terminada con error (tambien errores de step)
+	activityAskMarker  = "?" // solicitud de permiso pendiente (aprobar/denegar)
+)
+
+// activityNameWidth es el ancho de la columna del nombre en el header de
+// actividad: el nombre va alineado a la izquierda a este ancho para que los
+// resumenes de headers adyacentes queden en una columna comun legible.
+const activityNameWidth = 8
+
+// activityHeader compone el header de una entrada de actividad: el marcador
+// en la columna 0, el nombre alineado a activityNameWidth columnas y el
+// resumen (`● bash     ls`). Sin resumen se recortan los espacios colgantes
+// de la alineacion para no dejar una cola invisible en la linea.
+func activityHeader(marker, name, summary string) string {
+	return strings.TrimRight(marker+" "+fmt.Sprintf("%-*s", activityNameWidth, name)+" "+summary, " ")
+}
+
 // toolOutputPreviewLines es el tope de lineas del preview del output de una
 // tool exitosa: acota el detalle para no inundar el transcript; el resto se
-// resume en la marca "  … +N lineas".
+// resume en la marca "│ … +N lines".
 const toolOutputPreviewLines = 4
 
-// toolOutputPrefix marca cada linea del preview del output bajo el header de
-// la tool (dos espacios + U+2502 + espacio), estilo bloque citado.
-const toolOutputPrefix = "  │ "
+// activityRailPrefix es el rail de detalle de las entradas de actividad: cada
+// linea bajo el header (output, diff, error, marca de truncado) abre con
+// U+2502 + espacio en la columna 0, alineado bajo el marcador del header. En
+// el diff los marcadores +/- del propio diff llevan la vista dentro del rail.
+const activityRailPrefix = "│ "
 
 // toolDiffPreviewLines es el tope de lineas del diff mostrado bajo el header
 // de una tool exitosa de edit/write: mas generoso que el preview del output
 // (el diff ES el resultado que se quiere revisar) pero acotado igual; el resto
-// se resume en la misma marca "  … +N lineas".
+// se resume en la misma marca "│ … +N lines".
 const toolDiffPreviewLines = 16
-
-// toolDiffPrefix indenta cada linea del diff bajo el header de la tool (dos
-// espacios, sin barra: los marcadores +/- del propio diff llevan la vista).
-const toolDiffPrefix = "  "
 
 // Estilos de presentacion. Solo envuelven lineas o segmentos ya renderizados,
 // sin margenes ni padding, para no alterar el conteo de lineas de la vista.
@@ -120,11 +142,18 @@ func (e entry) render(width int) string {
 	case entryTool:
 		return e.renderTool()
 	case entryPermission:
-		return permissionStyle.Render("[permiso] " + e.tool + " " + e.input + " (aprobar/denegar)")
+		// Header de actividad con el marcador de pregunta: el resumen del
+		// Input (summarizeToolInput) dice QUE pide permiso, y el sufijo el
+		// gesto que lo resuelve.
+		return permissionStyle.Render(activityHeader(activityAskMarker, e.tool, summarizeToolInput(e.input)) + " (aprobar/denegar)")
 	case entryPlanApproval:
-		return permissionStyle.Render("[plan] plan presentado (y ejecutar / n seguir en plan)")
+		// Misma gramatica de actividad que el permiso (marcador de pregunta y
+		// "plan" como nombre), con el gesto que lo resuelve como sufijo.
+		return permissionStyle.Render(activityHeader(activityAskMarker, "plan", "presentado") + " (y ejecutar / n seguir en plan)")
 	case entryError:
-		return errorStyle.Render("[error] " + e.text)
+		// El fallo duro del step usa la misma gramatica de actividad, con
+		// "error" como nombre y el mensaje como resumen.
+		return errorStyle.Render(activityHeader(activityFailMarker, "error", e.text))
 	case entryCompaction:
 		if e.err != "" {
 			return errorStyle.Render("[error] " + e.err)
@@ -212,64 +241,75 @@ func formatThinkingDuration(d time.Duration) string {
 	return d.Round(time.Second).String()
 }
 
-// renderTool rinde el bloque de una tool call: el header con nombre y resumen
-// del Input, el estado, y en exito el detalle (diff u output) debajo. La tool
-// "skill" tiene su linea dedicada (renderSkill), no el header generico.
+// renderTool rinde el bloque de una tool call como entrada de actividad
+// (renderActivity): el resumen del Input dice QUE corrio la tool de un
+// vistazo; sin resumen el header queda en marcador y nombre pelados. La tool
+// "skill" comparte la misma gramatica pero con el nombre de la skill como
+// resumen (`● skill    demo`, el campo "name" del Input JSON; sin nombre
+// parseable el header queda pelado) y en exito SIN detalle: el cuerpo del
+// SKILL.md que viaja en el output es para el modelo, no para el transcript.
 func (e entry) renderTool() string {
 	if e.tool == "skill" {
-		return e.renderSkill()
+		return e.renderActivity("skill", skillName(e.input), false)
 	}
-	// El header lleva el resumen del Input entre parens (`bash(ls)`) para
-	// decir QUE corrio la tool de un vistazo; sin resumen queda el nombre
-	// pelado, como antes.
-	head := "[tool] " + e.tool
-	if summary := summarizeToolInput(e.input); summary != "" {
-		head += "(" + summary + ")"
-	}
+	return e.renderActivity(e.tool, summarizeToolInput(e.input), true)
+}
+
+// renderActivity es el render comun de las entradas de actividad de tool: el
+// header `<marcador> <nombre> <resumen>` (ver activityHeader) con el marcador
+// de estado en la columna 0 y, con showDetail y exito, el detalle (diff u
+// output) debajo como lineas de rail. Cada linea es UN segmento para que el
+// contenido plano siga siendo asertable.
+func (e entry) renderActivity(name, summary string, showDetail bool) string {
 	switch e.status {
 	case toolOK:
-		out := toolOKStyle.Render(head + ": ok")
-		// Con diff (edit/write) el detalle es el diff, no el output: el
-		// output de esas tools es un "ok" sin informacion frente al cambio.
-		detail := renderDiffPreview(e.diff)
-		if detail == "" {
-			detail = renderOutputPreview(e.output)
+		detail := ""
+		if showDetail {
+			// Con diff (edit/write) el detalle es el diff, no el output: el
+			// output de esas tools es un "ok" sin informacion frente al
+			// cambio. El header suma ademas el stat `+N -M` del diff (ver
+			// diffStat), separado del resumen por dos espacios.
+			detail = renderDiffPreview(e.diff)
+			if detail != "" {
+				added, removed := diffStat(e.diff)
+				summary += "  +" + strconv.Itoa(added) + " -" + strconv.Itoa(removed)
+			} else {
+				detail = renderOutputPreview(e.output)
+			}
 		}
+		out := toolOKStyle.Render(activityHeader(activityOKMarker, name, summary))
 		if detail != "" {
 			out += "\n" + detail
 		}
 		return out
 	case toolFailed:
-		return toolFailedStyle.Render(head + ": error: " + e.err)
+		// El error va debajo del header como linea de rail, no pegado a el.
+		return toolFailedStyle.Render(activityHeader(activityFailMarker, name, summary)) +
+			"\n" + toolFailedStyle.Render(activityRailPrefix+"error: "+e.err)
 	default:
-		return toolRunningStyle.Render(head + ": ejecutando")
+		return toolRunningStyle.Render(activityHeader(activityRunMarker, name, summary))
 	}
 }
 
-// renderSkill rinde la tool "skill" como linea dedicada `[skill] <nombre>`:
-// el nombre es el campo "name" del Input JSON (sin nombre parseable el header
-// queda "[skill]" pelado, sin parens). Los sufijos de estado y los estilos son
-// los mismos que el resto de tools, con la linea entera como UN segmento para
-// que el contenido plano siga siendo asertable. En exito NO se muestra preview
-// del output ni diff: el cuerpo del SKILL.md que viaja en el output es para el
-// modelo, no para el transcript.
-func (e entry) renderSkill() string {
-	head := "[skill]"
-	if name := skillName(e.input); name != "" {
-		head += " " + name
+// diffStat cuenta las lineas agregadas y quitadas de un unified diff: las que
+// empiezan con "+"/"-", excluyendo las cabeceras de archivo "+++"/"---". Es
+// el stat `+N -M` que el header de una edit/write exitosa muestra junto al
+// resumen del Input.
+func diffStat(diff string) (added, removed int) {
+	for _, line := range strings.Split(diff, "\n") {
+		switch {
+		case strings.HasPrefix(line, "+++"), strings.HasPrefix(line, "---"):
+		case strings.HasPrefix(line, "+"):
+			added++
+		case strings.HasPrefix(line, "-"):
+			removed++
+		}
 	}
-	switch e.status {
-	case toolOK:
-		return toolOKStyle.Render(head + ": ok")
-	case toolFailed:
-		return toolFailedStyle.Render(head + ": error: " + e.err)
-	default:
-		return toolRunningStyle.Render(head + ": ejecutando")
-	}
+	return added, removed
 }
 
 // skillName extrae el campo "name" del Input JSON de la tool skill; con JSON
-// invalido o sin campo devuelve "" y el header de renderSkill queda pelado.
+// invalido o sin campo devuelve "" y el header de la skill queda pelado.
 func skillName(raw string) string {
 	var input struct {
 		Name string `json:"name"`
@@ -285,9 +325,9 @@ func skillName(raw string) string {
 // resumen es ese valor pelado (el caso comun: `{"command":"ls -la"}` se lee
 // mejor como `ls -la` que como JSON); en cualquier otro caso es el JSON
 // compacto. Sin Input, con JSON invalido o con objeto vacio devuelve "" y el
-// header queda sin parens. Los saltos de linea colapsan a espacio y el
-// resultado se trunca a toolInputSummaryWidth celdas: el resumen es una
-// pista de una linea, no el input completo.
+// header queda en marcador y nombre pelados. Los saltos de linea colapsan a
+// espacio y el resultado se trunca a toolInputSummaryWidth celdas: el resumen
+// es una pista de una linea, no el input completo.
 func summarizeToolInput(raw string) string {
 	if raw == "" {
 		return ""
@@ -319,9 +359,9 @@ func summarizeToolInput(raw string) string {
 // renderCappedLines es el esqueleto comun de los previews de detalle de una
 // tool: parte el texto en lineas, rinde cada una con renderLine (UN segmento
 // contiguo por linea, siguiendo la convencion de los estilos de arriba) hasta
-// maxLines lineas y, con mas, cierra con la marca "  … +N lineas" (N =
-// ocultas) que acota el detalle para no inundar el transcript. Texto vacio o
-// solo whitespace devuelve "" (sin preview).
+// maxLines lineas y, con mas, cierra con la marca de rail "│ … +N lines"
+// (N = ocultas) que acota el detalle para no inundar el transcript. Texto
+// vacio o solo whitespace devuelve "" (sin preview).
 func renderCappedLines(text string, maxLines int, renderLine func(line string) string) string {
 	if strings.TrimSpace(text) == "" {
 		return ""
@@ -336,26 +376,27 @@ func renderCappedLines(text string, maxLines int, renderLine func(line string) s
 		rendered = append(rendered, renderLine(line))
 	}
 	if hidden := len(lines) - len(shown); hidden > 0 {
-		rendered = append(rendered, toolOutputStyle.Render("  … +"+strconv.Itoa(hidden)+" lineas"))
+		rendered = append(rendered, toolOutputStyle.Render(activityRailPrefix+"… +"+strconv.Itoa(hidden)+" lines"))
 	}
 	return strings.Join(rendered, "\n")
 }
 
-// renderOutputPreview rinde el output de una tool exitosa como bloque citado
-// bajo el header: cada linea prefijada con toolOutputPrefix y en estilo tenue,
-// hasta toolOutputPreviewLines lineas (mas alla, la marca de renderCappedLines).
+// renderOutputPreview rinde el output de una tool exitosa como lineas de rail
+// bajo el header: cada linea prefijada con activityRailPrefix y en estilo
+// tenue, hasta toolOutputPreviewLines lineas (mas alla, la marca de
+// renderCappedLines).
 func renderOutputPreview(output string) string {
 	return renderCappedLines(output, toolOutputPreviewLines, func(line string) string {
-		return toolOutputStyle.Render(toolOutputPrefix + line)
+		return toolOutputStyle.Render(activityRailPrefix + line)
 	})
 }
 
 // renderDiffPreview rinde el diff unificado de Tool.Success (edit/write) bajo
-// el header: cada linea indentada con toolDiffPrefix, las lineas "+" en verde,
-// las "-" en rojo y el resto tenue, hasta toolDiffPreviewLines lineas (mas
-// generoso que el preview del output: el diff ES el resultado que se quiere
-// revisar). Diff vacio o solo whitespace devuelve "" (sin detalle, la vista
-// cae al output).
+// el header: cada linea con el rail activityRailPrefix en la columna 0, las
+// lineas "+" en verde, las "-" en rojo y el resto tenue, hasta
+// toolDiffPreviewLines lineas (mas generoso que el preview del output: el
+// diff ES el resultado que se quiere revisar). Diff vacio o solo whitespace
+// devuelve "" (sin detalle, la vista cae al output).
 func renderDiffPreview(diff string) string {
 	return renderCappedLines(diff, toolDiffPreviewLines, func(line string) string {
 		style := toolOutputStyle
@@ -365,7 +406,7 @@ func renderDiffPreview(diff string) string {
 		case strings.HasPrefix(line, "-"):
 			style = diffDelStyle
 		}
-		return style.Render(toolDiffPrefix + line)
+		return style.Render(activityRailPrefix + line)
 	})
 }
 
@@ -456,19 +497,43 @@ func renderMarkdown(text string, width int) string {
 	return strings.Trim(out, "\n")
 }
 
-// renderTranscript une los bloques de la conversacion, un parrafo por entrada.
-// Pasa el ancho util del viewport (0 sin tamano conocido = sin envolver) para
-// que el render markdown envuelva al mismo ancho que luego usa syncViewport.
+// compactActivityJoin decide si la entrada cur se une a prev SIN linea en
+// blanco: ambas deben ser de actividad (tool, permiso o error de step), que
+// forman un grupo compacto de headers fisicamente contiguos; cualquier otra
+// vecindad (narrativa del assistant, pensamiento, usuario, compaction)
+// conserva el parrafo propio ("\n\n"). renderTranscript y entryLines DEBEN
+// compartir esta condicion: entryLines replica el contenido del viewport
+// linea a linea para mapear clics a entradas, y si las condiciones
+// divergieran la fila clicada dejaria de corresponder a la entrada real.
+func compactActivityJoin(prev, cur entry) bool {
+	isActivity := func(kind entryKind) bool {
+		return kind == entryTool || kind == entryPermission || kind == entryError
+	}
+	return isActivity(prev.kind) && isActivity(cur.kind)
+}
+
+// renderTranscript une los bloques de la conversacion, un parrafo por
+// entrada, salvo las entradas de actividad adyacentes, que se agrupan sin
+// linea en blanco entre si (ver compactActivityJoin). Pasa el ancho util del
+// viewport (0 sin tamano conocido = sin envolver) para que el render markdown
+// envuelva al mismo ancho que luego usa syncViewport.
 func (m Model) renderTranscript() string {
 	width := 0
 	if m.ready {
 		width = m.viewport.Width
 	}
-	parts := make([]string, len(m.entries))
+	var b strings.Builder
 	for i, e := range m.entries {
-		parts[i] = e.render(width)
+		if i > 0 {
+			if compactActivityJoin(m.entries[i-1], e) {
+				b.WriteString("\n")
+			} else {
+				b.WriteString("\n\n")
+			}
+		}
+		b.WriteString(e.render(width))
 	}
-	return strings.Join(parts, "\n\n")
+	return b.String()
 }
 
 // reservedLines es el alto reservado bajo el transcript: la caja del composer
@@ -565,7 +630,8 @@ type entryLine struct {
 
 // entryLines reconstruye el contenido del viewport envuelto linea por linea,
 // conservando a que entrada pertenece cada linea fisica. Los bloques se separan
-// con una linea vacia (el "\n\n" de renderTranscript) y el texto se envuelve al
+// con una linea vacia (el "\n\n" de renderTranscript) salvo entre entradas de
+// actividad adyacentes, que se agrupan sin separador, y el texto se envuelve al
 // ancho del viewport exactamente como syncViewport, de modo que la linea N de
 // esta lista es la linea N absoluta del contenido del viewport (la que ocupa la
 // fila YOffset+N en pantalla). Sin tamano conocido (ready == false) no envuelve.
@@ -576,8 +642,11 @@ func (m Model) entryLines() []entryLine {
 	}
 	var out []entryLine
 	for i, e := range m.entries {
-		if i > 0 {
-			// Separador de parrafo entre bloques (una linea vacia).
+		if i > 0 && !compactActivityJoin(m.entries[i-1], e) {
+			// Separador de parrafo entre bloques (una linea vacia), SOLO
+			// cuando renderTranscript separa con "\n\n": la condicion
+			// compartida compactActivityJoin evita que ambas numeraciones
+			// de lineas diverjan.
 			out = append(out, entryLine{idx: -1, line: ""})
 		}
 		block := e.render(width)
@@ -625,11 +694,20 @@ func (m Model) View() string {
 }
 
 func (m Model) renderCanvas(content string) string {
-	style := canvasStyle
-	if m.ready {
-		style = style.Width(max(m.width, 0)).Height(max(m.height, 0))
+	content = restoreCanvasBackground(content)
+	if !m.ready {
+		// Sin tamano conocido no hay lienzo rectangular que rellenar: el
+		// render multi-linea de lipgloss padea cada linea al ancho de la mas
+		// larga, un rectangulo arbitrario que ademas cuelga espacios tras los
+		// headers de actividad. El fondo se pinta linea a linea (una linea
+		// suelta no se padea) hasta que llegue el primer WindowSizeMsg.
+		lines := strings.Split(content, "\n")
+		for i, line := range lines {
+			lines[i] = canvasStyle.Render(line)
+		}
+		return strings.Join(lines, "\n")
 	}
-	return style.Render(restoreCanvasBackground(content))
+	return canvasStyle.Width(max(m.width, 0)).Height(max(m.height, 0)).Render(content)
 }
 
 func restoreCanvasBackground(content string) string {

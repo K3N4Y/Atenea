@@ -102,12 +102,31 @@ from the chat edges. Each block has one blank row of vertical padding and three
 cells of inner horizontal padding; its content starts with a faint `❯` marker
 and normal-weight text. The TUI does not render message timestamps.
 
+### Activity rail
+
+Tool calls, pending permissions, and hard step errors render as activity
+entries with a continuous visual column at column 0: a status marker (`●`
+running, `✓` success, `✗` failure, `?` pending permission) followed by the
+tool name padded to an 8-column name field and the summarized input
+(`✓ bash     ls`). Detail lines under a header carry the `│ ` rail: output
+preview, diff lines, the failure reason, and the truncation mark. Successful
+edits/writes append a `+N -M` stat computed from the unified diff (file
+headers excluded). Adjacent activity entries join without a blank line into
+one contiguous block, while narrative keeps its own paragraph; the shared
+predicate `compactActivityJoin` keeps `renderTranscript` and `entryLines`
+(click targeting) in lockstep. Full contract:
+[TUI transcript activity hierarchy](../specs/2026-07-11-tui-transcript-activity-hierarchy.md).
+
 ### Root Canvas
 
 `Model.View` routes every chat, explorer, and file-viewer layout through one
 root Lip Gloss canvas. Its background is the exact dark color `#141414`; after
 the first `WindowSizeMsg`, the canvas fills the complete reported width and
 height so empty terminal cells cannot fall back to the user's terminal theme.
+Before that first size arrives the background paints line by line instead:
+a multi-line Lip Gloss render would pad every line to the longest one, an
+arbitrary rectangle that would also hang trailing spaces after activity
+headers.
 Child styles remain responsible for explicit functional highlights such as
 the tree cursor, diffs, statuses, and selection states.
 Child styles can emit complete SGR resets inside the root render, so the
