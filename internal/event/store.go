@@ -2,6 +2,7 @@ package event
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"atenea/internal/session"
@@ -24,6 +25,7 @@ func NewEmittingStore(inner session.Store, bus *Bus) *EmittingStore {
 // var _ session.Store = (*EmittingStore)(nil) asegura en tiempo de compilacion
 // que el decorador cumple la interface.
 var _ session.Store = (*EmittingStore)(nil)
+var _ session.CompactionStore = (*EmittingStore)(nil)
 
 // AppendEvent delega en inner bajo candado y, si el append fue exitoso, sella su
 // copia local con SessionID y Seq y la publica en el bus. Si inner falla,
@@ -75,4 +77,41 @@ func (s *EmittingStore) PendingToolCalls(ctx context.Context, sessionID string) 
 // DeleteSession delega sin candado ni emision.
 func (s *EmittingStore) DeleteSession(ctx context.Context, sessionID string) error {
 	return s.inner.DeleteSession(ctx, sessionID)
+}
+
+func (s *EmittingStore) ContextForRunner(ctx context.Context, sessionID string) (session.RunnerContext, error) {
+	store, ok := s.inner.(session.CompactionStore)
+	if ok {
+		return store.ContextForRunner(ctx, sessionID)
+	}
+	epoch, err := s.inner.Epoch(ctx, sessionID)
+	if err != nil {
+		return session.RunnerContext{}, err
+	}
+	messages, err := s.inner.Messages(ctx, sessionID, epoch.BaselineSeq)
+	if err != nil {
+		return session.RunnerContext{}, err
+	}
+	return session.RunnerContext{Epoch: epoch, Messages: messages}, nil
+}
+
+func (s *EmittingStore) CommitCompaction(ctx context.Context, sessionID string, checkpoint session.CompactionCheckpoint) (session.Seq, error) {
+	store, ok := s.inner.(session.CompactionStore)
+	if !ok {
+		return 0, errors.New("inner store does not support context compaction")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	seq, err := store.CommitCompaction(ctx, sessionID, checkpoint)
+	if err != nil {
+		return seq, err
+	}
+	checkpointCopy := checkpoint
+	s.bus.Publish(session.SessionEvent{
+		SessionID:  sessionID,
+		Seq:        seq,
+		Kind:       session.KindContextCompacted,
+		Compaction: &checkpointCopy,
+	})
+	return seq, nil
 }

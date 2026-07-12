@@ -10,6 +10,10 @@ runs in the terminal. Reuse the SAME agent loop as the Wails app (the
 runner, the tools, the ask-before-run, the skills and the subagents); the only thing that
 changes is the presentation border.
 
+The composer also owns two built-in session commands that never become model
+messages: `/new` creates a session and `/compact` requests durable context
+compaction for the active session.
+
 ```
 wails app:  runner -> EmittingStore -> Bus -> EmitFunc(runtime.EventsEmit) -> frontend web
 atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Model Bubble Tea
@@ -27,6 +31,16 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
  opens the SQLite SHARED with the app via `session.OpenDefault` (fallback to
  memory if it fails, with `Close` on exit) and runs `tea.NewProgram` with
  alt-screen. Without its own testable logic.
+- `internal/tui/engine.go` — coordinates `/compact` per session. An idle session
+  starts immediately; an active run records one deduplicated pending request and
+  drains it after normal completion or cancellation. Prompt execution and
+  compaction share a per-session mutex so a later prompt observes the committed
+  compacted baseline.
+- `internal/tui/model.go`, `fold.go`, and `view.go` — render transient
+  `Compaction queued` / `Compacting context` feedback without persisting it.
+  Successful completion is replaced by the durable `Context.Compacted` event;
+  insufficient history is informational and provider failures use the normal
+  error styling.
 - `internal/tui/engine.go` — the headless assembly of the agent. It creates
  inbox/gate/snapshots in memory, decorates the store with `EmittingStore` on a
  `event.Bus` whose `EmitFunc` bridges each `session.SessionEvent` to the

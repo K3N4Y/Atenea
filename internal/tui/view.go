@@ -125,6 +125,11 @@ func (e entry) render(width int) string {
 		return permissionStyle.Render("[plan] plan presentado (y ejecutar / n seguir en plan)")
 	case entryError:
 		return errorStyle.Render("[error] " + e.text)
+	case entryCompaction:
+		if e.err != "" {
+			return errorStyle.Render("[error] " + e.err)
+		}
+		return statusStyle.Render("[context] " + e.text)
 	default: // entryAssistant: texto plano sin marcador
 		// Los bloques asentados se rinden completos; durante el streaming se
 		// rinde solo el prefijo revelado para no filtrar el backlog pendiente.

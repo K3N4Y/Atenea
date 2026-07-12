@@ -83,6 +83,117 @@ type blockingAfterToolProvider struct {
 	next     int
 }
 
+type compactQueueProvider struct {
+	started chan struct{}
+	release chan struct{}
+
+	mu       sync.Mutex
+	requests []llm.Request
+}
+
+type blockingSummaryProvider struct {
+	started chan struct{}
+	release chan struct{}
+
+	mu       sync.Mutex
+	requests []llm.Request
+}
+
+type replacementRunCompactionProvider struct {
+	mu      sync.Mutex
+	next    int
+	started [3]chan struct{}
+}
+
+func newReplacementRunCompactionProvider() *replacementRunCompactionProvider {
+	return &replacementRunCompactionProvider{started: [3]chan struct{}{make(chan struct{}), make(chan struct{}), make(chan struct{})}}
+}
+
+func (p *replacementRunCompactionProvider) Stream(ctx context.Context, _ llm.Request) (<-chan llm.Event, error) {
+	p.mu.Lock()
+	call := p.next
+	p.next++
+	p.mu.Unlock()
+	out := make(chan llm.Event)
+	go func() {
+		defer close(out)
+		close(p.started[call])
+		if call < 2 {
+			<-ctx.Done()
+			return
+		}
+		out <- llm.Event{Kind: llm.TextDelta, Text: `{"current_goal":"continue","constraints_and_instructions":[],"decisions":[],"completed_work":[],"files_and_changes":[],"relevant_tool_results":[],"failures_and_attempts":[],"pending_and_next_step":[],"facts_not_to_reinterpret":[]}`}
+		out <- llm.Event{Kind: llm.StepEnded}
+	}()
+	return out, nil
+}
+
+func newBlockingSummaryProvider() *blockingSummaryProvider {
+	return &blockingSummaryProvider{started: make(chan struct{}), release: make(chan struct{})}
+}
+
+func (p *blockingSummaryProvider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Event, error) {
+	p.mu.Lock()
+	call := len(p.requests)
+	p.requests = append(p.requests, req)
+	p.mu.Unlock()
+	out := make(chan llm.Event)
+	go func() {
+		defer close(out)
+		if call == 0 {
+			close(p.started)
+			select {
+			case <-ctx.Done():
+				return
+			case <-p.release:
+			}
+			out <- llm.Event{Kind: llm.TextDelta, Text: `{"current_goal":"continue","constraints_and_instructions":[],"decisions":[],"completed_work":[],"files_and_changes":[],"relevant_tool_results":[],"failures_and_attempts":[],"pending_and_next_step":[],"facts_not_to_reinterpret":[]}`}
+		}
+		out <- llm.Event{Kind: llm.StepEnded}
+	}()
+	return out, nil
+}
+
+func (p *blockingSummaryProvider) callCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.requests)
+}
+
+func newCompactQueueProvider() *compactQueueProvider {
+	return &compactQueueProvider{started: make(chan struct{}), release: make(chan struct{})}
+}
+
+func (p *compactQueueProvider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Event, error) {
+	p.mu.Lock()
+	call := len(p.requests)
+	p.requests = append(p.requests, req)
+	p.mu.Unlock()
+	out := make(chan llm.Event)
+	go func() {
+		defer close(out)
+		if call == 0 {
+			close(p.started)
+			select {
+			case <-ctx.Done():
+				return
+			case <-p.release:
+			}
+			out <- llm.Event{Kind: llm.StepEnded}
+			return
+		}
+		out <- llm.Event{Kind: llm.TextDelta, Text: `{"current_goal":"continue","constraints_and_instructions":[],"decisions":[],"completed_work":[],"files_and_changes":[],"relevant_tool_results":[],"failures_and_attempts":[],"pending_and_next_step":[],"facts_not_to_reinterpret":[]}`}
+		out <- llm.Event{Kind: llm.StepEnded}
+	}()
+	return out, nil
+}
+
+func (p *compactQueueProvider) callCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.requests)
+}
+
 func (p *blockingAfterToolProvider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Event, error) {
 	p.mu.Lock()
 	turn := p.next
@@ -352,6 +463,205 @@ func collectUntilRunDone(t *testing.T, ch <-chan tea.Msg, timeout time.Duration,
 			return events, m
 		default:
 			t.Fatalf("mensaje inesperado en el canal del engine: %T", m)
+		}
+	}
+}
+
+func seedCompactableEngineSession(t *testing.T, store session.Store, sessionID string) {
+	t.Helper()
+	for _, message := range []session.Message{
+		{ID: "u1", Role: session.RoleUser, Text: "old"},
+		{ID: "a1", Role: session.RoleAssistant, Text: "answer"},
+		{ID: "u2", Role: session.RoleUser, Text: "current"},
+	} {
+		message := message
+		if _, err := store.AppendEvent(context.Background(), sessionID, session.SessionEvent{Message: &message}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestEngine_CompactIdleSessionStartsImmediately(t *testing.T) {
+	store := session.NewMemoryStore()
+	seedCompactableEngineSession(t, store, "s1")
+	provider := newCompactQueueProvider()
+	close(provider.release)
+	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: store})
+
+	if _, err := e.SendPrompt("s1", "/compact"); err != nil {
+		t.Fatalf("SendPrompt(/compact) error = %v", err)
+	}
+	msg := nextMsg(t, e.Events(), time.Second)
+	status, ok := msg.(CompactionStatusMsg)
+	if !ok || status.State != CompactionRunning {
+		t.Fatalf("first message = %#v, want CompactionRunning", msg)
+	}
+}
+
+func TestEngine_CompactDuringRunQueuesOnceAndDrainsAfterCompletion(t *testing.T) {
+	store := session.NewMemoryStore()
+	seedCompactableEngineSession(t, store, "s1")
+	provider := newCompactQueueProvider()
+	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: store})
+
+	if _, err := e.SendPrompt("s1", "continue turn"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-provider.started:
+	case <-time.After(time.Second):
+		t.Fatal("turn did not start")
+	}
+	for range 2 {
+		if _, err := e.SendPrompt("s1", "/compact"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var status CompactionStatusMsg
+	for {
+		msg := nextMsg(t, e.Events(), time.Second)
+		if candidate, ok := msg.(CompactionStatusMsg); ok {
+			status = candidate
+			break
+		}
+	}
+	if status.State != CompactionQueued {
+		t.Fatalf("queued message = %#v", status)
+	}
+	select {
+	case duplicate := <-e.Events():
+		t.Fatalf("duplicate /compact emitted %#v", duplicate)
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(provider.release)
+
+	deadline := time.After(2 * time.Second)
+	seenCompacted := false
+	for !seenCompacted {
+		select {
+		case <-deadline:
+			t.Fatal("timeout waiting for Context.Compacted")
+		case message := <-e.Events():
+			if event, ok := message.(EventMsg); ok && event.Kind == session.KindContextCompacted {
+				seenCompacted = true
+			}
+		}
+	}
+	if got := provider.callCount(); got != 2 {
+		t.Fatalf("provider calls = %d, want turn + one summary", got)
+	}
+}
+
+func TestEngine_CompactWithArgumentsRemainsNormalPrompt(t *testing.T) {
+	store := session.NewMemoryStore()
+	provider := newTurnProvider([]llm.Event{{Kind: llm.StepEnded}})
+	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: store})
+	if _, err := e.SendPrompt("s1", "/compact later"); err != nil {
+		t.Fatal(err)
+	}
+	_, done := collectUntilRunDone(t, e.Events(), time.Second, nil)
+	if done.Err != "" {
+		t.Fatal(done.Err)
+	}
+	messages, err := store.Messages(context.Background(), "s1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) == 0 || messages[0].Text != "/compact later" {
+		t.Fatalf("messages = %+v, want literal prompt", messages)
+	}
+}
+
+func TestEngine_QueuedCompactRunsAfterCancellation(t *testing.T) {
+	store := session.NewMemoryStore()
+	seedCompactableEngineSession(t, store, "s1")
+	provider := newCompactQueueProvider()
+	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: store})
+	if _, err := e.SendPrompt("s1", "continue turn"); err != nil {
+		t.Fatal(err)
+	}
+	<-provider.started
+	if _, err := e.SendPrompt("s1", "/compact"); err != nil {
+		t.Fatal(err)
+	}
+	e.Stop("s1")
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			t.Fatal("timeout waiting for compaction after cancellation")
+		case message := <-e.Events():
+			if event, ok := message.(EventMsg); ok && event.Kind == session.KindContextCompacted {
+				return
+			}
+		}
+	}
+}
+
+func TestEngine_QueuedCompactWaitsForReplacementRun(t *testing.T) {
+	store := session.NewMemoryStore()
+	seedCompactableEngineSession(t, store, "s1")
+	provider := newReplacementRunCompactionProvider()
+	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: store})
+
+	if _, err := e.SendPrompt("s1", "first"); err != nil {
+		t.Fatal(err)
+	}
+	<-provider.started[0]
+	if _, err := e.SendPrompt("s1", "/compact"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.SendPrompt("s1", "replacement"); err != nil {
+		t.Fatal(err)
+	}
+	<-provider.started[1]
+
+	select {
+	case <-provider.started[2]:
+		t.Fatal("queued compaction started while replacement run was still active")
+	case <-time.After(100 * time.Millisecond):
+	}
+	e.Stop("s1")
+	select {
+	case <-provider.started[2]:
+	case <-time.After(time.Second):
+		t.Fatal("queued compaction did not start after replacement run stopped")
+	}
+}
+
+func TestEngine_PromptAfterIdleCompactWaitsForCommittedContext(t *testing.T) {
+	store := session.NewMemoryStore()
+	seedCompactableEngineSession(t, store, "s1")
+	provider := newBlockingSummaryProvider()
+	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: store})
+	if _, err := e.SendPrompt("s1", "/compact"); err != nil {
+		t.Fatal(err)
+	}
+	<-provider.started
+	promptDone := make(chan error, 1)
+	go func() {
+		_, err := e.SendPrompt("s1", "next prompt")
+		promptDone <- err
+	}()
+	time.Sleep(30 * time.Millisecond)
+	if got := provider.callCount(); got != 1 {
+		t.Fatalf("provider calls before summary release = %d, prompt overtook compaction", got)
+	}
+	select {
+	case err := <-promptDone:
+		t.Fatalf("prompt returned before compaction finished: %v", err)
+	default:
+	}
+	close(provider.release)
+	if err := <-promptDone; err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(2 * time.Second)
+	for provider.callCount() < 2 {
+		select {
+		case <-deadline:
+			t.Fatal("prompt did not start after compaction")
+		case <-time.After(time.Millisecond):
 		}
 	}
 }

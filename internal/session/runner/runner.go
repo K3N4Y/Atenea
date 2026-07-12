@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"log"
 
 	"atenea/internal/llm"
@@ -69,6 +70,17 @@ type Compactor interface {
 	// siguiente intento arme un request que entre. Debe hacer progreso: tras Compact,
 	// NeedsCompaction del nuevo request debe terminar siendo false.
 	Compact(ctx context.Context, sessionID string) error
+}
+
+func (r *Runner) SetCompactor(compactor Compactor) {
+	r.compactor = compactor
+}
+
+func (r *Runner) CompactNow(ctx context.Context, sessionID string) error {
+	if r.compactor == nil {
+		return errors.New("context compaction is unavailable")
+	}
+	return r.compactor.Compact(ctx, sessionID)
 }
 
 // NewRunner arma el Runner con sus dependencias. nextID genera el

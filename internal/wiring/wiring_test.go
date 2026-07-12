@@ -1,9 +1,15 @@
 package wiring
 
 import (
+	"context"
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"atenea/internal/event"
+	"atenea/internal/llm"
+	"atenea/internal/session"
+	"atenea/internal/tool"
 )
 
 // TestSkillDirs_ProjectBeforeGlobalDeduped: skillDirs lista primero las rutas del
@@ -29,5 +35,45 @@ func TestSkillDirs_ProjectBeforeGlobalDeduped(t *testing.T) {
 	// root == home: las rutas coinciden, deben deduplicarse a las 3 del home.
 	if d := skillDirs(home); len(d) != 3 {
 		t.Fatalf("root==home debe deduplicar a 3 dirs, got %v", d)
+	}
+}
+
+func TestBuild_InstallsContextCompactor(t *testing.T) {
+	store := session.NewMemoryStore()
+	ctx := context.Background()
+	for _, message := range []session.Message{
+		{ID: "u1", Role: session.RoleUser, Text: "old"},
+		{ID: "a1", Role: session.RoleAssistant, Text: "answer"},
+		{ID: "u2", Role: session.RoleUser, Text: "current"},
+	} {
+		message := message
+		if _, err := store.AppendEvent(ctx, "s1", session.SessionEvent{Message: &message}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	provider := llm.NewFakeProvider(
+		llm.Event{Kind: llm.TextDelta, Text: `{"current_goal":"continue","constraints_and_instructions":[],"decisions":[],"completed_work":[],"files_and_changes":[],"relevant_tool_results":[],"failures_and_attempts":[],"pending_and_next_step":[],"facts_not_to_reinterpret":[]}`},
+		llm.Event{Kind: llm.StepEnded},
+	)
+	built := Build(Config{
+		Root:     t.TempDir(),
+		Provider: provider,
+		Store:    store,
+		Inbox:    session.NewMemoryInbox(),
+		Gate:     session.NewMemoryPermissionGate(),
+		Snaps:    tool.NewSessionSnapshots(),
+		Bus:      event.NewBus(func(string, ...interface{}) {}),
+		NextID:   func() string { return "id" },
+	})
+
+	if err := built.Runner.CompactNow(ctx, "s1"); err != nil {
+		t.Fatalf("CompactNow() error = %v", err)
+	}
+	events, err := store.Events(ctx, "s1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last := events[len(events)-1]; last.Kind != session.KindContextCompacted {
+		t.Fatalf("last event = %+v, want Context.Compacted", last)
 	}
 }
