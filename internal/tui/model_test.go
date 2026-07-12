@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -1607,14 +1608,18 @@ func TestModel_EventPumpDeliversFromChannel(t *testing.T) {
 	if cmd == nil {
 		t.Fatalf("Init() = nil, con canal de eventos debe devolver el cmd de la bomba")
 	}
-	msg := cmd()
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok || len(batch) != 2 {
+		t.Fatalf("Init command = %#v, want event pump and composer cursor commands", batch)
+	}
+	msg := batch[0]()
 	if got, ok := msg.(EventMsg); !ok || got.Kind != first.Kind {
 		t.Fatalf("cmd() = %#v, se esperaba el primer EventMsg %#v", msg, first)
 	}
 
 	// Consumir un evento rearma la bomba: el nuevo cmd entrega el segundo msg.
 	updated, cmd2 := m.Update(msg)
-	m, ok := updated.(Model)
+	m, ok = updated.(Model)
 	if !ok {
 		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
 	}
@@ -1638,9 +1643,9 @@ func TestModel_EventPumpDeliversFromChannel(t *testing.T) {
 		t.Fatalf("cmd() = %#v con canal cerrado, se esperaba nil", got)
 	}
 
-	// Canal nil (tests del fold): no hay bomba que armar.
-	if cmd := NewModel(nil, "s1", nil).Init(); cmd != nil {
-		t.Fatalf("Init() = %#v con canal nil, se esperaba nil", cmd)
+	// Canal nil (tests del fold): solo queda el comando del cursor.
+	if cmd := NewModel(nil, "s1", nil).Init(); cmd == nil {
+		t.Fatal("Init() = nil con canal nil, se esperaba el comando del cursor")
 	}
 }
 
@@ -3524,6 +3529,16 @@ func TestModel_AcceptPlanStartsSpinner(t *testing.T) {
 
 	before := lineWith(t, m.View(), "trabajando")
 	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, batched := range batch {
+			if candidate := batched(); candidate != nil {
+				if _, ok := candidate.(spinner.TickMsg); ok {
+					msg = candidate
+					break
+				}
+			}
+		}
+	}
 	if msg == nil {
 		t.Fatalf("cmd() = nil, el cmd de la animacion debe producir un mensaje aplicable a Update")
 	}
@@ -5440,6 +5455,127 @@ func TestModel_ClickTreeFocusesExplorerAndCapturesKeys(t *testing.T) {
 	}
 	if got := m.input.Value(); got != "" {
 		t.Fatalf("input.Value() = %q, explorer keys must not reach the composer", got)
+	}
+}
+
+func TestModel_ComposerCursorStartsBlinking(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m.input.Cursor.BlinkSpeed = time.Millisecond
+
+	cmd := m.Init()
+	if cmd == nil {
+		t.Fatal("Init() = nil, want composer cursor blink command")
+	}
+	if m.input.Cursor.Blink {
+		t.Fatal("composer cursor starts hidden, want it visible while chat is focused")
+	}
+	blinkMsg := cmd()
+	updated, next := m.Update(blinkMsg)
+	m = updated.(Model)
+	if next == nil {
+		t.Fatal("initial cursor blink message did not schedule the next blink")
+	}
+	m = apply(t, m, next())
+	if !m.input.Cursor.Blink {
+		t.Fatal("composer cursor did not toggle after its blink interval")
+	}
+}
+
+func TestModel_ComposerCursorFollowsPanelFocus(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).
+		WithCompletions(nil, func() ([]string, error) { return []string{"one.go"}, nil })
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 12})
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeySpace})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	if m.input.Focused() {
+		t.Fatal("composer remains focused while explorer owns keyboard input")
+	}
+
+	m = apply(t, m, tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      m.treePanelWidth() + 2,
+		Y:      10,
+	})
+	if !m.input.Focused() {
+		t.Fatal("composer remains blurred after chat regains keyboard focus")
+	}
+}
+
+func TestModel_ComposerCursorHidesWhileInputGateIsPending(t *testing.T) {
+	tests := []struct {
+		name    string
+		entry   entry
+		resolve tea.Msg
+	}{
+		{
+			name:    "permission",
+			entry:   entry{kind: entryPermission, sessionID: "s1", callID: "c1"},
+			resolve: EventMsg{Kind: session.KindToolFailed, CallID: "c1"},
+		},
+		{
+			name:    "plan approval",
+			entry:   entry{kind: entryPlanApproval},
+			resolve: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			m := NewModel(&fakeAgent{}, "s1", nil)
+			m.entries = append(m.entries, test.entry)
+			m = apply(t, m, struct{}{})
+			if m.input.Focused() {
+				t.Fatal("composer remains focused while another input gate owns the keyboard")
+			}
+
+			m = apply(t, m, test.resolve)
+			if !m.input.Focused() {
+				t.Fatal("composer remains blurred after the input gate is resolved")
+			}
+		})
+	}
+}
+
+func TestModel_ComposerCursorFollowsTerminalFocus(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+
+	m = apply(t, m, tea.BlurMsg{})
+	if m.input.Focused() {
+		t.Fatal("composer remains focused after the terminal window loses focus")
+	}
+
+	m = apply(t, m, tea.FocusMsg{})
+	if !m.input.Focused() {
+		t.Fatal("composer remains blurred after the terminal window regains focus")
+	}
+}
+
+func TestModel_TerminalRefocusPreservesExplorerFocus(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).
+		WithCompletions(nil, func() ([]string, error) { return []string{"one.go"}, nil })
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 12})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeySpace})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	m = apply(t, m, tea.BlurMsg{})
+	m = apply(t, m, tea.FocusMsg{})
+
+	if got, want := m.focus, explorerFocus; got != want {
+		t.Fatalf("panel focus after terminal refocus = %v, want %v", got, want)
+	}
+	if m.input.Focused() {
+		t.Fatal("terminal refocus steals keyboard focus from explorer")
+	}
+
+	m = apply(t, m, tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      m.treePanelWidth() + 2,
+		Y:      10,
+	})
+	if !m.input.Focused() {
+		t.Fatal("composer remains blurred after terminal and chat both regain focus")
 	}
 }
 

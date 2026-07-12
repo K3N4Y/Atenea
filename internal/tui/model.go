@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -226,6 +227,7 @@ type Model struct {
 	viewer           fileViewer
 	viewerReturnY    int
 	focus            panelFocus
+	terminalFocused  bool
 }
 
 // NewModel construye el Model raiz de la TUI.
@@ -234,7 +236,7 @@ func NewModel(agent Agent, sessionID string, events <-chan tea.Msg) Model {
 	// El spinner comparte el estilo tenue de la linea de estado: el glifo es
 	// parte del indicador de trabajo, no un protagonista aparte.
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(statusStyle))
-	return Model{agent: agent, sessionID: sessionID, events: events, input: input, spinner: sp, followAgent: true}
+	return Model{agent: agent, sessionID: sessionID, events: events, input: input, spinner: sp, followAgent: true, terminalFocused: true}
 }
 
 // WithStatus fija el modelo de IA a mostrar en el borde inferior del composer.
@@ -305,12 +307,21 @@ func waitForEvent(ch <-chan tea.Msg) tea.Cmd {
 
 // Init arma la bomba de eventos del canal del engine.
 func (m Model) Init() tea.Cmd {
-	return waitForEvent(m.events)
+	return tea.Batch(waitForEvent(m.events), cursor.Blink)
 }
 
 // Update folda cada EventMsg al estado de la conversacion, maneja el teclado y
 // rearma la bomba tras cada mensaje consumido del canal.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	updated, cmd := m.update(msg)
+	next, ok := updated.(Model)
+	if !ok {
+		return updated, cmd
+	}
+	return next, tea.Batch(cmd, next.syncComposerFocus())
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch ev := msg.(type) {
 	case EventMsg:
 		m = m.foldEvent(ev)
@@ -357,6 +368,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(ev)
 		return m, cmd
+	case tea.BlurMsg:
+		m.terminalFocused = false
+		return m, nil
+	case tea.FocusMsg:
+		m.terminalFocused = true
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.ready = true
 		m.width = ev.Width
@@ -415,7 +432,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// ignora y la rueda igual va al scroll.
 		return m.scrollViewport(ev)
 	}
-	return m, nil
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
 }
 
 func (m Model) newActivityIndicatorHit(msg tea.MouseMsg) bool {
@@ -621,6 +640,18 @@ func (m Model) toggleTree() Model {
 	m.treeOffset = 0
 	m = m.loadTreeOnce()
 	return resizeViewport()
+}
+
+func (m *Model) syncComposerFocus() tea.Cmd {
+	_, permissionPending := m.pendingPermission()
+	if m.terminalFocused && m.normalizedFocus() == chatFocus && !permissionPending && !m.hasPendingPlan() {
+		if !m.input.Focused() {
+			return m.input.Focus()
+		}
+		return nil
+	}
+	m.input.Blur()
+	return nil
 }
 
 func (m Model) loadTreeOnce() Model {

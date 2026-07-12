@@ -155,7 +155,9 @@ the terminal's default background mid-line.
 - The composer box measures the terminal width, starts at three total rows
  including borders, and grows to seven total rows for five visible input
  lines. Longer multiline prompts scroll vertically; long individual lines
- scroll horizontally within the input. The
+ scroll horizontally within the input. Its native textarea cursor blinks while
+ chat and the terminal window own keyboard focus, and hides while the window is
+ unfocused or explorer, viewer, permission, or plan approval owns input. The
  footer shows `<agente> · <modelo>`: the model enters once via
  `WithStatus` and the agent reflects the active mode (build/plan).
 
