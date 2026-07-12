@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -11,6 +12,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"atenea/internal/checkpoint"
 	"atenea/internal/command"
 	"atenea/internal/event"
 	"atenea/internal/llm"
@@ -24,12 +26,20 @@ import (
 // EngineConfig describe el ensamblado del agente headless: la raiz del
 // workspace, el proveedor LLM, el store durable y el modo local.
 type EngineConfig struct {
-	Root     string
-	Provider llm.Provider
-	Store    session.Store
-	Local    bool
-	Models   ModelService
+	Root        string
+	Provider    llm.Provider
+	Store       session.Store
+	Local       bool
+	Models      ModelService
+	Checkpoints checkpoint.Store
 }
+
+type UndoResult struct {
+	Prompt string
+	Events []session.SessionEvent
+}
+
+var ErrWorkspaceDiverged = errors.New("workspace changed after the prompt; undo refused")
 
 type ModelService interface {
 	Active() providerconfig.Active
@@ -66,17 +76,24 @@ type Engine struct {
 	// de cada sesion. Inmutables tras NewEngine: se leen sin mu.
 	root             string
 	store            session.Store
+	undoStore        session.UndoStore
+	checkpoints      checkpoint.Store
 	models           ModelService
 	refreshingModels bool
 
 	mu    sync.Mutex
 	runs  map[string]*engineRun   // sessionID -> corrida en vuelo (identidad por puntero)
 	modes map[string]session.Mode // sessionID -> modo (normal/plan); guardado con mu como runs
+	ops   map[string]*sync.Mutex
 }
 
 // engineRun identifica una corrida en vuelo. Se compara por puntero porque
 // context.CancelFunc no es comparable.
-type engineRun struct{ cancel context.CancelFunc }
+type engineRun struct {
+	cancel       context.CancelFunc
+	done         chan struct{}
+	checkpointID string
+}
 
 // Fija en compilacion que Engine satisface la interface Agent de la TUI.
 var _ Agent = (*Engine)(nil)
@@ -93,6 +110,7 @@ func NewEngine(cfg EngineConfig) *Engine {
 		gate:   session.NewMemoryPermissionGate(),
 		runs:   map[string]*engineRun{},
 		modes:  map[string]session.Mode{},
+		ops:    map[string]*sync.Mutex{},
 	}
 	// La frontera: donde la app Wails emite a runtime.EventsEmit, aqui el evento
 	// durable va al canal de la TUI. El send bloqueante es deliberado: la TUI
@@ -107,7 +125,9 @@ func NewEngine(cfg EngineConfig) *Engine {
 	}
 	bus := event.NewBus(emit)
 	e.root = cfg.Root
+	e.undoStore, _ = cfg.Store.(session.UndoStore)
 	e.store = event.NewEmittingStore(cfg.Store, bus)
+	e.checkpoints = cfg.Checkpoints
 	e.models = cfg.Models
 	built := wiring.Build(wiring.Config{
 		Root:     cfg.Root,
@@ -182,7 +202,10 @@ func cloneProviderModels(in []providerconfig.ProviderModels) []providerconfig.Pr
 // Commands lista los slash-commands disponibles (nombre + descripcion) para el
 // menu "/" del composer, ordenados por nombre (espejo de App.ListCommands).
 func (e *Engine) Commands() []command.Command {
-	return e.commands.List()
+	commands := e.commands.List()
+	commands = append(commands, command.Command{Name: "undo", Description: "Undo the last prompt and its file changes"})
+	sort.Slice(commands, func(i, j int) bool { return commands[i].Name < commands[j].Name })
+	return commands
 }
 
 // ProjectFiles lista los archivos del workspace (rutas relativas a la raiz,
@@ -307,16 +330,32 @@ func (e *Engine) expandCommand(text string) string {
 // Es el camino comun de SendPrompt y SendPlanPrompt: el modo de la sesion ya
 // quedo fijado antes de llamarlo.
 func (e *Engine) send(sessionID, text, composerPrompt string) error {
-	// La PRIMERA vez que se manda un prompt a la sesion (LoadSession aun da
-	// error) se graba la carpeta de trabajo como Session.Cwd, ANTES de admitir
-	// el prompt para que quede de primero en el log: la sidebar de la app Wails
-	// agrupa los chats por esa carpeta (espejo de App.captureCwd). Idempotente:
-	// en la sesion ya existente no hace nada. Un fallo al grabar no corta el
-	// envio: la carpeta solo afecta la sidebar.
+	operation := e.operationLock(sessionID)
+	operation.Lock()
+	defer operation.Unlock()
+
+	checkpointID := ""
+	var before checkpoint.Tree
+	if composerPrompt != "" && e.checkpoints != nil {
+		var err error
+		before, err = e.checkpoints.Capture(context.Background(), e.root)
+		if err != nil {
+			return err
+		}
+	}
 	if _, err := e.store.LoadSession(context.Background(), sessionID); err != nil {
 		if _, err := e.store.AppendEvent(context.Background(), sessionID,
 			session.SessionEvent{Kind: session.KindSessionCwd, Text: e.root}); err != nil {
 			log.Printf("atenea-tui: no se pudo guardar la carpeta de %s: %v", sessionID, err)
+		}
+	}
+	if before != "" {
+		checkpointID = "checkpoint-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+		if _, err := e.store.AppendEvent(context.Background(), sessionID, session.SessionEvent{
+			Kind:       session.KindPromptCheckpointStarted,
+			Checkpoint: &session.PromptCheckpoint{ID: checkpointID, Prompt: composerPrompt, BeforeTree: string(before)},
+		}); err != nil {
+			return err
 		}
 	}
 	if err := e.inbox.Admit(context.Background(), sessionID,
@@ -330,7 +369,7 @@ func (e *Engine) send(sessionID, text, composerPrompt string) error {
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	h := &engineRun{cancel: cancel}
+	h := &engineRun{cancel: cancel, done: make(chan struct{}), checkpointID: checkpointID}
 	e.mu.Lock()
 	if old := e.runs[sessionID]; old != nil {
 		old.cancel() // una corrida previa de la misma sesion no debe quedar viva
@@ -340,7 +379,22 @@ func (e *Engine) send(sessionID, text, composerPrompt string) error {
 
 	go func() {
 		err := e.runner.Run(ctx, sessionID, false)
+		if h.checkpointID != "" {
+			operation.Lock()
+			after, captureErr := e.checkpoints.Capture(context.Background(), e.root)
+			if captureErr == nil {
+				_, captureErr = e.store.AppendEvent(context.Background(), sessionID, session.SessionEvent{
+					Kind:       session.KindPromptCheckpointFinished,
+					Checkpoint: &session.PromptCheckpoint{ID: h.checkpointID, AfterTree: string(after)},
+				})
+			}
+			operation.Unlock()
+			if err == nil {
+				err = captureErr
+			}
+		}
 		e.clear(sessionID, h)
+		close(h.done)
 		msg := ""
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			msg = err.Error()
@@ -348,6 +402,69 @@ func (e *Engine) send(sessionID, text, composerPrompt string) error {
 		e.events <- RunDoneMsg{Err: msg}
 	}()
 	return nil
+}
+
+func (e *Engine) Undo(sessionID string) (UndoResult, error) {
+	if e.undoStore == nil || e.checkpoints == nil {
+		return UndoResult{}, session.ErrNothingToUndo
+	}
+	e.mu.Lock()
+	run := e.runs[sessionID]
+	if run != nil {
+		run.cancel()
+	}
+	e.mu.Unlock()
+	if run != nil {
+		<-run.done
+	}
+
+	operation := e.operationLock(sessionID)
+	operation.Lock()
+	defer operation.Unlock()
+
+	boundary, err := e.undoStore.LatestPromptCheckpoint(context.Background(), sessionID)
+	if err != nil {
+		return UndoResult{}, err
+	}
+	if boundary.AfterTree != "" {
+		current, err := e.checkpoints.Capture(context.Background(), e.root)
+		if err != nil {
+			return UndoResult{}, err
+		}
+		if string(current) != boundary.AfterTree {
+			return UndoResult{}, ErrWorkspaceDiverged
+		}
+	}
+	if err := e.checkpoints.Restore(context.Background(), e.root, checkpoint.Tree(boundary.BeforeTree)); err != nil {
+		return UndoResult{}, err
+	}
+	if _, err := e.store.AppendEvent(context.Background(), sessionID, session.SessionEvent{
+		Kind:       session.KindPromptCheckpointReverted,
+		Checkpoint: &session.PromptCheckpoint{ID: boundary.ID},
+	}); err != nil {
+		if boundary.AfterTree != "" {
+			if restoreErr := e.checkpoints.Restore(context.Background(), e.root, checkpoint.Tree(boundary.AfterTree)); restoreErr != nil {
+				return UndoResult{}, errors.Join(err, restoreErr)
+			}
+		}
+		return UndoResult{}, err
+	}
+	events, err := e.store.Events(context.Background(), sessionID, 0)
+	if err != nil {
+		return UndoResult{}, err
+	}
+	return UndoResult{Prompt: boundary.Prompt, Events: events}, nil
+}
+
+func (e *Engine) operationLock(sessionID string) *sync.Mutex {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	lock := e.ops[sessionID]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		e.ops[sessionID] = lock
+	}
+	return lock
 }
 
 // acceptPlanPrompt es el prompt fijo de implementacion del plan aprobado (espejo del const homonimo de app.go).

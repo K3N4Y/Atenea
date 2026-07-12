@@ -16,14 +16,26 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"atenea/internal/checkpoint"
 	"atenea/internal/llm"
 	"atenea/internal/session"
+	"atenea/internal/tool/hashline"
 )
 
 type promptHistoryStore struct {
 	session.Store
 	failComposerPrompt bool
 	blockedSession     string
+}
+
+type failingCheckpointStore struct{ err error }
+
+func (s failingCheckpointStore) Capture(context.Context, string) (checkpoint.Tree, error) {
+	return "", s.err
+}
+
+func (s failingCheckpointStore) Restore(context.Context, string, checkpoint.Tree) error {
+	return nil
 }
 
 func (s *promptHistoryStore) AppendEvent(ctx context.Context, sessionID string, ev session.SessionEvent) (session.Seq, error) {
@@ -62,6 +74,38 @@ type turnProvider struct {
 	// el StepEnded que lo sigue: espejo deterministico del ultimo chunk SSE que
 	// llega tarde por la red mientras la tool ya se esta asentando localmente.
 	delayStepEnded time.Duration
+}
+
+type blockingAfterToolProvider struct {
+	started  chan struct{}
+	canceled chan struct{}
+	mu       sync.Mutex
+	next     int
+}
+
+func (p *blockingAfterToolProvider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Event, error) {
+	p.mu.Lock()
+	turn := p.next
+	p.next++
+	p.mu.Unlock()
+	out := make(chan llm.Event)
+	go func() {
+		defer close(out)
+		if turn == 0 {
+			for _, event := range []llm.Event{{Kind: llm.StepStarted}, {Kind: llm.ToolCall, CallID: "write-1", ToolName: "write", Input: json.RawMessage(`{"path":"created.txt","content":"created\n"}`)}, {Kind: llm.StepEnded}} {
+				select {
+				case <-ctx.Done():
+					return
+				case out <- event:
+				}
+			}
+			return
+		}
+		close(p.started)
+		<-ctx.Done()
+		close(p.canceled)
+	}()
+	return out, nil
 }
 
 var _ llm.Provider = (*turnProvider)(nil)
@@ -998,5 +1042,321 @@ func TestEngine_SendPromptNewWithArgumentsRemainsRegularPrompt(t *testing.T) {
 	}
 	if len(messages) != 1 || messages[0].Text != "/new algo" {
 		t.Fatalf("mensajes de s1 = %+v, se esperaba el prompt literal /new algo", messages)
+	}
+}
+
+func TestEngine_UndoRestoresPrePromptWorkspaceAndEffectiveConversation(t *testing.T) {
+	root := newUndoWorkspace(t)
+	if err := os.WriteFile(filepath.Join(root, "tracked.txt"), []byte("committed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runUndoGit(t, root, "add", "tracked.txt")
+	runUndoGit(t, root, "commit", "-m", "base")
+	if err := os.WriteFile(filepath.Join(root, "tracked.txt"), []byte("preexisting-change\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("preexisting-untracked\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	hash := hashline.ComputeFileHash("preexisting-change\n")
+	provider := newTurnProvider(
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.ToolCall, CallID: "read-1", ToolName: "read", Input: json.RawMessage(`{"path":"tracked.txt"}`)}, {Kind: llm.StepEnded}},
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.ToolCall, CallID: "edit-1", ToolName: "edit", Input: json.RawMessage(`{"patch":"[tracked.txt#` + hash + `]\nSWAP 1.=1:\n+agent-change"}`)}, {Kind: llm.StepEnded}},
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.ToolCall, CallID: "write-1", ToolName: "write", Input: json.RawMessage(`{"path":"created.txt","content":"created by agent\n"}`)}, {Kind: llm.StepEnded}},
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.StepEnded}},
+	)
+	store := session.NewMemoryStore()
+	engine := NewEngine(EngineConfig{
+		Root:        root,
+		Provider:    provider,
+		Store:       store,
+		Checkpoints: checkpoint.NewGitStore(t.TempDir()),
+	})
+
+	if _, err := engine.SendPrompt("s1", "cambia los archivos"); err != nil {
+		t.Fatal(err)
+	}
+	if _, done := collectUntilRunDone(t, engine.Events(), 10*time.Second, nil); done.Err != "" {
+		t.Fatalf("RunDoneMsg.Err = %q", done.Err)
+	}
+
+	result, err := engine.Undo("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Prompt != "cambia los archivos" {
+		t.Fatalf("Prompt = %q", result.Prompt)
+	}
+	assertUndoFile(t, root, "tracked.txt", "preexisting-change\n")
+	assertUndoFile(t, root, "notes.txt", "preexisting-untracked\n")
+	assertUndoMissing(t, root, "created.txt")
+
+	messages, err := store.Messages(context.Background(), "s1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 0 {
+		t.Fatalf("effective messages = %+v, want none", messages)
+	}
+}
+
+func TestEngine_UndoFirstPromptPreservesSessionWorkspace(t *testing.T) {
+	root := newUndoWorkspace(t)
+	store := session.NewMemoryStore()
+	engine := newWritingUndoEngine(t, root, store, t.TempDir())
+
+	if _, err := engine.SendPrompt("s1", "create file"); err != nil {
+		t.Fatal(err)
+	}
+	if _, done := collectUntilRunDone(t, engine.Events(), 10*time.Second, nil); done.Err != "" {
+		t.Fatalf("RunDoneMsg.Err = %q", done.Err)
+	}
+	if _, err := engine.Undo("s1"); err != nil {
+		t.Fatal(err)
+	}
+
+	sessions, err := store.Sessions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || sessions[0].ID != "s1" || sessions[0].Cwd != root {
+		t.Fatalf("Sessions = %+v, want session s1 with cwd %q", sessions, root)
+	}
+}
+
+func TestEngine_SendPromptSnapshotFailureDoesNotCreateSession(t *testing.T) {
+	store := session.NewMemoryStore()
+	wantErr := errors.New("snapshot unavailable")
+	engine := NewEngine(EngineConfig{
+		Root:        newUndoWorkspace(t),
+		Store:       store,
+		Checkpoints: failingCheckpointStore{err: wantErr},
+	})
+
+	if _, err := engine.SendPrompt("s1", "hello"); !errors.Is(err, wantErr) {
+		t.Fatalf("SendPrompt error = %v, want %v", err, wantErr)
+	}
+	if sessions, err := store.Sessions(context.Background()); err != nil || len(sessions) != 0 {
+		t.Fatalf("Sessions = %+v, err = %v, want none", sessions, err)
+	}
+}
+
+func TestEngine_UndoRejectsCheckpointFromAnotherWorkspace(t *testing.T) {
+	firstRoot := newUndoWorkspace(t)
+	secondRoot := newUndoWorkspace(t)
+	store := session.NewMemoryStore()
+	checkpointRoot := t.TempDir()
+	firstEngine := newWritingUndoEngine(t, firstRoot, store, checkpointRoot)
+
+	if _, err := firstEngine.SendPrompt("s1", "create file"); err != nil {
+		t.Fatal(err)
+	}
+	if _, done := collectUntilRunDone(t, firstEngine.Events(), 10*time.Second, nil); done.Err != "" {
+		t.Fatalf("RunDoneMsg.Err = %q", done.Err)
+	}
+
+	secondEngine := NewEngine(EngineConfig{
+		Root:        secondRoot,
+		Store:       store,
+		Checkpoints: checkpoint.NewGitStore(checkpointRoot),
+	})
+	if _, err := secondEngine.Undo("s1"); err == nil {
+		t.Fatal("Undo accepted a checkpoint created for another workspace")
+	}
+	if _, err := os.Stat(filepath.Join(firstRoot, "created.txt")); err != nil {
+		t.Fatalf("first workspace changed after rejected undo: %v", err)
+	}
+	if entries, err := os.ReadDir(secondRoot); err != nil || len(entries) != 1 || entries[0].Name() != ".git" {
+		t.Fatalf("second workspace changed after rejected undo: entries=%v err=%v", entries, err)
+	}
+}
+
+func TestEngine_UndoTwiceRestoresEachPromptBoundary(t *testing.T) {
+	root := newUndoWorkspace(t)
+	provider := newTurnProvider(
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.ToolCall, CallID: "write-1", ToolName: "write", Input: json.RawMessage(`{"path":"first.txt","content":"first\n"}`)}, {Kind: llm.StepEnded}},
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.StepEnded}},
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.ToolCall, CallID: "write-2", ToolName: "write", Input: json.RawMessage(`{"path":"second.txt","content":"second\n"}`)}, {Kind: llm.StepEnded}},
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.StepEnded}},
+	)
+	store := session.NewMemoryStore()
+	engine := NewEngine(EngineConfig{Root: root, Provider: provider, Store: store, Checkpoints: checkpoint.NewGitStore(t.TempDir())})
+	for _, prompt := range []string{"first prompt", "second prompt"} {
+		if _, err := engine.SendPrompt("s1", prompt); err != nil {
+			t.Fatal(err)
+		}
+		if _, done := collectUntilRunDone(t, engine.Events(), 10*time.Second, nil); done.Err != "" {
+			t.Fatal(done.Err)
+		}
+	}
+
+	result, err := engine.Undo("s1")
+	if err != nil || result.Prompt != "second prompt" {
+		t.Fatalf("first undo = %+v, err = %v", result, err)
+	}
+	assertUndoFile(t, root, "first.txt", "first\n")
+	assertUndoMissing(t, root, "second.txt")
+	result, err = engine.Undo("s1")
+	if err != nil || result.Prompt != "first prompt" {
+		t.Fatalf("second undo = %+v, err = %v", result, err)
+	}
+	assertUndoMissing(t, root, "first.txt")
+	if messages, err := store.Messages(context.Background(), "s1", 0); err != nil || len(messages) != 0 {
+		t.Fatalf("Messages = %+v, err = %v", messages, err)
+	}
+}
+
+func TestEngine_UndoRejectsWorkspaceDivergence(t *testing.T) {
+	root := newUndoWorkspace(t)
+	engine := newWritingUndoEngine(t, root, session.NewMemoryStore(), t.TempDir())
+	if _, err := engine.SendPrompt("s1", "create file"); err != nil {
+		t.Fatal(err)
+	}
+	collectUntilRunDone(t, engine.Events(), 10*time.Second, nil)
+	if err := os.WriteFile(filepath.Join(root, "outside.txt"), []byte("user change\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.Undo("s1"); !errors.Is(err, ErrWorkspaceDiverged) {
+		t.Fatalf("Undo error = %v", err)
+	}
+	assertUndoFile(t, root, "created.txt", "created\n")
+	assertUndoFile(t, root, "outside.txt", "user change\n")
+}
+
+func TestEngine_UndoIgnoresIgnoredFileDivergence(t *testing.T) {
+	root := newUndoWorkspace(t)
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("ignored.txt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runUndoGit(t, root, "add", ".gitignore")
+	runUndoGit(t, root, "commit", "-m", "ignore")
+	engine := newWritingUndoEngine(t, root, session.NewMemoryStore(), t.TempDir())
+	if _, err := engine.SendPrompt("s1", "create file"); err != nil {
+		t.Fatal(err)
+	}
+	collectUntilRunDone(t, engine.Events(), 10*time.Second, nil)
+	if err := os.WriteFile(filepath.Join(root, "ignored.txt"), []byte("preserve me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.Undo("s1"); err != nil {
+		t.Fatal(err)
+	}
+	assertUndoMissing(t, root, "created.txt")
+	assertUndoFile(t, root, "ignored.txt", "preserve me\n")
+}
+
+func TestEngine_UndoCancelsActiveRunBeforeRestore(t *testing.T) {
+	root := newUndoWorkspace(t)
+	provider := &blockingAfterToolProvider{started: make(chan struct{}), canceled: make(chan struct{})}
+	engine := NewEngine(EngineConfig{Root: root, Provider: provider, Store: session.NewMemoryStore(), Checkpoints: checkpoint.NewGitStore(t.TempDir())})
+	if _, err := engine.SendPrompt("s1", "create file"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-provider.started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("provider did not block on second turn")
+	}
+	if _, err := engine.Undo("s1"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-provider.canceled:
+	case <-time.After(time.Second):
+		t.Fatal("provider context was not canceled")
+	}
+	assertUndoMissing(t, root, "created.txt")
+}
+
+func TestEngine_UndoPersistsAcrossSQLiteReopen(t *testing.T) {
+	root := newUndoWorkspace(t)
+	dbPath := filepath.Join(t.TempDir(), "sessions.db")
+	checkpointRoot := t.TempDir()
+	store, err := session.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := newWritingUndoEngine(t, root, store, checkpointRoot)
+	if _, err := engine.SendPrompt("s1", "create file"); err != nil {
+		t.Fatal(err)
+	}
+	collectUntilRunDone(t, engine.Events(), 10*time.Second, nil)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err = session.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine = NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store, Checkpoints: checkpoint.NewGitStore(checkpointRoot)})
+	if _, err := engine.Undo("s1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err = session.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if messages, err := store.Messages(context.Background(), "s1", 0); err != nil || len(messages) != 0 {
+		t.Fatalf("Messages = %+v, err = %v", messages, err)
+	}
+	if events, err := store.Events(context.Background(), "s1", 0); err != nil || len(events) != 1 || events[0].Kind != session.KindSessionCwd || events[0].Text != root {
+		t.Fatalf("Events = %+v, err = %v, want only Session.Cwd %q", events, err, root)
+	}
+	if contextResult, err := store.ContextForRunner(context.Background(), "s1"); err != nil || len(contextResult.Messages) != 0 {
+		t.Fatalf("ContextForRunner = %+v, err = %v", contextResult, err)
+	}
+	if _, err := store.LatestPromptCheckpoint(context.Background(), "s1"); !errors.Is(err, session.ErrNothingToUndo) {
+		t.Fatalf("LatestPromptCheckpoint error = %v", err)
+	}
+}
+
+func newUndoWorkspace(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	runUndoGit(t, root, "init")
+	runUndoGit(t, root, "config", "user.name", "Atenea Test")
+	runUndoGit(t, root, "config", "user.email", "atenea@example.test")
+	return root
+}
+
+func runUndoGit(t *testing.T, root string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, output)
+	}
+}
+
+func newWritingUndoEngine(t *testing.T, root string, store session.Store, checkpointRoot string) *Engine {
+	t.Helper()
+	provider := newTurnProvider(
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.ToolCall, CallID: "write-1", ToolName: "write", Input: json.RawMessage(`{"path":"created.txt","content":"created\n"}`)}, {Kind: llm.StepEnded}},
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.StepEnded}},
+	)
+	return NewEngine(EngineConfig{Root: root, Provider: provider, Store: store, Checkpoints: checkpoint.NewGitStore(checkpointRoot)})
+}
+
+func assertUndoFile(t *testing.T, root, name, want string) {
+	t.Helper()
+	got, err := os.ReadFile(filepath.Join(root, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Fatalf("%s = %q, want %q", name, got, want)
+	}
+}
+
+func assertUndoMissing(t *testing.T, root, name string) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(root, name)); !os.IsNotExist(err) {
+		t.Fatalf("%s still exists or stat failed: %v", name, err)
 	}
 }

@@ -201,4 +201,3 @@ redesigning layout or status semantics.
 8. Existing scrolling, live-region, and new-activity behavior remain unchanged.
 9. The presentation vocabulary contains a future `summary` variant, but no
    transcript item is detected or rendered as a final summary in this release.
-

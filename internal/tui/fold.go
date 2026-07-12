@@ -92,6 +92,20 @@ func (m Model) foldEvent(ev EventMsg) Model {
 	return m
 }
 
+func (m Model) replaceEvents(events []session.SessionEvent) Model {
+	m.entries = nil
+	m.revealing = false
+	m.usage = nil
+	m.liveUsage = false
+	m.outputBytes = 0
+	m.reasoningBytes = 0
+	m.toolInputBytes = 0
+	for _, event := range events {
+		m = m.foldEvent(EventMsg(event))
+	}
+	return m
+}
+
 func (m Model) updateLiveUsage() Model {
 	if !m.liveUsage || m.usage == nil {
 		return m

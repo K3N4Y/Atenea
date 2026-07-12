@@ -2,6 +2,7 @@ package tui
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"strings"
@@ -9,12 +10,14 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 
 	"atenea/internal/command"
+	"atenea/internal/llm"
 	"atenea/internal/providerconfig"
 	"atenea/internal/session"
 )
@@ -28,12 +31,15 @@ type fakeAgent struct {
 		sessionID, callID string
 		approved          bool
 	}
-	stopped   []string
-	accepted  []string
-	models    []providerconfig.ProviderModels
-	active    providerconfig.Active
-	selected  []struct{ providerID, model string }
-	refreshes int
+	stopped    []string
+	accepted   []string
+	models     []providerconfig.ProviderModels
+	active     providerconfig.Active
+	selected   []struct{ providerID, model string }
+	refreshes  int
+	undos      []string
+	undoResult UndoResult
+	undoErr    error
 }
 
 func (f *fakeAgent) ModelCatalog() []providerconfig.ProviderModels {
@@ -79,6 +85,92 @@ func (f *fakeAgent) ResolvePermission(sessionID, callID string, approved bool) {
 
 func (f *fakeAgent) Stop(sessionID string) {
 	f.stopped = append(f.stopped, sessionID)
+}
+
+func (f *fakeAgent) Undo(sessionID string) (UndoResult, error) {
+	f.undos = append(f.undos, sessionID)
+	return f.undoResult, f.undoErr
+}
+
+func TestModel_UndoIsNativeCommandAndRestoresComposer(t *testing.T) {
+	fake := &fakeAgent{undoResult: UndoResult{
+		Prompt: "original prompt",
+		Events: []session.SessionEvent{{Message: &session.Message{ID: "u0", Role: session.RoleUser, Text: "kept"}}},
+	}}
+	m := NewModel(fake, "s1", nil)
+	m.entries = []entry{{kind: entryUser, text: "old"}, {kind: entryAssistant, text: "answer"}}
+	m.history = []string{"old prompt"}
+	m.histIdx = len(m.history)
+	m = typeRunes(t, m, "/undo")
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatal("undo must run asynchronously")
+	}
+	m = apply(t, m, cmd())
+	if len(fake.undos) != 1 || fake.undos[0] != "s1" {
+		t.Fatalf("Undo calls = %v", fake.undos)
+	}
+	if len(fake.sent) != 0 {
+		t.Fatalf("SendPrompt calls = %v", fake.sent)
+	}
+	if len(m.entries) != 1 || m.entries[0].kind != entryUser || m.entries[0].text != "kept" {
+		t.Fatalf("entries = %+v", m.entries)
+	}
+	if m.input.Value() != "original prompt" || m.input.Position() != len([]rune("original prompt")) {
+		t.Fatalf("composer = %q cursor=%d", m.input.Value(), m.input.Position())
+	}
+	if len(m.history) != 1 || m.history[0] != "old prompt" {
+		t.Fatalf("history = %v", m.history)
+	}
+}
+
+func TestModel_UndoFailureKeepsTranscriptAndComposer(t *testing.T) {
+	fake := &fakeAgent{undoErr: errors.New("undo failed")}
+	m := NewModel(fake, "s1", nil)
+	m.entries = []entry{{kind: entryUser, text: "old"}}
+	m = typeRunes(t, m, "/undo")
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	m = apply(t, m, cmd())
+	if m.input.Value() != "/undo" {
+		t.Fatalf("composer = %q", m.input.Value())
+	}
+	if len(m.entries) != 2 || m.entries[0].text != "old" || m.entries[1].kind != entryError || m.entries[1].text != "undo failed" {
+		t.Fatalf("entries = %+v", m.entries)
+	}
+}
+
+func TestModel_UndoAppearsInSlashCompletion(t *testing.T) {
+	engine := NewEngine(EngineConfig{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore()})
+	commands := engine.Commands()
+	found := false
+	for _, item := range commands {
+		if item.Name == "undo" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Commands = %+v", commands)
+	}
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(commands, nil)
+	m = typeRunes(t, m, "/un")
+	if len(m.menuItems) == 0 || m.menuItems[0].label != "/undo" {
+		t.Fatalf("menuItems = %+v", m.menuItems)
+	}
+}
+
+func TestModel_UndoWithArgumentsIsRejectedLocally(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = typeRunes(t, m, "/undo now")
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(fake.undos) != 0 || len(fake.sent) != 0 {
+		t.Fatalf("undos=%v sent=%v", fake.undos, fake.sent)
+	}
+	if len(m.entries) != 1 || m.entries[0].kind != entryError || m.entries[0].text != "usage: /undo" {
+		t.Fatalf("entries = %+v", m.entries)
+	}
 }
 
 // apply pasa un mensaje por Update y devuelve el Model concreto.
@@ -1180,11 +1272,61 @@ func TestModel_ThinkingPreviewSkipsBlankLines(t *testing.T) {
 		lines[i] = strings.TrimRight(line, " ")
 	}
 	view := strings.Join(lines, "\n")
-	if !strings.Contains(view, "[pensando]\nr2\nr3\nr4\nr5") {
-		t.Fatalf("View() = %q, el preview debe ser exactamente las ultimas 4 lineas NO vacias pegadas a la cabecera (%q): ni blancos intercalados ni lineas de contenido perdidas", view, "[pensando]\nr2\nr3\nr4\nr5")
+	if !strings.Contains(view, "  [pensando]\n  r2\n  r3\n  r4\n  r5") {
+		t.Fatalf("View() = %q, el preview debe contener las ultimas 4 lineas NO vacias con el inset uniforme (%q): ni blancos intercalados ni lineas de contenido perdidas", view, "  [pensando]\n  r2\n  r3\n  r4\n  r5")
 	}
 	if strings.Contains(view, "r1") {
 		t.Fatalf("View() = %q, %q ya salio de la ventana de 4 lineas no vacias", view, "r1")
+	}
+}
+
+func TestModel_ThinkingKeepsChatInsetWhileStreamingAndExpanded(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 44, Height: 18})
+
+	text := "streaming-inset-a\nstreaming-inset-b"
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: text})
+	m = drainReveal(t, m)
+
+	assertThinkingInset(t, m.View(), "[pensando]", "streaming-inset-a", "streaming-inset-b")
+
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: text})
+	m = drainReveal(t, m)
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
+
+	assertThinkingInset(t, m.View(), "[penso ", "streaming-inset-a", "streaming-inset-b")
+}
+
+func TestEntry_RenderThinkingInsetsEveryWrappedLine(t *testing.T) {
+	e := entry{
+		kind:     entryReasoning,
+		text:     strings.Repeat("pensamiento-largo ", 8),
+		revealed: len(strings.Repeat("pensamiento-largo ", 8)),
+		expanded: true,
+	}
+
+	lines := strings.Split(ansi.Strip(e.renderThinking(24)), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("renderThinking() produjo %d lineas, want cabecera y multiples lineas envueltas: %q", len(lines), lines)
+	}
+	for _, line := range lines {
+		if !strings.HasPrefix(line, thinkingInset) {
+			t.Fatalf("linea envuelta = %q, want inset %q", line, thinkingInset)
+		}
+		if got, want := ansi.StringWidth(line), 24; got > want {
+			t.Fatalf("ancho de linea envuelta = %d, want <= %d: %q", got, want, line)
+		}
+	}
+}
+
+func assertThinkingInset(t *testing.T, view string, needles ...string) {
+	t.Helper()
+	for _, needle := range needles {
+		line := strings.TrimRight(lineWith(t, ansi.Strip(view), needle), " ")
+		if !strings.HasPrefix(line, "  ") {
+			t.Fatalf("linea de pensamiento %q = %q, want inset de dos celdas", needle, line)
+		}
 	}
 }
 
@@ -1557,14 +1699,18 @@ func TestModel_EventPumpDeliversFromChannel(t *testing.T) {
 	if cmd == nil {
 		t.Fatalf("Init() = nil, con canal de eventos debe devolver el cmd de la bomba")
 	}
-	msg := cmd()
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok || len(batch) != 2 {
+		t.Fatalf("Init command = %#v, want event pump and composer cursor commands", batch)
+	}
+	msg := batch[0]()
 	if got, ok := msg.(EventMsg); !ok || got.Kind != first.Kind {
 		t.Fatalf("cmd() = %#v, se esperaba el primer EventMsg %#v", msg, first)
 	}
 
 	// Consumir un evento rearma la bomba: el nuevo cmd entrega el segundo msg.
 	updated, cmd2 := m.Update(msg)
-	m, ok := updated.(Model)
+	m, ok = updated.(Model)
 	if !ok {
 		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
 	}
@@ -1588,9 +1734,9 @@ func TestModel_EventPumpDeliversFromChannel(t *testing.T) {
 		t.Fatalf("cmd() = %#v con canal cerrado, se esperaba nil", got)
 	}
 
-	// Canal nil (tests del fold): no hay bomba que armar.
-	if cmd := NewModel(nil, "s1", nil).Init(); cmd != nil {
-		t.Fatalf("Init() = %#v con canal nil, se esperaba nil", cmd)
+	// Canal nil (tests del fold): solo queda el comando del cursor.
+	if cmd := NewModel(nil, "s1", nil).Init(); cmd == nil {
+		t.Fatal("Init() = nil con canal nil, se esperaba el comando del cursor")
 	}
 }
 
@@ -3474,6 +3620,16 @@ func TestModel_AcceptPlanStartsSpinner(t *testing.T) {
 
 	before := lineWith(t, m.View(), "trabajando")
 	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, batched := range batch {
+			if candidate := batched(); candidate != nil {
+				if _, ok := candidate.(spinner.TickMsg); ok {
+					msg = candidate
+					break
+				}
+			}
+		}
+	}
 	if msg == nil {
 		t.Fatalf("cmd() = nil, el cmd de la animacion debe producir un mensaje aplicable a Update")
 	}
@@ -4029,6 +4185,171 @@ func TestModel_ShiftTabExpandsAndCollapsesSettledThinking(t *testing.T) {
 	}
 }
 
+func TestModel_SettledThinkingSummaryAlignsWithAssistantContent(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "respuesta-asistente"})
+	m = apply(t, m, EventMsg{
+		Kind:    session.KindStepEnded,
+		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: "respuesta-asistente"},
+	})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "pensamiento-asentado"})
+	m = drainReveal(t, m)
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: "pensamiento-asentado"})
+	m = drainReveal(t, m)
+
+	assistantLine := ansi.Strip(lineWith(t, m.View(), "respuesta-asistente"))
+	thinkingLine := ansi.Strip(lineWith(t, m.View(), "[penso "))
+	assistantIndent := assistantLine[:len(assistantLine)-len(strings.TrimLeft(assistantLine, " "))]
+
+	if got, want := assistantIndent, "  "; got != want {
+		t.Fatalf("prefijo del contenido assistant = %q, want %q", got, want)
+	}
+	if !strings.HasPrefix(thinkingLine, assistantIndent) {
+		t.Fatalf("linea del resumen de pensamiento = %q, debe alinearse con el contenido assistant %q", thinkingLine, assistantLine)
+	}
+}
+
+func TestModel_LiveThinkingHeaderAlignsWithAssistantContent(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "respuesta-asistente"})
+	m = apply(t, m, EventMsg{
+		Kind:    session.KindStepEnded,
+		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: "respuesta-asistente"},
+	})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "pensamiento-vivo"})
+	m = drainReveal(t, m)
+
+	assistantLine := ansi.Strip(lineWith(t, m.View(), "respuesta-asistente"))
+	thinkingLine := ansi.Strip(lineWith(t, m.View(), "[pensando]"))
+	assistantIndent := assistantLine[:len(assistantLine)-len(strings.TrimLeft(assistantLine, " "))]
+
+	if got, want := assistantIndent, "  "; got != want {
+		t.Fatalf("prefijo del contenido assistant = %q, want %q", got, want)
+	}
+	if !strings.HasPrefix(thinkingLine, assistantIndent) {
+		t.Fatalf("linea del encabezado de pensamiento vivo = %q, debe alinearse con el contenido assistant %q", thinkingLine, assistantLine)
+	}
+}
+
+func TestModel_LiveThinkingHeaderKeepsChatIndentWhenSettledWithExplorer(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+		return []string{"internal/tui/model.go"}, nil
+	})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 100, Height: 24})
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "respuesta-visible"})
+	m = drainReveal(t, m)
+	m = apply(t, m, EventMsg{
+		Kind:    session.KindStepEnded,
+		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: "respuesta-visible"},
+	})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "preview-sin-indentacion-adicional"})
+	m = drainReveal(t, m)
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeySpace})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	if got, want := m.focus, explorerFocus; got != want {
+		t.Fatalf("focus after opening explorer = %v, want %v", got, want)
+	}
+
+	liveView := ansi.Strip(m.View())
+	assistantLine := lineWith(t, liveView, "respuesta-visible")
+	liveHeaderLine := lineWith(t, liveView, "[pensando]")
+	chatContentColumn := strings.Index(assistantLine, "respuesta-visible")
+	liveHeaderColumn := strings.Index(liveHeaderLine, "[pensando]")
+	if chatContentColumn < 0 || liveHeaderColumn < 0 {
+		t.Fatalf("View() sin ANSI = %q, deben verse el contenido assistant y el encabezado vivo", liveView)
+	}
+	if got, want := liveHeaderColumn, chatContentColumn; got != want {
+		t.Fatalf("columna de [pensando] = %d, want %d: debe alinearse con el contenido visible del chat", got, want)
+	}
+	if got, want := liveHeaderLine[:liveHeaderColumn], "│  "; !strings.HasSuffix(got, want) {
+		t.Fatalf("prefijo antes de [pensando] = %q, want suffix %q: el panel chat debe aportar exactamente dos espacios", got, want)
+	}
+
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: "preview-sin-indentacion-adicional"})
+	m = drainReveal(t, m)
+
+	settledView := ansi.Strip(m.View())
+	settledHeaderLine := lineWith(t, settledView, "[penso ")
+	settledHeaderColumn := strings.Index(settledHeaderLine, "[penso ")
+	if got, want := settledHeaderColumn, liveHeaderColumn; got != want {
+		t.Fatalf("columna del resumen asentado = %d, want %d: ReasoningEnded no debe desplazar horizontalmente el encabezado", got, want)
+	}
+}
+
+func TestModel_ShiftTabExpandsSettledThinkingWithExplorerFocus(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+		return []string{"internal/tui/model.go"}, nil
+	})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 100, Height: 24})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "pensamiento-completo"})
+	m = drainReveal(t, m)
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: "pensamiento-completo"})
+	m = drainReveal(t, m)
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeySpace})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	if got, want := m.focus, explorerFocus; got != want {
+		t.Fatalf("focus after opening explorer = %v, want %v", got, want)
+	}
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
+	if got := ansi.Strip(m.View()); !strings.Contains(got, "pensamiento-completo") {
+		t.Fatalf("View() sin ANSI = %q, Shift+Tab con foco del explorador debe expandir el pensamiento asentado", got)
+	}
+}
+
+func TestModel_ShiftTabExpandsSettledThinkingWithViewerFocusWithoutScrollingFile(t *testing.T) {
+	file := strings.Repeat("archivo\n", 80)
+	m := NewModel(&fakeAgent{}, "s1", nil).
+		WithCompletions(nil, func() ([]string, error) { return []string{"archivo.txt"}, nil }).
+		WithFileReader(viewerReader(map[string][]byte{"archivo.txt": []byte(file)}))
+	m = apply(t, m, tea.WindowSizeMsg{Width: 100, Height: 24})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "pensamiento-del-visor"})
+	m = drainReveal(t, m)
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: "pensamiento-del-visor"})
+	m = drainReveal(t, m)
+
+	m = m.toggleTree()
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if got, want := m.focus, viewerFocus; got != want {
+		t.Fatalf("focus after opening file = %v, want %v", got, want)
+	}
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyPgDown})
+	viewerPath, viewerOffset := m.viewer.path, m.viewer.offset
+	if viewerOffset == 0 {
+		t.Fatal("viewer precondition: PgDown must move the long file")
+	}
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
+	if !m.entries[0].expanded {
+		t.Fatal("Shift+Tab con foco del visor debe expandir el pensamiento asentado")
+	}
+	if got, want := m.focus, viewerFocus; got != want {
+		t.Fatalf("focus after Shift+Tab = %v, want %v", got, want)
+	}
+	if got, want := m.viewer.path, viewerPath; got != want {
+		t.Fatalf("viewer.path after Shift+Tab = %q, want %q", got, want)
+	}
+	if got, want := m.viewer.offset, viewerOffset; got != want {
+		t.Fatalf("viewer.offset after Shift+Tab = %d, want %d: global thinking toggle must not scroll the file", got, want)
+	}
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if got := ansi.Strip(m.View()); !strings.Contains(got, "pensamiento-del-visor") {
+		t.Fatalf("View() sin ANSI = %q, el pensamiento expandido debe verse al cerrar el visor", got)
+	}
+}
+
 // Contrato: el toggle es inerte mientras el pensamiento sigue en vivo (preview
 // de las ultimas lineas, no el texto completo). Un Shift+Tab durante el stream
 // no debe fijar expanded ni revelar el texto entero antes de tiempo.
@@ -4055,6 +4376,37 @@ func TestModel_ShiftTabIsInertWhileThinkingLive(t *testing.T) {
 	}
 	if strings.Contains(view, "vivo-1") {
 		t.Fatalf("View() = %q, Shift+Tab durante el stream vivo no debe expandir el texto entero", view)
+	}
+}
+
+func TestModel_ShiftTabIsInertForLiveThinkingWithExplorerFocus(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+		return []string{"archivo.txt", "otro.txt"}, nil
+	})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 100, Height: 24})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "vivo-uno\nvivo-dos\nvivo-tres\nvivo-cuatro\nvivo-cinco"})
+	m = drainReveal(t, m)
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeySpace})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	if got, want := m.focus, explorerFocus; got != want {
+		t.Fatalf("focus after opening explorer = %v, want %v", got, want)
+	}
+
+	beforeView, beforeCursor := ansi.Strip(m.View()), m.treeCursor
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
+	afterView := ansi.Strip(m.View())
+	if got, want := m.focus, explorerFocus; got != want {
+		t.Fatalf("focus after Shift+Tab = %v, want %v", got, want)
+	}
+	if got, want := m.treeCursor, beforeCursor; got != want {
+		t.Fatalf("treeCursor after Shift+Tab = %d, want %d", got, want)
+	}
+	if got, want := afterView, beforeView; got != want {
+		t.Fatalf("View() after Shift+Tab = %q, want unchanged live-thinking preview %q", got, want)
+	}
+	if strings.Contains(afterView, "vivo-uno") || strings.Contains(afterView, "[penso ") {
+		t.Fatalf("View() = %q, Shift+Tab con pensamiento vivo no debe revelar todo ni mostrar el resumen asentado", afterView)
 	}
 }
 
@@ -4137,6 +4489,142 @@ func TestModel_ClickExpandsSettledThinking(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("View() = %q, el clic sobre el resumen debe expandir el pensamiento mostrando %q", view, want)
 		}
+	}
+}
+
+func TestModel_ClickExpandsSettledThinkingInChatWithExplorerFocus(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+		return []string{"internal/tui/model.go"}, nil
+	})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 120, Height: 32})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "pensamiento-del-chat"})
+	m = drainReveal(t, m)
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: "pensamiento-del-chat"})
+	m = drainReveal(t, m)
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeySpace})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	if got, want := m.focus, explorerFocus; got != want {
+		t.Fatalf("focus after opening explorer = %v, want %v", got, want)
+	}
+
+	view := ansi.Strip(m.View())
+	summaryX, summaryY := -1, -1
+	for y, line := range strings.Split(view, "\n") {
+		if x := strings.Index(line, "[penso "); x >= 0 {
+			summaryX, summaryY = x, y
+			break
+		}
+	}
+	if summaryX < m.treePanelWidth() || summaryY < 0 {
+		t.Fatalf("View() = %q, no contiene el resumen de pensamiento en el panel chat", view)
+	}
+
+	m = apply(t, m, tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      summaryX,
+		Y:      summaryY,
+	})
+	if got := ansi.Strip(m.View()); !strings.Contains(got, "pensamiento-del-chat") {
+		t.Fatalf("View() sin ANSI = %q, el clic sobre el resumen del chat debe expandir el pensamiento", got)
+	}
+	if got, want := m.focus, explorerFocus; got != want {
+		t.Fatalf("focus after chat thinking click = %v, want %v: el clic no debe cambiar el foco del explorador", got, want)
+	}
+}
+
+func TestModel_ClickExpandsScrolledThinkingInChatWithExplorerFocus(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+		return []string{"internal/tui/model.go"}, nil
+	})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 120, Height: 18})
+	for i := 0; i < 8; i++ {
+		m = apply(t, m, EventMsg{Message: &session.Message{
+			ID:   fmt.Sprintf("u%d", i),
+			Role: session.RoleUser,
+			Text: fmt.Sprintf("relleno-%d", i),
+		}})
+	}
+	for _, text := range []string{"pensamiento-primero", "pensamiento-objetivo"} {
+		m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+		m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: text})
+		m = drainReveal(t, m)
+		m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: text})
+		m = drainReveal(t, m)
+	}
+	target := len(m.entries) - 1
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeySpace})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	if got, want := m.focus, explorerFocus; got != want {
+		t.Fatalf("focus after opening explorer = %v, want %v", got, want)
+	}
+	summaryRow := -1
+	for row, line := range m.entryLines() {
+		if line.idx == target && strings.Contains(line.line, "[penso ") {
+			summaryRow = row
+			break
+		}
+	}
+	if summaryRow < 0 {
+		t.Fatal("entryLines() no contiene el resumen del pensamiento objetivo")
+	}
+	m.viewport.SetYOffset(max(summaryRow-m.viewport.Height+1, 1))
+	if m.viewport.YOffset <= 0 {
+		t.Fatalf("viewport.YOffset = %d, want > 0 for a scrolled transcript", m.viewport.YOffset)
+	}
+	clickY := 2 + summaryRow - m.viewport.YOffset
+	if clickY < 2 || clickY >= m.viewport.Height+2 {
+		t.Fatalf("target summary row=%d, offset=%d, clickY=%d, viewport height=%d: el resumen objetivo debe estar visible dentro del transcript derecho", summaryRow, m.viewport.YOffset, clickY, m.viewport.Height)
+	}
+
+	m = apply(t, m, tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      m.treePanelWidth() + 2,
+		Y:      clickY,
+	})
+	if !m.entries[target].expanded {
+		t.Fatal("el clic sobre el resumen desplazado debe expandir el bloque de pensamiento objetivo")
+	}
+	if m.entries[target-1].expanded {
+		t.Fatal("el clic sobre el resumen desplazado no debe expandir otro bloque de pensamiento")
+	}
+	if got, want := m.focus, explorerFocus; got != want {
+		t.Fatalf("focus after scrolled chat thinking click = %v, want %v", got, want)
+	}
+}
+
+func TestModel_ClickChatPanelTitleIsInertWithExplorerFocus(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+		return []string{"internal/tui/model.go"}, nil
+	})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "pensamiento-del-titulo"})
+	m = drainReveal(t, m)
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: "pensamiento-del-titulo"})
+	m = drainReveal(t, m)
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeySpace})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	if got, want := m.focus, explorerFocus; got != want {
+		t.Fatalf("focus after opening explorer = %v, want %v", got, want)
+	}
+
+	m = apply(t, m, tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      m.treePanelWidth() + 2,
+		Y:      0,
+	})
+	if m.entries[0].expanded {
+		t.Fatal("el clic sobre el titulo del panel derecho no debe alternar pensamientos")
+	}
+	if got, want := m.focus, chatFocus; got != want {
+		t.Fatalf("focus after chat panel title click = %v, want %v: el clic derecho fuera del transcript debe enfocar el chat", got, want)
 	}
 }
 
@@ -5058,6 +5546,127 @@ func TestModel_ClickTreeFocusesExplorerAndCapturesKeys(t *testing.T) {
 	}
 	if got := m.input.Value(); got != "" {
 		t.Fatalf("input.Value() = %q, explorer keys must not reach the composer", got)
+	}
+}
+
+func TestModel_ComposerCursorStartsBlinking(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m.input.Cursor.BlinkSpeed = time.Millisecond
+
+	cmd := m.Init()
+	if cmd == nil {
+		t.Fatal("Init() = nil, want composer cursor blink command")
+	}
+	if m.input.Cursor.Blink {
+		t.Fatal("composer cursor starts hidden, want it visible while chat is focused")
+	}
+	blinkMsg := cmd()
+	updated, next := m.Update(blinkMsg)
+	m = updated.(Model)
+	if next == nil {
+		t.Fatal("initial cursor blink message did not schedule the next blink")
+	}
+	m = apply(t, m, next())
+	if !m.input.Cursor.Blink {
+		t.Fatal("composer cursor did not toggle after its blink interval")
+	}
+}
+
+func TestModel_ComposerCursorFollowsPanelFocus(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).
+		WithCompletions(nil, func() ([]string, error) { return []string{"one.go"}, nil })
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 12})
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeySpace})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	if m.input.Focused() {
+		t.Fatal("composer remains focused while explorer owns keyboard input")
+	}
+
+	m = apply(t, m, tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      m.treePanelWidth() + 2,
+		Y:      10,
+	})
+	if !m.input.Focused() {
+		t.Fatal("composer remains blurred after chat regains keyboard focus")
+	}
+}
+
+func TestModel_ComposerCursorHidesWhileInputGateIsPending(t *testing.T) {
+	tests := []struct {
+		name    string
+		entry   entry
+		resolve tea.Msg
+	}{
+		{
+			name:    "permission",
+			entry:   entry{kind: entryPermission, sessionID: "s1", callID: "c1"},
+			resolve: EventMsg{Kind: session.KindToolFailed, CallID: "c1"},
+		},
+		{
+			name:    "plan approval",
+			entry:   entry{kind: entryPlanApproval},
+			resolve: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			m := NewModel(&fakeAgent{}, "s1", nil)
+			m.entries = append(m.entries, test.entry)
+			m = apply(t, m, struct{}{})
+			if m.input.Focused() {
+				t.Fatal("composer remains focused while another input gate owns the keyboard")
+			}
+
+			m = apply(t, m, test.resolve)
+			if !m.input.Focused() {
+				t.Fatal("composer remains blurred after the input gate is resolved")
+			}
+		})
+	}
+}
+
+func TestModel_ComposerCursorFollowsTerminalFocus(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+
+	m = apply(t, m, tea.BlurMsg{})
+	if m.input.Focused() {
+		t.Fatal("composer remains focused after the terminal window loses focus")
+	}
+
+	m = apply(t, m, tea.FocusMsg{})
+	if !m.input.Focused() {
+		t.Fatal("composer remains blurred after the terminal window regains focus")
+	}
+}
+
+func TestModel_TerminalRefocusPreservesExplorerFocus(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).
+		WithCompletions(nil, func() ([]string, error) { return []string{"one.go"}, nil })
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 12})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeySpace})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	m = apply(t, m, tea.BlurMsg{})
+	m = apply(t, m, tea.FocusMsg{})
+
+	if got, want := m.focus, explorerFocus; got != want {
+		t.Fatalf("panel focus after terminal refocus = %v, want %v", got, want)
+	}
+	if m.input.Focused() {
+		t.Fatal("terminal refocus steals keyboard focus from explorer")
+	}
+
+	m = apply(t, m, tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      m.treePanelWidth() + 2,
+		Y:      10,
+	})
+	if !m.input.Focused() {
+		t.Fatal("composer remains blurred after terminal and chat both regain focus")
 	}
 }
 

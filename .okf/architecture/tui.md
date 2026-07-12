@@ -39,6 +39,15 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
  finish publishes `RunDoneMsg`. Satisfies the `Agent` interface of Model and
  exposes catalog, refresh, current-selection, and transactional selection
  operations to the optional model-selector boundary.
+- `internal/checkpoint/git.go` — prompt-level workspace snapshots for the TUI.
+  It stores Git trees in a private bare repository below
+  `session.DefaultCheckpointPath()` (`ATENEA_CHECKPOINTS` overrides it), using
+  the user's workspace only as `--work-tree`. Durable tree references include
+  the canonical workspace-path hash and are rejected from any other root.
+  Snapshots include tracked files
+  and non-ignored untracked files, executable modes, and symlinks. Ignored
+  files remain untouched, and the workspace's main `.git` directory, index,
+  branch, HEAD, refs, and staged changes are never mutated.
 - `internal/tui/model.go` + `fold.go` + `view.go` + `reveal.go` — the Model of
   Bubble Tea. `fold.go` projects durable `SessionEvent` to
   conversation inputs (streaming assistant text, collapsible
@@ -98,9 +107,16 @@ the terminal's default background mid-line.
  closes without duplicating against the coalesced Message; tool-input is not transcribed.
 - The reasoning folds to its own thinking block (parity with the
  ThinkingBlock of the desktop): while it flows it shows the header
- `[pensando]` and the last 4 non-empty lines of the revealed text (
- sliding window, with the same smooth reveal of the assistant); closed and drained
- collapses to the line `[penso <duracion>]`.
+ `[pensando]` and the last 4 non-empty lines of the revealed text (sliding
+ window, with the same smooth reveal of the assistant). Every rendered
+ thinking line keeps the two-cell chat inset, including physical lines created
+ by wrapping an expanded block. Closed and drained collapses to the line
+ `[penso <duracion>] ⇧Tab` with that same inset. `Shift+Tab` expands or
+ collapses every settled thinking block
+ regardless of whether chat, explorer, or viewer owns panel focus; a left
+ click on a settled summary in the visible chat transcript toggles that block
+ without stealing explorer focus. Pending permission and plan-approval gates
+ retain precedence, and live thinking stays unchanged.
  resolves via the gate with the `SessionID` of the EVENT (a surface
  request from a subagent is resolved with the child id).
 - Enter sends via the active mode path (`Agent.SendPrompt` in build,
@@ -113,6 +129,17 @@ the terminal's default background mid-line.
   composer popup to search every provider/model pair. The first Enter or Tab
   completes `/model <provider-id> <model-id> `; the next Enter persists and
   applies that pair.
+- `/undo` is a local command intercepted before prompt history, inbox
+  admission, and durable user-message events. It cancels and finalizes an
+  active run, restores the latest prompt's pre-run workspace tree, removes the
+  prompt range from effective session projections, rebuilds the transcript,
+  and returns the reverted literal prompt to the composer. Repeated `/undo`
+  walks backward through prompt boundaries. A finished prompt is undoable only
+  while the current non-ignored workspace still matches its captured after
+  tree; later workspace changes make undo fail without changing files or the
+  effective conversation. Ignored-file changes do not block undo and survive
+  restore. This control exists only in `atenea-tui`; the desktop frontend has
+  no undo control.
 - Tab toggles the build/plan agent mode: it's sticky between submissions (each
  Enter routes down the active mode path, without resetting it) and inert with a
  pending permission, and the composer footer reflects this live. In plan-mode the
@@ -130,8 +157,9 @@ the terminal's default background mid-line.
   moves the transcript. A tree file click opens or replaces the viewer without
   moving focus away from the explorer. `Esc` from a focused viewer closes it and
   returns focus to chat. Ctrl+C and pending permission/plan approval gates
-  keep precedence over panel routing; `Tab` continues to control build/plan
-  mode rather than panel focus.
+  keep precedence over panel routing; `Shift+Tab` still toggles settled thinking
+  globally, and `Tab` continues to control build/plan mode rather than panel
+  focus.
 - A successful `present_plan` adds the offer `[plan] plan presentado
   (y ejecutar / n seguir en plan)` to the end; with the offer pending the keyboard does not
  feed the input. `y` accepts via `Agent.AcceptPlan` (the Engine returns the
@@ -147,7 +175,9 @@ the terminal's default background mid-line.
 - The composer box measures the terminal width, starts at three total rows
  including borders, and grows to seven total rows for five visible input
  lines. Longer multiline prompts scroll vertically; long individual lines
- scroll horizontally within the input. The
+ scroll horizontally within the input. Its native textarea cursor blinks while
+ chat and the terminal window own keyboard focus, and hides while the window is
+ unfocused or explorer, viewer, permission, or plan approval owns input. The
  footer shows `<agente> · <modelo>`: the model enters once via
  `WithStatus` and the agent reflects the active mode (build/plan).
 
@@ -227,6 +257,11 @@ writes from ANOTHER connection) and emits `sessions:changed`, and the frontend r
 `ListSessions` upon receipt. If opening SQLite fails, `OpenDefault` returns
 a store in usable memory along with the error: the TUI still works, just
 without persisting.
+
+Prompt checkpoint metadata shares that SQLite event log, while workspace tree
+objects live separately under `session.DefaultCheckpointPath`. The feature has
+no redo, retention service, background cleanup, transaction framework, or
+desktop adapter.
 
 ## Run
 

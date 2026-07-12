@@ -36,6 +36,7 @@ func NewMemoryStore() *MemoryStore {
 // MemoryStore cumple la interface.
 var _ Store = (*MemoryStore)(nil)
 var _ CompactionStore = (*MemoryStore)(nil)
+var _ UndoStore = (*MemoryStore)(nil)
 
 // AppendEvent agrega ev al log durable de sessionID, le asigna el siguiente Seq
 // monotonico y lo devuelve. Crea la sesion si es su primer evento. El SessionID
@@ -53,6 +54,11 @@ func (s *MemoryStore) AppendEvent(ctx context.Context, sessionID string, ev Sess
 	ev.SessionID = sessionID
 	ev.Seq = seq
 	s.sessions[sessionID] = append(log, ev)
+	if ev.Kind == KindPromptCheckpointReverted {
+		epoch := s.epochs[sessionID]
+		epoch.Revision++
+		s.epochs[sessionID] = epoch
+	}
 	s.clock++
 	s.lastSeen[sessionID] = s.clock
 	return seq, nil
@@ -82,7 +88,7 @@ func (s *MemoryStore) Messages(ctx context.Context, sessionID string, sinceSeq S
 		return nil, ErrSessionNotFound
 	}
 
-	return foldMessages(log, sinceSeq), nil
+	return foldMessages(EffectiveEvents(log), sinceSeq), nil
 }
 
 // Sessions devuelve un resumen por sesion con al menos un evento, ordenado por
@@ -100,7 +106,8 @@ func (s *MemoryStore) Sessions(ctx context.Context) ([]SessionSummary, error) {
 		last  int // posicion global del ultimo evento: aproxima MAX(rowid)
 	}
 	entries := make([]entry, 0, len(s.sessions))
-	for id, log := range s.sessions {
+	for id, raw := range s.sessions {
+		log := EffectiveEvents(raw)
 		if len(log) == 0 {
 			continue
 		}
@@ -154,7 +161,7 @@ func (s *MemoryStore) Events(ctx context.Context, sessionID string, sinceSeq Seq
 	}
 
 	out := make([]SessionEvent, 0)
-	for _, ev := range log {
+	for _, ev := range EffectiveEvents(log) {
 		if ev.Seq > sinceSeq {
 			out = append(out, cloneSessionEvent(ev))
 		}
@@ -190,6 +197,7 @@ func (s *MemoryStore) ContextForRunner(ctx context.Context, sessionID string) (R
 		return RunnerContext{}, ErrSessionNotFound
 	}
 
+	events = EffectiveEvents(events)
 	epoch := s.epochs[sessionID]
 	result := RunnerContext{
 		Epoch: epoch,
@@ -274,7 +282,7 @@ func (s *MemoryStore) PendingToolCalls(ctx context.Context, sessionID string) ([
 
 	pending := make(map[string]PendingTool)
 	order := make([]string, 0)
-	for _, ev := range log {
+	for _, ev := range EffectiveEvents(log) {
 		switch ev.Kind {
 		case KindToolCalled:
 			if _, ok := pending[ev.CallID]; !ok {
@@ -293,6 +301,16 @@ func (s *MemoryStore) PendingToolCalls(ctx context.Context, sessionID string) ([
 		}
 	}
 	return out, nil
+}
+
+func (s *MemoryStore) LatestPromptCheckpoint(ctx context.Context, sessionID string) (EffectiveCheckpoint, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	log, ok := s.sessions[sessionID]
+	if !ok {
+		return EffectiveCheckpoint{}, ErrSessionNotFound
+	}
+	return LatestEffectiveCheckpoint(log)
 }
 
 // DeleteSession borra todos los eventos durables de la sesion. ErrSessionNotFound
@@ -444,6 +462,10 @@ func cloneSessionEvent(event SessionEvent) SessionEvent {
 	if event.Compaction != nil {
 		checkpoint := cloneCompactionCheckpoint(*event.Compaction)
 		event.Compaction = &checkpoint
+	}
+	if event.Checkpoint != nil {
+		checkpoint := *event.Checkpoint
+		event.Checkpoint = &checkpoint
 	}
 	return event
 }

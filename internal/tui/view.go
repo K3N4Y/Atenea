@@ -140,6 +140,8 @@ func (e entry) render(width int) string {
 // revelado (paridad con el ThinkingBlock del escritorio).
 const thinkingPreviewLines = 4
 
+const thinkingInset = "  "
+
 // renderThinking rinde el bloque de pensamiento (paridad con el ThinkingBlock
 // del escritorio). Mientras esta en vivo o queda backlog por revelar: la
 // cabecera "[pensando]" y debajo solo las ultimas thinkingPreviewLines lineas
@@ -157,23 +159,27 @@ func (e entry) renderThinking(width int) string {
 		for _, line := range lastNonEmptyLines(e.revealedText(), thinkingPreviewLines) {
 			lines = append(lines, statusStyle.Render(line))
 		}
-		return strings.Join(lines, "\n")
+		return insetThinking(strings.Join(lines, "\n"))
 	}
 	summary := statusStyle.Render("[penso " + formatThinkingDuration(e.duration) + "]")
 	if !e.expanded {
 		// Resumen colapsado: una linea con el hint de la tecla que lo expande.
 		// El prefijo "[penso " es estable para los tests; el hint " ⇧Tab" va al
 		// final para no romperlos (asertan por substring).
-		return summary + statusStyle.Render(" ⇧Tab")
+		return insetThinking(summary + statusStyle.Render(" ⇧Tab"))
 	}
 	// Expandido: cabecera de resumen seguida del texto completo del
 	// pensamiento, envuelto al ancho del viewport (0 = sin envolver) y en
 	// estilo tenue, con cada linea como UN segmento asertable.
 	body := e.revealedText()
-	if width > 0 {
-		body = ansi.Wrap(body, width, "")
+	if width > len(thinkingInset) {
+		body = ansi.Wrap(body, width-len(thinkingInset), "")
 	}
-	return strings.Join([]string{summary, statusStyle.Render(body)}, "\n")
+	return insetThinking(strings.Join([]string{summary, statusStyle.Render(body)}, "\n"))
+}
+
+func insetThinking(text string) string {
+	return thinkingInset + strings.ReplaceAll(text, "\n", "\n"+thinkingInset)
 }
 
 // lastNonEmptyLines devuelve las ultimas limit lineas no vacias (ignorando las

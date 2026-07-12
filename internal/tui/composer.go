@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -21,6 +22,7 @@ func newComposerInput() composerInput {
 	input.EndOfBufferCharacter = ' '
 	input.MaxHeight = composerMaxLines
 	input.SetHeight(1)
+	input.Cursor.BlinkSpeed = 700 * time.Millisecond
 	input.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("ctrl+j"))
 	input.FocusedStyle.Prompt = accentStyle
 	input.FocusedStyle.CursorLine = input.FocusedStyle.CursorLine.UnsetBackground()

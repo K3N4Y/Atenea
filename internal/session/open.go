@@ -25,6 +25,19 @@ func DefaultDBPath() string {
 	return filepath.Join(appDir, "atenea.db")
 }
 
+func DefaultCheckpointPath() string {
+	if path := os.Getenv("ATENEA_CHECKPOINTS"); path != "" {
+		return path
+	}
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return filepath.Join(os.TempDir(), "atenea", "checkpoints")
+	}
+	path := filepath.Join(dir, "atenea", "checkpoints")
+	_ = os.MkdirAll(path, 0o700)
+	return path
+}
+
 // OpenDefault abre el store durable en DefaultDBPath. Si SQLite falla devuelve
 // el error JUNTO a un store en memoria usable: un error no-nil NO significa
 // store inutilizable, el caller sigue funcionando sin persistencia y decide

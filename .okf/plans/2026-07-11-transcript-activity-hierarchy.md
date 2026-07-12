@@ -246,4 +246,3 @@ PostHog Code trailers.
 Push `posthog-code/transcript-hierarchy` and open a PR describing behavior,
 tests, visual verification constraints, and the deferred final-summary variant.
 Append the required PostHog Code PR footer.
-

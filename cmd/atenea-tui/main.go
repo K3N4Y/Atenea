@@ -15,6 +15,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"atenea/internal/checkpoint"
 	"atenea/internal/dotenv"
 	"atenea/internal/llm"
 	"atenea/internal/providerconfig"
@@ -67,10 +68,11 @@ func main() {
 	active := providerService.Active()
 
 	engine := tui.NewEngine(tui.EngineConfig{
-		Root:     root,
-		Provider: providerService.Provider(),
-		Store:    store,
-		Models:   providerService,
+		Root:        root,
+		Provider:    providerService.Provider(),
+		Store:       store,
+		Models:      providerService,
+		Checkpoints: checkpoint.NewGitStore(session.DefaultCheckpointPath()),
 	})
 	history, err := engine.PromptHistory()
 	if err != nil {
@@ -95,7 +97,7 @@ func main() {
 	// WithMouseCellMotion habilita el mouse tracking: sin el, la terminal nunca
 	// reporta la rueda a la app (en pantalla alternativa la traduce a flechas
 	// via "alternate scroll"); con la opcion llegan eventos de mouse reales.
-	if _, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run(); err != nil {
+	if _, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithReportFocus()).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "atenea-tui:", err)
 		os.Exit(1)
 	}
