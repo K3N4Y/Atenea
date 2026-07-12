@@ -144,6 +144,7 @@ func Build(cfg Config) Built {
 	r := runner.NewRunner(cfg.Store, cfg.Inbox, cfg.Provider, registry,
 		tool.Permissions{"read": true, "write": true, "edit": true, "glob": true, "grep": true, "bash": true, "skill": true, "task": true, "web_fetch": true, "todo_write": true},
 		cfg.NextID)
+	r.SetCompactor(runner.NewContextCompactor(cfg.Store, cfg.Provider))
 	r.SetSystemPrompt(systemPromptBuilder(root, skillsBlock, cfg.Local))
 	r.SetPermissionGate(cfg.Gate, needsApproval)
 	// Plan-mode: investigacion de solo lectura mas present_plan (sin write/edit/bash/
