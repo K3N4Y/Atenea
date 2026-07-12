@@ -134,6 +134,34 @@ canvas immediately restores `#141414` after each reset before any following
 cells. Styled prompts, cursors, panels, and Markdown therefore cannot expose
 the terminal's default background mid-line.
 
+### Top bar
+
+`Model.View` prepends a fixed top-bar chrome above every layout once the first
+`WindowSizeMsg` arrives: one blank row, the bar row, one blank row
+(`topBarHeight = 3`, with `topBarMargin = 1` above and below). The margin is one
+row, not `composerOuterMargin`: a single blank row is the project's vertical
+rhythm and visually balances the two-cell horizontal inset, and two rows would
+overflow short terminals. Every chrome row shares the `#141414` canvas
+background (and restores it after inner resets, like the rest of the view). The
+bar row shows, left to right, inset by `composerOuterMargin` on both sides so it
+aligns with the composer box: the git branch (a powerline branch glyph `` in
+green plus the branch name), the working directory (home abbreviated to `~`,
+faint) and, aligned to the right inset, the context usage `used / window` (e.g.
+`16k / 200k`) taken from the last `Step.Ended` input tokens and
+`llm.ContextWindow(model)`. When the model's window is unknown only the used
+count shows, and without any usage the right side is empty. Branch and directory
+enter once through `WithWorkspace(branch, dir)`, fed by `cmd/atenea-tui/main.go`
+(branch via `git rev-parse --abbrev-ref HEAD`, `""` outside a repo; directory
+home-abbreviated). On a width too narrow for both sides the left segment
+truncates with `…` so the context label always fits.
+
+Because the chrome owns the top `topBarHeight` rows, the body (chat, explorer,
+viewer) sizes against `bodyHeight = height - topBarHeight` rather than the full
+terminal height, and mouse events subtract `topBarHeight` from their row before
+the body handlers read it, so a click anywhere in the chrome is inert. Total
+rendered height is unchanged: the chrome comes out of the body, never adds extra
+rows.
+
 ## Contracts that the TUI establishes with tests
 
 - The fold is pure: the text deltas accumulate in a live block and `Step.Ended`

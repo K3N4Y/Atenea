@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -14,12 +15,7 @@ import (
 func (r *recordingEmit) sawChannel(channel string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for _, ch := range r.channels {
-		if ch == channel {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(r.channels, channel)
 }
 
 // TestApp_EmitsSessionsChangedOnExternalDBWrite es el wiring end-to-end del
@@ -34,9 +30,11 @@ func TestApp_EmitsSessionsChangedOnExternalDBWrite(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "atenea.db")
 	store, err := session.NewSQLiteStore(path)
+
 	if err != nil {
 		t.Fatalf("NewSQLiteStore: %v", err)
 	}
+
 	t.Cleanup(func() { store.Close() })
 
 	rec := &recordingEmit{}
@@ -46,10 +44,13 @@ func TestApp_EmitsSessionsChangedOnExternalDBWrite(t *testing.T) {
 
 	// El "otro proceso": un segundo store (otro pool) sobre el mismo archivo.
 	other, err := session.NewSQLiteStore(path)
+
 	if err != nil {
 		t.Fatalf("NewSQLiteStore (otro proceso): %v", err)
 	}
+
 	t.Cleanup(func() { other.Close() })
+
 	if _, err := other.AppendEvent(context.Background(), "sesion-tui",
 		session.SessionEvent{Kind: session.KindStepStarted}); err != nil {
 		t.Fatalf("AppendEvent (otro proceso): %v", err)
@@ -58,14 +59,21 @@ func TestApp_EmitsSessionsChangedOnExternalDBWrite(t *testing.T) {
 	// Margen holgado: bajo la suite completa (los tests PTY lanzan binarios
 	// TUI reales en paralelo) el watcher puede quedar hambriento de CPU y 2s
 	// no alcanzan; el caso feliz retorna apenas ve la emision, sin esperar.
-	deadline := time.After(10 * time.Second)
+	waitFor(t, 2*time.Second, func() bool {
+		return rec.sawChannel("sessions:changed")
+	}, "the app did not emit sessions:changed after the external write to the DB")
+}
+
+func waitFor(t *testing.T, timeout time.Duration, cond func() bool, msg string) {
+	t.Helper()
+	deadline := time.After(timeout)
 	for {
-		if rec.sawChannel("sessions:changed") {
+		if cond() {
 			return
 		}
 		select {
 		case <-deadline:
-			t.Fatal("la app no emitio sessions:changed tras la escritura externa a la DB")
+			t.Fatal(msg)
 		default:
 			time.Sleep(time.Millisecond)
 		}

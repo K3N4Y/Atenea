@@ -207,6 +207,13 @@ type Model struct {
 	reasoningBytes int
 	toolInputBytes int
 
+	// branch es la rama git actual que la top bar muestra a la izquierda;
+	// "" la oculta. workDir es el directorio de trabajo ya listo para mostrar
+	// (home abreviado a ~); "" lo oculta. Ambos entran una sola vez via
+	// WithWorkspace.
+	branch  string
+	workDir string
+
 	// planMode indica el modo del agente: Tab lo alterna entre build (false)
 	// y plan (true). Es pegajoso entre envios: cada Enter envia por el camino
 	// del modo activo (SendPrompt en build, SendPlanPrompt en plan) sin
@@ -266,6 +273,15 @@ func NewModel(agent Agent, sessionID string, events <-chan tea.Msg) Model {
 // construyen el modelo, pero el modo normal ya no agrega una etiqueta propia.
 func (m Model) WithStatus(_ string, model string) Model {
 	m.model = model
+	return m
+}
+
+// WithWorkspace fija la rama de git y el directorio (ya listo para mostrar,
+// con el home abreviado a ~) que la top bar muestra a la izquierda. Builder
+// de valor como WithStatus: la info entra una sola vez al construir el Model.
+func (m Model) WithWorkspace(branch, dir string) Model {
+	m.branch = branch
+	m.workDir = dir
 	return m
 }
 
@@ -422,6 +438,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKey(ev)
 	case tea.MouseMsg:
+		// La top bar ocupa la fila 0 de la pantalla, asi que el contenido del
+		// cuerpo empieza una fila mas abajo: se traslada el clic a coordenadas
+		// del cuerpo antes de leer ev.Y. Los handlers de abajo ya tratan una Y
+		// negativa como fallo, asi que un clic sobre la barra queda inerte.
+		if m.ready {
+			ev.Y -= topBarHeight
+		}
 		if m.newActivityIndicatorHit(ev) {
 			return m, nil
 		}
@@ -886,9 +909,9 @@ func (m *Model) moveTreeCursor(delta int) {
 
 func (m Model) fileViewerHeight() int {
 	if m.ready && m.treeOpen && m.treePanelWidth() < m.width {
-		return max(m.height-4, 0)
+		return max(m.bodyHeight()-4, 0)
 	}
-	return max(m.height-1, 0)
+	return max(m.bodyHeight()-1, 0)
 }
 
 func (m Model) openTreeFile(path string) Model {

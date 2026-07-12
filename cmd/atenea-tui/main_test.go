@@ -322,7 +322,10 @@ func TestTUI_FileViewerScrollsToLastLineUnderPTY(t *testing.T) {
 	if _, err := terminal.Write([]byte("\r\x1b[6~")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYText(t, output, "long.txt · 12-31/31")
+	// El chrome de la top bar toma dos filas del cuerpo: el visor a pantalla
+	// completa muestra dos lineas menos, asi que la ventana al fondo abre en la
+	// linea 15 (no 13).
+	waitForPTYText(t, output, "long.txt · 15-31/31")
 	waitForPTYText(t, output, "line 31")
 }
 
@@ -340,7 +343,10 @@ func TestTUI_FileTreeMouseWheelAndClickUnderPTY(t *testing.T) {
 	cmd := exec.Command(binary)
 	cmd.Dir = filepath.Join(repoRoot, "cmd/atenea-tui/testdata/file-tree-mouse/project")
 	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY=", "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
-	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 8})
+	// Rows: 11 = 8 filas de cuerpo (la geometria del arbol/visor que este test
+	// ejercita) mas las 3 filas del chrome de la top bar; asi el cuerpo conserva
+	// el mismo alto que antes de la barra y los clics de mouse suman 3 a su fila.
+	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 11})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,22 +358,25 @@ func TestTUI_FileTreeMouseWheelAndClickUnderPTY(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForPTYText(t, output, "file-00.go")
-	if _, err := terminal.Write([]byte("\x1b[<65;1;4M\x1b[<65;1;4M\x1b[<0;25;4M")); err != nil {
+	// El chrome de la top bar ocupa las filas 1-3 (SGR 1-based) de la pantalla,
+	// asi que el cuerpo (arbol y visor) empieza tres filas mas abajo: cada evento
+	// de mouse suma 3 a su fila respecto al layout sin barra.
+	if _, err := terminal.Write([]byte("\x1b[<65;1;7M\x1b[<65;1;7M\x1b[<0;25;7M")); err != nil {
 		t.Fatal(err)
 	}
 	waitForPTYText(t, output, "file-03.go · 1-1/1")
 	waitForPTYText(t, output, "package file03")
-	if _, err := terminal.Write([]byte("\x1b[<0;25;6M")); err != nil {
+	if _, err := terminal.Write([]byte("\x1b[<0;25;9M")); err != nil {
 		t.Fatal(err)
 	}
 	waitForPTYText(t, output, "file-05.go · 1-1/1")
 	waitForPTYText(t, output, "package file05")
-	if _, err := terminal.Write([]byte("\x1b[<0;50;4M")); err != nil {
+	if _, err := terminal.Write([]byte("\x1b[<0;50;7M")); err != nil {
 		t.Fatal(err)
 	}
 	waitForPTYText(t, output, "viewer *")
 	waitForPTYText(t, output, "file-05.go · 1-1/1")
-	if _, err := terminal.Write([]byte("\x1b[<0;1;1M")); err != nil {
+	if _, err := terminal.Write([]byte("\x1b[<0;1;4M")); err != nil {
 		t.Fatal(err)
 	}
 	waitForPTYText(t, output, "explorer *")

@@ -9,8 +9,10 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -92,6 +94,7 @@ func main() {
 	m := tui.NewModel(engine, sessionID, engine.Events()).
 		WithHistory(history).
 		WithStatus("build", active.Model).
+		WithWorkspace(gitBranch(root), displayDir(root)).
 		WithCompletions(engine.Commands(), engine.ProjectFiles).
 		WithFileReader(tui.WorkspaceFileReader(root))
 	// WithMouseCellMotion habilita el mouse tracking: sin el, la terminal nunca
@@ -101,6 +104,36 @@ func main() {
 		fmt.Fprintln(os.Stderr, "atenea-tui:", err)
 		os.Exit(1)
 	}
+}
+
+// gitBranch devuelve la rama git actual del repo en root (git rev-parse
+// --abbrev-ref HEAD), o "" ante cualquier error o si root no es un repo. La
+// top bar la muestra a la izquierda.
+func gitBranch(root string) string {
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// displayDir abrevia el prefijo del home a "~" para mostrar el directorio de
+// trabajo en la top bar; sin home resoluble o sin prefijo comun devuelve root
+// tal cual.
+func displayDir(root string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return root
+	}
+	if root == home {
+		return "~"
+	}
+	if strings.HasPrefix(root, home+"/") {
+		return "~/" + root[len(home)+1:]
+	}
+	return root
 }
 
 // providerFromEnv elige el provider igual que la config inicial de la app Wails:

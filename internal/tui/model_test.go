@@ -2015,7 +2015,7 @@ func TestModel_ViewportFollowsTailOnNewEvents(t *testing.T) {
 
 func TestModel_PgUpScrollsHistoryBack(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
-	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 12})
 
 	// Muchas mas entradas de las que caben: la vista arranca siguiendo la cola.
 	for i := 0; i < 30; i++ {
@@ -2073,7 +2073,7 @@ var (
 
 func TestModel_MouseWheelScrollsHistory(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
-	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 12})
 
 	// Muchas mas entradas de las que caben: la vista arranca siguiendo la cola.
 	for i := 0; i < 30; i++ {
@@ -2334,9 +2334,9 @@ func TestModel_WorkingIndicatorVisibleWhileRunning(t *testing.T) {
 func TestModel_ViewFitsHeightWithIndicator(t *testing.T) {
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
-	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 12})
 
-	// Muchas mas entradas de las que caben en 10 lineas.
+	// Muchas mas entradas de las que caben en 12 lineas.
 	for i := 0; i < 30; i++ {
 		m = apply(t, m, EventMsg{Message: &session.Message{
 			ID:   fmt.Sprintf("u%02d", i),
@@ -2353,8 +2353,8 @@ func TestModel_ViewFitsHeightWithIndicator(t *testing.T) {
 	if !strings.Contains(view, "trabajando") {
 		t.Fatalf("View() = %q, con corrida en curso debe verse el indicador %q", view, "trabajando")
 	}
-	if lines := strings.Count(view, "\n") + 1; lines > 10 {
-		t.Fatalf("View() tiene %d lineas, la linea de estado NO debe romper el alto acotado (<= 10)", lines)
+	if lines := strings.Count(view, "\n") + 1; lines > 12 {
+		t.Fatalf("View() tiene %d lineas, la linea de estado NO debe romper el alto acotado (<= 12)", lines)
 	}
 	if !strings.Contains(view, "mensaje-29") {
 		t.Fatalf("View() = %q, la vista debe seguir la cola (%q visible) aun con la linea de estado", view, "mensaje-29")
@@ -4834,9 +4834,10 @@ func TestModel_ClickExpandsSettledThinking(t *testing.T) {
 	if summaryRow < 0 {
 		t.Fatalf("entryLines() no contiene el resumen %q: %v", "[penso ", lines)
 	}
-	// La fila en pantalla es la del contenido menos el desplazamiento visible.
-	clickY := summaryRow - m.viewport.YOffset
-	if clickY < 0 {
+	// La fila en pantalla es la del contenido menos el desplazamiento visible,
+	// mas la fila de la top bar que corre el cuerpo una fila hacia abajo.
+	clickY := topBarHeight + summaryRow - m.viewport.YOffset
+	if clickY < topBarHeight {
 		t.Fatalf("summaryRow=%d YOffset=%d, el resumen no esta visible para clicar", summaryRow, m.viewport.YOffset)
 	}
 
@@ -4982,8 +4983,8 @@ func TestModel_ClickExpandsScrolledThinkingInChatWithExplorerFocus(t *testing.T)
 	if m.viewport.YOffset <= 0 {
 		t.Fatalf("viewport.YOffset = %d, want > 0 for a scrolled transcript", m.viewport.YOffset)
 	}
-	clickY := 2 + summaryRow - m.viewport.YOffset
-	if clickY < 2 || clickY >= m.viewport.Height+2 {
+	clickY := topBarHeight + 2 + summaryRow - m.viewport.YOffset
+	if clickY < topBarHeight+2 || clickY >= m.viewport.Height+topBarHeight+2 {
 		t.Fatalf("target summary row=%d, offset=%d, clickY=%d, viewport height=%d: el resumen objetivo debe estar visible dentro del transcript derecho", summaryRow, m.viewport.YOffset, clickY, m.viewport.Height)
 	}
 
@@ -5062,7 +5063,7 @@ func TestModel_ClickCollapsesExpandedThinking(t *testing.T) {
 			break
 		}
 	}
-	clickY := headerRow - m.viewport.YOffset
+	clickY := topBarHeight + headerRow - m.viewport.YOffset
 	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, Y: clickY})
 	view := m.View()
 	if strings.Contains(view, "razon-1") {
@@ -5239,7 +5240,7 @@ func TestModel_TreeNavigationScrollsSelectedRowIntoView(t *testing.T) {
 			"file-04.go",
 		}, nil
 	})
-	m = apply(t, m, tea.WindowSizeMsg{Width: 50, Height: 6})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 50, Height: 8})
 	m = m.toggleTree()
 
 	for range 3 {
@@ -5261,7 +5262,7 @@ func TestModel_TreeNavigationScrollsBackAtTopAndAfterResize(t *testing.T) {
 			"file-04.go",
 		}, nil
 	})
-	m = apply(t, m, tea.WindowSizeMsg{Width: 50, Height: 8})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 50, Height: 8 + topBarHeight})
 	m = m.toggleTree()
 
 	for range 4 {
@@ -5271,7 +5272,7 @@ func TestModel_TreeNavigationScrollsBackAtTopAndAfterResize(t *testing.T) {
 		t.Fatalf("treeOffset at bottom = %d, want %d", got, want)
 	}
 
-	m = apply(t, m, tea.WindowSizeMsg{Width: 50, Height: 6})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 50, Height: 6 + topBarHeight})
 	if got, want := m.treeOffset, 3; got != want {
 		t.Fatalf("treeOffset after shrinking = %d, want %d", got, want)
 	}
@@ -5297,7 +5298,7 @@ func TestModel_TreeMouseWheelScrollsSelectionWithoutMovingTranscript(t *testing.
 			"file-04.go",
 		}, nil
 	})
-	m = apply(t, m, tea.WindowSizeMsg{Width: 50, Height: 6})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 50, Height: 6 + topBarHeight})
 	m = m.toggleTree()
 	for i := 0; i < 20; i++ {
 		m.entries = append(m.entries, entry{kind: entryUser, text: fmt.Sprintf("message-%d", i)})
@@ -5389,7 +5390,7 @@ func TestModel_NarrowFullWidthViewerWheelNeverScrollsHiddenTree(t *testing.T) {
 				Action: tea.MouseActionPress,
 				Button: tea.MouseButtonWheelDown,
 				X:      x,
-				Y:      0,
+				Y:      topBarHeight,
 			})
 
 			if got, want := m.focus, viewerFocus; got != want {
@@ -5416,7 +5417,7 @@ func TestModel_TreeMouseClickOpensFileFromAnyColumnInRow(t *testing.T) {
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonLeft,
 		X:      m.treePanelWidth() - 1,
-		Y:      3,
+		Y:      3 + topBarHeight,
 	})
 
 	if !m.viewer.active() {
@@ -5436,9 +5437,9 @@ func TestModel_TreeMouseClickReplacesOpenFileViewer(t *testing.T) {
 		}))
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 12})
 	m = m.toggleTree()
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() - 1, Y: 3})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() - 1, Y: 3 + topBarHeight})
 
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() - 1, Y: 4})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() - 1, Y: 4 + topBarHeight})
 
 	if got, want := m.viewer.path, "second.go"; got != want {
 		t.Fatalf("viewer.path = %q, want %q", got, want)
@@ -5456,7 +5457,7 @@ func TestModel_TreeMouseClickFolderRowTogglesExpansion(t *testing.T) {
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonLeft,
 		X:      m.treePanelWidth() - 1,
-		Y:      3,
+		Y:      3 + topBarHeight,
 	})
 
 	if !m.tree.expanded["internal"] {
@@ -5637,7 +5638,7 @@ func TestModel_FileViewerScrollCapturesKeysButPermissionWins(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil).
 		WithCompletions(nil, func() ([]string, error) { return []string{"many.txt"}, nil }).
 		WithFileReader(viewerReader(map[string][]byte{"many.txt": []byte("1\n2\n3\n4\n5\n")}))
-	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 5})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 5 + topBarHeight})
 	m = m.toggleTree()
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
@@ -5656,7 +5657,7 @@ func TestModel_FileViewerMouseWheelScrollsFileWithoutMovingHiddenTranscript(t *t
 	m := NewModel(&fakeAgent{}, "s1", nil).
 		WithCompletions(nil, func() ([]string, error) { return []string{"many.txt"}, nil }).
 		WithFileReader(viewerReader(map[string][]byte{"many.txt": []byte("1\n2\n3\n4\n5\n6\n7\n8\n")}))
-	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 5})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 5 + topBarHeight})
 	for i := 0; i < 20; i++ {
 		m = apply(t, m, EventMsg{Message: &session.Message{ID: fmt.Sprintf("u%d", i), Role: session.RoleUser, Text: fmt.Sprintf("message-%d", i)}})
 	}
@@ -5668,7 +5669,7 @@ func TestModel_FileViewerMouseWheelScrollsFileWithoutMovingHiddenTranscript(t *t
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonWheelUp,
 		X:      m.treePanelWidth() + 2,
-		Y:      0,
+		Y:      topBarHeight,
 	})
 	if m.viewer.offset >= beforeOffset {
 		t.Fatalf("wheel up viewer offset = %d, want less than %d", m.viewer.offset, beforeOffset)
@@ -5683,7 +5684,7 @@ func TestModel_FileViewerTrackpadScrollKeepsTabbedRowsWithinLayout(t *testing.T)
 	m := NewModel(&fakeAgent{}, "s1", nil).
 		WithCompletions(nil, func() ([]string, error) { return []string{"tabs.go"}, nil }).
 		WithFileReader(viewerReader(map[string][]byte{"tabs.go": []byte(content)}))
-	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 6})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 6 + topBarHeight})
 	m = m.toggleTree()
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	for range 12 {
@@ -5691,7 +5692,7 @@ func TestModel_FileViewerTrackpadScrollKeepsTabbedRowsWithinLayout(t *testing.T)
 			Action: tea.MouseActionPress,
 			Button: tea.MouseButtonWheelDown,
 			X:      m.treePanelWidth() + 2,
-			Y:      0,
+			Y:      topBarHeight,
 		})
 	}
 	if got, want := m.viewer.offset, 10; got != want {
@@ -5715,9 +5716,9 @@ func TestModel_FileViewerHeightMatchesRenderedLayout(t *testing.T) {
 		openTree bool
 		wantRows int
 	}{
-		{name: "full screen", width: 12, height: 24, openTree: true, wantRows: 23},
-		{name: "split panels", width: 80, height: 24, openTree: true, wantRows: 20},
-		{name: "without explorer", width: 80, height: 24, wantRows: 23},
+		{name: "full screen", width: 12, height: 24 + topBarHeight, openTree: true, wantRows: 23},
+		{name: "split panels", width: 80, height: 24 + topBarHeight, openTree: true, wantRows: 20},
+		{name: "without explorer", width: 80, height: 24 + topBarHeight, wantRows: 23},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			m := NewModel(&fakeAgent{}, "s1", nil)
@@ -5784,7 +5785,7 @@ func TestModel_FileViewerReplacesChatWithHeaderAndGutter(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil).
 		WithCompletions(nil, func() ([]string, error) { return []string{"main.go"}, nil }).
 		WithFileReader(viewerReader(map[string][]byte{"main.go": []byte("package main\nfunc main() {}\n")}))
-	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 8})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 10})
 	m = m.toggleTree()
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	view := ansi.Strip(m.View())
@@ -5802,7 +5803,7 @@ func TestModel_FileViewerNarrowTerminalNeverOverflows(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil).
 		WithCompletions(nil, func() ([]string, error) { return []string{"long.go"}, nil }).
 		WithFileReader(viewerReader(map[string][]byte{"long.go": []byte("package extremelylongpackagename\n")}))
-	m = apply(t, m, tea.WindowSizeMsg{Width: 12, Height: 4})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 12, Height: 6})
 	m = m.toggleTree()
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	view := ansi.Strip(m.View())
@@ -5845,7 +5846,7 @@ func TestModel_ResizeToFullWidthTreeNormalizesFocusAndKeepsItAfterSplitReturns(t
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 8})
 	m = m.toggleTree()
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() + 2, Y: 0})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() + 2, Y: topBarHeight})
 	if got, want := m.focus, viewerFocus; got != want {
 		t.Fatalf("focus before narrow resize = %v, want %v", got, want)
 	}
@@ -5881,7 +5882,7 @@ func TestModel_SplitFocusChromeMarksExactlyOneActivePanel(t *testing.T) {
 	}
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() + 2, Y: 0})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() + 2, Y: topBarHeight})
 	view = ansi.Strip(m.View())
 	if got, want := strings.Count(view, "*"), 1; got != want {
 		t.Fatalf("split viewer view has %d active markers, want %d: %q", got, want, view)
@@ -5917,7 +5918,7 @@ func TestModel_NarrowViewerFocusChromePreservesHeaderAndGutterWithoutOverflow(t 
 	m := NewModel(&fakeAgent{}, "s1", nil).
 		WithCompletions(nil, func() ([]string, error) { return []string{"long-file-name.go"}, nil }).
 		WithFileReader(viewerReader(map[string][]byte{"long-file-name.go": []byte("package main\n")}))
-	m = apply(t, m, tea.WindowSizeMsg{Width: 12, Height: 4})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 12, Height: 6})
 	m = m.toggleTree()
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
@@ -6103,11 +6104,11 @@ func TestModel_ClickViewerFocusesFileScroll(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil).
 		WithCompletions(nil, func() ([]string, error) { return []string{"many.txt"}, nil }).
 		WithFileReader(viewerReader(map[string][]byte{"many.txt": []byte("1\n2\n3\n4\n5\n6\n7\n8\n9\n")}))
-	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 5})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 5 + topBarHeight})
 	m = m.toggleTree()
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: 3})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: 3 + topBarHeight})
 
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() + 2, Y: 4})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() + 2, Y: 4 + topBarHeight})
 	if got, want := m.focus, chatFocus; got != want {
 		t.Fatalf("focus after chat click = %v, want %v", got, want)
 	}
@@ -6116,7 +6117,7 @@ func TestModel_ClickViewerFocusesFileScroll(t *testing.T) {
 		t.Fatalf("viewer offset = %d after chat focus, want 0: chat keys must not scroll the file", got)
 	}
 
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() + 2, Y: 0})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() + 2, Y: topBarHeight})
 	if got, want := m.focus, viewerFocus; got != want {
 		t.Fatalf("focus after viewer click = %v, want %v", got, want)
 	}
@@ -6130,28 +6131,28 @@ func TestModel_ClickChatAfterOpeningViewerRoutesMouseWheelToTranscript(t *testin
 	m := NewModel(&fakeAgent{}, "s1", nil).
 		WithCompletions(nil, func() ([]string, error) { return []string{"many.txt"}, nil }).
 		WithFileReader(viewerReader(map[string][]byte{"many.txt": []byte("1\n2\n3\n4\n5\n6\n7\n8\n9\n")}))
-	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 5})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 5 + topBarHeight})
 	m = m.toggleTree()
 	for i := 0; i < 20; i++ {
 		m.entries = append(m.entries, entry{kind: entryUser, text: fmt.Sprintf("message-%d", i)})
 	}
 	m = m.syncViewport()
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp, X: m.treePanelWidth() + 2, Y: 4})
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: 3})
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() + 2, Y: 0})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp, X: m.treePanelWidth() + 2, Y: 4 + topBarHeight})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: 3 + topBarHeight})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() + 2, Y: topBarHeight})
 	if got, want := m.focus, viewerFocus; got != want {
 		t.Fatalf("focus after viewer click = %v, want %v", got, want)
 	}
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyPgDown})
 
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() + 2, Y: 4})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() + 2, Y: 4 + topBarHeight})
 	if got, want := m.focus, chatFocus; got != want {
 		t.Fatalf("focus after chat click = %v, want %v", got, want)
 	}
 	viewerOffset := m.viewer.offset
 	transcriptOffset := m.viewport.YOffset
 
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown, X: m.treePanelWidth() + 2, Y: 4})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown, X: m.treePanelWidth() + 2, Y: 4 + topBarHeight})
 
 	if got, want := m.viewer.offset, viewerOffset; got != want {
 		t.Fatalf("viewer offset = %d, want %d: wheel after chat click must not scroll the file", got, want)
@@ -6224,7 +6225,7 @@ func TestModel_MouseWheelRoutesByPointerWithoutChangingKeyboardFocus(t *testing.
 			Action: tea.MouseActionPress,
 			Button: tea.MouseButtonWheelDown,
 			X:      m.treePanelWidth() + 2,
-			Y:      m.fileViewerHeight(),
+			Y:      m.fileViewerHeight() + topBarHeight,
 		})
 
 		if got, want := m.focus, viewerFocus; got != want {
@@ -6239,7 +6240,7 @@ func TestModel_MouseWheelRoutesByPointerWithoutChangingKeyboardFocus(t *testing.
 	})
 
 	t.Run("right chat scrolls while explorer keeps keyboard focus", func(t *testing.T) {
-		const width, height = 80, 8
+		const width, height = 80, 8 + topBarHeight
 		m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
 			return []string{"file-00.go", "file-01.go", "file-02.go", "file-03.go"}, nil
 		})
@@ -6283,7 +6284,7 @@ func TestModel_MouseWheelRoutesByPointerWithoutChangingKeyboardFocus(t *testing.
 		m := NewModel(&fakeAgent{}, "s1", nil).
 			WithCompletions(nil, func() ([]string, error) { return []string{"many.txt"}, nil }).
 			WithFileReader(viewerReader(map[string][]byte{"many.txt": []byte("1\n2\n3\n4\n5\n6\n7\n8\n9\n")}))
-		m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 8})
+		m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 10})
 		m = m.toggleTree()
 		m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 		m.focus = explorerFocus
@@ -6293,7 +6294,7 @@ func TestModel_MouseWheelRoutesByPointerWithoutChangingKeyboardFocus(t *testing.
 			Action: tea.MouseActionPress,
 			Button: tea.MouseButtonWheelDown,
 			X:      m.treePanelWidth() + 2,
-			Y:      1,
+			Y:      topBarHeight,
 		})
 
 		if got, want := m.focus, explorerFocus; got != want {
@@ -6342,15 +6343,15 @@ func TestModel_ExplorerSelectionAfterOpeningViewerRoutesTreeKeysAndEsc(t *testin
 			"second.txt": []byte("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\n"),
 			"third.txt":  []byte("alpha\nbeta\ngamma\ndelta\nepsilon\nzeta\neta\ntheta\niota\n"),
 		}))
-	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 8})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 10})
 	m = m.toggleTree()
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: 3})
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() + 2, Y: 0})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: 3 + topBarHeight})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() + 2, Y: topBarHeight})
 	if got, want := m.focus, viewerFocus; got != want {
 		t.Fatalf("focus after viewer click = %v, want %v", got, want)
 	}
 
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: 4})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: 4 + topBarHeight})
 	if got, want := m.focus, explorerFocus; got != want {
 		t.Fatalf("focus after explorer file click = %v, want %v", got, want)
 	}
@@ -6389,8 +6390,8 @@ func TestModel_TreeFileClickKeepsExplorerFocus(t *testing.T) {
 		}))
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 12})
 	m = m.toggleTree()
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: 3})
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: 4})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: 3 + topBarHeight})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: 4 + topBarHeight})
 	if got, want := m.focus, explorerFocus; got != want {
 		t.Fatalf("focus after explorer file click = %v, want %v", got, want)
 	}

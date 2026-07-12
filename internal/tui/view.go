@@ -568,7 +568,7 @@ func (m Model) resizeViewport() Model {
 	contentWidth := m.chatContentWidth()
 	m.input.SetWidth(max(contentWidth-2*composerOuterMargin-composerBoxBorderWidth-2*composerBoxPadding-inputCursorWidth, 1))
 	m.viewport.Width = max(contentWidth, 0)
-	contentHeight := m.height
+	contentHeight := m.bodyHeight()
 	if m.chatPanelVisible() {
 		contentHeight -= 4
 	}
@@ -676,7 +676,7 @@ func (m Model) View() string {
 		if m.ready && m.treeOpen && m.treePanelWidth() >= m.width {
 			contentWidth = m.width
 		}
-		content = m.renderFileViewer(contentWidth, max(m.height, 0))
+		content = m.renderFileViewer(contentWidth, max(m.bodyHeight(), 0))
 		if m.treeOpen && (!m.ready || m.treePanelWidth() < m.width) {
 			content = lipgloss.JoinHorizontal(lipgloss.Top, m.treeView(), " ", m.viewerView(contentWidth))
 		}
@@ -690,7 +690,11 @@ func (m Model) View() string {
 			}
 		}
 	}
-	return m.renderCanvas(content)
+	canvas := m.renderCanvas(content)
+	if !m.ready {
+		return canvas
+	}
+	return m.topBar() + "\n" + canvas
 }
 
 func (m Model) renderCanvas(content string) string {
@@ -707,7 +711,7 @@ func (m Model) renderCanvas(content string) string {
 		}
 		return strings.Join(lines, "\n")
 	}
-	return canvasStyle.Width(max(m.width, 0)).Height(max(m.height, 0)).Render(content)
+	return canvasStyle.Width(max(m.width, 0)).Height(max(m.bodyHeight(), 0)).Render(content)
 }
 
 func restoreCanvasBackground(content string) string {
@@ -737,7 +741,7 @@ func (m Model) chatView(content string) string {
 	content = panelTitle("chat", m.focus == chatFocus) + "\n" + content
 	style := treeBorderStyle
 	if m.ready {
-		style = style.Width(innerWidth).Height(max(m.height-2, 0))
+		style = style.Width(innerWidth).Height(max(m.bodyHeight()-2, 0))
 	}
 	return style.Render(content)
 }
@@ -745,12 +749,12 @@ func (m Model) chatView(content string) string {
 func (m Model) viewerView(width int) string {
 	innerWidth := max(width-2, 0)
 	content := panelTitle("viewer", m.focus == viewerFocus)
-	if file := m.renderFileViewer(innerWidth, max(m.height-3, 0)); file != "" {
+	if file := m.renderFileViewer(innerWidth, max(m.bodyHeight()-3, 0)); file != "" {
 		content += "\n" + file
 	}
 	style := treeBorderStyle
 	if m.ready {
-		style = style.Width(innerWidth).Height(max(m.height-2, 0))
+		style = style.Width(innerWidth).Height(max(m.bodyHeight()-2, 0))
 	}
 	return style.Render(content)
 }
@@ -979,7 +983,7 @@ func (m Model) treeView() string {
 	content := strings.Join(lines, "\n")
 	style := treeBorderStyle
 	if m.ready {
-		style = style.Width(innerWidth).Height(max(m.height-2, 0))
+		style = style.Width(innerWidth).Height(max(m.bodyHeight()-2, 0))
 	}
 	return style.Render(content)
 }
@@ -988,7 +992,7 @@ func (m Model) treeVisibleRowCount() int {
 	if !m.ready {
 		return 0
 	}
-	return max(m.height-4, 0)
+	return max(m.bodyHeight()-4, 0)
 }
 
 // transcriptView devuelve el transcript con su separador hacia el resto de la
