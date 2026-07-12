@@ -578,14 +578,24 @@ func TestEngine_PromptAfterIdleCompactWaitsForCommittedContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-provider.started
-	if _, err := e.SendPrompt("s1", "next prompt"); err != nil {
-		t.Fatal(err)
-	}
+	promptDone := make(chan error, 1)
+	go func() {
+		_, err := e.SendPrompt("s1", "next prompt")
+		promptDone <- err
+	}()
 	time.Sleep(30 * time.Millisecond)
 	if got := provider.callCount(); got != 1 {
 		t.Fatalf("provider calls before summary release = %d, prompt overtook compaction", got)
 	}
+	select {
+	case err := <-promptDone:
+		t.Fatalf("prompt returned before compaction finished: %v", err)
+	default:
+	}
 	close(provider.release)
+	if err := <-promptDone; err != nil {
+		t.Fatal(err)
+	}
 	deadline := time.After(2 * time.Second)
 	for provider.callCount() < 2 {
 		select {
