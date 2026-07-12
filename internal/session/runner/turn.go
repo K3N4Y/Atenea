@@ -75,16 +75,28 @@ func (r *Runner) runTurn(ctx context.Context, sessionID string) (bool, error) {
 // SIN llamar a Stream. Si el epoch sigue vigente, llama Stream UNA vez y consume el
 // stream igual que M5. Devuelve needsContinuation.
 func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string) (bool, error) {
-	// Snapshot del contexto al empezar la preparacion.
 	before, err := r.store.Epoch(ctx, sessionID)
 	if err != nil {
 		return false, err
 	}
+	compactionStore, supportsCompaction := r.store.(session.CompactionStore)
+	var runnerContext session.RunnerContext
+	if supportsCompaction {
+		runnerContext, err = compactionStore.ContextForRunner(ctx, sessionID)
+		if err != nil {
+			return false, err
+		}
+	}
 
 	// Historial proyectado desde el baseline del epoch y tools materializadas.
-	msgs, err := r.store.Messages(ctx, sessionID, before.BaselineSeq)
-	if err != nil {
-		return false, err
+	msgs := runnerContext.Messages
+	if !supportsCompaction {
+		msgs, err = r.store.Messages(ctx, sessionID, before.BaselineSeq)
+		if err != nil {
+			return false, err
+		}
+	} else if runnerContext.Anchor != nil {
+		msgs = append([]session.Message{*runnerContext.Anchor}, msgs...)
 	}
 	// Modo del turno: en plan-mode se arma el Request con el system y los permisos
 	// de plan; si no hay hook de modo (nil) el modo es normal e identico a hoy.
@@ -107,6 +119,9 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string) (bool, er
 	req := llm.Request{Model: model, Messages: toLLMMessages(msgs), Tools: mat.Definitions}
 	if sys != nil {
 		req.System = sys(model)
+	}
+	if runnerContext.Checkpoint != nil {
+		req.System = renderCompactedSystem(req.System, runnerContext.Checkpoint.Summary)
 	}
 
 	// Overflow antes del mensaje del asistente: compactar y reintentar una vez.
