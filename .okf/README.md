@@ -42,6 +42,7 @@ uses Markdown and begins with `updated_at` and `summary` YAML metadata.
 - [TUI file viewer](plans/2026-07-09-tui-file-viewer.md)
 - [TUI provider and model selector](plans/2026-07-10-tui-model-selector.md)
 - [TUI dark canvas](plans/2026-07-10-tui-dark-canvas.md)
+- [Transcript activity hierarchy](plans/2026-07-11-transcript-activity-hierarchy.md)
 
 ## Research
 
