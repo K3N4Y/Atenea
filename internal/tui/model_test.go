@@ -266,13 +266,20 @@ func TestModel_OpenRouterCuratedModelsShowContext(t *testing.T) {
 // lineWith devuelve la primera linea de view que contiene needle, o falla.
 func lineWith(t *testing.T, view, needle string) string {
 	t.Helper()
-	for _, line := range strings.Split(view, "\n") {
+	return strings.Split(view, "\n")[lineIndexWith(t, view, needle)]
+}
+
+// lineIndexWith devuelve el indice (base 0) de la primera linea de view que
+// contiene needle; falla el test si ninguna lo contiene.
+func lineIndexWith(t *testing.T, view, needle string) int {
+	t.Helper()
+	for i, line := range strings.Split(view, "\n") {
 		if strings.Contains(line, needle) {
-			return line
+			return i
 		}
 	}
 	t.Fatalf("View() = %q, no contiene ninguna linea con %q", view, needle)
-	return ""
+	return -1
 }
 
 // assertNoLineWiderThan falla si alguna linea de view excede width celdas
@@ -858,54 +865,56 @@ func TestModel_RendersToolCallLifecycle(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"ls"}`)})
-	if got := m.View(); !strings.Contains(got, "[tool] bash(ls): ejecutando") {
-		t.Fatalf("View() = %q, Tool.Called debe mostrar el ToolName con el resumen del Input y estado de ejecucion %q", got, "[tool] bash(ls): ejecutando")
+	if got := m.View(); !strings.Contains(got, "● bash     ls") {
+		t.Fatalf("View() = %q, Tool.Called debe mostrar el ToolName con el resumen del Input y el marcador de ejecucion %q", got, "● bash     ls")
 	}
 
 	m = apply(t, m, EventMsg{
 		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash", Text: "archivo.txt",
 		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "archivo.txt", ToolCallID: "c1"},
 	})
-	if got := m.View(); !strings.Contains(got, "[tool] bash(ls): ok") {
-		t.Fatalf("View() = %q, Tool.Success debe asentar la tool como %q", got, "[tool] bash(ls): ok")
+	if got := m.View(); !strings.Contains(got, "✓ bash     ls") {
+		t.Fatalf("View() = %q, Tool.Success debe asentar la tool como %q", got, "✓ bash     ls")
 	}
-	if got := m.View(); strings.Contains(got, "ejecutando") {
+	if got := m.View(); strings.Contains(got, "●") {
 		t.Fatalf("View() = %q, la tool asentada no debe seguir mostrandose como en ejecucion", got)
 	}
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "edit", Input: json.RawMessage(`{"path":"a.go"}`)})
-	if got := m.View(); !strings.Contains(got, "[tool] edit(a.go): ejecutando") {
-		t.Fatalf("View() = %q, el segundo tool call debe mostrarse en ejecucion con el resumen del Input %q", got, "[tool] edit(a.go): ejecutando")
+	if got := m.View(); !strings.Contains(got, "● edit     a.go") {
+		t.Fatalf("View() = %q, el segundo tool call debe mostrarse en ejecucion con el resumen del Input %q", got, "● edit     a.go")
 	}
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "c2", ToolName: "edit", Error: "permiso denegado"})
 	got := m.View()
-	if !strings.Contains(got, "[tool] edit(a.go): error: permiso denegado") {
-		t.Fatalf("View() = %q, Tool.Failed debe mostrar el Error de la tool con el resumen del Input", got)
+	for _, want := range []string{"✗ edit     a.go", "│ error: permiso denegado"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("View() = %q, Tool.Failed debe mostrar %q: el header con el resumen del Input y el Error como linea de rail", got, want)
+		}
 	}
-	if !strings.Contains(got, "[tool] bash(ls): ok") {
+	if !strings.Contains(got, "✓ bash     ls") {
 		t.Fatalf("View() = %q, el fallo de c2 no debe tocar el estado ok de c1", got)
 	}
-	if strings.Contains(got, "ejecutando") {
+	if strings.Contains(got, "●") {
 		t.Fatalf("View() = %q, no debe quedar ninguna tool en ejecucion", got)
 	}
 }
 
-// Contrato del render de la tool "skill": no usa el header generico
-// `[tool] skill(...)` sino una linea dedicada `[skill] <nombre>: <estado>`,
-// donde el nombre es el campo "name" del Input JSON. En exito la linea va SIN
-// preview del output: el cuerpo del SKILL.md que viaja en ev.Text es para el
-// modelo, no para el transcript.
+// Contrato del render de la tool "skill": usa la gramatica de actividad con
+// el nombre de la skill como resumen (`● skill    <nombre>`), donde el nombre
+// es el campo "name" del Input JSON, sin filtrar el Input crudo al header. En
+// exito el header va SIN preview del output: el cuerpo del SKILL.md que viaja
+// en ev.Text es para el modelo, no para el transcript.
 func TestModel_RendersSkillToolAsSkillLine(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "skill", Input: json.RawMessage(`{"name":"tdd-cycle-evidence"}`)})
 	view := m.View()
-	if !strings.Contains(view, "[skill] tdd-cycle-evidence: ejecutando") {
-		t.Fatalf("View() = %q, la tool skill en ejecucion debe rendirse como linea dedicada %q (nombre = campo name del Input)", view, "[skill] tdd-cycle-evidence: ejecutando")
+	if !strings.Contains(view, "● skill    tdd-cycle-evidence") {
+		t.Fatalf("View() = %q, la tool skill en ejecucion debe rendirse como linea dedicada %q (nombre = campo name del Input)", view, "● skill    tdd-cycle-evidence")
 	}
-	if strings.Contains(view, "[tool] skill") {
-		t.Fatalf("View() = %q, NO debe contener el header generico %q: la tool skill tiene su linea dedicada [skill]", view, "[tool] skill")
+	if strings.Contains(view, `{"name"`) {
+		t.Fatalf("View() = %q, NO debe filtrar el Input crudo al header: la linea dedicada lleva el nombre pelado como resumen", view)
 	}
 
 	body := "<skill_content name=\"tdd-cycle-evidence\">\ncuerpo del skill para el modelo\n</skill_content>"
@@ -914,11 +923,8 @@ func TestModel_RendersSkillToolAsSkillLine(t *testing.T) {
 		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: body, ToolCallID: "c1"},
 	})
 	view = m.View()
-	if !strings.Contains(view, "[skill] tdd-cycle-evidence: ok") {
-		t.Fatalf("View() = %q, la tool skill exitosa debe asentarse como %q", view, "[skill] tdd-cycle-evidence: ok")
-	}
-	if strings.Contains(view, "[tool] skill") {
-		t.Fatalf("View() = %q, NO debe contener el header generico %q tras el exito", view, "[tool] skill")
+	if !strings.Contains(view, "✓ skill    tdd-cycle-evidence") {
+		t.Fatalf("View() = %q, la tool skill exitosa debe asentarse como %q", view, "✓ skill    tdd-cycle-evidence")
 	}
 	if strings.Contains(view, "skill_content") {
 		t.Fatalf("View() = %q, NO debe contener %q: en exito la linea de skill va sin preview del output, el cuerpo del SKILL.md es para el modelo y no para el transcript", view, "skill_content")
@@ -927,47 +933,43 @@ func TestModel_RendersSkillToolAsSkillLine(t *testing.T) {
 
 func TestModel_SkillToolFailureShowsError(t *testing.T) {
 	// TRIANGULATE: una implementacion pobre de renderSkill solo cubre los
-	// estados running/ok y ante Tool.Failed cae al header generico [tool] o
-	// deja la linea "ejecutando" para siempre. El fallo de la skill (p.ej.
-	// nombre inexistente) se asienta en la misma linea dedicada [skill] con el
-	// sufijo de error, igual que el resto de tools.
+	// estados running/ok y ante Tool.Failed deja el marcador ● para siempre.
+	// El fallo de la skill (p.ej. nombre inexistente) se asienta en la misma
+	// linea dedicada con el marcador ✗ y el error como linea de rail, igual
+	// que el resto de tools.
 	m := NewModel(nil, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "skill", Input: json.RawMessage(`{"name":"inexistente"}`)})
 	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "c1", ToolName: "skill", Error: `skill "inexistente" no encontrada`})
 
 	view := m.View()
-	if want := `[skill] inexistente: error: skill "inexistente" no encontrada`; !strings.Contains(view, want) {
-		t.Fatalf("View() = %q, la skill fallida debe asentarse como %q: la linea dedicada [skill] tambien cubre el estado de error, no solo running/ok", view, want)
+	for _, want := range []string{"✗ skill    inexistente", `│ error: skill "inexistente" no encontrada`} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("View() = %q, la skill fallida debe asentarse como %q: la linea dedicada tambien cubre el estado de error, no solo running/ok", view, want)
+		}
 	}
-	if strings.Contains(view, "ejecutando") {
+	if strings.Contains(view, "●") {
 		t.Fatalf("View() = %q, la skill asentada con error no debe seguir mostrandose como en ejecucion", view)
-	}
-	if strings.Contains(view, "[tool] skill") {
-		t.Fatalf("View() = %q, NO debe contener el header generico %q: el fallo no debe hacer caer a la skill al render generico de tools", view, "[tool] skill")
 	}
 }
 
 func TestModel_SkillToolWithoutNameRendersBareHeader(t *testing.T) {
 	// TRIANGULATE: una implementacion pobre asume que el Input de la skill es
-	// JSON valido (panic o basura en el header al parsearlo) o cae al header
-	// generico [tool] skill cuando no puede extraer el nombre. Con Input no
-	// parseable el header queda "[skill]" pelado: sin nombre, sin parens y sin
+	// JSON valido (panic o basura en el header al parsearlo) cuando no puede
+	// extraer el nombre. Con Input no parseable el header queda "● skill"
+	// pelado: sin resumen, sin espacios colgantes de la alineacion y sin
 	// filtrar el input crudo al transcript.
 	m := NewModel(nil, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "skill", Input: json.RawMessage(`no-es-json`)})
 
 	view := m.View()
-	if !strings.Contains(view, "[skill]: ejecutando") {
-		t.Fatalf("View() = %q, con Input no parseable la skill debe rendirse con el header pelado %q", view, "[skill]: ejecutando")
+	if !strings.Contains(view, "● skill") {
+		t.Fatalf("View() = %q, con Input no parseable la skill debe rendirse con el header pelado %q", view, "● skill")
 	}
-	if strings.Contains(view, "[tool] skill") {
-		t.Fatalf("View() = %q, NO debe contener el header generico %q: sin nombre parseable la skill sigue en su linea dedicada [skill]", view, "[tool] skill")
-	}
-	skillLine := lineWith(t, view, "[skill]")
-	if strings.Contains(skillLine, "(") {
-		t.Fatalf("linea de la skill = %q, NO debe llevar parens: el header pelado no hereda el resumen del Input del render generico", skillLine)
+	skillLine := lineWith(t, view, "● skill")
+	if got := strings.TrimRight(skillLine, " "); got != "● skill" {
+		t.Fatalf("linea de la skill = %q, el header pelado no lleva resumen: queda %q sin heredar nada del Input", skillLine, "● skill")
 	}
 	if strings.Contains(view, "no-es-json") {
 		t.Fatalf("View() = %q, NO debe filtrar el Input crudo %q al transcript", view, "no-es-json")
@@ -975,11 +977,11 @@ func TestModel_SkillToolWithoutNameRendersBareHeader(t *testing.T) {
 }
 
 // Contrato del detalle de tool calls: el header lleva el resumen del Input
-// (`[tool] <name>(<resumen>): <estado>`; con un solo campo string el resumen
-// es su valor) y Tool.Success trae el output en ev.Text, que se muestra bajo
-// el header con cada linea prefijada `  │ ` hasta 4 lineas; con mas lineas
-// aparece una marca final `  … +N lineas`. Con 3 lineas de output caben todas:
-// no debe aparecer ninguna marca de truncado.
+// (`✓ <name>     <resumen>`; con un solo campo string el resumen es su valor)
+// y Tool.Success trae el output en ev.Text, que se muestra bajo el header con
+// cada linea de rail `│ ` hasta 4 lineas; con mas lineas aparece una marca
+// final `│ … +N lineas`. Con 3 lineas de output caben todas: no debe aparecer
+// ninguna marca de truncado.
 func TestModel_ToolSuccessShowsOutputPreview(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -991,8 +993,8 @@ func TestModel_ToolSuccessShowsOutputPreview(t *testing.T) {
 	})
 
 	view := m.View()
-	if !strings.Contains(view, "bash(ls -la)") {
-		t.Fatalf("View() = %q, el header debe llevar el resumen del Input %q: con un solo campo string el resumen es su valor", view, "bash(ls -la)")
+	if !strings.Contains(view, "✓ bash     ls -la") {
+		t.Fatalf("View() = %q, el header debe llevar el resumen del Input %q: con un solo campo string el resumen es su valor", view, "✓ bash     ls -la")
 	}
 	for _, want := range []string{"│ uno", "│ dos", "│ tres"} {
 		if !strings.Contains(view, want) {
@@ -1006,8 +1008,9 @@ func TestModel_ToolSuccessShowsOutputPreview(t *testing.T) {
 
 // Contrato del diff en Tool.Success: cuando el evento trae Diff (edit/write),
 // el detalle bajo el header muestra EL DIFF en lugar del preview del output:
-// cada linea del diff indentada con dos espacios, las lineas `+` en verde, las
-// `-` en rojo y el resto tenue (cada linea un segmento contiguo estilizado).
+// cada linea del diff con el rail `│ ` en la columna 0, las lineas `+` en
+// verde, las `-` en rojo y el resto tenue (cada linea un segmento contiguo
+// estilizado).
 func TestModel_ToolSuccessShowsEditDiff(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -1020,9 +1023,9 @@ func TestModel_ToolSuccessShowsEditDiff(t *testing.T) {
 	})
 
 	view := m.View()
-	for _, want := range []string{"  -viejo", "  +nuevo"} {
+	for _, want := range []string{"│ -viejo", "│ +nuevo"} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("View() = %q, debe contener %q: con Diff en Tool.Success cada linea del diff se muestra bajo el header indentada con dos espacios", view, want)
+			t.Fatalf("View() = %q, debe contener %q: con Diff en Tool.Success cada linea del diff se muestra bajo el header como linea de rail", view, want)
 		}
 	}
 	if strings.Contains(view, "│ ok") {
@@ -1068,7 +1071,7 @@ func TestModel_ToolInputSummaryCompactsMultiField(t *testing.T) {
 	// Dos campos: el resumen es el JSON compacto, no el valor de un campo suelto.
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "edit", Input: json.RawMessage(`{"path":"a.go","texto":"x"}`)})
 	view := m.View()
-	if want := `edit({"path":"a.go","texto":"x"})`; !strings.Contains(view, want) {
+	if want := `● edit     {"path":"a.go","texto":"x"}`; !strings.Contains(view, want) {
 		t.Fatalf("View() = %q, el header debe contener %q: con varios campos el resumen es el JSON compacto", view, want)
 	}
 
@@ -1094,10 +1097,10 @@ func TestModel_ShowsPendingPermissionAndClearsOnOutcome(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"rm -rf /tmp/x"}`)})
 
 	view := m.View()
-	permLine := lineWith(t, view, "[permiso]")
-	for _, want := range []string{"bash", `{"cmd":"rm -rf /tmp/x"}`, "aprobar", "denegar"} {
+	permLine := lineWith(t, view, "(aprobar/denegar)")
+	for _, want := range []string{"? bash", "rm -rf /tmp/x", "aprobar", "denegar"} {
 		if !strings.Contains(permLine, want) {
-			t.Fatalf("solicitud pendiente = %q, debe contener %q (ToolName, Input y aprobar/denegar)", permLine, want)
+			t.Fatalf("solicitud pendiente = %q, debe contener %q (marcador ?, ToolName, resumen del Input y aprobar/denegar)", permLine, want)
 		}
 	}
 	if callID, ok := m.PendingPermission(); !ok || callID != "c1" {
@@ -1109,7 +1112,7 @@ func TestModel_ShowsPendingPermissionAndClearsOnOutcome(t *testing.T) {
 		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash", Text: "hecho",
 		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "hecho", ToolCallID: "c1"},
 	})
-	if got := m.View(); strings.Contains(got, "[permiso]") {
+	if got := m.View(); strings.Contains(got, "(aprobar/denegar)") {
 		t.Fatalf("View() = %q, Tool.Success de c1 debe retirar la solicitud pendiente", got)
 	}
 	if callID, ok := m.PendingPermission(); ok {
@@ -1123,7 +1126,7 @@ func TestModel_ShowsPendingPermissionAndClearsOnOutcome(t *testing.T) {
 		t.Fatalf("PendingPermission() = (%q, %v), debe exponer la solicitud pendiente c2", callID, ok)
 	}
 	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "c2", ToolName: "write", Error: "denegada por el usuario"})
-	if got := m.View(); strings.Contains(got, "[permiso]") {
+	if got := m.View(); strings.Contains(got, "(aprobar/denegar)") {
 		t.Fatalf("View() = %q, Tool.Failed de c2 debe retirar la solicitud pendiente", got)
 	}
 	if callID, ok := m.PendingPermission(); ok {
@@ -1138,8 +1141,249 @@ func TestModel_ShowsStepFailedError(t *testing.T) {
 
 	view := m.View()
 	errLine := lineWith(t, view, "contexto agotado: limite de tokens")
-	if !strings.Contains(errLine, "[error]") {
-		t.Fatalf("linea del fallo = %q, debe llevar el marcador %q para distinguirse del texto normal", errLine, "[error]")
+	if !strings.Contains(errLine, "✗ error") {
+		t.Fatalf("linea del fallo = %q, debe llevar el marcador %q para distinguirse del texto normal", errLine, "✗ error")
+	}
+}
+
+// Contrato de la jerarquia visual de actividad: el header de cada tool lleva
+// un marcador de estado en la columna 0 (`●` corriendo, `✓` exito, `✗` fallo),
+// el nombre de la tool alineado a 8 columnas (`%-8s`) y el resumen del Input
+// (`● bash     ls`); el detalle va debajo como lineas de rail `│ ` en columna
+// 0 (`│ 18 matches`, `│ error: exit 1`). El formato viejo `[tool] ...`
+// desaparece del transcript.
+func TestModel_RendersActivityMarkersThroughToolLifecycle(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"ls"}`)})
+	plain := ansi.Strip(m.View())
+	if want := "● bash     ls"; !strings.Contains(plain, want) {
+		t.Fatalf("View() sin ANSI = %q, la tool en ejecucion debe rendirse como %q: marcador ● en columna 0, nombre alineado a 8 columnas y resumen del Input", plain, want)
+	}
+
+	m = apply(t, m, EventMsg{
+		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash", Text: "18 matches",
+		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "18 matches", ToolCallID: "c1"},
+	})
+	plain = ansi.Strip(m.View())
+	if want := "✓ bash     ls"; !strings.Contains(plain, want) {
+		t.Fatalf("View() sin ANSI = %q, la tool exitosa debe asentarse como %q: el marcador ✓ reemplaza al ● en la misma columna", plain, want)
+	}
+	railLine := lineWith(t, plain, "18 matches")
+	if want := "│ 18 matches"; !strings.HasPrefix(railLine, want) {
+		t.Fatalf("linea del output = %q, debe llevar el rail en columna 0 como %q: el detalle bajo el header usa `│ ` sin la sangria vieja", railLine, want)
+	}
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "bash", Input: json.RawMessage(`{"command":"false"}`)})
+	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "c2", ToolName: "bash", Error: "exit 1"})
+	plain = ansi.Strip(m.View())
+	if want := "✗ bash     false"; !strings.Contains(plain, want) {
+		t.Fatalf("View() sin ANSI = %q, la tool fallida debe asentarse como %q: marcador ✗ con la misma columna de nombre", plain, want)
+	}
+	failLine := lineWith(t, plain, "error: exit 1")
+	if want := "│ error: exit 1"; !strings.HasPrefix(failLine, want) {
+		t.Fatalf("linea del fallo = %q, el error de la tool va debajo del header como linea de rail %q, no pegado al header", failLine, want)
+	}
+	if strings.Contains(plain, "[tool]") {
+		t.Fatalf("View() sin ANSI = %q, NO debe contener el formato viejo %q: los marcadores de estado lo reemplazan", plain, "[tool]")
+	}
+}
+
+// Contrato del agrupado compacto: las entradas de actividad adyacentes (tools,
+// permisos, errores de step) se unen SIN linea en blanco entre si (separador
+// "\n"), mientras la narrativa del assistant conserva su parrafo propio
+// ("\n\n") y rompe el grupo: dos tools consecutivas quedan en lineas
+// fisicamente contiguas y la narrativa va rodeada de lineas en blanco.
+func TestModel_GroupsAdjacentActivityEntriesWithoutBlankLine(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"ls"}`)})
+	m = apply(t, m, EventMsg{
+		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash",
+		Message: &session.Message{ID: "c1", Role: session.RoleTool, ToolCallID: "c1"},
+	})
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "grep", Input: json.RawMessage(`{"pattern":"foo"}`)})
+
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "listo el analisis"})
+	m = drainReveal(t, m)
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c3", ToolName: "bash", Input: json.RawMessage(`{"command":"pwd"}`)})
+
+	plain := ansi.Strip(m.View())
+	if want := "✓ bash     ls\n● grep     foo"; !strings.Contains(plain, want) {
+		t.Fatalf("View() sin ANSI = %q, debe contener %q: dos entradas de actividad adyacentes se agrupan en lineas fisicamente contiguas, sin linea en blanco entre si", plain, want)
+	}
+
+	lines := strings.Split(plain, "\n")
+	narrIdx := lineIndexWith(t, plain, "listo el analisis")
+	if narrIdx == 0 || strings.TrimSpace(lines[narrIdx-1]) != "" {
+		t.Fatalf("linea previa a la narrativa = %q, la narrativa del assistant rompe el grupo de actividad: se separa con linea en blanco", lines[narrIdx-1])
+	}
+	toolIdx := lineIndexWith(t, plain, "pwd")
+	if toolIdx == 0 || strings.TrimSpace(lines[toolIdx-1]) != "" {
+		t.Fatalf("linea previa a la tool posterior a la narrativa = %q, la actividad tras la narrativa abre grupo nuevo separado por linea en blanco", lines[toolIdx-1])
+	}
+}
+
+// Contrato del stat de diff: el exito de edit/write lleva en el header el
+// conteo `+N -M` de lineas agregadas/quitadas del unified diff, contando las
+// que empiezan con +/- pero excluyendo las cabeceras `+++`/`---`, separado del
+// resumen por dos espacios (`✓ edit     main.go  +2 -1`); las lineas del diff
+// van debajo con el rail `│ ` en columna 0 (`│ +nueva`).
+func TestModel_EditSuccessShowsDiffStatInHeader(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "edit", Input: json.RawMessage(`{"path":"main.go"}`)})
+	m = apply(t, m, EventMsg{
+		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "edit", Text: "ok",
+		Diff:    "--- a/main.go\n+++ b/main.go\n@@ -1,2 +1,3 @@\n-vieja\n+nueva\n+extra",
+		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "ok", ToolCallID: "c1"},
+	})
+
+	plain := ansi.Strip(m.View())
+	if want := "✓ edit     main.go  +2 -1"; !strings.Contains(plain, want) {
+		t.Fatalf("View() sin ANSI = %q, el header de la edit exitosa debe contener %q: el stat cuenta las lineas +/- de contenido del diff y excluye las cabeceras +++/---", plain, want)
+	}
+	for _, needle := range []string{"+nueva", "+extra", "-vieja"} {
+		line := lineWith(t, plain, needle)
+		if want := "│ " + needle; !strings.HasPrefix(line, want) {
+			t.Fatalf("linea del diff = %q, debe llevar el rail en columna 0 como %q: el diff bajo el header usa `│ ` en vez de la sangria vieja de dos espacios", line, want)
+		}
+	}
+}
+
+// TRIANGULATE: tumba un header que trunque el nombre de la tool al ancho de la
+// columna de alineacion (8) o que padee de mas: con un nombre mas largo que la
+// columna, el nombre queda entero y el resumen a UN espacio del nombre.
+func TestModel_ActivityHeaderKeepsLongToolNameReadable(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "present_plan", Input: json.RawMessage(`{"plan":"migrar el runner"}`)})
+
+	plain := ansi.Strip(m.View())
+	line := lineWith(t, plain, "present_plan")
+	if want := "● present_plan migrar el runner"; line != want {
+		t.Fatalf("header = %q, want exactamente %q: un nombre mas largo que la columna de 8 no se trunca y el resumen queda a UN espacio del nombre", line, want)
+	}
+}
+
+// TRIANGULATE: tumba un header que deje la cola invisible de la alineacion
+// cuando no hay resumen (sin Input o con Input `{}`): la linea es exactamente
+// el marcador y el nombre, sin espacios colgantes.
+func TestModel_ActivityHeaderWithoutSummaryHasNoTrailingSpaces(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+
+	// Sin Input y con Input `{}`: en ambos el resumen queda vacio y el header
+	// debe recortar los espacios de la alineacion del nombre.
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash"})
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "grep", Input: json.RawMessage(`{}`)})
+
+	plain := ansi.Strip(m.View())
+	if line := lineWith(t, plain, "● bash"); line != "● bash" {
+		t.Fatalf("header sin Input = %q, want exactamente %q: sin resumen no quedan espacios colgantes de la alineacion", line, "● bash")
+	}
+	if line := lineWith(t, plain, "● grep"); line != "● grep" {
+		t.Fatalf("header con Input {} = %q, want exactamente %q: el objeto vacio no produce resumen ni espacios colgantes", line, "● grep")
+	}
+}
+
+// TRIANGULATE: tumba un diffStat hardcodeado al diff del test de arriba o que
+// cuente las cabeceras de archivo +++/--- como contenido; la tabla cubre
+// tambien el diff vacio y las lineas +/- peladas (sin texto detras).
+func TestEntry_DiffStatIgnoresFileHeadersAndEmptyDiff(t *testing.T) {
+	tests := []struct {
+		name    string
+		diff    string
+		added   int
+		removed int
+	}{
+		{
+			name:    "cabeceras, hunk y contenido",
+			diff:    "--- a/x\n+++ b/x\n@@ -1,2 +1,3 @@\n contexto\n-vieja\n+nueva\n+extra",
+			added:   2,
+			removed: 1,
+		},
+		{
+			name:    "solo cabeceras y contexto",
+			diff:    "--- a/x\n+++ b/x\n@@ -1,1 +1,1 @@\n contexto",
+			added:   0,
+			removed: 0,
+		},
+		{name: "diff vacio", diff: "", added: 0, removed: 0},
+		{name: "lineas + y - peladas cuentan", diff: "+\n-", added: 1, removed: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			added, removed := diffStat(tt.diff)
+			if added != tt.added || removed != tt.removed {
+				t.Fatalf("diffStat(%q) = (+%d, -%d), want (+%d, -%d)", tt.diff, added, removed, tt.added, tt.removed)
+			}
+		})
+	}
+}
+
+// TRIANGULATE: tumba un header que pegue el stat siempre (`✓ bash     ls  +0 -0`)
+// en vez de solo cuando hay diff: una tool exitosa SIN diff lleva el header
+// pelado y su output como lineas de rail.
+func TestModel_SuccessWithoutDiffShowsNoStat(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"ls"}`)})
+	m = apply(t, m, EventMsg{
+		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash", Text: "main.go\nview.go",
+		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "main.go\nview.go", ToolCallID: "c1"},
+	})
+
+	plain := ansi.Strip(m.View())
+	header := lineWith(t, plain, "✓ bash")
+	if want := "✓ bash     ls"; header != want {
+		t.Fatalf("header = %q, want exactamente %q: el exito sin diff no agrega nada tras el resumen", header, want)
+	}
+	for _, banned := range []string{"+0 -0", " +"} {
+		if strings.Contains(header, banned) {
+			t.Fatalf("header = %q, NO debe contener %q: el stat +N -M solo aplica cuando hay diff", header, banned)
+		}
+	}
+	for _, needle := range []string{"main.go", "view.go"} {
+		if line := lineWith(t, plain, needle); !strings.HasPrefix(line, "│ ") {
+			t.Fatalf("linea del output = %q, el output de la tool exitosa va con el rail %q en columna 0", line, "│ ")
+		}
+	}
+}
+
+// TRIANGULATE: tumba un agrupado compacto que solo contemple tools: el permiso
+// pendiente (entryPermission) y el fallo duro del step (entryError) tambien son
+// actividad y se unen al grupo sin lineas en blanco; la narrativa del assistant
+// que sigue conserva su parrafo propio.
+func TestModel_PermissionAndErrorJoinActivityGroup(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"ls"}`)})
+	m = apply(t, m, EventMsg{
+		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash",
+		Message: &session.Message{ID: "c1", Role: session.RoleTool, ToolCallID: "c1"},
+	})
+	// Orden real del runner: Tool.Called y despues Tool.Permission.Requested
+	// mientras bloquea en el gate (ask-before-run).
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "write", Input: json.RawMessage(`{"path":"b.go"}`)})
+	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c2", ToolName: "write", Input: json.RawMessage(`{"path":"b.go"}`)})
+	m = apply(t, m, EventMsg{Kind: session.KindStepFailed, Error: "boom"})
+
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "sigo con el resto"})
+	m = drainReveal(t, m)
+
+	plain := ansi.Strip(m.View())
+	want := "✓ bash     ls\n● write    b.go\n? write    b.go (aprobar/denegar)\n✗ error    boom"
+	if !strings.Contains(plain, want) {
+		t.Fatalf("View() sin ANSI = %q, debe contener %q: la tool exitosa, el permiso pendiente y el error de step quedan fisicamente contiguos, sin lineas en blanco entre si", plain, want)
+	}
+
+	lines := strings.Split(plain, "\n")
+	narrIdx := lineIndexWith(t, plain, "sigo con el resto")
+	if narrIdx == 0 || strings.TrimSpace(lines[narrIdx-1]) != "" {
+		t.Fatalf("linea previa a la narrativa = %q, la narrativa del assistant tras el grupo de actividad se separa con linea en blanco", lines[narrIdx-1])
 	}
 }
 
@@ -1667,7 +1911,7 @@ func TestModel_RunDoneStopsWorkingAndShowsError(t *testing.T) {
 	if m.Working() {
 		t.Fatalf("Working() = true, RunDoneMsg debe apagar el estado de trabajo")
 	}
-	if got := m.View(); strings.Contains(got, "[error]") {
+	if got := m.View(); strings.Contains(got, "✗ error") {
 		t.Fatalf("View() = %q, una corrida limpia no debe mostrar error", got)
 	}
 
@@ -1681,8 +1925,8 @@ func TestModel_RunDoneStopsWorkingAndShowsError(t *testing.T) {
 		t.Fatalf("Working() = true, RunDoneMsg con error tambien debe apagar el estado de trabajo")
 	}
 	errLine := lineWith(t, m2.View(), "boom")
-	if !strings.Contains(errLine, "[error]") {
-		t.Fatalf("linea del fallo = %q, debe llevar el marcador %q", errLine, "[error]")
+	if !strings.Contains(errLine, "✗ error") {
+		t.Fatalf("linea del fallo = %q, debe llevar el marcador %q", errLine, "✗ error")
 	}
 }
 
@@ -4601,6 +4845,56 @@ func TestModel_ClickExpandsSettledThinking(t *testing.T) {
 	for _, want := range []string{"[penso ", "razon-1", "razon-2", "razon-3"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("View() = %q, el clic sobre el resumen debe expandir el pensamiento mostrando %q", view, want)
+		}
+	}
+}
+
+// TRIANGULATE de la condicion compartida compactActivityJoin (su razon de
+// ser): con un grupo compacto de DOS tools antes de un pensamiento colapsado,
+// la fila del resumen se localiza en lo que el usuario VE (View), no en
+// entryLines, y el clic sobre esa fila debe expandir el pensamiento. Si
+// entryLines siguiera emitiendo el separador entre actividades, su numeracion
+// divergeria de la del viewport y el clic caeria en la linea equivocada.
+func TestModel_ClickTargetingStaysAlignedWithCompactGroups(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 20})
+
+	// Grupo compacto: dos tools asentadas contiguas (sin linea en blanco).
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"ls"}`)})
+	m = apply(t, m, EventMsg{
+		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash",
+		Message: &session.Message{ID: "c1", Role: session.RoleTool, ToolCallID: "c1"},
+	})
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "grep", Input: json.RawMessage(`{"pattern":"foo"}`)})
+	m = apply(t, m, EventMsg{
+		Kind: session.KindToolSuccess, CallID: "c2", ToolName: "grep",
+		Message: &session.Message{ID: "c2", Role: session.RoleTool, ToolCallID: "c2"},
+	})
+
+	text := "razon-1\nrazon-2"
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: text})
+	m = drainReveal(t, m)
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: text})
+	m = drainReveal(t, m)
+	target := len(m.entries) - 1
+
+	// La fila se busca en la pantalla real: el transcript corto se muestra
+	// desde arriba (sin scroll) y el viewport abre la vista, asi que la fila Y
+	// de la pantalla es la linea absoluta del contenido.
+	if m.viewport.YOffset != 0 {
+		t.Fatalf("viewport.YOffset = %d, want 0: el transcript corto se muestra desde arriba", m.viewport.YOffset)
+	}
+	summaryY := lineIndexWith(t, ansi.Strip(m.View()), "[penso ")
+
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 2, Y: summaryY})
+	if !m.entries[target].expanded {
+		t.Fatal("el clic sobre la fila visible del resumen debe expandir el pensamiento pese al grupo compacto de tools encima")
+	}
+	view := ansi.Strip(m.View())
+	for _, want := range []string{"razon-1", "razon-2"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("View() sin ANSI = %q, el pensamiento expandido debe mostrar %q", view, want)
 		}
 	}
 }

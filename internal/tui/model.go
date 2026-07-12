@@ -137,9 +137,9 @@ type entry struct {
 	tool   string
 	status toolStatus
 	err    string // mensaje de Tool.Failed
-	// input es el JSON crudo del Input de la tool: lo llena la solicitud de
-	// permiso (se rinde tal cual en la linea [permiso]) y tambien Tool.Called,
-	// donde alimenta el resumen del header (`bash(ls)`) via summarizeToolInput.
+	// input es el JSON crudo del Input de la tool: lo llenan la solicitud de
+	// permiso y Tool.Called, y en ambos alimenta el resumen del header de
+	// actividad (`● bash     ls`, `? bash     ls`) via summarizeToolInput.
 	input string
 	// output es el resultado de Tool.Success (ev.Text): alimenta el preview de
 	// hasta 4 lineas bajo el header (ver renderOutputPreview).

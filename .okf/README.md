@@ -63,6 +63,7 @@ uses Markdown and begins with `updated_at` and `summary` YAML metadata.
 - [TUI inline model completion](specs/2026-07-10-tui-inline-model-completion.md)
 - [TUI manual context compaction](specs/2026-07-11-tui-manual-context-compaction.md)
 - [TUI prompt undo](specs/2026-07-11-tui-prompt-undo.md)
+- [TUI transcript activity hierarchy](specs/2026-07-11-tui-transcript-activity-hierarchy.md)
 - [Milestone M0: scaffolding](specs/atenea-m0-scaffolding-spec.md)
 - [Milestone M1: types and in-memory store](specs/atenea-m1-tipos-store-spec.md)
 - [Milestone M2: provider and scriptable fake](specs/atenea-m2-provider-fake-spec.md)
