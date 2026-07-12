@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -201,7 +202,10 @@ func cloneProviderModels(in []providerconfig.ProviderModels) []providerconfig.Pr
 // Commands lista los slash-commands disponibles (nombre + descripcion) para el
 // menu "/" del composer, ordenados por nombre (espejo de App.ListCommands).
 func (e *Engine) Commands() []command.Command {
-	return e.commands.List()
+	commands := e.commands.List()
+	commands = append(commands, command.Command{Name: "undo", Description: "Undo the last prompt and its file changes"})
+	sort.Slice(commands, func(i, j int) bool { return commands[i].Name < commands[j].Name })
+	return commands
 }
 
 // ProjectFiles lista los archivos del workspace (rutas relativas a la raiz,

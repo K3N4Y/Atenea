@@ -2,6 +2,7 @@ package tui
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/muesli/termenv"
 
 	"atenea/internal/command"
+	"atenea/internal/llm"
 	"atenea/internal/providerconfig"
 	"atenea/internal/session"
 )
@@ -29,12 +31,15 @@ type fakeAgent struct {
 		sessionID, callID string
 		approved          bool
 	}
-	stopped   []string
-	accepted  []string
-	models    []providerconfig.ProviderModels
-	active    providerconfig.Active
-	selected  []struct{ providerID, model string }
-	refreshes int
+	stopped    []string
+	accepted   []string
+	models     []providerconfig.ProviderModels
+	active     providerconfig.Active
+	selected   []struct{ providerID, model string }
+	refreshes  int
+	undos      []string
+	undoResult UndoResult
+	undoErr    error
 }
 
 func (f *fakeAgent) ModelCatalog() []providerconfig.ProviderModels {
@@ -80,6 +85,92 @@ func (f *fakeAgent) ResolvePermission(sessionID, callID string, approved bool) {
 
 func (f *fakeAgent) Stop(sessionID string) {
 	f.stopped = append(f.stopped, sessionID)
+}
+
+func (f *fakeAgent) Undo(sessionID string) (UndoResult, error) {
+	f.undos = append(f.undos, sessionID)
+	return f.undoResult, f.undoErr
+}
+
+func TestModel_UndoIsNativeCommandAndRestoresComposer(t *testing.T) {
+	fake := &fakeAgent{undoResult: UndoResult{
+		Prompt: "original prompt",
+		Events: []session.SessionEvent{{Message: &session.Message{ID: "u0", Role: session.RoleUser, Text: "kept"}}},
+	}}
+	m := NewModel(fake, "s1", nil)
+	m.entries = []entry{{kind: entryUser, text: "old"}, {kind: entryAssistant, text: "answer"}}
+	m.history = []string{"old prompt"}
+	m.histIdx = len(m.history)
+	m = typeRunes(t, m, "/undo")
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatal("undo must run asynchronously")
+	}
+	m = apply(t, m, cmd())
+	if len(fake.undos) != 1 || fake.undos[0] != "s1" {
+		t.Fatalf("Undo calls = %v", fake.undos)
+	}
+	if len(fake.sent) != 0 {
+		t.Fatalf("SendPrompt calls = %v", fake.sent)
+	}
+	if len(m.entries) != 1 || m.entries[0].kind != entryUser || m.entries[0].text != "kept" {
+		t.Fatalf("entries = %+v", m.entries)
+	}
+	if m.input.Value() != "original prompt" || m.input.Position() != len([]rune("original prompt")) {
+		t.Fatalf("composer = %q cursor=%d", m.input.Value(), m.input.Position())
+	}
+	if len(m.history) != 1 || m.history[0] != "old prompt" {
+		t.Fatalf("history = %v", m.history)
+	}
+}
+
+func TestModel_UndoFailureKeepsTranscriptAndComposer(t *testing.T) {
+	fake := &fakeAgent{undoErr: errors.New("undo failed")}
+	m := NewModel(fake, "s1", nil)
+	m.entries = []entry{{kind: entryUser, text: "old"}}
+	m = typeRunes(t, m, "/undo")
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	m = apply(t, m, cmd())
+	if m.input.Value() != "/undo" {
+		t.Fatalf("composer = %q", m.input.Value())
+	}
+	if len(m.entries) != 2 || m.entries[0].text != "old" || m.entries[1].kind != entryError || m.entries[1].text != "undo failed" {
+		t.Fatalf("entries = %+v", m.entries)
+	}
+}
+
+func TestModel_UndoAppearsInSlashCompletion(t *testing.T) {
+	engine := NewEngine(EngineConfig{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore()})
+	commands := engine.Commands()
+	found := false
+	for _, item := range commands {
+		if item.Name == "undo" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Commands = %+v", commands)
+	}
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(commands, nil)
+	m = typeRunes(t, m, "/un")
+	if len(m.menuItems) == 0 || m.menuItems[0].label != "/undo" {
+		t.Fatalf("menuItems = %+v", m.menuItems)
+	}
+}
+
+func TestModel_UndoWithArgumentsIsRejectedLocally(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = typeRunes(t, m, "/undo now")
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(fake.undos) != 0 || len(fake.sent) != 0 {
+		t.Fatalf("undos=%v sent=%v", fake.undos, fake.sent)
+	}
+	if len(m.entries) != 1 || m.entries[0].kind != entryError || m.entries[0].text != "usage: /undo" {
+		t.Fatalf("entries = %+v", m.entries)
+	}
 }
 
 // apply pasa un mensaje por Update y devuelve el Model concreto.

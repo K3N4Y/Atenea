@@ -28,6 +28,11 @@ type EventMsg session.SessionEvent
 // RunDoneMsg marca el fin de una corrida; Err == "" significa terminada limpia.
 type RunDoneMsg struct{ Err string }
 
+type UndoDoneMsg struct {
+	Result UndoResult
+	Err    string
+}
+
 type leaderTimeoutMsg struct{ generation uint64 }
 
 // Agent es la superficie del engine que la TUI necesita para operar la sesion.
@@ -39,6 +44,7 @@ type Agent interface {
 	SendPlanPrompt(sessionID, text string) error
 	// AcceptPlan acepta el plan presentado: vuelve a modo normal y ejecuta.
 	AcceptPlan(sessionID string) error
+	Undo(sessionID string) (UndoResult, error)
 	ResolvePermission(sessionID, callID string, approved bool)
 	Stop(sessionID string)
 }
@@ -341,6 +347,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Al apagar working la linea de estado desaparece: recalcular el alto.
 		return m.resizeViewport(), waitForEvent(m.events)
+	case UndoDoneMsg:
+		if ev.Err != "" {
+			return m.appendError(ev.Err).syncViewport(), nil
+		}
+		m = m.replaceEvents(ev.Result.Events)
+		m.input.SetValue(ev.Result.Prompt)
+		m.input.CursorEnd()
+		m.menuItems = nil
+		m.working = false
+		return m.resizeViewport(), nil
 	case ModelsRefreshedMsg:
 		return m.refreshMenu(), waitForEvent(m.events)
 	case revealTickMsg:
@@ -993,6 +1009,21 @@ func (m Model) submitPrompt() (Model, tea.Cmd) {
 	text := m.input.Value()
 	if text == "" || m.agent == nil {
 		return m, nil
+	}
+	trimmed := strings.TrimSpace(text)
+	if strings.HasPrefix(trimmed, "/undo") {
+		if trimmed != "/undo" {
+			return m.appendError("usage: /undo"), nil
+		}
+		sessionID := m.sessionID
+		agent := m.agent
+		return m, func() tea.Msg {
+			result, err := agent.Undo(sessionID)
+			if err != nil {
+				return UndoDoneMsg{Err: err.Error()}
+			}
+			return UndoDoneMsg{Result: result}
+		}
 	}
 	if strings.HasPrefix(strings.TrimSpace(text), "/model") {
 		controller, ok := m.agent.(modelAgent)
