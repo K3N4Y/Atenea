@@ -845,6 +845,91 @@ func TestEngine_StreamsSessionEventsAndSignalsRunDone(t *testing.T) {
 	}
 }
 
+func TestEngine_UndoRestoresDeletedAndRecreatedTrackedFile(t *testing.T) {
+	root := newUndoWorkspace(t)
+	if err := os.WriteFile(filepath.Join(root, "tracked.txt"), []byte("committed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runUndoGit(t, root, "add", "tracked.txt")
+	runUndoGit(t, root, "commit", "-m", "initial")
+	if err := os.WriteFile(filepath.Join(root, "tracked.txt"), []byte("preexisting-change\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("preexisting-untracked\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := newTurnProvider(
+		[]llm.Event{
+			{Kind: llm.StepStarted},
+			{Kind: llm.ToolCall, CallID: "remove-tracked", ToolName: "bash", Input: json.RawMessage(`{"command":"rm tracked.txt"}`)},
+			{Kind: llm.StepEnded},
+		},
+		[]llm.Event{
+			{Kind: llm.StepStarted},
+			{Kind: llm.ToolCall, CallID: "rewrite-tracked", ToolName: "write", Input: json.RawMessage(`{"path":"tracked.txt","content":"prompt-change\n"}`)},
+			{Kind: llm.StepEnded},
+		},
+		[]llm.Event{
+			{Kind: llm.StepStarted},
+			{Kind: llm.ToolCall, CallID: "create-file", ToolName: "write", Input: json.RawMessage(`{"path":"created.txt","content":"created-by-prompt\n"}`)},
+			{Kind: llm.StepEnded},
+		},
+		[]llm.Event{
+			{Kind: llm.StepStarted},
+			{Kind: llm.TextStarted},
+			{Kind: llm.TextDelta, Text: "archivos cambiados"},
+			{Kind: llm.TextEnded},
+			{Kind: llm.StepEnded},
+		},
+	)
+	store := session.NewMemoryStore()
+	engine := NewEngine(EngineConfig{
+		Root:        root,
+		Provider:    provider,
+		Store:       store,
+		Checkpoints: checkpoint.NewGitStore(t.TempDir()),
+	})
+
+	if _, err := engine.SendPrompt("s1", "cambia los archivos"); err != nil {
+		t.Fatal(err)
+	}
+	events, done := collectUntilRunDone(t, engine.Events(), 10*time.Second, func(ev session.SessionEvent) {
+		if ev.Kind == session.KindToolPermissionRequested && ev.CallID == "remove-tracked" {
+			t.Cleanup(resolveUntilStopped(engine, ev.SessionID, ev.CallID, true))
+		}
+	})
+	if done.Err != "" {
+		t.Fatalf("RunDoneMsg.Err = %q", done.Err)
+	}
+	for _, callID := range []string{"remove-tracked", "rewrite-tracked", "create-file"} {
+		if lastEvent(events, session.KindToolSuccess, callID) == nil {
+			t.Fatalf("tool call %q did not succeed", callID)
+		}
+	}
+	assertUndoFile(t, root, "tracked.txt", "prompt-change\n")
+	assertUndoFile(t, root, "created.txt", "created-by-prompt\n")
+
+	result, err := engine.Undo("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Prompt != "cambia los archivos" {
+		t.Fatalf("Prompt = %q", result.Prompt)
+	}
+	assertUndoFile(t, root, "tracked.txt", "preexisting-change\n")
+	assertUndoFile(t, root, "notes.txt", "preexisting-untracked\n")
+	assertUndoMissing(t, root, "created.txt")
+
+	messages, err := store.Messages(context.Background(), "s1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 0 {
+		t.Fatalf("effective messages = %+v, want none", messages)
+	}
+}
+
 func TestEngine_GatedBashApprovedRunsAndSettles(t *testing.T) {
 	provider := newTurnProvider(gatedBashTurns("echo hola-gate")...)
 	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
