@@ -49,6 +49,34 @@ func TestDefaultDBPath_DefaultsToUserConfigDir(t *testing.T) {
 	}
 }
 
+func TestDefaultCheckpointPath_UsesEnvOverride(t *testing.T) {
+	want := filepath.Join(t.TempDir(), "custom-checkpoints")
+	t.Setenv("ATENEA_CHECKPOINTS", want)
+	if got := DefaultCheckpointPath(); got != want {
+		t.Fatalf("DefaultCheckpointPath() = %q, want %q", got, want)
+	}
+}
+
+func TestDefaultCheckpointPath_DefaultsToUserConfigDir(t *testing.T) {
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		t.Skipf("os.UserConfigDir does not respect XDG_CONFIG_HOME on %s", runtime.GOOS)
+	}
+	xdg := t.TempDir()
+	t.Setenv("ATENEA_CHECKPOINTS", "")
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	want := filepath.Join(xdg, "atenea", "checkpoints")
+	if got := DefaultCheckpointPath(); got != want {
+		t.Fatalf("DefaultCheckpointPath() = %q, want %q", got, want)
+	}
+	info, err := os.Stat(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o700 {
+		t.Fatalf("mode = %o, want 700", info.Mode().Perm())
+	}
+}
+
 func TestOpenDefault_OpensSQLiteAtDefaultPath(t *testing.T) {
 	// OpenDefault abre el SQLite en la ruta por defecto y devuelve un store
 	// durable usable: un round-trip minimo AppendEvent + Sessions y el archivo

@@ -15,6 +15,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"atenea/internal/checkpoint"
 	"atenea/internal/dotenv"
 	"atenea/internal/llm"
 	"atenea/internal/providerconfig"
@@ -67,10 +68,11 @@ func main() {
 	active := providerService.Active()
 
 	engine := tui.NewEngine(tui.EngineConfig{
-		Root:     root,
-		Provider: providerService.Provider(),
-		Store:    store,
-		Models:   providerService,
+		Root:        root,
+		Provider:    providerService.Provider(),
+		Store:       store,
+		Models:      providerService,
+		Checkpoints: checkpoint.NewGitStore(session.DefaultCheckpointPath()),
 	})
 	history, err := engine.PromptHistory()
 	if err != nil {
