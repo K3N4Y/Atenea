@@ -111,9 +111,9 @@ func (m Model) replaceEvents(events []session.SessionEvent) Model {
 func (m Model) foldCompactionStatus(status CompactionStatusMsg) Model {
 	switch status.State {
 	case CompactionQueued:
-		return m.upsertCompaction("Compaction queued", false)
+		return m.upsertCompaction("Compaction queued", false, true)
 	case CompactionRunning:
-		return m.upsertCompaction("Compacting context", false)
+		return m.upsertCompaction("Compacting context", false, true)
 	case CompactionNotNeeded:
 		return m.resolveCompaction("Not enough context to compact", false)
 	case CompactionFailed:
@@ -123,18 +123,19 @@ func (m Model) foldCompactionStatus(status CompactionStatusMsg) Model {
 	}
 }
 
-func (m Model) upsertCompaction(text string, failed bool) Model {
-	for i := range m.entries {
-		if m.entries[i].kind == entryCompaction && m.entries[i].sessionID == m.sessionID {
+func (m Model) upsertCompaction(text string, failed, live bool) Model {
+	for i := len(m.entries) - 1; i >= 0; i-- {
+		if m.entries[i].kind == entryCompaction && m.entries[i].sessionID == m.sessionID && m.entries[i].live {
 			m.entries[i].text = text
 			m.entries[i].err = ""
+			m.entries[i].live = live
 			if failed {
 				m.entries[i].err = text
 			}
 			return m
 		}
 	}
-	entry := entry{kind: entryCompaction, text: text, sessionID: m.sessionID}
+	entry := entry{kind: entryCompaction, text: text, sessionID: m.sessionID, live: live}
 	if failed {
 		entry.err = text
 	}
@@ -143,7 +144,7 @@ func (m Model) upsertCompaction(text string, failed bool) Model {
 }
 
 func (m Model) resolveCompaction(text string, failed bool) Model {
-	return m.upsertCompaction(text, failed)
+	return m.upsertCompaction(text, failed, false)
 }
 
 func (m Model) updateLiveUsage() Model {

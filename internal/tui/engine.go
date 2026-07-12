@@ -511,9 +511,10 @@ func (e *Engine) Stop(sessionID string) {
 func (e *Engine) finishRun(sessionID string, h *engineRun) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.runs[sessionID] == h {
-		delete(e.runs, sessionID)
+	if e.runs[sessionID] != h {
+		return false
 	}
+	delete(e.runs, sessionID)
 	if !e.pendingCompactions[sessionID] || e.compacting[sessionID] {
 		return false
 	}

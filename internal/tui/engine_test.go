@@ -99,6 +99,35 @@ type blockingSummaryProvider struct {
 	requests []llm.Request
 }
 
+type replacementRunCompactionProvider struct {
+	mu      sync.Mutex
+	next    int
+	started [3]chan struct{}
+}
+
+func newReplacementRunCompactionProvider() *replacementRunCompactionProvider {
+	return &replacementRunCompactionProvider{started: [3]chan struct{}{make(chan struct{}), make(chan struct{}), make(chan struct{})}}
+}
+
+func (p *replacementRunCompactionProvider) Stream(ctx context.Context, _ llm.Request) (<-chan llm.Event, error) {
+	p.mu.Lock()
+	call := p.next
+	p.next++
+	p.mu.Unlock()
+	out := make(chan llm.Event)
+	go func() {
+		defer close(out)
+		close(p.started[call])
+		if call < 2 {
+			<-ctx.Done()
+			return
+		}
+		out <- llm.Event{Kind: llm.TextDelta, Text: `{"current_goal":"continue","constraints_and_instructions":[],"decisions":[],"completed_work":[],"files_and_changes":[],"relevant_tool_results":[],"failures_and_attempts":[],"pending_and_next_step":[],"facts_not_to_reinterpret":[]}`}
+		out <- llm.Event{Kind: llm.StepEnded}
+	}()
+	return out, nil
+}
+
 func newBlockingSummaryProvider() *blockingSummaryProvider {
 	return &blockingSummaryProvider{started: make(chan struct{}), release: make(chan struct{})}
 }
@@ -566,6 +595,37 @@ func TestEngine_QueuedCompactRunsAfterCancellation(t *testing.T) {
 				return
 			}
 		}
+	}
+}
+
+func TestEngine_QueuedCompactWaitsForReplacementRun(t *testing.T) {
+	store := session.NewMemoryStore()
+	seedCompactableEngineSession(t, store, "s1")
+	provider := newReplacementRunCompactionProvider()
+	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: store})
+
+	if _, err := e.SendPrompt("s1", "first"); err != nil {
+		t.Fatal(err)
+	}
+	<-provider.started[0]
+	if _, err := e.SendPrompt("s1", "/compact"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.SendPrompt("s1", "replacement"); err != nil {
+		t.Fatal(err)
+	}
+	<-provider.started[1]
+
+	select {
+	case <-provider.started[2]:
+		t.Fatal("queued compaction started while replacement run was still active")
+	case <-time.After(100 * time.Millisecond):
+	}
+	e.Stop("s1")
+	select {
+	case <-provider.started[2]:
+	case <-time.After(time.Second):
+		t.Fatal("queued compaction did not start after replacement run stopped")
 	}
 }
 

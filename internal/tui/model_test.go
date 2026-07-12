@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -3101,6 +3102,41 @@ func TestModel_CompactStatusDeduplicatesAndResolves(t *testing.T) {
 	view = ansi.Strip(m.View())
 	if !strings.Contains(view, "Context compacted") || strings.Contains(view, "Compacting context") {
 		t.Fatalf("completed view = %q", view)
+	}
+}
+
+func TestModel_SeparateDurableCompactionsRemainSeparateEntries(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, EventMsg{SessionID: "s1", Kind: session.KindContextCompacted})
+	m = apply(t, m, EventMsg{SessionID: "s1", Message: &session.Message{Role: session.RoleUser, Text: "later work"}})
+	m = apply(t, m, EventMsg{SessionID: "s1", Kind: session.KindContextCompacted})
+
+	count := 0
+	for _, entry := range m.entries {
+		if entry.kind == entryCompaction {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Fatalf("compaction entries = %d, want 2", count)
+	}
+}
+
+func TestModel_NewCompactionAfterResolvedNoopCreatesNewEntry(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, CompactionStatusMsg{SessionID: "s1", State: CompactionQueued})
+	m = apply(t, m, CompactionStatusMsg{SessionID: "s1", State: CompactionNotNeeded})
+	m = apply(t, m, CompactionStatusMsg{SessionID: "s1", State: CompactionQueued})
+
+	var states []string
+	for _, entry := range m.entries {
+		if entry.kind == entryCompaction {
+			states = append(states, entry.text)
+		}
+	}
+	want := []string{"Not enough context to compact", "Compaction queued"}
+	if !slices.Equal(states, want) {
+		t.Fatalf("compaction states = %v, want %v", states, want)
 	}
 }
 
