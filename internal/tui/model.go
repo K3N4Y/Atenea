@@ -33,6 +33,21 @@ type UndoDoneMsg struct {
 	Err    string
 }
 
+type CompactionState int
+
+const (
+	CompactionQueued CompactionState = iota
+	CompactionRunning
+	CompactionNotNeeded
+	CompactionFailed
+)
+
+type CompactionStatusMsg struct {
+	SessionID string
+	State     CompactionState
+	Err       string
+}
+
 type leaderTimeoutMsg struct{ generation uint64 }
 
 // Agent es la superficie del engine que la TUI necesita para operar la sesion.

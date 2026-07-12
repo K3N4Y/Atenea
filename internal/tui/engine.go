@@ -81,10 +81,12 @@ type Engine struct {
 	models           ModelService
 	refreshingModels bool
 
-	mu    sync.Mutex
-	runs  map[string]*engineRun   // sessionID -> corrida en vuelo (identidad por puntero)
-	modes map[string]session.Mode // sessionID -> modo (normal/plan); guardado con mu como runs
-	ops   map[string]*sync.Mutex
+	mu                 sync.Mutex
+	runs               map[string]*engineRun   // sessionID -> corrida en vuelo (identidad por puntero)
+	modes              map[string]session.Mode // sessionID -> modo (normal/plan); guardado con mu como runs
+	ops                map[string]*sync.Mutex
+	pendingCompactions map[string]bool
+	compacting         map[string]bool
 }
 
 // engineRun identifica una corrida en vuelo. Se compara por puntero porque
@@ -105,12 +107,14 @@ var _ Agent = (*Engine)(nil)
 func NewEngine(cfg EngineConfig) *Engine {
 	e := &Engine{
 		// Buffer generoso: amortigua rafagas de deltas mientras la TUI drena.
-		events: make(chan tea.Msg, 256),
-		inbox:  session.NewMemoryInbox(),
-		gate:   session.NewMemoryPermissionGate(),
-		runs:   map[string]*engineRun{},
-		modes:  map[string]session.Mode{},
-		ops:    map[string]*sync.Mutex{},
+		events:             make(chan tea.Msg, 256),
+		inbox:              session.NewMemoryInbox(),
+		gate:               session.NewMemoryPermissionGate(),
+		runs:               map[string]*engineRun{},
+		modes:              map[string]session.Mode{},
+		ops:                map[string]*sync.Mutex{},
+		pendingCompactions: map[string]bool{},
+		compacting:         map[string]bool{},
 	}
 	// La frontera: donde la app Wails emite a runtime.EventsEmit, aqui el evento
 	// durable va al canal de la TUI. El send bloqueante es deliberado: la TUI
@@ -297,6 +301,10 @@ func (e *Engine) SendPrompt(sessionID, text string) (string, error) {
 		}
 		return newSessionID, nil
 	}
+	if text == "/compact" {
+		e.requestCompaction(sessionID)
+		return sessionID, nil
+	}
 	e.setMode(sessionID, session.ModeNormal)
 	if err := e.send(sessionID, text, text); err != nil {
 		return "", err
@@ -393,13 +401,18 @@ func (e *Engine) send(sessionID, text, composerPrompt string) error {
 				err = captureErr
 			}
 		}
-		e.clear(sessionID, h)
+		compact := e.finishRun(sessionID, h)
 		close(h.done)
 		msg := ""
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			msg = err.Error()
 		}
 		e.events <- RunDoneMsg{Err: msg}
+		if compact {
+			operation.Lock()
+			e.compactLocked(sessionID)
+			operation.Unlock()
+		}
 	}()
 	return nil
 }
@@ -495,12 +508,55 @@ func (e *Engine) Stop(sessionID string) {
 
 // clear saca del mapa la corrida h solo si sigue siendo la vigente (un
 // SendPrompt mas nuevo pudo reemplazarla).
-func (e *Engine) clear(sessionID string, h *engineRun) {
+func (e *Engine) finishRun(sessionID string, h *engineRun) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.runs[sessionID] == h {
 		delete(e.runs, sessionID)
 	}
+	if !e.pendingCompactions[sessionID] || e.compacting[sessionID] {
+		return false
+	}
+	delete(e.pendingCompactions, sessionID)
+	e.compacting[sessionID] = true
+	return true
+}
+
+func (e *Engine) requestCompaction(sessionID string) {
+	e.mu.Lock()
+	if e.pendingCompactions[sessionID] || e.compacting[sessionID] {
+		e.mu.Unlock()
+		return
+	}
+	if e.runs[sessionID] != nil {
+		e.pendingCompactions[sessionID] = true
+		e.mu.Unlock()
+		e.events <- CompactionStatusMsg{SessionID: sessionID, State: CompactionQueued}
+		return
+	}
+	e.compacting[sessionID] = true
+	e.mu.Unlock()
+
+	operation := e.operationLock(sessionID)
+	operation.Lock()
+	go func() {
+		defer operation.Unlock()
+		e.compactLocked(sessionID)
+	}()
+}
+
+func (e *Engine) compactLocked(sessionID string) {
+	e.events <- CompactionStatusMsg{SessionID: sessionID, State: CompactionRunning}
+	err := e.runner.CompactNow(context.Background(), sessionID)
+	switch {
+	case errors.Is(err, session.ErrNoCompactableHistory):
+		e.events <- CompactionStatusMsg{SessionID: sessionID, State: CompactionNotNeeded}
+	case err != nil:
+		e.events <- CompactionStatusMsg{SessionID: sessionID, State: CompactionFailed, Err: err.Error()}
+	}
+	e.mu.Lock()
+	delete(e.compacting, sessionID)
+	e.mu.Unlock()
 }
 
 // Events entrega los EventMsg durables de la corrida y un RunDoneMsg al
