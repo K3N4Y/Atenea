@@ -101,8 +101,23 @@ func (m Model) topBarContext() string {
 		return ""
 	}
 	used := formatTokenCount(m.usage.InputTokens)
-	if window, ok := llm.ContextWindow(m.model); ok {
-		return statusStyle.Render(used + " / " + formatTokenCount(window))
+	if window := m.contextWindowLabel(); window != "" {
+		return statusStyle.Render(used + " / " + window)
 	}
 	return statusStyle.Render(used)
+}
+
+// contextWindowLabel devuelve la ventana de contexto del modelo activo como
+// etiqueta ("256k"), o "" si es desconocida. Prefiere el registro canonico de
+// llm.ContextWindow; si ahi no esta (los modelos de OpenRouter no lo estan),
+// cae al contexto curado del menu de modelos (curatedModelContext), en
+// minusculas para casar con el formato de formatTokenCount ("256K" -> "256k").
+func (m Model) contextWindowLabel() string {
+	if window, ok := llm.ContextWindow(m.model); ok {
+		return formatTokenCount(window)
+	}
+	if curated := curatedModelContext[m.model]; curated != "" {
+		return strings.ToLower(curated)
+	}
+	return ""
 }

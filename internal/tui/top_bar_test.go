@@ -72,6 +72,34 @@ func TestModel_TopBarKeepsTotalHeight(t *testing.T) {
 	}
 }
 
+// TestModel_TopBarContextFallsBackToCuratedWindow verifica que, cuando el modelo
+// no esta en el registro canonico de llm.ContextWindow (p.ej. los modelos de
+// OpenRouter), la barra usa la ventana curada del menu de modelos
+// (curatedModelContext) y la muestra en minusculas ("9k / 256k"), en vez de
+// mostrar solo los tokens usados.
+func TestModel_TopBarContextFallsBackToCuratedWindow(t *testing.T) {
+	const curatedModel = "cohere/north-mini-code:free"
+	if _, ok := llm.ContextWindow(curatedModel); ok {
+		t.Fatalf("precondicion: %q no debe estar en llm.ContextWindow (debe caer al curado)", curatedModel)
+	}
+	if curatedModelContext[curatedModel] == "" {
+		t.Fatalf("precondicion: %q debe tener contexto curado registrado", curatedModel)
+	}
+
+	m := NewModel(nil, "s1", nil).
+		WithWorkspace("main", "~/x").
+		WithStatus("build", curatedModel)
+
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 20})
+	m = apply(t, m, EventMsg{Kind: session.KindStepEnded, Usage: &session.Usage{InputTokens: 9000}})
+
+	first := lineWith(t, ansi.Strip(m.View()), "256k")
+
+	if !strings.Contains(first, "9k / 256k") {
+		t.Fatalf("con ventana curada la barra debe mostrar %q; primera linea = %q", "9k / 256k", first)
+	}
+}
+
 // TestModel_TopBarContextShowsUsedOnlyWhenWindowUnknown verifica que, cuando el
 // modelo no tiene ventana de contexto conocida, la etiqueta de la derecha
 // muestra solo los tokens usados (p.ej. "16k") sin la forma "usado / ventana".
