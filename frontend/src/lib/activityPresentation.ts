@@ -21,6 +21,13 @@ function oneLine(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
 }
 
+function excerpt(value: string, maxLength = 160): string {
+  const normalized = oneLine(value)
+  return normalized.length > maxLength
+    ? `${normalized.slice(0, maxLength - 1).trimEnd()}…`
+    : normalized
+}
+
 function inputObject(input: unknown): Record<string, unknown> {
   return input && typeof input === 'object'
     ? (input as Record<string, unknown>)
@@ -78,9 +85,18 @@ function targetFor(item: ToolItem): string {
 function diffSummary(diff: string): string {
   let additions = 0
   let deletions = 0
+  let inHunk = false
 
   for (const line of diff.split('\n')) {
-    if (line.startsWith('+++') || line.startsWith('---')) continue
+    if (line.startsWith('@@')) {
+      inHunk = true
+      continue
+    }
+    if (line.startsWith('diff --git ')) {
+      inHunk = false
+      continue
+    }
+    if (!inHunk) continue
     if (line.startsWith('+')) additions++
     if (line.startsWith('-')) deletions++
   }
@@ -91,6 +107,11 @@ function diffSummary(diff: string): string {
 function grepSummary(output: string): string {
   const trimmed = output.trim()
   if (!trimmed || trimmed.startsWith('{') || trimmed.startsWith('[')) return ''
+  const canonicalCount = /^Found (\d+) match(?:es)?\b/.exec(trimmed)
+  if (canonicalCount) {
+    const count = Number(canonicalCount[1])
+    return `${count} ${count === 1 ? 'match' : 'matches'}`
+  }
   const lines = trimmed.split('\n').filter((line) => line.trim())
   return lines.length
     ? `${lines.length} ${lines.length === 1 ? 'match' : 'matches'}`
@@ -98,7 +119,7 @@ function grepSummary(output: string): string {
 }
 
 function compactResultFor(item: ToolItem): string {
-  if (item.status === 'failed' && item.error) return oneLine(item.error)
+  if (item.status === 'failed' && item.error) return excerpt(item.error)
   if (item.diff) return diffSummary(item.diff)
   if (item.name === 'grep') return grepSummary(item.output)
   return ''

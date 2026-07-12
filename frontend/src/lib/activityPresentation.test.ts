@@ -99,6 +99,25 @@ describe('activityPresentation', () => {
     ).toBe('3 matches')
   })
 
+  it('uses the canonical grep result count instead of counting rendered lines', () => {
+    expect(
+      activityPresentation(
+        tool({
+          name: 'grep',
+          output: 'Found 2 matches\n[foo.go#abc]\n1:first\n2:second',
+        }),
+      ).compactResult,
+    ).toBe('2 matches')
+  })
+
+  it('uses singular grammar for one canonical grep match', () => {
+    expect(
+      activityPresentation(
+        tool({ name: 'grep', output: 'Found 1 match\n[foo.go#abc]\n1:first' }),
+      ).compactResult,
+    ).toBe('1 match')
+  })
+
   it('does not guess a grep count from structured or empty output', () => {
     expect(
       activityPresentation(tool({ name: 'grep', output: '{"matches": 3}' }))
@@ -153,6 +172,41 @@ describe('activityPresentation', () => {
         tool({ name: 'write', diff: '--- a/file\n+++ b/file\n' }),
       ).compactResult,
     ).toBe('')
+  })
+
+  it('counts diff content whose text begins with header marker characters', () => {
+    expect(
+      activityPresentation(
+        tool({
+          name: 'write',
+          diff: '--- a/file\n+++ b/file\n@@ -1 +1 @@\n---oldValue\n+++newValue\n',
+        }),
+      ).compactResult,
+    ).toBe('+1 -1')
+  })
+
+  it('counts hunks across multiple files without counting file headers', () => {
+    expect(
+      activityPresentation(
+        tool({
+          name: 'edit',
+          diff: [
+            'diff --git a/a b/a',
+            '--- a/a',
+            '+++ b/a',
+            '@@ -1 +1 @@',
+            '-old',
+            '+new',
+            'diff --git a/b b/b',
+            '--- a/b',
+            '+++ b/b',
+            '@@ -0,0 +1,2 @@',
+            '+first',
+            '+second',
+          ].join('\n'),
+        }),
+      ).compactResult,
+    ).toBe('+3 -1')
   })
 
   it('leaves unknown tools without scalar input targetless', () => {

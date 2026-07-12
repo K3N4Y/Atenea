@@ -110,6 +110,20 @@ describe('ToolCall', () => {
     expect(wrapper.text()).toContain('permission denied\nfull stack trace')
   })
 
+  it('keeps long errors compact until the row is expanded', async () => {
+    const error = `permission denied: ${'stack frame '.repeat(40).trim()}`
+    const wrapper = mount(ToolCall, {
+      props: tool({ status: 'failed', error }),
+    })
+
+    const summary = wrapper.get('[data-test="activity-summary"]')
+    expect(summary.text().length).toBeLessThan(220)
+    expect(summary.text()).toContain('…')
+
+    await summary.trigger('click')
+    expect(wrapper.text()).toContain(error)
+  })
+
   it('uses a status-rich accessible label and title for the full target', () => {
     const wrapper = mount(ToolCall, {
       props: tool({
