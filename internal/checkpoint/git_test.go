@@ -117,6 +117,54 @@ func TestGitStore_RestorePreservesMainGitMetadata(t *testing.T) {
 	}
 }
 
+func TestGitStore_RestorePreservesEmptyIgnoredDirectory(t *testing.T) {
+	root := newGitWorkspace(t)
+	writeFile(t, root, ".gitignore", "build/\n")
+	writeFile(t, root, "tracked.txt", "before\n")
+	runGit(t, root, "add", ".gitignore", "tracked.txt")
+	runGit(t, root, "commit", "-m", "base")
+
+	store := NewGitStore(t.TempDir())
+	tree, err := store.Capture(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "build"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, root, "tracked.txt", "after\n")
+
+	if err := store.Restore(context.Background(), root, tree); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(filepath.Join(root, "build")); err != nil || !info.IsDir() {
+		t.Fatalf("ignored directory removed: info=%v err=%v", info, err)
+	}
+}
+
+func TestGitStore_RestoreRejectsTreeFromAnotherWorkspace(t *testing.T) {
+	first := newGitWorkspace(t)
+	second := newGitWorkspace(t)
+	for _, root := range []string{first, second} {
+		writeFile(t, root, "tracked.txt", "same contents\n")
+		runGit(t, root, "add", "tracked.txt")
+		runGit(t, root, "commit", "-m", "base")
+	}
+
+	store := NewGitStore(t.TempDir())
+	firstTree, err := store.Capture(context.Background(), first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Capture(context.Background(), second); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.Restore(context.Background(), second, firstTree); err == nil {
+		t.Fatal("Restore accepted a tree captured for another workspace")
+	}
+}
+
 func newGitWorkspace(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()

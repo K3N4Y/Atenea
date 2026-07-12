@@ -335,29 +335,27 @@ func (e *Engine) send(sessionID, text, composerPrompt string) error {
 	defer operation.Unlock()
 
 	checkpointID := ""
+	var before checkpoint.Tree
 	if composerPrompt != "" && e.checkpoints != nil {
-		before, err := e.checkpoints.Capture(context.Background(), e.root)
+		var err error
+		before, err = e.checkpoints.Capture(context.Background(), e.root)
 		if err != nil {
 			return err
 		}
+	}
+	if _, err := e.store.LoadSession(context.Background(), sessionID); err != nil {
+		if _, err := e.store.AppendEvent(context.Background(), sessionID,
+			session.SessionEvent{Kind: session.KindSessionCwd, Text: e.root}); err != nil {
+			log.Printf("atenea-tui: no se pudo guardar la carpeta de %s: %v", sessionID, err)
+		}
+	}
+	if before != "" {
 		checkpointID = "checkpoint-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 		if _, err := e.store.AppendEvent(context.Background(), sessionID, session.SessionEvent{
 			Kind:       session.KindPromptCheckpointStarted,
 			Checkpoint: &session.PromptCheckpoint{ID: checkpointID, Prompt: composerPrompt, BeforeTree: string(before)},
 		}); err != nil {
 			return err
-		}
-	}
-	// La PRIMERA vez que se manda un prompt a la sesion (LoadSession aun da
-	// error) se graba la carpeta de trabajo como Session.Cwd, ANTES de admitir
-	// el prompt para que quede de primero en el log: la sidebar de la app Wails
-	// agrupa los chats por esa carpeta (espejo de App.captureCwd). Idempotente:
-	// en la sesion ya existente no hace nada. Un fallo al grabar no corta el
-	// envio: la carpeta solo afecta la sidebar.
-	if _, err := e.store.LoadSession(context.Background(), sessionID); err != nil {
-		if _, err := e.store.AppendEvent(context.Background(), sessionID,
-			session.SessionEvent{Kind: session.KindSessionCwd, Text: e.root}); err != nil {
-			log.Printf("atenea-tui: no se pudo guardar la carpeta de %s: %v", sessionID, err)
 		}
 	}
 	if err := e.inbox.Admit(context.Background(), sessionID,

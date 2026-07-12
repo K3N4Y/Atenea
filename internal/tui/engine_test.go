@@ -28,6 +28,16 @@ type promptHistoryStore struct {
 	blockedSession     string
 }
 
+type failingCheckpointStore struct{ err error }
+
+func (s failingCheckpointStore) Capture(context.Context, string) (checkpoint.Tree, error) {
+	return "", s.err
+}
+
+func (s failingCheckpointStore) Restore(context.Context, string, checkpoint.Tree) error {
+	return nil
+}
+
 func (s *promptHistoryStore) AppendEvent(ctx context.Context, sessionID string, ev session.SessionEvent) (session.Seq, error) {
 	if s.failComposerPrompt && ev.Kind == session.KindComposerPrompt {
 		return 0, errors.New("composer history unavailable")
@@ -1091,6 +1101,77 @@ func TestEngine_UndoRestoresPrePromptWorkspaceAndEffectiveConversation(t *testin
 	}
 }
 
+func TestEngine_UndoFirstPromptPreservesSessionWorkspace(t *testing.T) {
+	root := newUndoWorkspace(t)
+	store := session.NewMemoryStore()
+	engine := newWritingUndoEngine(t, root, store, t.TempDir())
+
+	if _, err := engine.SendPrompt("s1", "create file"); err != nil {
+		t.Fatal(err)
+	}
+	if _, done := collectUntilRunDone(t, engine.Events(), 10*time.Second, nil); done.Err != "" {
+		t.Fatalf("RunDoneMsg.Err = %q", done.Err)
+	}
+	if _, err := engine.Undo("s1"); err != nil {
+		t.Fatal(err)
+	}
+
+	sessions, err := store.Sessions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || sessions[0].ID != "s1" || sessions[0].Cwd != root {
+		t.Fatalf("Sessions = %+v, want session s1 with cwd %q", sessions, root)
+	}
+}
+
+func TestEngine_SendPromptSnapshotFailureDoesNotCreateSession(t *testing.T) {
+	store := session.NewMemoryStore()
+	wantErr := errors.New("snapshot unavailable")
+	engine := NewEngine(EngineConfig{
+		Root:        newUndoWorkspace(t),
+		Store:       store,
+		Checkpoints: failingCheckpointStore{err: wantErr},
+	})
+
+	if _, err := engine.SendPrompt("s1", "hello"); !errors.Is(err, wantErr) {
+		t.Fatalf("SendPrompt error = %v, want %v", err, wantErr)
+	}
+	if sessions, err := store.Sessions(context.Background()); err != nil || len(sessions) != 0 {
+		t.Fatalf("Sessions = %+v, err = %v, want none", sessions, err)
+	}
+}
+
+func TestEngine_UndoRejectsCheckpointFromAnotherWorkspace(t *testing.T) {
+	firstRoot := newUndoWorkspace(t)
+	secondRoot := newUndoWorkspace(t)
+	store := session.NewMemoryStore()
+	checkpointRoot := t.TempDir()
+	firstEngine := newWritingUndoEngine(t, firstRoot, store, checkpointRoot)
+
+	if _, err := firstEngine.SendPrompt("s1", "create file"); err != nil {
+		t.Fatal(err)
+	}
+	if _, done := collectUntilRunDone(t, firstEngine.Events(), 10*time.Second, nil); done.Err != "" {
+		t.Fatalf("RunDoneMsg.Err = %q", done.Err)
+	}
+
+	secondEngine := NewEngine(EngineConfig{
+		Root:        secondRoot,
+		Store:       store,
+		Checkpoints: checkpoint.NewGitStore(checkpointRoot),
+	})
+	if _, err := secondEngine.Undo("s1"); err == nil {
+		t.Fatal("Undo accepted a checkpoint created for another workspace")
+	}
+	if _, err := os.Stat(filepath.Join(firstRoot, "created.txt")); err != nil {
+		t.Fatalf("first workspace changed after rejected undo: %v", err)
+	}
+	if entries, err := os.ReadDir(secondRoot); err != nil || len(entries) != 1 || entries[0].Name() != ".git" {
+		t.Fatalf("second workspace changed after rejected undo: entries=%v err=%v", entries, err)
+	}
+}
+
 func TestEngine_UndoTwiceRestoresEachPromptBoundary(t *testing.T) {
 	root := newUndoWorkspace(t)
 	provider := newTurnProvider(
@@ -1225,8 +1306,8 @@ func TestEngine_UndoPersistsAcrossSQLiteReopen(t *testing.T) {
 	if messages, err := store.Messages(context.Background(), "s1", 0); err != nil || len(messages) != 0 {
 		t.Fatalf("Messages = %+v, err = %v", messages, err)
 	}
-	if events, err := store.Events(context.Background(), "s1", 0); err != nil || len(events) != 0 {
-		t.Fatalf("Events = %+v, err = %v", events, err)
+	if events, err := store.Events(context.Background(), "s1", 0); err != nil || len(events) != 1 || events[0].Kind != session.KindSessionCwd || events[0].Text != root {
+		t.Fatalf("Events = %+v, err = %v, want only Session.Cwd %q", events, err, root)
 	}
 	if contextResult, err := store.ContextForRunner(context.Background(), "s1"); err != nil || len(contextResult.Messages) != 0 {
 		t.Fatalf("ContextForRunner = %+v, err = %v", contextResult, err)

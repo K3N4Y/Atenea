@@ -42,7 +42,9 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
 - `internal/checkpoint/git.go` — prompt-level workspace snapshots for the TUI.
   It stores Git trees in a private bare repository below
   `session.DefaultCheckpointPath()` (`ATENEA_CHECKPOINTS` overrides it), using
-  the user's workspace only as `--work-tree`. Snapshots include tracked files
+  the user's workspace only as `--work-tree`. Durable tree references include
+  the canonical workspace-path hash and are rejected from any other root.
+  Snapshots include tracked files
   and non-ignored untracked files, executable modes, and symlinks. Ignored
   files remain untouched, and the workspace's main `.git` directory, index,
   branch, HEAD, refs, and staged changes are never mutated.

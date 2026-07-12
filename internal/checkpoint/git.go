@@ -17,6 +17,8 @@ import (
 
 type Tree string
 
+var ErrWorkspaceMismatch = errors.New("checkpoint belongs to another workspace")
+
 type Store interface {
 	Capture(ctx context.Context, workspace string) (Tree, error)
 	Restore(ctx context.Context, workspace string, tree Tree) error
@@ -39,9 +41,16 @@ func (s *GitStore) Restore(ctx context.Context, workspace string, tree Tree) err
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	abs, private, err := s.prepare(ctx, workspace)
+	abs, private, workspaceID, err := s.prepare(ctx, workspace)
 	if err != nil {
 		return err
+	}
+	targetID, targetTree, err := splitTree(tree)
+	if err != nil {
+		return err
+	}
+	if targetID != workspaceID {
+		return ErrWorkspaceMismatch
 	}
 	current, err := s.capturePrepared(ctx, abs, private)
 	if err != nil {
@@ -51,7 +60,7 @@ func (s *GitStore) Restore(ctx context.Context, workspace string, tree Tree) err
 	if err != nil {
 		return err
 	}
-	targetPaths, err := treePaths(ctx, private, abs, tree)
+	targetPaths, err := treePaths(ctx, private, abs, Tree(targetTree))
 	if err != nil {
 		return err
 	}
@@ -63,8 +72,7 @@ func (s *GitStore) Restore(ctx context.Context, workspace string, tree Tree) err
 			return err
 		}
 	}
-	removeEmptyDirs(abs)
-	if _, err := privateGit(ctx, private, abs, nil, "read-tree", string(tree)); err != nil {
+	if _, err := privateGit(ctx, private, abs, nil, "read-tree", targetTree); err != nil {
 		return err
 	}
 	_, err = privateGit(ctx, private, abs, nil, "checkout-index", "-a", "-f")
@@ -72,11 +80,15 @@ func (s *GitStore) Restore(ctx context.Context, workspace string, tree Tree) err
 }
 
 func (s *GitStore) capture(ctx context.Context, workspace string) (Tree, error) {
-	abs, private, err := s.prepare(ctx, workspace)
+	abs, private, workspaceID, err := s.prepare(ctx, workspace)
 	if err != nil {
 		return "", err
 	}
-	return s.capturePrepared(ctx, abs, private)
+	tree, err := s.capturePrepared(ctx, abs, private)
+	if err != nil {
+		return "", err
+	}
+	return Tree(workspaceID + ":" + string(tree)), nil
 }
 
 func (s *GitStore) capturePrepared(ctx context.Context, workspace, private string) (Tree, error) {
@@ -100,30 +112,38 @@ func (s *GitStore) capturePrepared(ctx context.Context, workspace, private strin
 	return Tree(strings.TrimSpace(string(out))), nil
 }
 
-func (s *GitStore) prepare(ctx context.Context, workspace string) (string, string, error) {
+func (s *GitStore) prepare(ctx context.Context, workspace string) (string, string, string, error) {
 	abs, err := filepath.Abs(workspace)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	abs = filepath.Clean(abs)
 	cmd := exec.CommandContext(ctx, "git", "-C", abs, "rev-parse", "--is-inside-work-tree")
 	if out, err := cmd.Output(); err != nil || strings.TrimSpace(string(out)) != "true" {
-		return "", "", errors.New("checkpoint requires a Git workspace")
+		return "", "", "", errors.New("checkpoint requires a Git workspace")
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(abs)))
 	private := filepath.Join(s.root, digest)
 	if _, err := os.Stat(private); os.IsNotExist(err) {
 		if err := os.MkdirAll(s.root, 0o755); err != nil {
-			return "", "", err
+			return "", "", "", err
 		}
 		cmd := exec.CommandContext(ctx, "git", "init", "--bare", private)
 		if out, err := cmd.CombinedOutput(); err != nil {
-			return "", "", fmt.Errorf("git init checkpoint: %w: %s", err, out)
+			return "", "", "", fmt.Errorf("git init checkpoint: %w: %s", err, out)
 		}
 	} else if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	return abs, private, nil
+	return abs, private, digest, nil
+}
+
+func splitTree(tree Tree) (string, string, error) {
+	workspaceID, treeHash, ok := strings.Cut(string(tree), ":")
+	if !ok || workspaceID == "" || treeHash == "" {
+		return "", "", errors.New("invalid checkpoint tree")
+	}
+	return workspaceID, treeHash, nil
 }
 
 func nonIgnoredPaths(ctx context.Context, workspace string) ([]string, error) {
@@ -244,27 +264,4 @@ func privateGit(ctx context.Context, private, workspace string, stdin []byte, ar
 		return nil, fmt.Errorf("git checkpoint %s: %w: %s", args[0], err, out)
 	}
 	return out, nil
-}
-
-func removeEmptyDirs(root string) {
-	var dirs []string
-	_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || path == root {
-			return err
-		}
-		if entry.Name() == ".git" {
-			if entry.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if entry.IsDir() {
-			dirs = append(dirs, path)
-		}
-		return nil
-	})
-	sort.Sort(sort.Reverse(sort.StringSlice(dirs)))
-	for _, dir := range dirs {
-		_ = os.Remove(dir)
-	}
 }
