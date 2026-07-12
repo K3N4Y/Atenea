@@ -91,6 +91,46 @@ type compactQueueProvider struct {
 	requests []llm.Request
 }
 
+type blockingSummaryProvider struct {
+	started chan struct{}
+	release chan struct{}
+
+	mu       sync.Mutex
+	requests []llm.Request
+}
+
+func newBlockingSummaryProvider() *blockingSummaryProvider {
+	return &blockingSummaryProvider{started: make(chan struct{}), release: make(chan struct{})}
+}
+
+func (p *blockingSummaryProvider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Event, error) {
+	p.mu.Lock()
+	call := len(p.requests)
+	p.requests = append(p.requests, req)
+	p.mu.Unlock()
+	out := make(chan llm.Event)
+	go func() {
+		defer close(out)
+		if call == 0 {
+			close(p.started)
+			select {
+			case <-ctx.Done():
+				return
+			case <-p.release:
+			}
+			out <- llm.Event{Kind: llm.TextDelta, Text: `{"current_goal":"continue","constraints_and_instructions":[],"decisions":[],"completed_work":[],"files_and_changes":[],"relevant_tool_results":[],"failures_and_attempts":[],"pending_and_next_step":[],"facts_not_to_reinterpret":[]}`}
+		}
+		out <- llm.Event{Kind: llm.StepEnded}
+	}()
+	return out, nil
+}
+
+func (p *blockingSummaryProvider) callCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.requests)
+}
+
 func newCompactQueueProvider() *compactQueueProvider {
 	return &compactQueueProvider{started: make(chan struct{}), release: make(chan struct{})}
 }
@@ -480,6 +520,79 @@ func TestEngine_CompactDuringRunQueuesOnceAndDrainsAfterCompletion(t *testing.T)
 	}
 	if got := provider.callCount(); got != 2 {
 		t.Fatalf("provider calls = %d, want turn + one summary", got)
+	}
+}
+
+func TestEngine_CompactWithArgumentsRemainsNormalPrompt(t *testing.T) {
+	store := session.NewMemoryStore()
+	provider := newTurnProvider([]llm.Event{{Kind: llm.StepEnded}})
+	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: store})
+	if _, err := e.SendPrompt("s1", "/compact later"); err != nil {
+		t.Fatal(err)
+	}
+	_, done := collectUntilRunDone(t, e.Events(), time.Second, nil)
+	if done.Err != "" {
+		t.Fatal(done.Err)
+	}
+	messages, err := store.Messages(context.Background(), "s1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) == 0 || messages[0].Text != "/compact later" {
+		t.Fatalf("messages = %+v, want literal prompt", messages)
+	}
+}
+
+func TestEngine_QueuedCompactRunsAfterCancellation(t *testing.T) {
+	store := session.NewMemoryStore()
+	seedCompactableEngineSession(t, store, "s1")
+	provider := newCompactQueueProvider()
+	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: store})
+	if _, err := e.SendPrompt("s1", "continue turn"); err != nil {
+		t.Fatal(err)
+	}
+	<-provider.started
+	if _, err := e.SendPrompt("s1", "/compact"); err != nil {
+		t.Fatal(err)
+	}
+	e.Stop("s1")
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			t.Fatal("timeout waiting for compaction after cancellation")
+		case message := <-e.Events():
+			if event, ok := message.(EventMsg); ok && event.Kind == session.KindContextCompacted {
+				return
+			}
+		}
+	}
+}
+
+func TestEngine_PromptAfterIdleCompactWaitsForCommittedContext(t *testing.T) {
+	store := session.NewMemoryStore()
+	seedCompactableEngineSession(t, store, "s1")
+	provider := newBlockingSummaryProvider()
+	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: store})
+	if _, err := e.SendPrompt("s1", "/compact"); err != nil {
+		t.Fatal(err)
+	}
+	<-provider.started
+	if _, err := e.SendPrompt("s1", "next prompt"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(30 * time.Millisecond)
+	if got := provider.callCount(); got != 1 {
+		t.Fatalf("provider calls before summary release = %d, prompt overtook compaction", got)
+	}
+	close(provider.release)
+	deadline := time.After(2 * time.Second)
+	for provider.callCount() < 2 {
+		select {
+		case <-deadline:
+			t.Fatal("prompt did not start after compaction")
+		case <-time.After(time.Millisecond):
+		}
 	}
 }
 

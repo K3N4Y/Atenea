@@ -3120,6 +3120,14 @@ func TestModel_CompactStatusNotNeededAndFailure(t *testing.T) {
 	}
 }
 
+func TestModel_CompactStatusForOtherSessionIsIgnored(t *testing.T) {
+	m := NewModel(nil, "visible", nil)
+	m = apply(t, m, CompactionStatusMsg{SessionID: "other", State: CompactionQueued})
+	if view := ansi.Strip(m.View()); strings.Contains(view, "Compaction queued") {
+		t.Fatalf("other session status leaked into view: %q", view)
+	}
+}
+
 func TestModel_CommandMenuClosesOnSpace(t *testing.T) {
 	// El primer espacio cierra el menu: lo que sigue al nombre son los args del
 	// comando y el popup ya no debe tapar la conversacion.

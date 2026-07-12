@@ -67,3 +67,40 @@ func TestEmittingStore_ForwardsAppendedEventToBusWithSeq(t *testing.T) {
 		t.Errorf("ev.Kind = %q, quiero %q", ev.Kind, session.KindStepStarted)
 	}
 }
+
+func TestEmittingStore_CommitCompactionForwardsDurableEvent(t *testing.T) {
+	fake := &fakeEmit{}
+	store := NewEmittingStore(session.NewMemoryStore(), NewBus(fake.emit))
+	ctx := context.Background()
+	covered, err := store.AppendEvent(ctx, "s1", session.SessionEvent{Message: &session.Message{ID: "u1", Role: session.RoleUser, Text: "old"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	anchor, err := store.AppendEvent(ctx, "s1", session.SessionEvent{Message: &session.Message{ID: "u2", Role: session.RoleUser, Text: "current"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	epoch, err := store.Epoch(ctx, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := session.CompactionCheckpoint{
+		Summary: session.StructuredSummary{
+			CurrentGoal: "continue", Constraints: []string{}, Decisions: []string{}, Completed: []string{},
+			Files: []string{}, ToolResults: []string{}, Failures: []string{}, Pending: []string{}, Invariants: []string{},
+		},
+		ExpectedEpoch: epoch, CoveredThroughSeq: covered, AnchorUserSeq: anchor, PreservedFromSeq: anchor,
+		Model: "model", Reason: session.CompactionPreventive, InputTokensBefore: 100, EstimatedTokensAfter: 40,
+	}
+	seq, err := store.CommitCompaction(ctx, "s1", checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	last := fake.payloads[len(fake.payloads)-1].(session.SessionEvent)
+	if last.Seq != seq || last.Kind != session.KindContextCompacted || last.Compaction == nil {
+		t.Fatalf("emitted compaction = %+v", last)
+	}
+}

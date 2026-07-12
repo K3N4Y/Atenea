@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
@@ -127,5 +128,58 @@ func TestCompactor_InvalidSummaryDoesNotCommitCheckpoint(t *testing.T) {
 		if event.Kind == session.KindContextCompacted {
 			t.Fatalf("invalid summary committed checkpoint: %+v", event)
 		}
+	}
+}
+
+func TestRunner_TurnAfterCompactionIncludesSummaryAndCurrentActivity(t *testing.T) {
+	store := session.NewMemoryStore()
+	seedManualCompactionHistory(t, store)
+	provider := &compactionProvider{events: validCompactionSummaryEvents()}
+	r := newCompactionRunner(t, store, provider)
+	if err := r.CompactNow(context.Background(), "s1"); err != nil {
+		t.Fatal(err)
+	}
+	provider.events = []llm.Event{{Kind: llm.StepEnded}}
+	if _, err := r.runTurn(context.Background(), "s1"); err != nil {
+		t.Fatal(err)
+	}
+
+	provider.mu.Lock()
+	request := provider.requests[len(provider.requests)-1]
+	provider.mu.Unlock()
+	if !strings.Contains(request.System, "COMPACTED_SESSION_CONTEXT") || !strings.Contains(request.System, "continue current work") {
+		t.Fatalf("system = %q, want compacted summary", request.System)
+	}
+	if len(request.Messages) != 1 || request.Messages[0].Text != "current question" {
+		t.Fatalf("messages = %+v, want current activity only", request.Messages)
+	}
+}
+
+func TestRunner_CompactNowPreservesAssistantToolGroupAfterCurrentUser(t *testing.T) {
+	store := session.NewMemoryStore()
+	ctx := context.Background()
+	messages := []session.Message{
+		{ID: "u1", Role: session.RoleUser, Text: "old"},
+		{ID: "a1", Role: session.RoleAssistant, Text: "old answer"},
+		{ID: "u2", Role: session.RoleUser, Text: "current"},
+		{ID: "a2", Role: session.RoleAssistant, ToolCalls: []session.ToolCall{{ID: "c1", Name: "read", Arguments: `{}`}}},
+		{ID: "c1", Role: session.RoleTool, ToolCallID: "c1", Text: "result"},
+	}
+	for _, message := range messages {
+		message := message
+		if _, err := store.AppendEvent(ctx, "s1", session.SessionEvent{Message: &message}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	provider := &compactionProvider{events: validCompactionSummaryEvents()}
+	if err := newCompactionRunner(t, store, provider).CompactNow(ctx, "s1"); err != nil {
+		t.Fatal(err)
+	}
+	runnerContext, err := store.ContextForRunner(ctx, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runnerContext.Messages) != 3 || runnerContext.Messages[1].Role != session.RoleAssistant || runnerContext.Messages[2].Role != session.RoleTool {
+		t.Fatalf("preserved messages = %+v, want user + complete assistant/tool group", runnerContext.Messages)
 	}
 }
