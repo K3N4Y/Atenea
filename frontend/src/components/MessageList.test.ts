@@ -49,7 +49,6 @@ describe('MessageList', () => {
         status: 'success',
         output: 'salida',
         error: null,
-        diff: '',
       },
     ]
 
@@ -58,8 +57,7 @@ describe('MessageList', () => {
     expect(wrapper.text()).toContain('pregunta')
     expect(wrapper.html()).toContain('<strong>resp</strong>')
     expect(wrapper.text()).toContain('Thought 3s')
-    expect(wrapper.text()).not.toContain('salida')
-    expect(wrapper.findAll('[data-test="activity-group"]')).toHaveLength(1)
+    expect(wrapper.text()).toContain('salida')
   })
 
   it('el contenedor es una region live para lectores de pantalla', () => {
@@ -97,7 +95,6 @@ describe('MessageList', () => {
         status: 'pending',
         output: '',
         error: null,
-        diff: '',
       },
     ]
 
@@ -108,67 +105,6 @@ describe('MessageList', () => {
 
     await wrapper.get('[data-action="deny"]').trigger('click')
     expect(wrapper.emitted('deny')?.[0]).toEqual(['c1'])
-  })
-
-  it('groups adjacent tools into one continuous activity group', () => {
-    const items: TurnItem[] = [
-      {
-        kind: 'tool',
-        id: 't1',
-        callID: 'c1',
-        name: 'grep',
-        input: { pattern: 'auth' },
-        status: 'success',
-        output: 'match',
-        error: null,
-        diff: '',
-      },
-      {
-        kind: 'tool',
-        id: 't2',
-        callID: 'c2',
-        name: 'read',
-        input: { path: 'internal/auth.go' },
-        status: 'success',
-        output: '',
-        error: null,
-        diff: '',
-      },
-    ]
-
-    const wrapper = mount(MessageList, { props: { items } })
-
-    expect(wrapper.findAll('[data-test="activity-group"]')).toHaveLength(1)
-    expect(wrapper.findAll('[data-test="activity-row"]')).toHaveLength(2)
-  })
-
-  it('assistant narrative splits tools into separate activity groups', () => {
-    const tool = (id: string): TurnItem => ({
-      kind: 'tool',
-      id,
-      callID: id,
-      name: 'echo',
-      input: {},
-      status: 'success',
-      output: '',
-      error: null,
-      diff: '',
-    })
-    const items: TurnItem[] = [
-      tool('t1'),
-      {
-        kind: 'assistant',
-        id: 'a1',
-        text: 'Ahora leo el archivo.',
-        streaming: false,
-      },
-      tool('t2'),
-    ]
-
-    const wrapper = mount(MessageList, { props: { items } })
-
-    expect(wrapper.findAll('[data-test="activity-group"]')).toHaveLength(2)
-    expect(wrapper.text()).toContain('Ahora leo el archivo.')
   })
 
   it('no arrastra al fondo ni oculta nueva actividad mientras el usuario lee arriba', async () => {
