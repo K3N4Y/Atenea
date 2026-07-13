@@ -15,5 +15,11 @@
 // bash -c por llamada (sin sesion persistente, el cwd y el env no sobreviven entre
 // calls), combina stdout+stderr, aplica un timeout por tiers (rapido por defecto,
 // lento con slow_ok), mata el grupo de procesos al expirar, scrubea los secretos
-// del env y acota el output head+tail.
+// del env y acota el output head+tail. Settle now passes each call's input
+// through the repair layer of the internal/tool/repair subpackage
+// (validate-then-repair) BEFORE Execute: an almost-valid input is repaired
+// against the tool's schema and notes about what was repaired are prepended to
+// the output as <repair_note> lines so the model corrects its next call; an
+// irreparable input returns a model-readable error without executing the
+// tool.
 package tool

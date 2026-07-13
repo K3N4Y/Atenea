@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"atenea/internal/llm"
+	"atenea/internal/tool/repair"
 )
 
 // Tool es una herramienta registrada: su esquema anunciable y su ejecucion. El
@@ -43,12 +44,13 @@ type Result struct {
 	Diff      string
 }
 
-// SettleFunc asienta una tool call: valida contra el set materializado, ejecuta y
+// SettleFunc asienta una tool call: valida contra el set materializado,
+// repairs the input against the tool's schema (repair.Repair), ejecuta y
 // devuelve el Result. Esta cerrada sobre las tools permitidas de una
-// materializacion: una tool fuera del set devuelve UnknownToolError sin ejecutar
-// nada. M5 la invoca concurrentemente desde consume (errgroup); por eso es segura
-// para uso concurrente (no muta estado compartido salvo el OutputStore, que tiene
-// su candado).
+// materializacion: una tool fuera del set devuelve UnknownToolError sin
+// ejecutar nada. M5 la invoca concurrentemente desde consume (errgroup); por
+// eso es segura para uso concurrente (no muta estado compartido salvo el
+// OutputStore, que tiene su candado).
 type SettleFunc func(ctx context.Context, call Call) (Result, error)
 
 // Permissions es el set de tools permitidas por nombre. Materialize solo anuncia
@@ -124,11 +126,25 @@ func (r *Registry) Materialize(perms Permissions) Materialized {
 		if !ok {
 			return Result{}, &UnknownToolError{Name: call.Name}
 		}
-		res, err := t.Execute(ctx, call.Input)
+		// The input goes through the repair layer BEFORE executing: an
+		// almost-valid input is repaired and an irreparable one returns
+		// the error without executing the tool. An empty input (tool
+		// with no arguments) skips the layer: there is nothing to repair.
+		input, notes := call.Input, []string(nil)
+		if len(input) > 0 {
+			var err error
+			input, notes, err = repair.Repair(call.Name, t.Schema(), call.Input)
+			if err != nil {
+				return Result{}, err
+			}
+		}
+		res, err := t.Execute(ctx, input)
 		if err != nil {
 			return Result{}, err
 		}
-		capped := r.outputs.Cap(call.ID, res.Output)
+		// Repair notes are prepended BEFORE capping, so the <repair_note>
+		// header survives the capping and the model sees it.
+		capped := r.outputs.Cap(call.ID, repair.WithNotes(notes, res.Output))
 		capped.Diff = res.Diff // el diff (solo-UI) no se acota
 		return capped, nil
 	}

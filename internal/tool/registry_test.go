@@ -1,13 +1,17 @@
 package tool
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"atenea/internal/llm"
+	"atenea/internal/tool/repair"
 )
 
 // spyTool es una tool de prueba que cuenta sus ejecuciones por puntero (Tool se
@@ -28,6 +32,159 @@ func (s spyTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"obj
 func (s spyTool) Execute(ctx context.Context, in json.RawMessage) (Result, error) {
 	*s.calls++
 	return Result{Output: s.out, Diff: s.diff}, s.execErr
+}
+
+// recorderTool is a test tool with a configurable schema that records through
+// a pointer the input Execute received (Tool is passed by value, so the
+// recording must be shared) and returns a fixed output. It serves to verify
+// that the registry repairs the input BEFORE executing: the recording is what
+// the tool actually saw.
+type recorderTool struct {
+	name   string
+	schema string
+	got    *json.RawMessage
+	out    string
+}
+
+func (r recorderTool) Name() string            { return r.name }
+func (r recorderTool) Description() string     { return r.name + " recorder" }
+func (r recorderTool) Schema() json.RawMessage { return json.RawMessage(r.schema) }
+func (r recorderTool) Execute(ctx context.Context, in json.RawMessage) (Result, error) {
+	*r.got = append(json.RawMessage(nil), in...)
+	return Result{Output: r.out}, nil
+}
+
+// mirrorTool is a stateless test tool: it returns as Output the input Execute
+// received. Since it shares nothing between executions it is safe to settle
+// from several goroutines at once (concurrency test with -race).
+type mirrorTool struct {
+	name   string
+	schema string
+}
+
+func (m mirrorTool) Name() string            { return m.name }
+func (m mirrorTool) Description() string     { return m.name + " mirror" }
+func (m mirrorTool) Schema() json.RawMessage { return json.RawMessage(m.schema) }
+func (m mirrorTool) Execute(ctx context.Context, in json.RawMessage) (Result, error) {
+	return Result{Output: string(in)}, nil
+}
+
+// listerSchema is the schema shared by the repair-layer tests: a single
+// required items field of type array, enough to trigger a repair
+// (JSON-stringified array) and to fail when items is missing.
+const listerSchema = `{"type":"object","properties":{"items":{"type":"array"}},"required":["items"]}`
+
+// materializeLister builds a registry with a "lister" recorderTool (schema
+// listerSchema, fixed output out) and an OutputStore with the given limit
+// (0 = no capping), materializes it with permission and returns the
+// Materialized along with the pointer where the tool records the input
+// Execute received.
+func materializeLister(limit int, out string) (Materialized, *json.RawMessage) {
+	var got json.RawMessage
+	reg := NewRegistry(NewOutputStore(limit), recorderTool{
+		name:   "lister",
+		schema: listerSchema,
+		got:    &got,
+		out:    out,
+	})
+	return reg.Materialize(Permissions{"lister": true}), &got
+}
+
+// cutRepairNote splits off the first line of the output and asserts that it
+// is a complete <repair_note>...</repair_note> note; it returns the rest of
+// the output (what follows the note).
+func cutRepairNote(t *testing.T, output string) string {
+	t.Helper()
+	note, rest, found := strings.Cut(output, "\n")
+	if !found || !strings.HasPrefix(note, "<repair_note>") || !strings.HasSuffix(note, "</repair_note>") {
+		t.Fatalf("Output: expected a complete <repair_note>...</repair_note> line at the start, got %q", output)
+	}
+	return rest
+}
+
+// TestRegistry_SettleRepairsToolInputBeforeExecute asserts that Settle passes
+// the raw input through the repair layer (repair.Repair) BEFORE executing the
+// tool: an array field that arrives JSON-stringified is repaired into the real
+// array before Execute, and the Output the model sees carries the
+// <repair_note> line prepended to the tool's fixed output.
+func TestRegistry_SettleRepairsToolInputBeforeExecute(t *testing.T) {
+	mat, got := materializeLister(0, "done")
+
+	// The items field arrives JSON-stringified: repairable, not valid as is.
+	call := Call{ID: "c1", Name: "lister", Input: json.RawMessage(`{"items":"[\"a\"]"}`)}
+	res, err := mat.Settle(context.Background(), call)
+	if err != nil {
+		t.Fatalf("Settle: unexpected error: %v", err)
+	}
+
+	// (1) Execute received the repaired input: items is now a real array.
+	var fields struct {
+		Items []string `json:"items"`
+	}
+	if err := json.Unmarshal(*got, &fields); err != nil {
+		t.Fatalf("Execute: the recorded input does not parse with items as an array: %v (input: %s)", err, *got)
+	}
+	if len(fields.Items) != 1 || fields.Items[0] != "a" {
+		t.Fatalf("Execute: expected repaired items [\"a\"], got %v", fields.Items)
+	}
+
+	// (2) The Output starts with a <repair_note> line, then the fixed output.
+	if rest := cutRepairNote(t, res.Output); rest != "done" {
+		t.Fatalf("Output: expected the fixed output %q after the note, got %q", "done", rest)
+	}
+}
+
+// TestRegistry_SettleIrreparableInputHasNoSideEffects asserts that an input
+// that cannot be repaired against the schema (a required field is missing with
+// no possible alias) returns *repair.InvalidInputError with the field's
+// bullet, and that the tool is NOT executed: the recorder's recording stays
+// nil.
+func TestRegistry_SettleIrreparableInputHasNoSideEffects(t *testing.T) {
+	mat, got := materializeLister(0, "done")
+
+	// "something_else" is not an alias of "items": the required field is
+	// missing and there is no repair for it.
+	call := Call{ID: "c1", Name: "lister", Input: json.RawMessage(`{"something_else":1}`)}
+	_, err := mat.Settle(context.Background(), call)
+	if err == nil {
+		t.Fatalf("Settle: expected an error for an irreparable input, got nil")
+	}
+	var invalid *repair.InvalidInputError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("Settle: expected *repair.InvalidInputError, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "• items") {
+		t.Fatalf("Error: expected the bullet for field %q in the message, got %q", "items", err.Error())
+	}
+	// The tool must not have executed: the recorder never recorded an input.
+	if *got != nil {
+		t.Fatalf("Execute: the tool must not execute on an irreparable input, it recorded %s", *got)
+	}
+}
+
+// TestRegistry_SettleValidInputPassesThroughUntouched asserts that an
+// already-valid input crosses the repair layer without noise: Execute receives
+// the input byte for byte, the Output carries no <repair_note> and there is no
+// error.
+func TestRegistry_SettleValidInputPassesThroughUntouched(t *testing.T) {
+	mat, got := materializeLister(0, "done")
+
+	// Input valid as is, with its own spacing: if the registry re-serialized
+	// it, the bytes would change.
+	call := Call{ID: "c1", Name: "lister", Input: json.RawMessage(`{ "items": ["a"] }`)}
+	res, err := mat.Settle(context.Background(), call)
+	if err != nil {
+		t.Fatalf("Settle: unexpected error: %v", err)
+	}
+	if !bytes.Equal(*got, call.Input) {
+		t.Fatalf("Execute: expected the input byte for byte %s, got %s", call.Input, *got)
+	}
+	if strings.Contains(res.Output, "<repair_note>") {
+		t.Fatalf("Output: expected no <repair_note> for a valid input, got %q", res.Output)
+	}
+	if res.Output != "done" {
+		t.Fatalf("Output: expected the fixed output %q, got %q", "done", res.Output)
+	}
 }
 
 // TestRegistry_SettlePreservesDiffThroughCap afirma que el Diff (solo-UI) sobrevive
@@ -53,6 +210,35 @@ func TestRegistry_SettlePreservesDiffThroughCap(t *testing.T) {
 	}
 }
 
+// TestRegistry_SettleRepairNotesSurviveCapping asserts that the repair note is
+// prepended BEFORE the OutputStore capping: with an output larger than the
+// limit, the capped Output (Truncated) still starts with the complete
+// <repair_note> line. If the registry capped first, the note could be lost.
+func TestRegistry_SettleRepairNotesSurviveCapping(t *testing.T) {
+	// The limit leaves room for the note line (~220 bytes) but cuts the tool
+	// output (2000 bytes): the capping is real and the whole note fits.
+	const limit = 512
+	mat, _ := materializeLister(limit, strings.Repeat("x", 2000))
+
+	// The items field arrives JSON-stringified: requires a repair (leaves a note).
+	call := Call{ID: "c1", Name: "lister", Input: json.RawMessage(`{"items":"[\"a\"]"}`)}
+	res, err := mat.Settle(context.Background(), call)
+	if err != nil {
+		t.Fatalf("Settle: unexpected error: %v", err)
+	}
+	if !res.Truncated {
+		t.Fatalf("Truncated: expected true for an output larger than the limit")
+	}
+	if len(res.Output) != limit {
+		t.Fatalf("Output: expected length %d, got %d", limit, len(res.Output))
+	}
+	// The first line of the capped Output is the complete note; the tool
+	// output follows.
+	if rest := cutRepairNote(t, res.Output); !strings.HasPrefix(rest, "x") {
+		t.Fatalf("Output: expected the tool output after the note, got %q", rest)
+	}
+}
+
 // TestRegistry_SettleNoDiffStaysEmpty: una tool sin diff (p.ej. bash) deja Diff vacio.
 func TestRegistry_SettleNoDiffStaysEmpty(t *testing.T) {
 	calls := 0
@@ -65,6 +251,32 @@ func TestRegistry_SettleNoDiffStaysEmpty(t *testing.T) {
 	}
 	if res.Diff != "" {
 		t.Fatalf("Diff: se esperaba vacio, se obtuvo %q", res.Diff)
+	}
+}
+
+// TestRegistry_SettleNilInputSkipsRepairAndValidation explicitly pins that a
+// Call with a nil Input (tool with no arguments) does NOT go through the
+// repair layer: it executes normally, without notes and without error. If the
+// settle passed the nil through repair.Repair, the parse would fail (nil is
+// not JSON) and this test would see a *repair.InvalidInputError instead of the
+// execution.
+func TestRegistry_SettleNilInputSkipsRepairAndValidation(t *testing.T) {
+	var calls int
+	reg := NewRegistry(NewOutputStore(0), spyTool{name: "noargs", calls: &calls, out: "ok"})
+	mat := reg.Materialize(Permissions{"noargs": true})
+
+	res, err := mat.Settle(context.Background(), Call{ID: "c1", Name: "noargs", Input: nil})
+	if err != nil {
+		t.Fatalf("Settle: unexpected error with a nil Input: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("Execute: the tool must execute exactly once, counter = %d", calls)
+	}
+	if strings.Contains(res.Output, "<repair_note>") {
+		t.Fatalf("Output: expected no <repair_note> with a nil Input, got %q", res.Output)
+	}
+	if res.Output != "ok" {
+		t.Fatalf("Output: expected %q, got %q", "ok", res.Output)
 	}
 }
 
@@ -172,6 +384,49 @@ func TestRegistry_LargeOutputCappedViaOutputStore(t *testing.T) {
 	}
 	if len(got) != len(full) {
 		t.Fatalf("Full(c1): se esperaba largo %d, se obtuvo %d", len(full), len(got))
+	}
+}
+
+// TestRegistry_SettleConcurrentCallsWithRepairAreIndependent asserts that
+// Settle is safe when invoked concurrently on the same Materialized (M5 calls
+// it from an errgroup): several Calls that require repair settle in parallel
+// and each one receives ITS repaired input, its note and its output, without
+// mixing across goroutines. It runs with -race to catch data races.
+func TestRegistry_SettleConcurrentCallsWithRepairAreIndependent(t *testing.T) {
+	reg := NewRegistry(NewOutputStore(0), mirrorTool{name: "mirror", schema: listerSchema})
+	mat := reg.Materialize(Permissions{"mirror": true})
+
+	const n = 16
+	results := make([]Result, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			// Each Call carries a JSON-stringified items with its own value:
+			// it requires a repair and lets us verify they do not cross.
+			input := fmt.Sprintf(`{"items":"[\"x%d\"]"}`, i)
+			results[i], errs[i] = mat.Settle(context.Background(), Call{
+				ID:    fmt.Sprintf("c%d", i),
+				Name:  "mirror",
+				Input: json.RawMessage(input),
+			})
+		}(i)
+	}
+	wg.Wait()
+
+	for i := 0; i < n; i++ {
+		if errs[i] != nil {
+			t.Fatalf("Settle(c%d): unexpected error: %v", i, errs[i])
+		}
+		rest := cutRepairNote(t, results[i].Output)
+		// The mirror returns the input Execute received: it must be THIS
+		// Call's repaired input, with its own value.
+		want := fmt.Sprintf(`{"items":["x%d"]}`, i)
+		if rest != want {
+			t.Fatalf("Output(c%d): expected the repaired input %q, got %q", i, want, rest)
+		}
 	}
 }
 

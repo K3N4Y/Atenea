@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-10
+updated_at: 2026-07-12
 summary: Navigation index for Atenea project documentation in the OKF convention.
 ---
 
@@ -79,6 +79,7 @@ uses Markdown and begins with `updated_at` and `summary` YAML metadata.
 - [Glob tool](specs/atenea-tool-glob-spec.md)
 - [Grep tool](specs/atenea-tool-grep-spec.md)
 - [Read tool](specs/atenea-tool-read-spec.md)
+- [Tool input repair](specs/atenea-tool-input-repair-spec.md)
 
 ## Audits
 
