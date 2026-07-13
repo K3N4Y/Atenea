@@ -61,6 +61,26 @@ type CompactionStatusMsg struct {
 
 type leaderTimeoutMsg struct{ generation uint64 }
 
+type fileListTarget uint8
+
+const (
+	fileListMenu fileListTarget = iota
+	fileListTree
+)
+
+type filesListedMsg struct {
+	target     fileListTarget
+	generation uint64
+	files      []string
+	err        error
+}
+
+type fileOpenedMsg struct {
+	generation uint64
+	path       string
+	viewer     fileViewer
+}
+
 // Agent es la superficie del engine que la TUI necesita para operar la sesion.
 type Agent interface {
 	// SendPrompt devuelve la sesion activa y la identidad de la corrida iniciada;
@@ -247,6 +267,9 @@ type Model struct {
 	modelSearch  bool
 	files        []string
 	filesLoaded  bool
+	filesLoading bool
+	filesError   string
+	filesGen     uint64
 
 	// history guarda los ultimos historyLimit prompts enviados (Enter con
 	// texto, camino build o plan). Con el composer vacio, Arriba/Abajo los
@@ -264,8 +287,13 @@ type Model struct {
 	treeCursor       int
 	treeOffset       int
 	treeError        string
+	treeLoading      bool
+	treeGen          uint64
 	fileReader       FileReader
 	viewer           fileViewer
+	viewerLoading    bool
+	viewerGen        uint64
+	viewerPending    int
 	viewerReturnY    int
 	focus            panelFocus
 	terminalFocused  bool
@@ -411,7 +439,51 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.working = false
 		return m.resizeViewport(), nil
 	case ModelsRefreshedMsg:
-		return m.refreshMenu(), waitForEvent(m.events)
+		next, cmd := m.refreshMenu()
+		return next, tea.Batch(cmd, waitForEvent(m.events))
+	case filesListedMsg:
+		switch ev.target {
+		case fileListMenu:
+			if ev.generation != m.filesGen {
+				return m, nil
+			}
+			m.filesLoading = false
+			m.filesLoaded = true
+			m.files = ev.files
+			if ev.err != nil {
+				m.files = nil
+				m.filesError = ev.err.Error()
+			}
+			next, cmd := m.refreshMenu()
+			return next, cmd
+		case fileListTree:
+			if ev.generation != m.treeGen {
+				return m, nil
+			}
+			m.treeLoading = false
+			m.tree = newFileTree(ev.files)
+			m.treeError = ""
+			if ev.err != nil {
+				m.tree = newFileTree(nil)
+				m.treeError = ev.err.Error()
+				return m, nil
+			}
+			m.treeLoaded = true
+			m.syncTreeViewport()
+			return m, nil
+		}
+		return m, nil
+	case fileOpenedMsg:
+		if ev.generation != m.viewerGen || ev.path != m.viewer.path {
+			return m, nil
+		}
+		pendingScroll := m.viewerPending
+		m.viewer = ev.viewer
+		m.viewerLoading = false
+		m.viewerPending = 0
+		m.viewer.scroll(pendingScroll, m.fileViewerHeight())
+		m.viewer.clamp(m.fileViewerHeight())
+		return m, nil
 	case revealTickMsg:
 		// El loop de reveal muere solo: con el backlog agotado el tick no se
 		// reagenda (cmd nil) y un delta posterior lo reinicia. Siempre se
@@ -480,8 +552,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.scrollViewport(ev)
 		}
 		m.focus = m.normalizedFocus()
-		if m.treeOpen && m.handleTreeMouse(ev) {
-			return m, nil
+		if m.treeOpen {
+			handled, cmd := m.handleTreeMouse(ev)
+			if handled {
+				return m, cmd
+			}
 		}
 		if ev.Action == tea.MouseActionPress && ev.Button == tea.MouseButtonLeft {
 			if viewportLine, ok := m.transcriptLineAtMouse(ev); ok {
@@ -543,8 +618,16 @@ func (m *Model) scrollFileViewerMouse(msg tea.MouseMsg) {
 	}
 	switch msg.Button {
 	case tea.MouseButtonWheelUp:
+		if m.viewerLoading {
+			m.viewerPending -= 3
+			return
+		}
 		m.viewer.scroll(-3, m.fileViewerHeight())
 	case tea.MouseButtonWheelDown:
+		if m.viewerLoading {
+			m.viewerPending += 3
+			return
+		}
 		m.viewer.scroll(3, m.fileViewerHeight())
 	}
 }
@@ -605,14 +688,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case tea.KeyTab:
 			// Tab aplica la seleccion; no alterna el modo build/plan.
-			return m.applySelection(), nil
+			return m.applySelection()
 		case tea.KeyEnter:
 			if m.menuItems[m.menuSelected].builtin && (m.menuItems[m.menuSelected].label == "/new" || m.menuItems[m.menuSelected].label == "/compact") {
 				m.input.SetValue(m.menuItems[m.menuSelected].label)
 				m.input.SetCursor(len([]rune(m.menuItems[m.menuSelected].label)))
 				return m.closeMenu().submitPrompt()
 			}
-			return m.applySelection(), nil
+			return m.applySelection()
 		case tea.KeyEsc:
 			// Esc cierra el popup sin detener la corrida ni tocar el input; la
 			// proxima tecla que alimente el input recomputa y puede reabrirlo.
@@ -623,7 +706,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.leaderPending {
 		m.leaderPending = false
 		if keyRune(msg) == "e" {
-			return m.toggleTree(), nil
+			return m.toggleTreeAsync()
 		}
 		return m, nil
 	}
@@ -657,7 +740,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.input, cmd = m.input.Update(msg)
 	// La tecla pudo cambiar el texto o el caret: recomputar el popup de
 	// autocompletado desde el estado nuevo del input.
-	return m.refreshMenu(), cmd
+	next, refreshCmd := m.refreshMenu()
+	return next, tea.Batch(cmd, refreshCmd)
 }
 
 func (m Model) handleKeyRuneBatch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -698,24 +782,38 @@ func keyRune(msg tea.KeyMsg) string {
 	return string(msg.Runes)
 }
 
-func (m Model) toggleTree() Model {
+func (m Model) toggleTreeAsync() (Model, tea.Cmd) {
 	m.leaderPending = false
 	viewportOffset := m.viewport.YOffset
-	resizeViewport := func() Model {
-		m = m.resizeViewport()
-		m.viewport.SetYOffset(viewportOffset)
-		return m
-	}
 	m.treeOpen = !m.treeOpen
 	if !m.treeOpen {
 		m.focus = m.normalizedFocus()
-		return resizeViewport()
+		m = m.resizeViewport()
+		m.viewport.SetYOffset(viewportOffset)
+		return m, nil
 	}
 	m.focus = explorerFocus
 	m.treeCursor = 0
 	m.treeOffset = 0
-	m = m.loadTreeOnce()
-	return resizeViewport()
+	m, cmd := m.startTreeLoad()
+	m = m.resizeViewport()
+	m.viewport.SetYOffset(viewportOffset)
+	return m, cmd
+}
+
+func (m Model) startTreeLoad() (Model, tea.Cmd) {
+	if m.treeLoaded || m.treeLoading {
+		return m, nil
+	}
+	m.treeError = ""
+	if m.listFiles == nil {
+		m.tree = newFileTree(nil)
+		m.treeLoaded = true
+		return m, nil
+	}
+	m.treeLoading = true
+	m.treeGen++
+	return m, listFilesCmd(m.listFiles, fileListTree, m.treeGen)
 }
 
 func (m *Model) syncComposerFocus() tea.Cmd {
@@ -730,32 +828,11 @@ func (m *Model) syncComposerFocus() tea.Cmd {
 	return nil
 }
 
-func (m Model) loadTreeOnce() Model {
-	if m.treeLoaded {
-		return m
-	}
-	m.treeError = ""
-	if m.listFiles == nil {
-		m.tree = newFileTree(nil)
-		m.treeLoaded = true
-		return m
-	}
-	files, err := m.listFiles()
-	if err != nil {
-		m.tree = newFileTree(nil)
-		m.treeError = err.Error()
-		return m
-	}
-	m.tree = newFileTree(files)
-	m.treeLoaded = true
-	return m
-}
-
 func (m Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.leaderPending {
 		m.leaderPending = false
 		if keyRune(msg) == "e" {
-			return m.toggleTree(), nil
+			return m.toggleTreeAsync()
 		}
 		return m, nil
 	}
@@ -784,8 +861,11 @@ func (m Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.clampTreeCursor()
 			break
 		}
-		m = m.openTreeFile(node.path)
+		var cmd tea.Cmd
+		m, cmd = m.startOpenTreeFile(node.path)
 		m.focus = viewerFocus
+		m.syncTreeViewport()
+		return m, cmd
 	case keyRune(msg) == "h":
 		if len(rows) == 0 {
 			break
@@ -812,31 +892,31 @@ func (m Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // La rueda mueve la seleccion para conservar el mismo foco visual que el
 // teclado; un clic izquierdo selecciona la fila completa y la activa, igual
 // que Enter (carpeta expande/colapsa, archivo abre el visor).
-func (m *Model) handleTreeMouse(msg tea.MouseMsg) bool {
+func (m *Model) handleTreeMouse(msg tea.MouseMsg) (bool, tea.Cmd) {
 	if !m.treeMouseOverPanel(msg) {
-		return false
+		return false, nil
 	}
 	switch msg.Button {
 	case tea.MouseButtonWheelUp:
 		if msg.Action != tea.MouseActionPress {
-			return true
+			return true, nil
 		}
 		m.moveTreeCursor(-3)
-		return true
+		return true, nil
 	case tea.MouseButtonWheelDown:
 		if msg.Action != tea.MouseActionPress {
-			return true
+			return true, nil
 		}
 		m.moveTreeCursor(3)
-		return true
+		return true, nil
 	case tea.MouseButtonLeft:
 		if msg.Action != tea.MouseActionPress {
-			return true
+			return true, nil
 		}
 		m.focus = explorerFocus
 		row, ok := m.treeRowAtMouse(msg.Y)
 		if !ok {
-			return true
+			return true, nil
 		}
 		m.treeCursor = row
 		rows := m.tree.visibleRows()
@@ -844,12 +924,13 @@ func (m *Model) handleTreeMouse(msg tea.MouseMsg) bool {
 		if node.dir {
 			m.tree.toggle(node.path)
 			m.clampTreeCursor()
-			return true
+			return true, nil
 		}
-		*m = m.openTreeFile(node.path)
-		return true
+		var cmd tea.Cmd
+		*m, cmd = m.startOpenTreeFile(node.path)
+		return true, cmd
 	}
-	return true
+	return true, nil
 }
 
 func (m Model) normalizedFocus() panelFocus {
@@ -930,20 +1011,33 @@ func (m Model) fileViewerHeight() int {
 	return max(m.bodyHeight()-1, 0)
 }
 
-func (m Model) openTreeFile(path string) Model {
+func (m Model) startOpenTreeFile(path string) (Model, tea.Cmd) {
 	m.viewerReturnY = m.viewport.YOffset
+	m.viewerGen++
+	m.viewerLoading = true
+	m.viewerPending = 0
+	m.viewer = fileViewer{path: path, message: "cargando archivo…"}
 	if m.fileReader == nil {
 		m.viewer = openFileViewerError(path, errors.New("lector de archivos no configurado"))
-		return m
+		m.viewerLoading = false
+		return m, nil
 	}
-	content, err := m.fileReader(path)
-	if err != nil {
-		m.viewer = openFileViewerError(path, err)
-		return m
+	generation := m.viewerGen
+	reader := m.fileReader
+	return m, func() tea.Msg {
+		content, err := reader(path)
+		if err != nil {
+			return fileOpenedMsg{generation: generation, path: path, viewer: openFileViewerError(path, err)}
+		}
+		return fileOpenedMsg{generation: generation, path: path, viewer: openFileViewer(path, content)}
 	}
-	m.viewer = openFileViewer(path, content)
-	m.viewer.clamp(m.fileViewerHeight())
-	return m
+}
+
+func listFilesCmd(listFiles func() ([]string, error), target fileListTarget, generation uint64) tea.Cmd {
+	return func() tea.Msg {
+		files, err := listFiles()
+		return filesListedMsg{target: target, generation: generation, files: files, err: err}
+	}
 }
 
 func (m Model) handleFileViewerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -951,15 +1045,33 @@ func (m Model) handleFileViewerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case msg.Type == tea.KeyEsc:
 		m.viewer = fileViewer{}
+		m.viewerLoading = false
+		m.viewerPending = 0
 		m.viewport.SetYOffset(m.viewerReturnY)
 		m.focus = chatFocus
 	case msg.Type == tea.KeyDown || keyRune(msg) == "j":
+		if m.viewerLoading {
+			m.viewerPending++
+			break
+		}
 		m.viewer.scroll(1, height)
 	case msg.Type == tea.KeyUp || keyRune(msg) == "k":
+		if m.viewerLoading {
+			m.viewerPending--
+			break
+		}
 		m.viewer.scroll(-1, height)
 	case msg.Type == tea.KeyPgDown:
+		if m.viewerLoading {
+			m.viewerPending += max(height, 1)
+			break
+		}
 		m.viewer.scroll(max(height, 1), height)
 	case msg.Type == tea.KeyPgUp:
+		if m.viewerLoading {
+			m.viewerPending -= max(height, 1)
+			break
+		}
 		m.viewer.scroll(-max(height, 1), height)
 	}
 	return m, nil

@@ -987,7 +987,9 @@ func (m Model) treeView() string {
 	panelWidth := m.treePanelWidth()
 	innerWidth := max(panelWidth-2, 0)
 	lines := []string{panelTitle("explorer", m.focus == explorerFocus && panelWidth < m.width), ""}
-	if m.treeError != "" {
+	if m.treeLoading {
+		lines = append(lines, statusStyle.Render("cargando workspace…"))
+	} else if m.treeError != "" {
 		lines = append(lines, statusStyle.Render(m.treeError))
 	} else {
 		rows := m.tree.visibleRows()

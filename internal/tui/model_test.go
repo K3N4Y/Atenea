@@ -203,7 +203,174 @@ func apply(t *testing.T, m Model, msg tea.Msg) Model {
 	if !ok {
 		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
 	}
-	return next
+	return settleDiskWork(t, next)
+}
+
+func settleDiskWork(t *testing.T, m Model) Model {
+	t.Helper()
+	for {
+		switch {
+		case m.treeLoading:
+			files, err := m.listFiles()
+			updated, _ := m.Update(filesListedMsg{target: fileListTree, generation: m.treeGen, files: files, err: err})
+			m = updated.(Model)
+		case m.filesLoading:
+			files, err := m.listFiles()
+			updated, _ := m.Update(filesListedMsg{target: fileListMenu, generation: m.filesGen, files: files, err: err})
+			m = updated.(Model)
+		case m.viewerLoading:
+			content, err := m.fileReader(m.viewer.path)
+			viewer := openFileViewer(m.viewer.path, content)
+			if err != nil {
+				viewer = openFileViewerError(m.viewer.path, err)
+			}
+			updated, _ := m.Update(fileOpenedMsg{generation: m.viewerGen, path: m.viewer.path, viewer: viewer})
+			m = updated.(Model)
+		default:
+			return m
+		}
+	}
+}
+
+func (m Model) toggleTree() Model {
+	next, cmd := m.toggleTreeAsync()
+	if cmd == nil {
+		return next
+	}
+	updated, _ := next.Update(cmd())
+	return updated.(Model)
+}
+
+func TestModel_DiskWorkRunsOutsideUpdate(t *testing.T) {
+	t.Run("opening explorer defers workspace listing", func(t *testing.T) {
+		calls := 0
+		m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+			calls++
+			return []string{"go.mod"}, nil
+		})
+		m = apply(t, m, tea.KeyMsg{Type: tea.KeySpace})
+
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+		if _, ok := updated.(Model); !ok {
+			t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+		}
+		if calls != 0 {
+			t.Fatalf("listFiles calls during Update = %d, want 0", calls)
+		}
+	})
+
+	t.Run("typing mention defers workspace listing", func(t *testing.T) {
+		calls := 0
+		m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+			calls++
+			return []string{"go.mod"}, nil
+		})
+
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'@'}})
+		if _, ok := updated.(Model); !ok {
+			t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+		}
+		if calls != 0 {
+			t.Fatalf("listFiles calls during Update = %d, want 0", calls)
+		}
+	})
+
+	t.Run("opening file defers reading and highlighting", func(t *testing.T) {
+		calls := 0
+		m := NewModel(&fakeAgent{}, "s1", nil).WithFileReader(func(path string) ([]byte, error) {
+			calls++
+			return []byte("package main\n"), nil
+		})
+		m.treeOpen = true
+		m.focus = explorerFocus
+		m.treeLoaded = true
+		m.tree = newFileTree([]string{"main.go"})
+
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		if _, ok := updated.(Model); !ok {
+			t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+		}
+		if calls != 0 {
+			t.Fatalf("fileReader calls during Update = %d, want 0", calls)
+		}
+	})
+}
+
+func TestModel_AsyncDiskWorkTracksLoadingErrorsAndLatestResult(t *testing.T) {
+	t.Run("explorer shows loading then error", func(t *testing.T) {
+		m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+			return nil, errors.New("glob failed")
+		})
+
+		m, cmd := m.toggleTreeAsync()
+		if cmd == nil || !m.treeLoading || !strings.Contains(m.View(), "cargando workspace") {
+			t.Fatalf("tree loading state = loading:%v cmd:%v view:%q", m.treeLoading, cmd != nil, m.View())
+		}
+		m = apply(t, m, cmd())
+		if m.treeLoading || m.treeError != "glob failed" || !strings.Contains(m.View(), "glob failed") {
+			t.Fatalf("tree error state = loading:%v error:%q view:%q", m.treeLoading, m.treeError, m.View())
+		}
+	})
+
+	t.Run("mention shows loading then files", func(t *testing.T) {
+		m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+			return []string{"internal/tui/model.go"}, nil
+		})
+		m.input.SetValue("@")
+		m.input.CursorEnd()
+
+		m, cmd := m.refreshMenu()
+		if cmd == nil || !m.filesLoading || len(m.menuItems) != 1 || m.menuItems[0].label != "Loading files…" {
+			t.Fatalf("mention loading state = loading:%v cmd:%v items:%+v", m.filesLoading, cmd != nil, m.menuItems)
+		}
+		m = apply(t, m, cmd())
+		if m.filesLoading || len(m.menuItems) != 1 || m.menuItems[0].label != "internal/tui/model.go" {
+			t.Fatalf("mention result state = loading:%v items:%+v", m.filesLoading, m.menuItems)
+		}
+	})
+
+	t.Run("viewer ignores stale file result", func(t *testing.T) {
+		m := NewModel(&fakeAgent{}, "s1", nil).WithFileReader(func(path string) ([]byte, error) {
+			return []byte(path), nil
+		})
+		m, first := m.startOpenTreeFile("first.txt")
+		m, second := m.startOpenTreeFile("second.txt")
+
+		updated, _ := m.Update(first())
+		m = updated.(Model)
+		if m.viewer.path != "second.txt" || m.viewer.message != "cargando archivo…" {
+			t.Fatalf("stale result changed viewer = %+v", m.viewer)
+		}
+		updated, _ = m.Update(second())
+		m = updated.(Model)
+		if m.viewer.path != "second.txt" || m.viewer.message != "" || ansi.Strip(strings.Join(m.viewer.lines, "\n")) != "second.txt" {
+			t.Fatalf("latest result not applied = %+v", m.viewer)
+		}
+	})
+
+	t.Run("viewer applies navigation received while loading", func(t *testing.T) {
+		var content strings.Builder
+		for line := 0; line < 40; line++ {
+			content.WriteString("line\n")
+		}
+		m := NewModel(&fakeAgent{}, "s1", nil).WithFileReader(func(string) ([]byte, error) {
+			return []byte(content.String()), nil
+		})
+		m.ready = true
+		m.height = 10
+		m, cmd := m.startOpenTreeFile("long.txt")
+		m.focus = viewerFocus
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+		m = updated.(Model)
+		if m.viewerPending == 0 {
+			t.Fatal("PgDown while loading must be queued")
+		}
+		updated, _ = m.Update(cmd())
+		m = updated.(Model)
+		if m.viewerLoading || m.viewer.offset == 0 {
+			t.Fatalf("loaded viewer = loading:%v offset:%d, want queued scroll applied", m.viewerLoading, m.viewer.offset)
+		}
+	})
 }
 
 func activeRunDone(m Model, err string) RunDoneMsg {
@@ -3903,14 +4070,14 @@ func TestModel_AtOpensFileMenu(t *testing.T) {
 		t.Fatalf("linea seleccionada del menu = %q, sin listFiles el @-menu no debe abrir", got)
 	}
 
-	// Con listFiles fallando el menu tampoco abre.
+	// Con listFiles fallando el menu muestra el error sin bloquear el input.
 	m3 := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
 		return nil, fmt.Errorf("rg no disponible")
 	})
 	m3 = apply(t, m3, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m3 = typeRunes(t, m3, "hola @")
-	if got := menuSelectedLine(m3.View()); got != "" {
-		t.Fatalf("linea seleccionada del menu = %q, con listFiles fallando el @-menu no debe abrir", got)
+	if got := menuSelectedLine(m3.View()); !strings.Contains(got, "Could not list files: rg no disponible") {
+		t.Fatalf("linea seleccionada del menu = %q, con listFiles fallando el @-menu debe mostrar el error", got)
 	}
 }
 

@@ -15,6 +15,8 @@ import (
 	"strings"
 	"unicode"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"atenea/internal/command"
 	"atenea/internal/providerconfig"
 )
@@ -281,19 +283,19 @@ func filterFiles(files []string, query string, limit int) []string {
 // applyMention: text[:start] + insert + text[end:]). En ambos el caret queda
 // tras el espacio, listo para seguir escribiendo, y el recomputo final cierra
 // el menu (el token ya no es vigente por el espacio). Sin menu abierto es no-op.
-func (m Model) applySelection() Model {
+func (m Model) applySelection() (Model, tea.Cmd) {
 	if len(m.menuItems) == 0 {
-		return m
+		return m, nil
 	}
 	item := m.menuItems[m.menuSelected]
 	if item.empty {
-		return m
+		return m, nil
 	}
 	if item.model != "" {
 		value := "/model " + item.providerID + " " + item.model + " "
 		m.input.SetValue(value)
 		m.input.SetCursor(len([]rune(value)))
-		return m.closeMenu()
+		return m.closeMenu(), nil
 	}
 	runes := []rune(m.input.Value())
 	if q := detectCommand(m.input.Value(), m.input.Position()); q.active {
@@ -311,13 +313,13 @@ func (m Model) applySelection() Model {
 // refreshMenu recomputa el popup de autocompletado desde el texto y el caret
 // actuales del input: con token "/" vigente puebla los items con los comandos
 // filtrados; con token "@" vigente, con los archivos del workspace filtrados
-// (listFiles se llama UNA vez al activarse el token y se cachea mientras siga
-// activo; con listFiles nil o con error el menu no abre). Sin token vigente lo
-// cierra y descarta el cache. En todos los casos el primer item queda
-// seleccionado. Se llama tras cada tecla que alimenta el input. El popup ocupa
-// lineas bajo el transcript (reservedLines las descuenta), asi que recalcula
-// el alto del viewport.
-func (m Model) refreshMenu() Model {
+// (listFiles se agenda UNA vez al activarse el token y se cachea mientras siga
+// activo; mientras corre o falla, el menu muestra el estado correspondiente).
+// Sin token vigente lo cierra, invalida resultados pendientes y descarta el
+// cache. En todos los casos el primer item queda seleccionado. Se llama tras
+// cada tecla que alimenta el input. El popup ocupa lineas bajo el transcript
+// (reservedLines las descuenta), asi que recalcula el alto del viewport.
+func (m Model) refreshMenu() (Model, tea.Cmd) {
 	m.menuItems = nil
 	m.menuSelected = 0
 	text, caret := m.input.Value(), m.input.Position()
@@ -326,7 +328,7 @@ func (m Model) refreshMenu() Model {
 		controller, ok := m.agent.(modelAgent)
 		if ok && isCanonicalModelCommand(text, controller.ModelCatalog()) {
 			m.modelSearch = false
-			return m.resizeViewport()
+			return m.resizeViewport(), nil
 		}
 		if ok {
 			m.menuItems = filterModels(controller.ModelCatalog(), q.query, menuLimit)
@@ -393,15 +395,25 @@ func (m Model) refreshMenu() Model {
 		}
 	} else if q := detectMention(text, caret); q.active {
 		m.modelSearch = false
-		m = m.loadFilesOnce()
+		var cmd tea.Cmd
+		m, cmd = m.loadFilesOnce()
+		if m.filesLoading {
+			m.menuItems = []menuItem{{label: "Loading files…", empty: true}}
+			return m.resizeViewport(), cmd
+		}
+		if m.filesError != "" {
+			m.menuItems = []menuItem{{label: "Could not list files: " + m.filesError, empty: true}}
+			return m.resizeViewport(), cmd
+		}
 		for _, f := range filterFiles(m.files, q.query, menuLimit) {
 			m.menuItems = append(m.menuItems, menuItem{label: f})
 		}
+		return m.resizeViewport(), cmd
 	} else {
 		m.modelSearch = false
 		m = m.dropFileCache()
 	}
-	return m.resizeViewport()
+	return m.resizeViewport(), nil
 }
 
 // closeMenu cierra el popup descartando items y seleccion, sin tocar el input
@@ -416,23 +428,22 @@ func (m Model) closeMenu() Model {
 	return m.resizeViewport()
 }
 
-// loadFilesOnce llama listFiles la primera vez que el token "@" esta vigente y
+// loadFilesOnce agenda listFiles la primera vez que el token "@" esta vigente y
 // cachea el resultado mientras lo siga estando (dropFileCache lo descarta al
-// desactivarse). Un error (o listFiles nil) deja el cache vacio: el menu
-// simplemente no abre.
-func (m Model) loadFilesOnce() Model {
-	if m.filesLoaded {
-		return m
+// desactivarse). La generacion permite ignorar respuestas de tokens anteriores.
+func (m Model) loadFilesOnce() (Model, tea.Cmd) {
+	if m.filesLoaded || m.filesLoading {
+		return m, nil
 	}
-	m.filesLoaded = true
 	m.files = nil
+	m.filesError = ""
 	if m.listFiles == nil {
-		return m
+		m.filesLoaded = true
+		return m, nil
 	}
-	if files, err := m.listFiles(); err == nil {
-		m.files = files
-	}
-	return m
+	m.filesLoading = true
+	m.filesGen++
+	return m, listFilesCmd(m.listFiles, fileListMenu, m.filesGen)
 }
 
 // dropFileCache descarta el listado cacheado del @-menu: la proxima activacion
@@ -440,5 +451,8 @@ func (m Model) loadFilesOnce() Model {
 func (m Model) dropFileCache() Model {
 	m.files = nil
 	m.filesLoaded = false
+	m.filesLoading = false
+	m.filesError = ""
+	m.filesGen++
 	return m
 }

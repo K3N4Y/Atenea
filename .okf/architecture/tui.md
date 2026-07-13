@@ -14,6 +14,11 @@ The composer also owns two built-in session commands that never become model
 messages: `/new` creates a session and `/compact` requests durable context
 compaction for the active session.
 
+Workspace globbing for the explorer and `@` completion, plus file reading and
+Chroma highlighting for the viewer, run as `tea.Cmd` work. The model renders
+loading/error states and applies only results whose generation still matches
+the latest request, so slow disk work cannot block or overwrite newer input.
+
 ```
 wails app:  runner -> EmittingStore -> Bus -> EmitFunc(runtime.EventsEmit) -> frontend web
 atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Model Bubble Tea
