@@ -5555,6 +5555,44 @@ func TestModel_LeaderSpaceE_OpensTree(t *testing.T) {
 	}
 }
 
+func TestModel_ToolDiffRefreshesOpenTreeAndPreservesState(t *testing.T) {
+	files := []string{"internal/tui/model.go", "go.mod"}
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+		return files, nil
+	})
+	m = m.toggleTree()
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	selected := m.selectedTreePath()
+
+	files = append(files, "internal/tui/new.go")
+	m = apply(t, m, EventMsg{Kind: session.KindToolSuccess, CallID: "c1", Diff: "diff --git a/internal/tui/new.go b/internal/tui/new.go"})
+
+	if !m.tree.expanded["internal"] {
+		t.Fatal("tool diff refresh must preserve expanded directories")
+	}
+	if got := m.selectedTreePath(); got != selected {
+		t.Fatalf("selected path after refresh = %q, want %q", got, selected)
+	}
+	if !slices.Contains(m.tree.paths(), "internal/tui/new.go") {
+		t.Fatalf("tree paths = %v, tool diff refresh must include new files", m.tree.paths())
+	}
+}
+
+func TestModel_TreeKeyRRefreshesClosedOverSnapshot(t *testing.T) {
+	files := []string{"old.go"}
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
+		return files, nil
+	})
+	m = m.toggleTree()
+	files = []string{"new.go"}
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	if got, want := m.selectedTreePath(), "new.go"; got != want {
+		t.Fatalf("selected path after manual refresh = %q, want %q", got, want)
+	}
+}
+
 func TestModel_LeaderSpaceE_TogglesClosed(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
 		return []string{"go.mod"}, nil

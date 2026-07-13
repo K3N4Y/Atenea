@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-09
+updated_at: 2026-07-13
 summary: Design specification for the TUI file tree.
 ---
 
@@ -29,7 +29,7 @@ agent already understands.
 - Left panel; transcript + composer on the right.
 - In-memory tree built from `listFiles` / `Engine.ProjectFiles`
  (gitignore + glob limit, same as the `@` menu).
-- Navigation j/k (and arrows), h/l, Enter, Esc, q, mouse wheel and click.
+- Navigation j/k (and arrows), h/l, Enter, Esc, q, `r` to refresh, mouse wheel and click.
 - Insert `@ruta` when committing a file and **close** the panel.
 - Nerd Font icons by extension and by folder type.
 - Behavior tests in `internal/tui` (TDD with evidence).
@@ -58,8 +58,9 @@ All work lives in `internal/tui`. Do not play the runner, Wails or
 
 ### Tree data
 
-1. When **opening** the panel (or if the file list is empty), invoke
- `listFiles()` (same source as `@-menu`).
+1. When **opening** the panel without a current snapshot, invoke `listFiles()`
+ (same source as `@-menu`). A successful tool event with a diff invalidates the
+ snapshot and refreshes an open panel immediately; `r` forces the same refresh.
 2. Convert the slice of flat relative paths into a tree (`treeNode` with
  name, relative path, isDir, children, expanded).
 3. The **visible rows** are calculated by traversing the tree in order of
@@ -69,6 +70,8 @@ All work lives in `internal/tui`. Do not play the runner, Wails or
  workspace). If `listFiles` does not include empty directories,
  folders exist only if they have at least one file under them (consistent with the current
  glob).
+5. Rebuilding preserves expanded paths and the selected path when they still
+ exist in the new snapshot.
 
 Conceptual structure:
 

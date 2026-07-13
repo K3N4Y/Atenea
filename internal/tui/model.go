@@ -403,15 +403,19 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch ev := msg.(type) {
 	case EventMsg:
 		m = m.foldEvent(ev)
+		var treeCmd tea.Cmd
+		if ev.Kind == session.KindToolSuccess && ev.Diff != "" {
+			m, treeCmd = m.reloadTree(m.treeOpen)
+		}
 		pump := waitForEvent(m.events)
 		// Un evento que deja texto sin revelar arranca el loop de ticks del
 		// reveal si no hay uno corriendo (ver revealing); el tick viaja
 		// batcheado con la bomba de eventos.
 		if !m.revealing && m.hasBacklog() {
 			m.revealing = true
-			return m.syncViewportActivity(), tea.Batch(pump, revealTick())
+			return m.syncViewportActivity(), tea.Batch(pump, treeCmd, revealTick())
 		}
-		return m.syncViewportActivity(), pump
+		return m.syncViewportActivity(), tea.Batch(pump, treeCmd)
 	case CompactionStatusMsg:
 		if ev.SessionID == m.sessionID {
 			m = m.foldCompactionStatus(ev)
@@ -461,7 +465,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.treeLoading = false
+			selectedPath := m.selectedTreePath()
+			expanded := m.tree.expanded
 			m.tree = newFileTree(ev.files)
+			for nodePath := range expanded {
+				m.tree.expanded[nodePath] = true
+			}
 			m.treeError = ""
 			if ev.err != nil {
 				m.tree = newFileTree(nil)
@@ -469,6 +478,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.treeLoaded = true
+			m.selectTreePath(selectedPath)
 			m.syncTreeViewport()
 			return m, nil
 		}
@@ -816,6 +826,18 @@ func (m Model) startTreeLoad() (Model, tea.Cmd) {
 	return m, listFilesCmd(m.listFiles, fileListTree, m.treeGen)
 }
 
+func (m Model) reloadTree(loadNow bool) (Model, tea.Cmd) {
+	m.treeLoaded = false
+	if m.treeLoading {
+		m.treeLoading = false
+		m.treeGen++
+	}
+	if !loadNow {
+		return m, nil
+	}
+	return m.startTreeLoad()
+}
+
 func (m *Model) syncComposerFocus() tea.Cmd {
 	_, permissionPending := m.pendingPermission()
 	if m.terminalFocused && m.normalizedFocus() == chatFocus && !permissionPending && !m.hasPendingPlan() {
@@ -851,6 +873,8 @@ func (m Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.treeCursor > 0 {
 			m.treeCursor--
 		}
+	case keyRune(msg) == "r":
+		return m.reloadTree(true)
 	case msg.Type == tea.KeyEnter || keyRune(msg) == "l":
 		if len(rows) == 0 {
 			break
@@ -1085,6 +1109,28 @@ func (m *Model) clampTreeCursor() {
 		m.treeCursor = len(rows) - 1
 	}
 	m.syncTreeViewport()
+}
+
+func (m Model) selectedTreePath() string {
+	rows := m.tree.visibleRows()
+	if m.treeCursor < 0 || m.treeCursor >= len(rows) {
+		return ""
+	}
+	return rows[m.treeCursor].node.path
+}
+
+func (m *Model) selectTreePath(nodePath string) {
+	if nodePath == "" {
+		m.clampTreeCursor()
+		return
+	}
+	for i, row := range m.tree.visibleRows() {
+		if row.node.path == nodePath {
+			m.treeCursor = i
+			return
+		}
+	}
+	m.clampTreeCursor()
 }
 
 func (m *Model) syncTreeViewport() {
