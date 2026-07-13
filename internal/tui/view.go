@@ -49,8 +49,8 @@ const inputPrompt = "❯ "
 const toolInputSummaryWidth = 48
 
 // Marcadores de estado de las entradas de actividad (tools, skills, permisos
-// y errores de step): un glifo en la columna 0 del transcript dice el estado
-// de un vistazo; el detalle va debajo como lineas de rail (activityRailPrefix).
+// y errores de step): un glifo tras el margen del transcript dice el estado de
+// un vistazo; el detalle va debajo como lineas de rail (activityRailPrefix).
 const (
 	activityRunMarker  = "●" // actividad en ejecucion
 	activityOKMarker   = "✓" // actividad terminada con exito
@@ -63,12 +63,14 @@ const (
 // resumenes de headers adyacentes queden en una columna comun legible.
 const activityNameWidth = 8
 
+const activityInset = "  "
+
 // activityHeader compone el header de una entrada de actividad: el marcador
-// en la columna 0, el nombre alineado a activityNameWidth columnas y el
+// tras activityInset, el nombre alineado a activityNameWidth columnas y el
 // resumen (`● bash     ls`). Sin resumen se recortan los espacios colgantes
 // de la alineacion para no dejar una cola invisible en la linea.
 func activityHeader(marker, name, summary string) string {
-	return strings.TrimRight(marker+" "+fmt.Sprintf("%-*s", activityNameWidth, name)+" "+summary, " ")
+	return strings.TrimRight(activityInset+marker+" "+fmt.Sprintf("%-*s", activityNameWidth, name)+" "+summary, " ")
 }
 
 // toolOutputPreviewLines es el tope de lineas del preview del output de una
@@ -78,9 +80,9 @@ const toolOutputPreviewLines = 4
 
 // activityRailPrefix es el rail de detalle de las entradas de actividad: cada
 // linea bajo el header (output, diff, error, marca de truncado) abre con
-// U+2502 + espacio en la columna 0, alineado bajo el marcador del header. En
+// U+2502 + espacio tras activityInset, alineado bajo el marcador del header. En
 // el diff los marcadores +/- del propio diff llevan la vista dentro del rail.
-const activityRailPrefix = "│ "
+const activityRailPrefix = activityInset + "│ "
 
 // toolDiffPreviewLines es el tope de lineas del diff mostrado bajo el header
 // de una tool exitosa de edit/write: mas generoso que el preview del output
@@ -257,7 +259,7 @@ func (e entry) renderTool() string {
 
 // renderActivity es el render comun de las entradas de actividad de tool: el
 // header `<marcador> <nombre> <resumen>` (ver activityHeader) con el marcador
-// de estado en la columna 0 y, con showDetail y exito, el detalle (diff u
+// de estado tras activityInset y, con showDetail y exito, el detalle (diff u
 // output) debajo como lineas de rail. Cada linea es UN segmento para que el
 // contenido plano siga siendo asertable.
 func (e entry) renderActivity(name, summary string, showDetail bool) string {
@@ -392,7 +394,7 @@ func renderOutputPreview(output string) string {
 }
 
 // renderDiffPreview rinde el diff unificado de Tool.Success (edit/write) bajo
-// el header: cada linea con el rail activityRailPrefix en la columna 0, las
+// el header: cada linea con el rail activityRailPrefix tras el margen, las
 // lineas "+" en verde, las "-" en rojo y el resto tenue, hasta
 // toolDiffPreviewLines lineas (mas generoso que el preview del output: el
 // diff ES el resultado que se quiere revisar). Diff vacio o solo whitespace

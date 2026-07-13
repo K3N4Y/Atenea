@@ -21,17 +21,17 @@ taxonomy in the interface it was meant for, the TUI (`internal/tui`).
 ## Contract
 
 Activity entries (tool calls, pending permissions, step errors) render with a
-continuous visual column at column 0 of the transcript:
+continuous visual column inset two spaces from the transcript edge:
 
 ```text
-✓ bash     ls
-│ 18 matches
-● grep     auth middleware
-✓ edit     main.go  +14 -3
-│ -old line
-│ +new line
-? bash     rm -rf /tmp/x (aprobar/denegar)
-✗ error    step failed
+  ✓ bash     ls
+  │ 18 matches
+  ● grep     auth middleware
+  ✓ edit     main.go  +14 -3
+  │ -old line
+  │ +new line
+  ? bash     rm -rf /tmp/x (aprobar/denegar)
+  ✗ error    step failed
 ```
 
 ### Header grammar
@@ -41,8 +41,8 @@ continuous visual column at column 0 of the transcript:
 space (never truncated); a header without summary trims the padding so no
 trailing spaces remain.
 
-Status markers (one glyph, column 0, whole line styled as ONE segment so
-plain-text substrings stay assertable):
+Status markers (one glyph after the two-space inset, whole line styled as ONE
+segment so plain-text substrings stay assertable):
 
 | Marker | Meaning | Style |
 | --- | --- | --- |
@@ -53,10 +53,10 @@ plain-text substrings stay assertable):
 
 ### Detail rail
 
-Every detail line under a header opens with the rail `│ ` at column 0
-(`activityRailPrefix`): output preview lines (up to 4), diff lines (up to 16,
-`+`/`-` colored), the failure reason (`│ error: <msg>`), and the truncation
-mark (`│ … +N lines`).
+Every detail line under a header opens with the rail `│ ` after the same
+two-space inset (`activityRailPrefix`): output preview lines (up to 4), diff
+lines (up to 16, `+`/`-` colored), the failure reason (`│ error: <msg>`), and
+the truncation mark (`│ … +N lines`).
 
 ### File-change stat
 

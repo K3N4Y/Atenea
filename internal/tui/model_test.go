@@ -968,8 +968,8 @@ func TestModel_SkillToolWithoutNameRendersBareHeader(t *testing.T) {
 		t.Fatalf("View() = %q, con Input no parseable la skill debe rendirse con el header pelado %q", view, "● skill")
 	}
 	skillLine := lineWith(t, view, "● skill")
-	if got := strings.TrimRight(skillLine, " "); got != "● skill" {
-		t.Fatalf("linea de la skill = %q, el header pelado no lleva resumen: queda %q sin heredar nada del Input", skillLine, "● skill")
+	if got := strings.TrimRight(skillLine, " "); got != "  ● skill" {
+		t.Fatalf("linea de la skill = %q, el header pelado no lleva resumen: queda %q sin heredar nada del Input", skillLine, "  ● skill")
 	}
 	if strings.Contains(view, "no-es-json") {
 		t.Fatalf("View() = %q, NO debe filtrar el Input crudo %q al transcript", view, "no-es-json")
@@ -1008,7 +1008,7 @@ func TestModel_ToolSuccessShowsOutputPreview(t *testing.T) {
 
 // Contrato del diff en Tool.Success: cuando el evento trae Diff (edit/write),
 // el detalle bajo el header muestra EL DIFF en lugar del preview del output:
-// cada linea del diff con el rail `│ ` en la columna 0, las lineas `+` en
+// cada linea del diff con el rail `│ ` tras el margen, las lineas `+` en
 // verde, las `-` en rojo y el resto tenue (cada linea un segmento contiguo
 // estilizado).
 func TestModel_ToolSuccessShowsEditDiff(t *testing.T) {
@@ -1147,18 +1147,19 @@ func TestModel_ShowsStepFailedError(t *testing.T) {
 }
 
 // Contrato de la jerarquia visual de actividad: el header de cada tool lleva
-// un marcador de estado en la columna 0 (`●` corriendo, `✓` exito, `✗` fallo),
+// un marcador de estado con dos columnas de margen (`●` corriendo, `✓` exito,
+// `✗` fallo),
 // el nombre de la tool alineado a 8 columnas (`%-8s`) y el resumen del Input
-// (`● bash     ls`); el detalle va debajo como lineas de rail `│ ` en columna
-// 0 (`│ 18 matches`, `│ error: exit 1`). El formato viejo `[tool] ...`
+// (`  ● bash     ls`); el detalle va debajo como lineas de rail con el mismo
+// margen (`  │ 18 matches`, `  │ error: exit 1`). El formato viejo `[tool] ...`
 // desaparece del transcript.
 func TestModel_RendersActivityMarkersThroughToolLifecycle(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"ls"}`)})
 	plain := ansi.Strip(m.View())
-	if want := "● bash     ls"; !strings.Contains(plain, want) {
-		t.Fatalf("View() sin ANSI = %q, la tool en ejecucion debe rendirse como %q: marcador ● en columna 0, nombre alineado a 8 columnas y resumen del Input", plain, want)
+	if want := "  ● bash     ls"; !strings.Contains(plain, want) {
+		t.Fatalf("View() sin ANSI = %q, la tool en ejecucion debe rendirse como %q: dos columnas de margen, marcador ●, nombre alineado a 8 columnas y resumen del Input", plain, want)
 	}
 
 	m = apply(t, m, EventMsg{
@@ -1166,22 +1167,22 @@ func TestModel_RendersActivityMarkersThroughToolLifecycle(t *testing.T) {
 		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "18 matches", ToolCallID: "c1"},
 	})
 	plain = ansi.Strip(m.View())
-	if want := "✓ bash     ls"; !strings.Contains(plain, want) {
+	if want := "  ✓ bash     ls"; !strings.Contains(plain, want) {
 		t.Fatalf("View() sin ANSI = %q, la tool exitosa debe asentarse como %q: el marcador ✓ reemplaza al ● en la misma columna", plain, want)
 	}
 	railLine := lineWith(t, plain, "18 matches")
-	if want := "│ 18 matches"; !strings.HasPrefix(railLine, want) {
-		t.Fatalf("linea del output = %q, debe llevar el rail en columna 0 como %q: el detalle bajo el header usa `│ ` sin la sangria vieja", railLine, want)
+	if want := "  │ 18 matches"; !strings.HasPrefix(railLine, want) {
+		t.Fatalf("linea del output = %q, debe llevar el rail con el mismo margen como %q", railLine, want)
 	}
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "bash", Input: json.RawMessage(`{"command":"false"}`)})
 	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "c2", ToolName: "bash", Error: "exit 1"})
 	plain = ansi.Strip(m.View())
-	if want := "✗ bash     false"; !strings.Contains(plain, want) {
+	if want := "  ✗ bash     false"; !strings.Contains(plain, want) {
 		t.Fatalf("View() sin ANSI = %q, la tool fallida debe asentarse como %q: marcador ✗ con la misma columna de nombre", plain, want)
 	}
 	failLine := lineWith(t, plain, "error: exit 1")
-	if want := "│ error: exit 1"; !strings.HasPrefix(failLine, want) {
+	if want := "  │ error: exit 1"; !strings.HasPrefix(failLine, want) {
 		t.Fatalf("linea del fallo = %q, el error de la tool va debajo del header como linea de rail %q, no pegado al header", failLine, want)
 	}
 	if strings.Contains(plain, "[tool]") {
@@ -1211,7 +1212,7 @@ func TestModel_GroupsAdjacentActivityEntriesWithoutBlankLine(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c3", ToolName: "bash", Input: json.RawMessage(`{"command":"pwd"}`)})
 
 	plain := ansi.Strip(m.View())
-	if want := "✓ bash     ls\n● grep     foo"; !strings.Contains(plain, want) {
+	if want := "  ✓ bash     ls\n  ● grep     foo"; !strings.Contains(plain, want) {
 		t.Fatalf("View() sin ANSI = %q, debe contener %q: dos entradas de actividad adyacentes se agrupan en lineas fisicamente contiguas, sin linea en blanco entre si", plain, want)
 	}
 
@@ -1230,7 +1231,7 @@ func TestModel_GroupsAdjacentActivityEntriesWithoutBlankLine(t *testing.T) {
 // conteo `+N -M` de lineas agregadas/quitadas del unified diff, contando las
 // que empiezan con +/- pero excluyendo las cabeceras `+++`/`---`, separado del
 // resumen por dos espacios (`✓ edit     main.go  +2 -1`); las lineas del diff
-// van debajo con el rail `│ ` en columna 0 (`│ +nueva`).
+// van debajo con el rail `│ ` tras el margen (`  │ +nueva`).
 func TestModel_EditSuccessShowsDiffStatInHeader(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
@@ -1247,8 +1248,8 @@ func TestModel_EditSuccessShowsDiffStatInHeader(t *testing.T) {
 	}
 	for _, needle := range []string{"+nueva", "+extra", "-vieja"} {
 		line := lineWith(t, plain, needle)
-		if want := "│ " + needle; !strings.HasPrefix(line, want) {
-			t.Fatalf("linea del diff = %q, debe llevar el rail en columna 0 como %q: el diff bajo el header usa `│ ` en vez de la sangria vieja de dos espacios", line, want)
+		if want := "  │ " + needle; !strings.HasPrefix(line, want) {
+			t.Fatalf("linea del diff = %q, debe llevar el rail tras el margen como %q", line, want)
 		}
 	}
 }
@@ -1263,7 +1264,7 @@ func TestModel_ActivityHeaderKeepsLongToolNameReadable(t *testing.T) {
 
 	plain := ansi.Strip(m.View())
 	line := lineWith(t, plain, "present_plan")
-	if want := "● present_plan migrar el runner"; line != want {
+	if want := "  ● present_plan migrar el runner"; line != want {
 		t.Fatalf("header = %q, want exactamente %q: un nombre mas largo que la columna de 8 no se trunca y el resumen queda a UN espacio del nombre", line, want)
 	}
 }
@@ -1280,11 +1281,11 @@ func TestModel_ActivityHeaderWithoutSummaryHasNoTrailingSpaces(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "grep", Input: json.RawMessage(`{}`)})
 
 	plain := ansi.Strip(m.View())
-	if line := lineWith(t, plain, "● bash"); line != "● bash" {
-		t.Fatalf("header sin Input = %q, want exactamente %q: sin resumen no quedan espacios colgantes de la alineacion", line, "● bash")
+	if line := lineWith(t, plain, "● bash"); line != "  ● bash" {
+		t.Fatalf("header sin Input = %q, want exactamente %q: sin resumen no quedan espacios colgantes de la alineacion", line, "  ● bash")
 	}
-	if line := lineWith(t, plain, "● grep"); line != "● grep" {
-		t.Fatalf("header con Input {} = %q, want exactamente %q: el objeto vacio no produce resumen ni espacios colgantes", line, "● grep")
+	if line := lineWith(t, plain, "● grep"); line != "  ● grep" {
+		t.Fatalf("header con Input {} = %q, want exactamente %q: el objeto vacio no produce resumen ni espacios colgantes", line, "  ● grep")
 	}
 }
 
@@ -1337,7 +1338,7 @@ func TestModel_SuccessWithoutDiffShowsNoStat(t *testing.T) {
 
 	plain := ansi.Strip(m.View())
 	header := lineWith(t, plain, "✓ bash")
-	if want := "✓ bash     ls"; header != want {
+	if want := "  ✓ bash     ls"; header != want {
 		t.Fatalf("header = %q, want exactamente %q: el exito sin diff no agrega nada tras el resumen", header, want)
 	}
 	for _, banned := range []string{"+0 -0", " +"} {
@@ -1346,8 +1347,8 @@ func TestModel_SuccessWithoutDiffShowsNoStat(t *testing.T) {
 		}
 	}
 	for _, needle := range []string{"main.go", "view.go"} {
-		if line := lineWith(t, plain, needle); !strings.HasPrefix(line, "│ ") {
-			t.Fatalf("linea del output = %q, el output de la tool exitosa va con el rail %q en columna 0", line, "│ ")
+		if line := lineWith(t, plain, needle); !strings.HasPrefix(line, "  │ ") {
+			t.Fatalf("linea del output = %q, el output de la tool exitosa va con el rail %q tras el margen", line, "  │ ")
 		}
 	}
 }
@@ -1375,7 +1376,7 @@ func TestModel_PermissionAndErrorJoinActivityGroup(t *testing.T) {
 	m = drainReveal(t, m)
 
 	plain := ansi.Strip(m.View())
-	want := "✓ bash     ls\n● write    b.go\n? write    b.go (aprobar/denegar)\n✗ error    boom"
+	want := "  ✓ bash     ls\n  ● write    b.go\n  ? write    b.go (aprobar/denegar)\n  ✗ error    boom"
 	if !strings.Contains(plain, want) {
 		t.Fatalf("View() sin ANSI = %q, debe contener %q: la tool exitosa, el permiso pendiente y el error de step quedan fisicamente contiguos, sin lineas en blanco entre si", plain, want)
 	}
