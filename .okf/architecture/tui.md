@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-11
+updated_at: 2026-07-13
 summary: Architecture and behavior of the Atenea terminal user interface.
 ---
 
@@ -49,8 +49,11 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
  `Mode` of `wiring.Build` that the runner consults each turn): `SendPrompt`
  sets normal mode and `SendPlanPrompt` sets plan-mode before queuing, mirror
  of `App.SendPrompt`/`App.SendPlanPrompt`. Both support inbox and run
- `Run` in a session-cancellable goroutine (mirror of `App.start`); at
- finish publishes `RunDoneMsg`. Satisfies the `Agent` interface of Model and
+ `Run` in a session-cancellable goroutine (mirror of `App.start`). Replacement
+ runs receive a monotonic `runID`, cancel the previous run, and wait for its
+ complete shutdown before entering the runner; at finish the engine publishes
+ `RunDoneMsg` with `sessionID + runID`. Satisfies the `Agent` interface of
+ Model and
  exposes catalog, refresh, current-selection, and transactional selection
  operations to the optional model-selector boundary.
 - `internal/checkpoint/git.go` — prompt-level workspace snapshots for the TUI.
@@ -182,7 +185,9 @@ rows.
  request from a subagent is resolved with the child id).
 - Enter sends via the active mode path (`Agent.SendPrompt` in build,
  `Agent.SendPlanPrompt` in plan); Ctrl+C cuts and exits; Esc only shorts;
- `RunDoneMsg` turns off the work flag. `Ctrl+J` inserts a newline without
+ only a `RunDoneMsg` matching the active `sessionID + runID` turns off the work
+ flag, so a late close from a canceled run is ignored. `Ctrl+J` inserts a
+ newline without
  submitting; the composer grows to five visible lines and then scrolls while
  preserving literal newlines in the submitted prompt.
 - `/model` is a local command intercepted before slash expansion, prompt

@@ -82,7 +82,8 @@ type Engine struct {
 	refreshingModels bool
 
 	mu                 sync.Mutex
-	runs               map[string]*engineRun   // sessionID -> corrida en vuelo (identidad por puntero)
+	runs               map[string]*engineRun // sessionID -> corrida en vuelo (identidad por puntero)
+	nextRunID          uint64
 	modes              map[string]session.Mode // sessionID -> modo (normal/plan); guardado con mu como runs
 	ops                map[string]*sync.Mutex
 	pendingCompactions map[string]bool
@@ -92,6 +93,7 @@ type Engine struct {
 // engineRun identifica una corrida en vuelo. Se compara por puntero porque
 // context.CancelFunc no es comparable.
 type engineRun struct {
+	id           uint64
 	cancel       context.CancelFunc
 	done         chan struct{}
 	checkpointID string
@@ -287,37 +289,40 @@ func (e *Engine) setMode(sessionID string, m session.Mode) {
 	e.modes[sessionID] = m
 }
 
-// SendPrompt encola un prompt del usuario por el camino normal y devuelve el
-// ID de la sesion activa. Para /new exacto crea y devuelve una sesion durable
-// nueva; en cualquier otro caso conserva sessionID. Fija modo normal primero:
-// una sesion que estaba en plan-mode vuelve a las tools normales al enviar.
-func (e *Engine) SendPrompt(sessionID, text string) (string, error) {
+// SendPrompt encola un prompt del usuario por el camino normal y devuelve la
+// sesion activa junto con el runID. Para /new exacto crea y devuelve una sesion
+// durable nueva sin corrida; en cualquier otro caso conserva sessionID. Fija
+// modo normal primero: una sesion que estaba en plan-mode vuelve a las tools
+// normales al enviar.
+func (e *Engine) SendPrompt(sessionID, text string) (RunHandle, error) {
 	if text == "/new" {
 		newSessionID := "tui-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 		_, err := e.store.AppendEvent(context.Background(), newSessionID,
 			session.SessionEvent{Kind: session.KindSessionCwd, Text: e.root})
 		if err != nil {
-			return "", err
+			return RunHandle{}, err
 		}
-		return newSessionID, nil
+		return RunHandle{SessionID: newSessionID}, nil
 	}
 	if text == "/compact" {
 		e.requestCompaction(sessionID)
-		return sessionID, nil
+		return RunHandle{SessionID: sessionID}, nil
 	}
 	e.setMode(sessionID, session.ModeNormal)
-	if err := e.send(sessionID, text, text); err != nil {
-		return "", err
+	runID, err := e.send(sessionID, text, text)
+	if err != nil {
+		return RunHandle{}, err
 	}
-	return sessionID, nil
+	return RunHandle{SessionID: sessionID, RunID: runID}, nil
 }
 
 // SendPlanPrompt encola el prompt en plan-mode: investigacion de solo lectura
 // mas present_plan, con el contrato de plan-mode en el system prompt. Fija
 // ModePlan antes de arrancar (espejo de App.SendPlanPrompt).
-func (e *Engine) SendPlanPrompt(sessionID, text string) error {
+func (e *Engine) SendPlanPrompt(sessionID, text string) (RunHandle, error) {
 	e.setMode(sessionID, session.ModePlan)
-	return e.send(sessionID, text, text)
+	runID, err := e.send(sessionID, text, text)
+	return RunHandle{SessionID: sessionID, RunID: runID}, err
 }
 
 // expandCommand resuelve un slash-command ("/name args") al prompt expandido
@@ -332,12 +337,13 @@ func (e *Engine) expandCommand(text string) string {
 
 // send expande el prompt si es un slash-command, lo encola y dispara la
 // corrida en una goroutine con un ctx cancelable registrado por sesion (espejo
-// de App.start): si habia una corrida previa de la misma sesion, se cancela.
-// Al terminar la corrida se limpia el handle y se publica RunDoneMsg; una
-// cancelacion deliberada (Stop, follow-up) es un cierre limpio, no un error.
+// de App.start): si habia una corrida previa de la misma sesion, se cancela y
+// la sustituta espera su cierre antes de entrar al runner. Al terminar se limpia
+// el handle y se publica RunDoneMsg con sessionID + runID; una cancelacion
+// deliberada (Stop, follow-up) es un cierre limpio, no un error.
 // Es el camino comun de SendPrompt y SendPlanPrompt: el modo de la sesion ya
 // quedo fijado antes de llamarlo.
-func (e *Engine) send(sessionID, text, composerPrompt string) error {
+func (e *Engine) send(sessionID, text, composerPrompt string) (uint64, error) {
 	operation := e.operationLock(sessionID)
 	operation.Lock()
 	defer operation.Unlock()
@@ -348,7 +354,7 @@ func (e *Engine) send(sessionID, text, composerPrompt string) error {
 		var err error
 		before, err = e.checkpoints.Capture(context.Background(), e.root)
 		if err != nil {
-			return err
+			return 0, err
 		}
 	}
 	if _, err := e.store.LoadSession(context.Background(), sessionID); err != nil {
@@ -363,12 +369,12 @@ func (e *Engine) send(sessionID, text, composerPrompt string) error {
 			Kind:       session.KindPromptCheckpointStarted,
 			Checkpoint: &session.PromptCheckpoint{ID: checkpointID, Prompt: composerPrompt, BeforeTree: string(before)},
 		}); err != nil {
-			return err
+			return 0, err
 		}
 	}
 	if err := e.inbox.Admit(context.Background(), sessionID,
 		session.Prompt{Text: e.expandCommand(text)}, session.DeliveryQueue); err != nil {
-		return err
+		return 0, err
 	}
 	if composerPrompt != "" {
 		if _, err := e.store.AppendEvent(context.Background(), sessionID,
@@ -377,15 +383,20 @@ func (e *Engine) send(sessionID, text, composerPrompt string) error {
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	h := &engineRun{cancel: cancel, done: make(chan struct{}), checkpointID: checkpointID}
 	e.mu.Lock()
-	if old := e.runs[sessionID]; old != nil {
+	e.nextRunID++
+	h := &engineRun{id: e.nextRunID, cancel: cancel, done: make(chan struct{}), checkpointID: checkpointID}
+	old := e.runs[sessionID]
+	if old != nil {
 		old.cancel() // una corrida previa de la misma sesion no debe quedar viva
 	}
 	e.runs[sessionID] = h
 	e.mu.Unlock()
 
 	go func() {
+		if old != nil {
+			<-old.done
+		}
 		err := e.runner.Run(ctx, sessionID, false)
 		if h.checkpointID != "" {
 			operation.Lock()
@@ -402,19 +413,19 @@ func (e *Engine) send(sessionID, text, composerPrompt string) error {
 			}
 		}
 		compact := e.finishRun(sessionID, h)
-		close(h.done)
 		msg := ""
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			msg = err.Error()
 		}
-		e.events <- RunDoneMsg{Err: msg}
+		e.events <- RunDoneMsg{SessionID: sessionID, RunID: h.id, Err: msg}
+		close(h.done)
 		if compact {
 			operation.Lock()
 			e.compactLocked(sessionID)
 			operation.Unlock()
 		}
 	}()
-	return nil
+	return h.id, nil
 }
 
 func (e *Engine) Undo(sessionID string) (UndoResult, error) {
@@ -486,9 +497,10 @@ const acceptPlanPrompt = "El plan fue aprobado. Implementalo ahora paso a paso s
 // AcceptPlan acepta y ejecuta el plan: vuelve la sesion a modo normal y
 // promueve el prompt fijo de implementacion como prompt del usuario,
 // arrancando la corrida (espejo de App.AcceptPlan).
-func (e *Engine) AcceptPlan(sessionID string) error {
+func (e *Engine) AcceptPlan(sessionID string) (RunHandle, error) {
 	e.setMode(sessionID, session.ModeNormal)
-	return e.send(sessionID, acceptPlanPrompt, "")
+	runID, err := e.send(sessionID, acceptPlanPrompt, "")
+	return RunHandle{SessionID: sessionID, RunID: runID}, err
 }
 
 // ResolvePermission resuelve una solicitud de permiso pendiente (ask-before-run).

@@ -105,6 +105,48 @@ type replacementRunCompactionProvider struct {
 	started [3]chan struct{}
 }
 
+type delayedCancellationProvider struct {
+	mu            sync.Mutex
+	next          int
+	firstStarted  chan struct{}
+	cancelSeen    chan struct{}
+	releaseFirst  chan struct{}
+	secondStarted chan struct{}
+}
+
+func newDelayedCancellationProvider() *delayedCancellationProvider {
+	return &delayedCancellationProvider{
+		firstStarted:  make(chan struct{}),
+		cancelSeen:    make(chan struct{}),
+		releaseFirst:  make(chan struct{}),
+		secondStarted: make(chan struct{}),
+	}
+}
+
+func (p *delayedCancellationProvider) Stream(ctx context.Context, _ llm.Request) (<-chan llm.Event, error) {
+	p.mu.Lock()
+	call := p.next
+	p.next++
+	p.mu.Unlock()
+	out := make(chan llm.Event)
+	go func() {
+		defer close(out)
+		if call == 0 {
+			close(p.firstStarted)
+			<-ctx.Done()
+			close(p.cancelSeen)
+			<-p.releaseFirst
+			return
+		}
+		close(p.secondStarted)
+		select {
+		case <-ctx.Done():
+		case out <- llm.Event{Kind: llm.StepEnded}:
+		}
+	}()
+	return out, nil
+}
+
 func newReplacementRunCompactionProvider() *replacementRunCompactionProvider {
 	return &replacementRunCompactionProvider{started: [3]chan struct{}{make(chan struct{}), make(chan struct{}), make(chan struct{})}}
 }
@@ -845,6 +887,65 @@ func TestEngine_StreamsSessionEventsAndSignalsRunDone(t *testing.T) {
 	}
 }
 
+func TestEngine_ReplacementRunWaitsForCanceledRunAndKeepsDistinctIdentity(t *testing.T) {
+	provider := newDelayedCancellationProvider()
+	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
+
+	first, err := e.SendPrompt("s1", "primera")
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-provider.firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("la primera corrida no inicio")
+	}
+
+	second, err := e.SendPrompt("s1", "segunda")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.RunID == second.RunID {
+		t.Fatalf("run IDs = %d y %d, se esperaban identidades distintas", first.RunID, second.RunID)
+	}
+	select {
+	case <-provider.cancelSeen:
+	case <-time.After(time.Second):
+		t.Fatal("la primera corrida no recibio cancelacion")
+	}
+	select {
+	case <-provider.secondStarted:
+		t.Fatal("la corrida nueva inicio antes de que terminara la cancelada")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(provider.releaseFirst)
+	select {
+	case <-provider.secondStarted:
+	case <-time.After(time.Second):
+		t.Fatal("la corrida nueva no inicio tras terminar la cancelada")
+	}
+
+	var done []RunDoneMsg
+	deadline := time.After(2 * time.Second)
+	for len(done) < 2 {
+		select {
+		case <-deadline:
+			t.Fatalf("cierres recibidos = %+v, se esperaban ambas corridas", done)
+		case msg := <-e.Events():
+			if runDone, ok := msg.(RunDoneMsg); ok {
+				done = append(done, runDone)
+			}
+		}
+	}
+	if done[0].SessionID != "s1" || done[0].RunID != first.RunID {
+		t.Fatalf("primer cierre = %+v, se esperaba session s1 run %d", done[0], first.RunID)
+	}
+	if done[1].SessionID != "s1" || done[1].RunID != second.RunID {
+		t.Fatalf("segundo cierre = %+v, se esperaba session s1 run %d", done[1], second.RunID)
+	}
+}
+
 func TestEngine_UndoRestoresDeletedAndRecreatedTrackedFile(t *testing.T) {
 	root := newUndoWorkspace(t)
 	if err := os.WriteFile(filepath.Join(root, "tracked.txt"), []byte("committed\n"), 0o644); err != nil {
@@ -1042,7 +1143,7 @@ func TestEngine_AcceptPlanRunsImplementationInNormalMode(t *testing.T) {
 	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 
 	// Corrida de plan previa: deja la sesion en plan-mode con el plan presentado.
-	if err := e.SendPlanPrompt("s1", "planea"); err != nil {
+	if _, err := e.SendPlanPrompt("s1", "planea"); err != nil {
 		t.Fatalf("SendPlanPrompt(s1, planea) = %v, se esperaba nil", err)
 	}
 	if _, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil); done.Err != "" {
@@ -1051,7 +1152,7 @@ func TestEngine_AcceptPlanRunsImplementationInNormalMode(t *testing.T) {
 	planCalls := len(provider.requestedTools())
 
 	// El usuario acepta el plan: debe arrancar la corrida de implementacion.
-	if err := e.AcceptPlan("s1"); err != nil {
+	if _, err := e.AcceptPlan("s1"); err != nil {
 		t.Fatalf("AcceptPlan(s1) = %v, se esperaba nil", err)
 	}
 	events, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil)
@@ -1102,7 +1203,7 @@ func TestEngine_SendPlanPromptRunsInPlanMode(t *testing.T) {
 	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 
 	// Envio en plan-mode: el turno debe anunciar las tools de planificacion.
-	if err := e.SendPlanPrompt("s1", "planea x"); err != nil {
+	if _, err := e.SendPlanPrompt("s1", "planea x"); err != nil {
 		t.Fatalf("SendPlanPrompt(s1, planea x) = %v, se esperaba nil", err)
 	}
 	if _, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil); done.Err != "" {

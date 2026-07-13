@@ -25,8 +25,19 @@ import (
 // EventMsg es el evento durable de sesion que llega del engine al Model.
 type EventMsg session.SessionEvent
 
+// RunHandle identifica una corrida concreta dentro de una sesion. RunID == 0
+// significa que la operacion no arranco una corrida (/new, /compact).
+type RunHandle struct {
+	SessionID string
+	RunID     uint64
+}
+
 // RunDoneMsg marca el fin de una corrida; Err == "" significa terminada limpia.
-type RunDoneMsg struct{ Err string }
+type RunDoneMsg struct {
+	SessionID string
+	RunID     uint64
+	Err       string
+}
 
 type UndoDoneMsg struct {
 	Result UndoResult
@@ -52,13 +63,13 @@ type leaderTimeoutMsg struct{ generation uint64 }
 
 // Agent es la superficie del engine que la TUI necesita para operar la sesion.
 type Agent interface {
-	// SendPrompt devuelve el ID de la sesion activa; /new exacto devuelve una
-	// sesion durable distinta de la actual.
-	SendPrompt(sessionID, text string) (string, error)
+	// SendPrompt devuelve la sesion activa y la identidad de la corrida iniciada;
+	// /new exacto devuelve una sesion durable distinta sin corrida.
+	SendPrompt(sessionID, text string) (RunHandle, error)
 	// SendPlanPrompt envia el prompt por el camino de plan-mode.
-	SendPlanPrompt(sessionID, text string) error
+	SendPlanPrompt(sessionID, text string) (RunHandle, error)
 	// AcceptPlan acepta el plan presentado: vuelve a modo normal y ejecuta.
-	AcceptPlan(sessionID string) error
+	AcceptPlan(sessionID string) (RunHandle, error)
 	Undo(sessionID string) (UndoResult, error)
 	ResolvePermission(sessionID, callID string, approved bool)
 	Stop(sessionID string)
@@ -159,6 +170,7 @@ type entry struct {
 type Model struct {
 	agent     Agent
 	sessionID string
+	activeRun uint64
 	events    <-chan tea.Msg
 	entries   []entry
 	input     composerInput
@@ -378,7 +390,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m.syncViewportActivity(), waitForEvent(m.events)
 	case RunDoneMsg:
+		if ev.SessionID != m.sessionID || ev.RunID != m.activeRun {
+			return m, waitForEvent(m.events)
+		}
 		m.working = false
+		m.activeRun = 0
 		if ev.Err != "" {
 			m = m.appendError(ev.Err)
 		}
@@ -1030,10 +1046,14 @@ func (m Model) resolvePlanKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	}
 	switch string(msg.Runes) {
 	case "y":
-		m.agent.AcceptPlan(m.sessionID)
+		run, err := m.agent.AcceptPlan(m.sessionID)
+		if err != nil {
+			return m.appendError(err.Error()).syncViewport(), nil
+		}
 		m = m.removePendingPlan()
 		m.planMode = false
-		m.working = true
+		m.activeRun = run.RunID
+		m.working = run.RunID != 0
 		// La linea de estado ocupa una linea bajo el transcript: recalcular el alto.
 		return m.resizeViewport(), m.spinner.Tick
 	case "n":
@@ -1088,11 +1108,12 @@ func (m Model) submitPrompt() (Model, tea.Cmd) {
 		return m.resizeViewport(), nil
 	}
 	if text == "/new" {
-		newSessionID, err := m.agent.SendPrompt(m.sessionID, text)
+		run, err := m.agent.SendPrompt(m.sessionID, text)
 		if err != nil {
 			return m.appendError(err.Error()).syncViewport(), nil
 		}
-		m.sessionID = newSessionID
+		m.sessionID = run.SessionID
+		m.activeRun = 0
 		m.entries = nil
 		m.history = nil
 		m.histIdx = 0
@@ -1115,10 +1136,15 @@ func (m Model) submitPrompt() (Model, tea.Cmd) {
 		m.menuItems = nil
 		return m.resizeViewport(), nil
 	}
+	var run RunHandle
+	var err error
 	if m.planMode {
-		m.agent.SendPlanPrompt(m.sessionID, text)
+		run, err = m.agent.SendPlanPrompt(m.sessionID, text)
 	} else {
-		m.agent.SendPrompt(m.sessionID, text)
+		run, err = m.agent.SendPrompt(m.sessionID, text)
+	}
+	if err != nil {
+		return m.appendError(err.Error()).syncViewport(), nil
 	}
 	m.input.SetValue("")
 	// El prompt enviado se apila en el historial y la navegacion se resetea:
@@ -1129,7 +1155,8 @@ func (m Model) submitPrompt() (Model, tea.Cmd) {
 		m.history = m.history[len(m.history)-historyLimit:]
 	}
 	m.histIdx = len(m.history)
-	m.working = true
+	m.activeRun = run.RunID
+	m.working = run.RunID != 0
 	// La linea de estado ocupa una linea bajo el transcript: recalcular el alto.
 	return m.resizeViewport(), m.spinner.Tick
 }

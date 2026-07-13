@@ -41,6 +41,7 @@ type fakeAgent struct {
 	undos      []string
 	undoResult UndoResult
 	undoErr    error
+	nextRunID  uint64
 }
 
 func (f *fakeAgent) ModelCatalog() []providerconfig.ProviderModels {
@@ -59,22 +60,30 @@ func (f *fakeAgent) SelectModel(providerID, model string) (providerconfig.Active
 }
 func (f *fakeAgent) RefreshModels() { f.refreshes++ }
 
-func (f *fakeAgent) SendPrompt(sessionID, text string) (string, error) {
+func (f *fakeAgent) nextRun(sessionID string) RunHandle {
+	f.nextRunID++
+	return RunHandle{SessionID: sessionID, RunID: f.nextRunID}
+}
+
+func (f *fakeAgent) SendPrompt(sessionID, text string) (RunHandle, error) {
 	f.sent = append(f.sent, struct{ sessionID, text string }{sessionID, text})
 	if text == "/new" && f.newSessionID != "" {
-		return f.newSessionID, nil
+		return RunHandle{SessionID: f.newSessionID}, nil
 	}
-	return sessionID, nil
+	if text == "/compact" {
+		return RunHandle{SessionID: sessionID}, nil
+	}
+	return f.nextRun(sessionID), nil
 }
 
-func (f *fakeAgent) SendPlanPrompt(sessionID, text string) error {
+func (f *fakeAgent) SendPlanPrompt(sessionID, text string) (RunHandle, error) {
 	f.planSent = append(f.planSent, struct{ sessionID, text string }{sessionID, text})
-	return nil
+	return f.nextRun(sessionID), nil
 }
 
-func (f *fakeAgent) AcceptPlan(sessionID string) error {
+func (f *fakeAgent) AcceptPlan(sessionID string) (RunHandle, error) {
 	f.accepted = append(f.accepted, sessionID)
-	return nil
+	return f.nextRun(sessionID), nil
 }
 
 func (f *fakeAgent) ResolvePermission(sessionID, callID string, approved bool) {
@@ -183,6 +192,10 @@ func apply(t *testing.T, m Model, msg tea.Msg) Model {
 		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
 	}
 	return next
+}
+
+func activeRunDone(m Model, err string) RunDoneMsg {
+	return RunDoneMsg{SessionID: m.sessionID, RunID: m.activeRun, Err: err}
 }
 
 // drainReveal aplica ticks de reveal hasta agotar el backlog del smooth
@@ -1936,7 +1949,7 @@ func TestModel_RunDoneStopsWorkingAndShowsError(t *testing.T) {
 		t.Fatalf("Working() = false, el modelo debe quedar trabajando tras enviar el prompt")
 	}
 
-	m = apply(t, m, RunDoneMsg{Err: ""})
+	m = apply(t, m, activeRunDone(m, ""))
 	if m.Working() {
 		t.Fatalf("Working() = true, RunDoneMsg debe apagar el estado de trabajo")
 	}
@@ -1949,13 +1962,41 @@ func TestModel_RunDoneStopsWorkingAndShowsError(t *testing.T) {
 	m2 = apply(t, m2, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
 	m2 = apply(t, m2, tea.KeyMsg{Type: tea.KeyEnter})
 
-	m2 = apply(t, m2, RunDoneMsg{Err: "boom"})
+	m2 = apply(t, m2, activeRunDone(m2, "boom"))
 	if m2.Working() {
 		t.Fatalf("Working() = true, RunDoneMsg con error tambien debe apagar el estado de trabajo")
 	}
 	errLine := lineWith(t, m2.View(), "boom")
 	if !strings.Contains(errLine, "✗ error") {
 		t.Fatalf("linea del fallo = %q, debe llevar el marcador %q", errLine, "✗ error")
+	}
+}
+
+func TestModel_StaleRunDoneDoesNotStopReplacementRun(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m.input.SetValue("primera")
+	m, _ = m.submitPrompt()
+	firstRunID := m.activeRun
+
+	m.input.SetValue("segunda")
+	m, _ = m.submitPrompt()
+	secondRunID := m.activeRun
+	if firstRunID == secondRunID {
+		t.Fatalf("run IDs = %d y %d, cada corrida debe tener identidad propia", firstRunID, secondRunID)
+	}
+
+	m = apply(t, m, RunDoneMsg{SessionID: "s1", RunID: firstRunID})
+	if !m.Working() {
+		t.Fatal("el cierre tardio de la corrida anterior apago el indicador de la corrida nueva")
+	}
+	if m.activeRun != secondRunID {
+		t.Fatalf("activeRun = %d, se esperaba conservar la corrida nueva %d", m.activeRun, secondRunID)
+	}
+
+	m = apply(t, m, RunDoneMsg{SessionID: "s1", RunID: secondRunID})
+	if m.Working() {
+		t.Fatal("el cierre de la corrida activa debe apagar el indicador")
 	}
 }
 
@@ -1997,7 +2038,7 @@ func TestModel_EventPumpDeliversFromChannel(t *testing.T) {
 	}
 
 	// RunDoneMsg tambien rearma la bomba.
-	_, cmd3 := m.Update(RunDoneMsg{Err: ""})
+	_, cmd3 := m.Update(activeRunDone(m, ""))
 	if cmd3 == nil {
 		t.Fatalf("Update(RunDoneMsg) devolvio cmd nil, la bomba debe rearmarse tras el fin de corrida")
 	}
@@ -2354,7 +2395,7 @@ func TestModel_WorkingIndicatorVisibleWhileRunning(t *testing.T) {
 	}
 
 	// Fin de corrida limpio: el indicador desaparece.
-	m = apply(t, m, RunDoneMsg{Err: ""})
+	m = apply(t, m, activeRunDone(m, ""))
 	if got := m.View(); strings.Contains(got, "trabajando") {
 		t.Fatalf("View() = %q, RunDoneMsg debe retirar el indicador de trabajo", got)
 	}
@@ -4103,7 +4144,7 @@ func TestModel_SpinnerTickDiesAfterRunDone(t *testing.T) {
 	msg := cmd()
 
 	// La corrida termina; recien entonces llega el tick viejo.
-	m = apply(t, m, RunDoneMsg{})
+	m = apply(t, m, activeRunDone(m, ""))
 	updated, tickCmd := m.Update(msg)
 	m, ok = updated.(Model)
 	if !ok {
@@ -4182,7 +4223,7 @@ func TestModel_SecondRunRestartsSpinner(t *testing.T) {
 	if cmd1 == nil {
 		t.Fatalf("Update(Enter) devolvio cmd nil, arrancar la primera corrida debe devolver el cmd que bombea la animacion")
 	}
-	m = apply(t, m, RunDoneMsg{})
+	m = apply(t, m, activeRunDone(m, ""))
 
 	// Segunda corrida: el loop debe renacer con el nuevo Enter.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("otra vez")})
@@ -4345,7 +4386,7 @@ func TestModel_HistoryRecordsPlanPrompts(t *testing.T) {
 	if len(fake.planSent) != 1 {
 		t.Fatalf("SendPlanPrompt fue llamado %d veces, Enter en plan-mode debe enviar el prompt exactamente una vez por el camino de plan", len(fake.planSent))
 	}
-	m = apply(t, m, RunDoneMsg{})
+	m = apply(t, m, activeRunDone(m, ""))
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
 	if got := m.input.Value(); got != "plan-uno" {
@@ -4638,7 +4679,7 @@ func TestModel_RevealSurvivesRunDone(t *testing.T) {
 
 	// La corrida termina con backlog pendiente: working se apaga pero la cola
 	// del texto sigue sin revelar.
-	m = apply(t, m, RunDoneMsg{})
+	m = apply(t, m, activeRunDone(m, ""))
 	if m.Working() {
 		t.Fatalf("Working() = true, RunDoneMsg debe apagar el estado de trabajo")
 	}
