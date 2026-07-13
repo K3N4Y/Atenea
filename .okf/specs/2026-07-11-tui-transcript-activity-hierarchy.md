@@ -79,6 +79,9 @@ viewport content line by line to map mouse clicks back to entries.
 - Assistant narrative: markdown, no marker; breaks activity groups.
 - Tool call (`entryTool`): header grammar above; success detail is the diff
   when present, otherwise the output preview.
+- Read (`tool == "read"`): renders `Reading <filename>` while running and
+  `Read <filename>` on success, using only the basename and never showing the
+  path, range selector, or output preview.
 - Skill (`tool == "skill"`): same grammar with the skill name as summary
   (`✓ skill    demo`); no output/diff detail — the SKILL.md body that travels
   in the output is for the model, not the transcript.

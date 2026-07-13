@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -251,10 +252,34 @@ func formatThinkingDuration(d time.Duration) string {
 // parseable el header queda pelado) y en exito SIN detalle: el cuerpo del
 // SKILL.md que viaja en el output es para el modelo, no para el transcript.
 func (e entry) renderTool() string {
+	if e.tool == "read" {
+		label := "Reading"
+		if e.status != toolRunning {
+			label = "Read"
+		}
+		return e.renderActivity(label, readFileName(e.input), false)
+	}
 	if e.tool == "skill" {
 		return e.renderActivity("skill", skillName(e.input), false)
 	}
 	return e.renderActivity(e.tool, summarizeToolInput(e.input), true)
+}
+
+func readFileName(raw string) string {
+	var input struct {
+		Path string `json:"path"`
+	}
+	if json.Unmarshal([]byte(raw), &input) != nil || input.Path == "" {
+		return ""
+	}
+	displayPath := input.Path
+	if i := strings.LastIndex(displayPath, ":"); i >= 0 {
+		selector := displayPath[i+1:]
+		if selector != "" && strings.Trim(selector, "0123456789-") == "" {
+			displayPath = displayPath[:i]
+		}
+	}
+	return path.Base(strings.ReplaceAll(displayPath, "\\", "/"))
 }
 
 // renderActivity es el render comun de las entradas de actividad de tool: el

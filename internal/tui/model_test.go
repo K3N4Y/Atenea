@@ -976,6 +976,34 @@ func TestModel_SkillToolWithoutNameRendersBareHeader(t *testing.T) {
 	}
 }
 
+func TestModel_ReadToolShowsOnlyStatusAndFileName(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "read", Input: json.RawMessage(`{"path":"internal/tui/view.go:20-40"}`)})
+
+	view := ansi.Strip(m.View())
+	if want := "  ● Reading  view.go"; !strings.Contains(view, want) {
+		t.Fatalf("View() sin ANSI = %q, read en ejecucion debe mostrar solo %q", view, want)
+	}
+	if strings.Contains(view, "internal/tui") || strings.Contains(view, ":20-40") {
+		t.Fatalf("View() sin ANSI = %q, read no debe mostrar la ruta ni el selector", view)
+	}
+
+	m = apply(t, m, EventMsg{
+		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "read", Text: "[internal/tui/view.go#ABCD]\n20:package tui",
+		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "[internal/tui/view.go#ABCD]\n20:package tui", ToolCallID: "c1"},
+	})
+
+	view = ansi.Strip(m.View())
+	if want := "  ✓ Read     view.go"; !strings.Contains(view, want) {
+		t.Fatalf("View() sin ANSI = %q, read exitoso debe mostrar solo %q", view, want)
+	}
+	for _, hidden := range []string{"Reading", "internal/tui", "20:package tui", "ABCD"} {
+		if strings.Contains(view, hidden) {
+			t.Fatalf("View() sin ANSI = %q, read exitoso no debe mostrar %q", view, hidden)
+		}
+	}
+}
+
 // Contrato del detalle de tool calls: el header lleva el resumen del Input
 // (`✓ <name>     <resumen>`; con un solo campo string el resumen es su valor)
 // y Tool.Success trae el output en ev.Text, que se muestra bajo el header con
