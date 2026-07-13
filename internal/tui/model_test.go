@@ -41,6 +41,9 @@ type fakeAgent struct {
 	undos      []string
 	undoResult UndoResult
 	undoErr    error
+	sendErr    error
+	planErr    error
+	acceptErr  error
 	nextRunID  uint64
 }
 
@@ -67,6 +70,9 @@ func (f *fakeAgent) nextRun(sessionID string) RunHandle {
 
 func (f *fakeAgent) SendPrompt(sessionID, text string) (RunHandle, error) {
 	f.sent = append(f.sent, struct{ sessionID, text string }{sessionID, text})
+	if f.sendErr != nil {
+		return RunHandle{}, f.sendErr
+	}
 	if text == "/new" && f.newSessionID != "" {
 		return RunHandle{SessionID: f.newSessionID}, nil
 	}
@@ -78,11 +84,17 @@ func (f *fakeAgent) SendPrompt(sessionID, text string) (RunHandle, error) {
 
 func (f *fakeAgent) SendPlanPrompt(sessionID, text string) (RunHandle, error) {
 	f.planSent = append(f.planSent, struct{ sessionID, text string }{sessionID, text})
+	if f.planErr != nil {
+		return RunHandle{}, f.planErr
+	}
 	return f.nextRun(sessionID), nil
 }
 
 func (f *fakeAgent) AcceptPlan(sessionID string) (RunHandle, error) {
 	f.accepted = append(f.accepted, sessionID)
+	if f.acceptErr != nil {
+		return RunHandle{}, f.acceptErr
+	}
 	return f.nextRun(sessionID), nil
 }
 
@@ -3444,6 +3456,58 @@ func TestModel_EnterSendsTypedPromptViaAgent(t *testing.T) {
 	if !m.Working() {
 		t.Fatalf("Working() = false, el modelo debe quedar trabajando tras enviar el prompt hasta RunDoneMsg")
 	}
+}
+
+func TestModel_SendFailuresKeepPendingUserAction(t *testing.T) {
+	t.Run("build prompt", func(t *testing.T) {
+		fake := &fakeAgent{sendErr: errors.New("send failed")}
+		m := typeRunes(t, NewModel(fake, "s1", nil), "hola")
+
+		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m = updated.(Model)
+
+		if cmd != nil || m.Working() || m.input.Value() != "hola" {
+			t.Fatalf("cmd=%v working=%v composer=%q", cmd != nil, m.Working(), m.input.Value())
+		}
+		if got := m.entries[len(m.entries)-1]; got.kind != entryError || got.text != "send failed" {
+			t.Fatalf("last entry = %+v", got)
+		}
+	})
+
+	t.Run("plan prompt", func(t *testing.T) {
+		fake := &fakeAgent{planErr: errors.New("plan send failed")}
+		m := NewModel(fake, "s1", nil)
+		m.planMode = true
+		m = typeRunes(t, m, "investiga")
+
+		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m = updated.(Model)
+
+		if cmd != nil || m.Working() || !m.planMode || m.input.Value() != "investiga" {
+			t.Fatalf("cmd=%v working=%v planMode=%v composer=%q", cmd != nil, m.Working(), m.planMode, m.input.Value())
+		}
+		if got := m.entries[len(m.entries)-1]; got.kind != entryError || got.text != "plan send failed" {
+			t.Fatalf("last entry = %+v", got)
+		}
+	})
+
+	t.Run("plan approval", func(t *testing.T) {
+		fake := &fakeAgent{acceptErr: errors.New("accept failed")}
+		m := NewModel(fake, "s1", nil)
+		m.planMode = true
+		m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "p1", ToolName: "present_plan"})
+		m = apply(t, m, EventMsg{Kind: session.KindToolSuccess, CallID: "p1"})
+
+		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+		m = updated.(Model)
+
+		if cmd != nil || m.Working() || !m.planMode || !m.hasPendingPlan() {
+			t.Fatalf("cmd=%v working=%v planMode=%v pendingPlan=%v", cmd != nil, m.Working(), m.planMode, m.hasPendingPlan())
+		}
+		if got := m.entries[len(m.entries)-1]; got.kind != entryError || got.text != "accept failed" {
+			t.Fatalf("last entry = %+v", got)
+		}
+	})
 }
 
 // menuCommands son los comandos compartidos por los tests del menu "/".
