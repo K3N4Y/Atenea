@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-13
+updated_at: 2026-07-14
 summary: Architecture and behavior of the Atenea terminal user interface.
 ---
 
@@ -9,6 +9,11 @@ summary: Architecture and behavior of the Atenea terminal user interface.
 runs in the terminal. Reuse the SAME agent loop as the Wails app (the
 runner, the tools, the ask-before-run, the skills and the subagents); the only thing that
 changes is the presentation border.
+
+On exit, the executable calls `Engine.Shutdown` before closing the shared
+session store. Shutdown stops active runs, cancels and waits for context
+compactions, and disables further Bubble Tea messages once its event loop has
+ended. This preserves final events and prompt checkpoints before SQLite closes.
 
 The composer also owns two built-in session commands that never become model
 messages: `/new` creates a session and `/compact` requests durable context

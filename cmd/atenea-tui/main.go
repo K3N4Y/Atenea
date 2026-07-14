@@ -5,6 +5,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -34,6 +36,13 @@ const (
 )
 
 func main() {
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, "atenea-tui:", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	// Cargar .env del cwd (si existe) antes de armar el engine: deja
 	// OPENROUTER_API_KEY y demas a mano en dev. Las env vars reales tienen prioridad.
 	dotenv.Load(".env")
@@ -51,10 +60,7 @@ func main() {
 	if err != nil {
 		log.Printf("atenea-tui: no se pudo abrir el SQLite (%v); las sesiones NO van a persistir (store en memoria)", err)
 	}
-	// El Close al salir dispara el checkpoint del WAL y deja el .db consolidado.
-	if c, ok := store.(io.Closer); ok {
-		defer c.Close()
-	}
+	closer, _ := store.(io.Closer)
 
 	root, err := os.Getwd()
 	if err != nil {
@@ -100,10 +106,13 @@ func main() {
 	// WithMouseCellMotion habilita el mouse tracking: sin el, la terminal nunca
 	// reporta la rueda a la app (en pantalla alternativa la traduce a flechas
 	// via "alternate scroll"); con la opcion llegan eventos de mouse reales.
-	if _, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithReportFocus()).Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "atenea-tui:", err)
-		os.Exit(1)
+	_, runErr := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithReportFocus()).Run()
+	shutdownErr := engine.Shutdown(context.Background())
+	var closeErr error
+	if closer != nil {
+		closeErr = closer.Close()
 	}
+	return errors.Join(runErr, shutdownErr, closeErr)
 }
 
 // gitBranch devuelve la rama git actual del repo en root (git rev-parse

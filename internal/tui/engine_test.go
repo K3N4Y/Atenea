@@ -541,6 +541,103 @@ func TestEngine_CompactIdleSessionStartsImmediately(t *testing.T) {
 	}
 }
 
+func TestEngine_ShutdownCancelsAndWaitsForActiveRun(t *testing.T) {
+	provider := newDelayedCancellationProvider()
+	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
+	if _, err := e.SendPrompt("s1", "wait"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-provider.firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("run did not start")
+	}
+	for len(e.events) < cap(e.events) {
+		e.events <- struct{}{}
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- e.Shutdown(context.Background()) }()
+	select {
+	case <-provider.cancelSeen:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not cancel the active run")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("Shutdown returned before the canceled run finished: %v", err)
+	default:
+	}
+	close(provider.releaseFirst)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Shutdown did not wait for the canceled run")
+	}
+}
+
+func TestEngine_ShutdownFinishesCheckpointBeforeSQLiteClose(t *testing.T) {
+	root := newUndoWorkspace(t)
+	dbPath := filepath.Join(t.TempDir(), "sessions.db")
+	store, err := session.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &blockingAfterToolProvider{started: make(chan struct{}), canceled: make(chan struct{})}
+	e := NewEngine(EngineConfig{Root: root, Provider: provider, Store: store, Checkpoints: checkpoint.NewGitStore(t.TempDir())})
+	if _, err := e.SendPrompt("s1", "create file"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-provider.started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("provider did not block after the tool")
+	}
+	if err := e.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err = session.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	boundary, err := store.LatestPromptCheckpoint(context.Background(), "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if boundary.AfterTree == "" {
+		t.Fatal("checkpoint remained incomplete after shutdown")
+	}
+}
+
+func TestEngine_ShutdownCancelsAndWaitsForCompaction(t *testing.T) {
+	store := session.NewMemoryStore()
+	seedCompactableEngineSession(t, store, "s1")
+	provider := newBlockingSummaryProvider()
+	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: store})
+	if _, err := e.SendPrompt("s1", "/compact"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-provider.started:
+	case <-time.After(time.Second):
+		t.Fatal("compaction did not start")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := e.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestEngine_CompactDuringRunQueuesOnceAndDrainsAfterCompletion(t *testing.T) {
 	store := session.NewMemoryStore()
 	seedCompactableEngineSession(t, store, "s1")

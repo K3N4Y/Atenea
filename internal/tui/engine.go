@@ -64,6 +64,8 @@ type Engine struct {
 	gate   *session.MemoryPermissionGate
 	runner *runner.Runner
 	agent  *agent.Service
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	// agent y glob alimentan el autocompletado del composer (espejo de
 	// App.ListCommands/App.ListProjectFiles): los slash-commands derivados de
@@ -85,6 +87,12 @@ type Engine struct {
 	mu                 sync.Mutex
 	pendingCompactions map[string]bool
 	compacting         map[string]bool
+
+	lifecycleMu  sync.Mutex
+	shuttingDown bool
+	shutdownDone chan struct{}
+	shutdownOnce sync.Once
+	compactions  sync.WaitGroup
 }
 
 // Fija en compilacion que Engine satisface la interface Agent de la TUI.
@@ -95,6 +103,7 @@ var _ Agent = (*Engine)(nil)
 // decorado con EmittingStore sobre ese bus, y el agente completo via
 // wiring.Build (tools, skills, subagentes, runner con ask-before-run).
 func NewEngine(cfg EngineConfig) *Engine {
+	ctx, cancel := context.WithCancel(context.Background())
 	e := &Engine{
 		// Buffer generoso: amortigua rafagas de deltas mientras la TUI drena.
 		events:             make(chan tea.Msg, 256),
@@ -102,6 +111,9 @@ func NewEngine(cfg EngineConfig) *Engine {
 		gate:               session.NewMemoryPermissionGate(),
 		pendingCompactions: map[string]bool{},
 		compacting:         map[string]bool{},
+		ctx:                ctx,
+		cancel:             cancel,
+		shutdownDone:       make(chan struct{}),
 	}
 	// La frontera: donde la app Wails emite a runtime.EventsEmit, aqui el evento
 	// durable va al canal de la TUI. El send bloqueante es deliberado: la TUI
@@ -111,7 +123,7 @@ func NewEngine(cfg EngineConfig) *Engine {
 			return
 		}
 		if ev, ok := data[0].(session.SessionEvent); ok {
-			e.events <- EventMsg(ev)
+			e.sendEvent(EventMsg(ev))
 		}
 	}
 	bus := event.NewBus(emit)
@@ -170,7 +182,7 @@ func (e *Engine) RefreshModels() {
 	e.refreshingModels = true
 	e.mu.Unlock()
 	go func() {
-		providers, err := e.models.Refresh(context.Background())
+		providers, err := e.models.Refresh(e.ctx)
 		e.mu.Lock()
 		e.refreshingModels = false
 		e.mu.Unlock()
@@ -178,7 +190,7 @@ func (e *Engine) RefreshModels() {
 		if err != nil {
 			msg.Err = err.Error()
 		}
-		e.events <- msg
+		e.sendEvent(msg)
 	}()
 }
 
@@ -350,14 +362,9 @@ func (e *Engine) turnHooks(sessionID, composerPrompt string) agent.Hooks {
 			if err != nil {
 				msg = err.Error()
 			}
-			e.events <- RunDoneMsg{SessionID: sessionID, RunID: result.ID, Err: msg}
+			e.sendEvent(RunDoneMsg{SessionID: sessionID, RunID: result.ID, Err: msg})
 			if compact {
-				go func() {
-					_ = e.agent.Synchronize(sessionID, func() error {
-						e.compactLocked(sessionID)
-						return nil
-					})
-				}()
+				e.startCompaction(sessionID)
 			}
 		},
 	}
@@ -427,6 +434,29 @@ func (e *Engine) Stop(sessionID string) {
 	e.agent.Stop(sessionID)
 }
 
+// Shutdown cancels background work and waits until runs and compactions have
+// stopped, so the caller can safely close the shared store afterwards.
+func (e *Engine) Shutdown(ctx context.Context) error {
+	e.shutdownOnce.Do(func() {
+		e.lifecycleMu.Lock()
+		e.shuttingDown = true
+		e.cancel()
+		e.agent.StopAll()
+		e.lifecycleMu.Unlock()
+		go func() {
+			e.agent.Wait()
+			e.compactions.Wait()
+			close(e.shutdownDone)
+		}()
+	})
+	select {
+	case <-e.shutdownDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // clear saca del mapa la corrida h solo si sigue siendo la vigente (un
 // SendPrompt mas nuevo pudo reemplazarla).
 func (e *Engine) finishRun(sessionID string, current bool) bool {
@@ -452,13 +482,25 @@ func (e *Engine) requestCompaction(sessionID string) {
 	if e.agent.Running(sessionID) {
 		e.pendingCompactions[sessionID] = true
 		e.mu.Unlock()
-		e.events <- CompactionStatusMsg{SessionID: sessionID, State: CompactionQueued}
+		e.sendEvent(CompactionStatusMsg{SessionID: sessionID, State: CompactionQueued})
 		return
 	}
 	e.compacting[sessionID] = true
 	e.mu.Unlock()
 
+	e.startCompaction(sessionID)
+}
+
+func (e *Engine) startCompaction(sessionID string) {
+	e.lifecycleMu.Lock()
+	if e.shuttingDown {
+		e.lifecycleMu.Unlock()
+		return
+	}
+	e.compactions.Add(1)
+	e.lifecycleMu.Unlock()
 	go func() {
+		defer e.compactions.Done()
 		_ = e.agent.Synchronize(sessionID, func() error {
 			e.compactLocked(sessionID)
 			return nil
@@ -467,17 +509,29 @@ func (e *Engine) requestCompaction(sessionID string) {
 }
 
 func (e *Engine) compactLocked(sessionID string) {
-	e.events <- CompactionStatusMsg{SessionID: sessionID, State: CompactionRunning}
-	err := e.runner.CompactNow(context.Background(), sessionID)
+	e.sendEvent(CompactionStatusMsg{SessionID: sessionID, State: CompactionRunning})
+	err := e.runner.CompactNow(e.ctx, sessionID)
 	switch {
 	case errors.Is(err, session.ErrNoCompactableHistory):
-		e.events <- CompactionStatusMsg{SessionID: sessionID, State: CompactionNotNeeded}
+		e.sendEvent(CompactionStatusMsg{SessionID: sessionID, State: CompactionNotNeeded})
 	case err != nil:
-		e.events <- CompactionStatusMsg{SessionID: sessionID, State: CompactionFailed, Err: err.Error()}
+		e.sendEvent(CompactionStatusMsg{SessionID: sessionID, State: CompactionFailed, Err: err.Error()})
 	}
 	e.mu.Lock()
 	delete(e.compacting, sessionID)
 	e.mu.Unlock()
+}
+
+func (e *Engine) sendEvent(msg tea.Msg) {
+	select {
+	case <-e.ctx.Done():
+		return
+	default:
+	}
+	select {
+	case e.events <- msg:
+	case <-e.ctx.Done():
+	}
 }
 
 // Events entrega los EventMsg durables de la corrida y un RunDoneMsg al
