@@ -52,6 +52,10 @@ const (
 	// permite rehidratar el historial de Up/Down entre procesos.
 	KindComposerPrompt EventKind = "Composer.Prompt"
 
+	// KindSessionMode lleva en Text el ultimo modo usado por la TUI. No entra al
+	// contexto del modelo; permite reabrir la sesion en build o plan.
+	KindSessionMode EventKind = "Session.Mode"
+
 	KindPromptCheckpointStarted  EventKind = "Prompt.Checkpoint.Started"
 	KindPromptCheckpointFinished EventKind = "Prompt.Checkpoint.Finished"
 	KindPromptCheckpointReverted EventKind = "Prompt.Checkpoint.Reverted"

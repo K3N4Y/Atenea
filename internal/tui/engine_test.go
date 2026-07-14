@@ -29,7 +29,25 @@ type promptHistoryStore struct {
 	blockedSession     string
 }
 
+type sessionModeFailingStore struct {
+	session.Store
+	err error
+}
+
+type blockingSessionsStore struct {
+	session.Store
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+type resumeBlockingProvider struct {
+	started chan struct{}
+}
+
 type failingCheckpointStore struct{ err error }
+
+type fixedCheckpointStore struct{ tree checkpoint.Tree }
 
 func (s failingCheckpointStore) Capture(context.Context, string) (checkpoint.Tree, error) {
 	return "", s.err
@@ -37,6 +55,31 @@ func (s failingCheckpointStore) Capture(context.Context, string) (checkpoint.Tre
 
 func (s failingCheckpointStore) Restore(context.Context, string, checkpoint.Tree) error {
 	return nil
+}
+
+func (s fixedCheckpointStore) Capture(context.Context, string) (checkpoint.Tree, error) {
+	return s.tree, nil
+}
+
+func (s fixedCheckpointStore) Restore(context.Context, string, checkpoint.Tree) error {
+	return nil
+}
+
+func (s *sessionModeFailingStore) AppendEvent(ctx context.Context, sessionID string, event session.SessionEvent) (session.Seq, error) {
+	if event.Kind == session.KindSessionMode {
+		return 0, s.err
+	}
+	return s.Store.AppendEvent(ctx, sessionID, event)
+}
+
+func (s *blockingSessionsStore) Sessions(ctx context.Context) ([]session.SessionSummary, error) {
+	s.once.Do(func() { close(s.entered) })
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-s.release:
+		return s.Store.Sessions(ctx)
+	}
 }
 
 func (s *promptHistoryStore) AppendEvent(ctx context.Context, sessionID string, ev session.SessionEvent) (session.Seq, error) {
@@ -51,6 +94,16 @@ func (s *promptHistoryStore) Events(ctx context.Context, sessionID string, since
 		return nil, errors.New("older session should not be read")
 	}
 	return s.Store.Events(ctx, sessionID, sinceSeq)
+}
+
+func (p *resumeBlockingProvider) Stream(ctx context.Context, _ llm.Request) (<-chan llm.Event, error) {
+	out := make(chan llm.Event)
+	go func() {
+		defer close(out)
+		close(p.started)
+		<-ctx.Done()
+	}()
+	return out, nil
 }
 
 // turnProvider implementa llm.Provider con un guion POR TURNO: la i-esima
@@ -362,6 +415,373 @@ func resolveUntilStopped(e *Engine, sessionID, callID string, approved bool) (st
 		}
 	}()
 	return func() { close(done); wg.Wait() }
+}
+
+func appendSessionEvent(t *testing.T, store session.Store, sessionID string, event session.SessionEvent) {
+	t.Helper()
+	if _, err := store.AppendEvent(context.Background(), sessionID, event); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEngine_ResumeSessionLoadsLatestWorkspaceSessionAndMode(t *testing.T) {
+	root := t.TempDir()
+	store := session.NewMemoryStore()
+	appendSessionEvent(t, store, "tui-older", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
+	appendSessionEvent(t, store, "tui-newer", session.SessionEvent{Kind: session.KindSessionCwd, Text: filepath.Join(root, ".")})
+	appendSessionEvent(t, store, "tui-newer", session.SessionEvent{Kind: session.KindSessionMode, Text: string(session.ModePlan)})
+	appendSessionEvent(t, store, "tui-other", session.SessionEvent{Kind: session.KindSessionCwd, Text: t.TempDir()})
+
+	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store})
+	sessionID, events, mode, err := engine.ResumeSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != "tui-newer" {
+		t.Fatalf("ResumeSession ID = %q, want tui-newer", sessionID)
+	}
+	if mode != session.ModePlan {
+		t.Fatalf("ResumeSession mode = %q, want %q", mode, session.ModePlan)
+	}
+	if len(events) != 2 || events[0].Kind != session.KindSessionCwd || events[1].Kind != session.KindSessionMode {
+		t.Fatalf("ResumeSession events = %+v, want exact persisted transcript", events)
+	}
+}
+
+func TestEngine_ListResumeSessionsFiltersWorkspaceAndPreservesStoreOrder(t *testing.T) {
+	root := t.TempDir()
+	store := session.NewMemoryStore()
+	appendSessionEvent(t, store, "tui-current", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
+	appendSessionEvent(t, store, "app-newest", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
+	appendSessionEvent(t, store, "tui-other-root", session.SessionEvent{Kind: session.KindSessionCwd, Text: t.TempDir()})
+	appendSessionEvent(t, store, "tui-newer", session.SessionEvent{Kind: session.KindSessionCwd, Text: filepath.Join(root, ".")})
+
+	all, err := store.Sessions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []session.SessionSummary{all[0], all[3]}
+	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store})
+	got, err := engine.ListResumeSessions("tui-current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("ListResumeSessions = %+v, want store-ordered summaries %+v", got, want)
+	}
+}
+
+func TestEngine_ListResumeSessionsAcceptsSymlinkToWorkspaceRoot(t *testing.T) {
+	root := t.TempDir()
+	aliasParent := t.TempDir()
+	alias := filepath.Join(aliasParent, "workspace-link")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Fatal(err)
+	}
+	store := session.NewMemoryStore()
+	appendSessionEvent(t, store, "tui-linked", session.SessionEvent{Kind: session.KindSessionCwd, Text: alias})
+
+	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store})
+	got, err := engine.ListResumeSessions("tui-current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != "tui-linked" {
+		t.Fatalf("ListResumeSessions = %+v, want symlinked workspace session", got)
+	}
+}
+
+func TestEngine_ListResumeSessionsUsesKernelSemanticsForSymlinkFollowedByDotDot(t *testing.T) {
+	root := t.TempDir()
+	child := filepath.Join(root, "child")
+	if err := os.Mkdir(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	childLink := filepath.Join(t.TempDir(), "child-link")
+	if err := os.Symlink(child, childLink); err != nil {
+		t.Fatal(err)
+	}
+	store := session.NewMemoryStore()
+	appendSessionEvent(t, store, "tui-linked-parent", session.SessionEvent{
+		Kind: session.KindSessionCwd,
+		Text: childLink + string(os.PathSeparator) + "..",
+	})
+
+	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store})
+	got, err := engine.ListResumeSessions("tui-current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != "tui-linked-parent" {
+		t.Fatalf("ListResumeSessions = %+v, want kernel-resolved symlink/.. workspace", got)
+	}
+}
+
+func TestEngine_ListResumeSessionsRejectsNonDirectoryRoot(t *testing.T) {
+	rootFile := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(rootFile, []byte("file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := session.NewMemoryStore()
+	appendSessionEvent(t, store, "tui-file-root", session.SessionEvent{Kind: session.KindSessionCwd, Text: rootFile})
+
+	engine := NewEngine(EngineConfig{Root: rootFile, Provider: llm.NewFakeProvider(), Store: store})
+	if got, err := engine.ListResumeSessions("tui-current"); err == nil {
+		t.Fatalf("ListResumeSessions = %+v, want non-directory root error", got)
+	}
+}
+
+func TestEngine_ListResumeSessionsRejectsSymlinkToOtherWorkspace(t *testing.T) {
+	root := t.TempDir()
+	otherRoot := t.TempDir()
+	alias := filepath.Join(t.TempDir(), "other-workspace-link")
+	if err := os.Symlink(otherRoot, alias); err != nil {
+		t.Fatal(err)
+	}
+	store := session.NewMemoryStore()
+	appendSessionEvent(t, store, "tui-other", session.SessionEvent{Kind: session.KindSessionCwd, Text: alias})
+
+	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store})
+	got, err := engine.ListResumeSessions("tui-current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("ListResumeSessions = %+v, want cross-workspace symlink rejected", got)
+	}
+}
+
+func TestEngine_ListResumeSessionsRejectsEmptyUnresolvableAndNonDirectoryCwd(t *testing.T) {
+	root := t.TempDir()
+	brokenLink := filepath.Join(t.TempDir(), "broken-workspace-link")
+	if err := os.Symlink(filepath.Join(t.TempDir(), "missing"), brokenLink); err != nil {
+		t.Fatal(err)
+	}
+	fileCwd := filepath.Join(root, "not-a-directory")
+	if err := os.WriteFile(fileCwd, []byte("file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := session.NewMemoryStore()
+	appendSessionEvent(t, store, "tui-empty", session.SessionEvent{Kind: session.KindSessionCwd})
+	appendSessionEvent(t, store, "tui-broken", session.SessionEvent{Kind: session.KindSessionCwd, Text: brokenLink})
+	appendSessionEvent(t, store, "tui-file", session.SessionEvent{Kind: session.KindSessionCwd, Text: fileCwd})
+
+	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store})
+	got, err := engine.ListResumeSessions("tui-current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("ListResumeSessions = %+v, want unsafe Cwd values rejected", got)
+	}
+}
+
+func TestEngine_ResumeSessionByIDLoadsExactTargetAndRestoresPlanMode(t *testing.T) {
+	root := t.TempDir()
+	store := session.NewMemoryStore()
+	appendSessionEvent(t, store, "tui-current", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
+	appendSessionEvent(t, store, "tui-target", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
+	appendSessionEvent(t, store, "tui-target", session.SessionEvent{Kind: session.KindTextDelta, Text: "target marker"})
+	appendSessionEvent(t, store, "tui-target", session.SessionEvent{Kind: session.KindSessionMode, Text: string(session.ModePlan)})
+	appendSessionEvent(t, store, "tui-other", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
+	appendSessionEvent(t, store, "tui-other", session.SessionEvent{Kind: session.KindTextDelta, Text: "other marker"})
+
+	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store})
+	result, err := engine.ResumeSessionByID("tui-current", "tui-target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SessionID != "tui-target" || result.Mode != session.ModePlan {
+		t.Fatalf("ResumeSessionByID = %+v, want exact target in plan mode", result)
+	}
+	if len(result.Events) != 3 || result.Events[1].Text != "target marker" {
+		t.Fatalf("ResumeSessionByID events = %+v, want target events before resume marker", result.Events)
+	}
+	persisted, err := store.Events(context.Background(), "tui-target", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := persisted[len(persisted)-1]
+	if len(persisted) != 4 || last.Kind != session.KindSessionMode || last.Text != string(session.ModePlan) {
+		t.Fatalf("persisted target events = %+v, want current plan mode appended", persisted)
+	}
+}
+
+func TestEngine_ResumeOperationsRejectActiveRun(t *testing.T) {
+	root := t.TempDir()
+	store := session.NewMemoryStore()
+	appendSessionEvent(t, store, "tui-current", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
+	appendSessionEvent(t, store, "tui-target", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
+	provider := &resumeBlockingProvider{started: make(chan struct{})}
+	engine := NewEngine(EngineConfig{Root: root, Provider: provider, Store: store})
+	if _, err := engine.SendPrompt("tui-current", "keep running"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-provider.started:
+	case <-time.After(time.Second):
+		t.Fatal("active run did not start")
+	}
+	t.Cleanup(func() {
+		engine.Stop("tui-current")
+		_ = engine.Shutdown(context.Background())
+	})
+
+	const want = "stop the active run before resuming another session"
+	if _, err := engine.ListResumeSessions("tui-current"); !errors.Is(err, ErrResumeActiveRun) || err.Error() != want {
+		t.Fatalf("ListResumeSessions error = %v, want %q", err, want)
+	}
+	if _, err := engine.ResumeSessionByID("tui-current", "tui-target"); !errors.Is(err, ErrResumeActiveRun) || err.Error() != want {
+		t.Fatalf("ResumeSessionByID error = %v, want %q", err, want)
+	}
+}
+
+func TestEngine_ResumeSessionByIDRejectsActiveTargetRun(t *testing.T) {
+	root := t.TempDir()
+	store := session.NewMemoryStore()
+	appendSessionEvent(t, store, "tui-current", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
+	appendSessionEvent(t, store, "tui-target", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
+	provider := &resumeBlockingProvider{started: make(chan struct{})}
+	engine := NewEngine(EngineConfig{Root: root, Provider: provider, Store: store})
+	if _, err := engine.SendPrompt("tui-target", "keep target running"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-provider.started:
+	case <-time.After(time.Second):
+		t.Fatal("target run did not start")
+	}
+	t.Cleanup(func() {
+		engine.Stop("tui-target")
+		_ = engine.Shutdown(context.Background())
+	})
+
+	_, err := engine.ResumeSessionByID("tui-current", "tui-target")
+	if !errors.Is(err, ErrResumeActiveRun) || err.Error() != ErrResumeActiveRun.Error() {
+		t.Fatalf("ResumeSessionByID error = %v, want active-run sentinel", err)
+	}
+}
+
+func TestEngine_ResumeSessionByIDRejectsUnavailableTargets(t *testing.T) {
+	root := t.TempDir()
+	store := session.NewMemoryStore()
+	appendSessionEvent(t, store, "tui-current", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
+	appendSessionEvent(t, store, "app-session", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
+	appendSessionEvent(t, store, "tui-other-root", session.SessionEvent{Kind: session.KindSessionCwd, Text: t.TempDir()})
+	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store})
+
+	for _, target := range []string{"tui-missing", "app-session", "tui-other-root"} {
+		t.Run(target, func(t *testing.T) {
+			_, err := engine.ResumeSessionByID("tui-current", target)
+			if !errors.Is(err, ErrSessionNotResumable) || err.Error() != ErrSessionNotResumable.Error() {
+				t.Fatalf("ResumeSessionByID(%q) error = %v", target, err)
+			}
+		})
+	}
+}
+
+func TestEngine_ResumeSessionByIDSerializesTargetAdmission(t *testing.T) {
+	root := t.TempDir()
+	backend := session.NewMemoryStore()
+	appendSessionEvent(t, backend, "tui-current", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
+	appendSessionEvent(t, backend, "tui-target", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
+	store := &blockingSessionsStore{
+		Store:   backend,
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store})
+	t.Cleanup(func() { _ = engine.Shutdown(context.Background()) })
+
+	resumeDone := make(chan error, 1)
+	go func() {
+		_, err := engine.ResumeSessionByID("tui-current", "tui-target")
+		resumeDone <- err
+	}()
+	select {
+	case <-store.entered:
+	case <-time.After(time.Second):
+		t.Fatal("resume did not block in Sessions")
+	}
+
+	sendStarted := make(chan struct{})
+	sendDone := make(chan error, 1)
+	go func() {
+		close(sendStarted)
+		_, err := engine.SendPrompt("tui-target", "wait for resume")
+		sendDone <- err
+	}()
+	<-sendStarted
+	select {
+	case err := <-sendDone:
+		t.Fatalf("SendPrompt completed before resume validation/load released: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(store.release)
+	select {
+	case err := <-resumeDone:
+		if err != nil {
+			t.Fatalf("ResumeSessionByID error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ResumeSessionByID deadlocked")
+	}
+	select {
+	case err := <-sendDone:
+		if err != nil {
+			t.Fatalf("SendPrompt error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("SendPrompt did not proceed after resume released admission lock")
+	}
+}
+
+func TestEngine_ResumePreviousReturnsNotResumableSentinelWhenNoPreviousSession(t *testing.T) {
+	root := t.TempDir()
+	store := session.NewMemoryStore()
+	appendSessionEvent(t, store, "tui-current", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
+	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store})
+
+	_, err := engine.ResumePrevious("tui-current")
+	if !errors.Is(err, ErrSessionNotResumable) {
+		t.Fatalf("ResumePrevious error = %v, want ErrSessionNotResumable", err)
+	}
+}
+
+func TestModeFromEventsIgnoresUnknownModeAfterValidMode(t *testing.T) {
+	events := []session.SessionEvent{
+		{Kind: session.KindSessionMode, Text: string(session.ModePlan)},
+		{Kind: session.KindSessionMode, Text: "future-mode"},
+	}
+	if got := modeFromEvents(events); got != session.ModePlan {
+		t.Fatalf("modeFromEvents = %q, want prior valid mode %q", got, session.ModePlan)
+	}
+}
+
+func TestEngine_SendPromptDoesNotStartCheckpointWhenModePersistenceFails(t *testing.T) {
+	backend := session.NewMemoryStore()
+	modeErr := errors.New("mode persistence failed")
+	store := &sessionModeFailingStore{Store: backend, err: modeErr}
+	engine := NewEngine(EngineConfig{
+		Root:        t.TempDir(),
+		Provider:    llm.NewFakeProvider(),
+		Store:       store,
+		Checkpoints: fixedCheckpointStore{tree: checkpoint.Tree("before-tree")},
+	})
+
+	if _, err := engine.SendPrompt("tui-session", "hola"); !errors.Is(err, modeErr) {
+		t.Fatalf("SendPrompt error = %v, want %v", err, modeErr)
+	}
+	events, err := backend.Events(context.Background(), "tui-session", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event.Kind == session.KindPromptCheckpointStarted {
+			t.Fatalf("events = %+v, checkpoint started before mode persisted", events)
+		}
+	}
 }
 
 func TestEngine_PromptHistoryLoadsLatestTUIComposerPrompts(t *testing.T) {
@@ -1900,8 +2320,10 @@ func TestEngine_UndoPersistsAcrossSQLiteReopen(t *testing.T) {
 	if messages, err := store.Messages(context.Background(), "s1", 0); err != nil || len(messages) != 0 {
 		t.Fatalf("Messages = %+v, err = %v", messages, err)
 	}
-	if events, err := store.Events(context.Background(), "s1", 0); err != nil || len(events) != 1 || events[0].Kind != session.KindSessionCwd || events[0].Text != root {
-		t.Fatalf("Events = %+v, err = %v, want only Session.Cwd %q", events, err, root)
+	if events, err := store.Events(context.Background(), "s1", 0); err != nil || len(events) != 2 ||
+		events[0].Kind != session.KindSessionCwd || events[0].Text != root ||
+		events[1].Kind != session.KindSessionMode || events[1].Text != string(session.ModeNormal) {
+		t.Fatalf("Events = %+v, err = %v, want Session.Cwd %q then Session.Mode %q", events, err, root, session.ModeNormal)
 	}
 	if contextResult, err := store.ContextForRunner(context.Background(), "s1"); err != nil || len(contextResult.Messages) != 0 {
 		t.Fatalf("ContextForRunner = %+v, err = %v", contextResult, err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -40,7 +41,17 @@ type UndoResult struct {
 	Events []session.SessionEvent
 }
 
-var ErrWorkspaceDiverged = errors.New("workspace changed after the prompt; undo refused")
+type ResumeResult struct {
+	SessionID string
+	Events    []session.SessionEvent
+	Mode      session.Mode
+}
+
+var (
+	ErrWorkspaceDiverged   = errors.New("workspace changed after the prompt; undo refused")
+	ErrResumeActiveRun     = errors.New("stop the active run before resuming another session")
+	ErrSessionNotResumable = errors.New("session is not resumable in this workspace")
+)
 
 type ModelService interface {
 	Active() providerconfig.Active
@@ -84,6 +95,7 @@ type Engine struct {
 	models           ModelService
 	refreshingModels bool
 
+	resumeMu           sync.Mutex
 	mu                 sync.Mutex
 	pendingCompactions map[string]bool
 	compacting         map[string]bool
@@ -207,7 +219,10 @@ func cloneProviderModels(in []providerconfig.ProviderModels) []providerconfig.Pr
 // menu "/" del composer, ordenados por nombre (espejo de App.ListCommands).
 func (e *Engine) Commands() []command.Command {
 	commands := e.agent.Commands()
-	commands = append(commands, command.Command{Name: "undo", Description: "Undo the last prompt and its file changes"})
+	commands = append(commands,
+		command.Command{Name: "resume", Description: "Resume the previous TUI session in this workspace"},
+		command.Command{Name: "undo", Description: "Undo the last prompt and its file changes"},
+	)
 	sort.Slice(commands, func(i, j int) bool { return commands[i].Name < commands[j].Name })
 	return commands
 }
@@ -269,12 +284,168 @@ func (e *Engine) PromptHistory() ([]string, error) {
 	return history, nil
 }
 
+// ResumeSession devuelve la sesion TUI mas reciente del workspace actual, su
+// transcript y el ultimo modo usado. Si no existe, reserva un ID nuevo.
+func (e *Engine) ResumeSession() (string, []session.SessionEvent, session.Mode, error) {
+	e.resumeMu.Lock()
+	defer e.resumeMu.Unlock()
+
+	newSessionID := func() string {
+		return "tui-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	}
+	summaries, err := e.resumeSessions(context.Background())
+	if err != nil {
+		return newSessionID(), nil, session.ModeNormal, err
+	}
+	for _, summary := range summaries {
+		events, err := e.store.Events(context.Background(), summary.ID, 0)
+		if err != nil {
+			return newSessionID(), nil, session.ModeNormal, err
+		}
+		mode := modeFromEvents(events)
+		return summary.ID, events, mode, nil
+	}
+	return newSessionID(), nil, session.ModeNormal, nil
+}
+
+// ListResumeSessions devuelve las sesiones TUI resumibles del workspace actual
+// en el mismo orden de recencia entregado por el store.
+func (e *Engine) ListResumeSessions(currentSessionID string) ([]session.SessionSummary, error) {
+	e.resumeMu.Lock()
+	defer e.resumeMu.Unlock()
+	return e.listResumeSessionsUnlocked(currentSessionID)
+}
+
+func (e *Engine) listResumeSessionsUnlocked(currentSessionID string) ([]session.SessionSummary, error) {
+	if e.agent.Running(currentSessionID) {
+		return nil, ErrResumeActiveRun
+	}
+	return e.resumeSessions(context.Background())
+}
+
+func (e *Engine) resumeSessions(ctx context.Context) ([]session.SessionSummary, error) {
+	summaries, err := e.store.Sessions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	root, err := workspaceDirectoryInfo(e.root)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]session.SessionSummary, 0, len(summaries))
+	for _, summary := range summaries {
+		if !strings.HasPrefix(summary.ID, "tui-") || summary.Cwd == "" {
+			continue
+		}
+		cwd, err := workspaceDirectoryInfo(summary.Cwd)
+		if err == nil && os.SameFile(root, cwd) {
+			out = append(out, summary)
+		}
+	}
+	return out, nil
+}
+
+func workspaceDirectoryInfo(path string) (os.FileInfo, error) {
+	if path == "" {
+		return nil, errors.New("workspace path is empty")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, errors.New("workspace path is not a directory")
+	}
+	return info, nil
+}
+
+// ResumeSessionByID carga exactamente una sesion resumible del workspace y
+// persiste el modo restaurado como el modo vigente de la sesion.
+func (e *Engine) ResumeSessionByID(currentSessionID, targetSessionID string) (ResumeResult, error) {
+	e.resumeMu.Lock()
+	defer e.resumeMu.Unlock()
+	return e.resumeSessionByIDUnlocked(currentSessionID, targetSessionID)
+}
+
+func (e *Engine) resumeSessionByIDUnlocked(currentSessionID, targetSessionID string) (ResumeResult, error) {
+	if e.agent.Running(currentSessionID) || e.agent.Running(targetSessionID) {
+		return ResumeResult{}, ErrResumeActiveRun
+	}
+	summaries, err := e.listResumeSessionsUnlocked(currentSessionID)
+	if err != nil {
+		return ResumeResult{}, err
+	}
+	allowed := false
+	for _, summary := range summaries {
+		if summary.ID == targetSessionID {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return ResumeResult{}, ErrSessionNotResumable
+	}
+	events, err := e.store.Events(context.Background(), targetSessionID, 0)
+	if err != nil {
+		return ResumeResult{}, err
+	}
+	mode := modeFromEvents(events)
+	if _, err := e.store.AppendEvent(context.Background(), targetSessionID,
+		session.SessionEvent{Kind: session.KindSessionMode, Text: string(mode)}); err != nil {
+		return ResumeResult{}, err
+	}
+	return ResumeResult{SessionID: targetSessionID, Events: events, Mode: mode}, nil
+}
+
+// ResumePrevious mantiene compatibilidad temporal con Model hasta Task 5. La
+// seleccion secuencial se limita a adaptar las APIs explicitas y se eliminara
+// cuando el picker llame ResumeSessionByID directamente.
+func (e *Engine) ResumePrevious(sessionID string) (ResumeResult, error) {
+	e.resumeMu.Lock()
+	defer e.resumeMu.Unlock()
+
+	summaries, err := e.listResumeSessionsUnlocked(sessionID)
+	if err != nil {
+		return ResumeResult{}, err
+	}
+	targetIndex := 0
+	for index, summary := range summaries {
+		if summary.ID == sessionID {
+			targetIndex = index + 1
+			break
+		}
+	}
+	if targetIndex >= len(summaries) {
+		return ResumeResult{}, ErrSessionNotResumable
+	}
+	return e.resumeSessionByIDUnlocked(sessionID, summaries[targetIndex].ID)
+}
+
+func modeFromEvents(events []session.SessionEvent) session.Mode {
+	mode := session.ModeNormal
+	for _, event := range events {
+		if event.Kind != session.KindSessionMode {
+			continue
+		}
+		switch session.Mode(event.Text) {
+		case session.ModeNormal:
+			mode = session.ModeNormal
+		case session.ModePlan:
+			mode = session.ModePlan
+		}
+	}
+	return mode
+}
+
 // SendPrompt encola un prompt del usuario por el camino normal y devuelve la
 // sesion activa junto con el runID. Para /new exacto crea y devuelve una sesion
 // durable nueva sin corrida; en cualquier otro caso conserva sessionID. Fija
 // modo normal primero: una sesion que estaba en plan-mode vuelve a las tools
 // normales al enviar.
 func (e *Engine) SendPrompt(sessionID, text string) (RunHandle, error) {
+	e.resumeMu.Lock()
+	defer e.resumeMu.Unlock()
+
 	if text == "/new" {
 		newSessionID := "tui-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 		_, err := e.store.AppendEvent(context.Background(), newSessionID,
@@ -288,7 +459,7 @@ func (e *Engine) SendPrompt(sessionID, text string) (RunHandle, error) {
 		e.requestCompaction(sessionID)
 		return RunHandle{SessionID: sessionID}, nil
 	}
-	run, err := e.agent.Send(sessionID, text, e.turnHooks(sessionID, text))
+	run, err := e.agent.Send(sessionID, text, e.turnHooks(sessionID, text, session.ModeNormal))
 	if err != nil {
 		return RunHandle{}, err
 	}
@@ -299,13 +470,16 @@ func (e *Engine) SendPrompt(sessionID, text string) (RunHandle, error) {
 // mas present_plan, con el contrato de plan-mode en el system prompt. Fija
 // ModePlan antes de arrancar (espejo de App.SendPlanPrompt).
 func (e *Engine) SendPlanPrompt(sessionID, text string) (RunHandle, error) {
-	run, err := e.agent.SendPlan(sessionID, text, e.turnHooks(sessionID, text))
+	e.resumeMu.Lock()
+	defer e.resumeMu.Unlock()
+
+	run, err := e.agent.SendPlan(sessionID, text, e.turnHooks(sessionID, text, session.ModePlan))
 	return RunHandle{SessionID: sessionID, RunID: run.ID}, err
 }
 
 // turnHooks conserva las responsabilidades exclusivas de la TUI alrededor del
 // ciclo compartido: CWD, checkpoints, historial literal, RunDoneMsg y compactado.
-func (e *Engine) turnHooks(sessionID, composerPrompt string) agent.Hooks {
+func (e *Engine) turnHooks(sessionID, composerPrompt string, mode session.Mode) agent.Hooks {
 	checkpointID := ""
 	return agent.Hooks{
 		BeforeAdmit: func() error {
@@ -322,6 +496,10 @@ func (e *Engine) turnHooks(sessionID, composerPrompt string) agent.Hooks {
 					session.SessionEvent{Kind: session.KindSessionCwd, Text: e.root}); err != nil {
 					log.Printf("atenea-tui: no se pudo guardar la carpeta de %s: %v", sessionID, err)
 				}
+			}
+			if _, err := e.store.AppendEvent(context.Background(), sessionID,
+				session.SessionEvent{Kind: session.KindSessionMode, Text: string(mode)}); err != nil {
+				return err
 			}
 			if before != "" {
 				checkpointID = "checkpoint-" + strconv.FormatInt(time.Now().UnixNano(), 10)
@@ -420,7 +598,10 @@ func (e *Engine) Undo(sessionID string) (UndoResult, error) {
 // promueve el prompt fijo de implementacion como prompt del usuario,
 // arrancando la corrida (espejo de App.AcceptPlan).
 func (e *Engine) AcceptPlan(sessionID string) (RunHandle, error) {
-	run, err := e.agent.AcceptPlan(sessionID, e.turnHooks(sessionID, ""))
+	e.resumeMu.Lock()
+	defer e.resumeMu.Unlock()
+
+	run, err := e.agent.AcceptPlan(sessionID, e.turnHooks(sessionID, "", session.ModeNormal))
 	return RunHandle{SessionID: sessionID, RunID: run.ID}, err
 }
 
