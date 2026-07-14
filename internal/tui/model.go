@@ -9,6 +9,7 @@ package tui
 
 import (
 	"errors"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -80,6 +81,8 @@ type fileOpenedMsg struct {
 	path       string
 	viewer     fileViewer
 }
+
+type workspaceRefreshedMsg struct{ branch string }
 
 // Agent es la superficie del engine que la TUI necesita para operar la sesion.
 type Agent interface {
@@ -241,10 +244,11 @@ type Model struct {
 
 	// branch es la rama git actual que la top bar muestra a la izquierda;
 	// "" la oculta. workDir es el directorio de trabajo ya listo para mostrar
-	// (home abreviado a ~); "" lo oculta. Ambos entran una sola vez via
-	// WithWorkspace.
-	branch  string
-	workDir string
+	// (home abreviado a ~); "" lo oculta. workspaceRoot conserva la ruta real
+	// para refrescar la rama despues de comandos del agente.
+	branch        string
+	workDir       string
+	workspaceRoot string
 
 	// planMode indica el modo del agente: Tab lo alterna entre build (false)
 	// y plan (true). Es pegajoso entre envios: cada Enter envia por el camino
@@ -317,12 +321,33 @@ func (m Model) WithStatus(_ string, model string) Model {
 }
 
 // WithWorkspace fija la rama de git y el directorio (ya listo para mostrar,
-// con el home abreviado a ~) que la top bar muestra a la izquierda. Builder
-// de valor como WithStatus: la info entra una sola vez al construir el Model.
+// con el home abreviado a ~) que la top bar muestra a la izquierda.
 func (m Model) WithWorkspace(branch, dir string) Model {
 	m.branch = branch
 	m.workDir = dir
 	return m
+}
+
+// WithWorkspaceRoot conserva ademas la ruta real usada para refrescar git.
+func (m Model) WithWorkspaceRoot(branch, dir, root string) Model {
+	m = m.WithWorkspace(branch, dir)
+	m.workspaceRoot = root
+	return m
+}
+
+func refreshWorkspace(root string) tea.Cmd {
+	if root == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+		cmd.Dir = root
+		output, err := cmd.Output()
+		if err != nil {
+			return workspaceRefreshedMsg{}
+		}
+		return workspaceRefreshedMsg{branch: strings.TrimSpace(string(output))}
+	}
 }
 
 // WithCompletions fija las fuentes del autocompletado del composer: los
@@ -403,9 +428,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch ev := msg.(type) {
 	case EventMsg:
 		m = m.foldEvent(ev)
-		var treeCmd tea.Cmd
+		var treeCmd, workspaceCmd tea.Cmd
 		if ev.Kind == session.KindToolSuccess && ev.Diff != "" {
 			m, treeCmd = m.reloadTree(m.treeOpen)
+		}
+		if ev.Kind == session.KindToolSuccess && ev.ToolName == "bash" {
+			workspaceCmd = refreshWorkspace(m.workspaceRoot)
 		}
 		pump := waitForEvent(m.events)
 		// Un evento que deja texto sin revelar arranca el loop de ticks del
@@ -413,9 +441,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// batcheado con la bomba de eventos.
 		if !m.revealing && m.hasBacklog() {
 			m.revealing = true
-			return m.syncViewportActivity(), tea.Batch(pump, treeCmd, revealTick())
+			return m.syncViewportActivity(), tea.Batch(pump, treeCmd, workspaceCmd, revealTick())
 		}
-		return m.syncViewportActivity(), tea.Batch(pump, treeCmd)
+		return m.syncViewportActivity(), tea.Batch(pump, treeCmd, workspaceCmd)
+	case workspaceRefreshedMsg:
+		m.branch = ev.branch
+		return m, nil
 	case CompactionStatusMsg:
 		if ev.SessionID == m.sessionID {
 			m = m.foldCompactionStatus(ev)

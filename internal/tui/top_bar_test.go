@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -11,6 +12,75 @@ import (
 	"atenea/internal/llm"
 	"atenea/internal/session"
 )
+
+func TestModel_TopBarRefreshesBranchAfterSuccessfulTool(t *testing.T) {
+	root := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, output)
+		}
+	}
+	git("init", "-b", "main")
+	git("-c", "user.name=Atenea Test", "-c", "user.email=atenea@example.test", "commit", "--allow-empty", "-m", "initial")
+
+	m := NewModel(nil, "s1", nil).WithWorkspaceRoot("main", root, root)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 20})
+	git("checkout", "-b", "feature/live-branch")
+
+	updated, cmd := m.update(EventMsg{Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash"})
+	m = updated.(Model)
+	if cmd != nil {
+		m = apply(t, m, cmd())
+	}
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "feature/live-branch") {
+		t.Fatalf("la barra superior debe refrescar la rama tras Tool.Success; View() = %q", view)
+	}
+	if strings.Contains(view, branchGlyph+" main") {
+		t.Fatalf("la barra superior conserva la rama inicial despues del checkout; View() = %q", view)
+	}
+
+	git("checkout", "-b", "fix/second-refresh")
+	updated, cmd = m.update(EventMsg{Kind: session.KindToolSuccess, CallID: "c2", ToolName: "bash"})
+	m = updated.(Model)
+	if cmd != nil {
+		m = apply(t, m, cmd())
+	}
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "fix/second-refresh") {
+		t.Fatalf("la rama debe refrescarse despues de cada bash exitoso; View() = %q", view)
+	}
+}
+
+func TestModel_TopBarRefreshesBranchFromHomeAbbreviatedWorkspace(t *testing.T) {
+	root := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, output)
+		}
+	}
+	git("init", "-b", "main")
+	git("-c", "user.name=Atenea Test", "-c", "user.email=atenea@example.test", "commit", "--allow-empty", "-m", "initial")
+
+	m := NewModel(nil, "s1", nil).WithWorkspaceRoot("main", "~/workspace", root)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 20})
+	git("checkout", "-b", "feature/home-path")
+	updated, cmd := m.update(EventMsg{Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash"})
+	m = updated.(Model)
+	if cmd != nil {
+		m = apply(t, m, cmd())
+	}
+
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "feature/home-path") {
+		t.Fatalf("la rama debe refrescarse cuando el workspace usa ~; View() = %q", view)
+	}
+}
 
 // TestModel_TopBarShowsBranchDirectoryAndContextUsage verifica que, una vez
 // listo el modelo, la primera linea de View() es la barra superior con la rama

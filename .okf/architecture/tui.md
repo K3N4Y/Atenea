@@ -158,10 +158,12 @@ faint) and, aligned to the right inset, the context usage `used / window` (e.g.
 `16k / 200k`) taken from the last `Step.Ended` input tokens and
 `llm.ContextWindow(model)`. When the model's window is unknown only the used
 count shows, and without any usage the right side is empty. Branch and directory
-enter once through `WithWorkspace(branch, dir)`, fed by `cmd/atenea-tui/main.go`
+start through `WithWorkspaceRoot(branch, dir, root)`, fed by `cmd/atenea-tui/main.go`
 (branch via `git rev-parse --abbrev-ref HEAD`, `""` outside a repo; directory
-home-abbreviated). On a width too narrow for both sides the left segment
-truncates with `…` so the context label always fits.
+home-abbreviated). After every successful `bash` tool call the model refreshes
+the branch asynchronously from that workspace, so checkouts and newly created
+branches update the bar without polling. On a width too narrow for both sides
+the left segment truncates with `…` so the context label always fits.
 
 Because the chrome owns the top `topBarHeight` rows, the body (chat, explorer,
 viewer) sizes against `bodyHeight = height - topBarHeight` rather than the full

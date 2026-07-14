@@ -94,7 +94,7 @@ func main() {
 	m := tui.NewModel(engine, sessionID, engine.Events()).
 		WithHistory(history).
 		WithStatus("build", active.Model).
-		WithWorkspace(gitBranch(root), displayDir(root)).
+		WithWorkspaceRoot(gitBranch(root), displayDir(root), root).
 		WithCompletions(engine.Commands(), engine.ProjectFiles).
 		WithFileReader(tui.WorkspaceFileReader(root))
 	// WithMouseCellMotion habilita el mouse tracking: sin el, la terminal nunca
