@@ -10,7 +10,26 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
+
+type sessionSummaryProjection struct {
+	ID    string
+	Title string
+	Cwd   string
+}
+
+func projectSessionSummaries(summaries []SessionSummary) []sessionSummaryProjection {
+	projected := make([]sessionSummaryProjection, 0, len(summaries))
+	for _, summary := range summaries {
+		projected = append(projected, sessionSummaryProjection{
+			ID:    summary.ID,
+			Title: summary.Title,
+			Cwd:   summary.Cwd,
+		})
+	}
+	return projected
+}
 
 // testStoreContract corre el contrato durable del Store contra cualquier
 // implementacion. newStore devuelve un store vacio y listo (un MemoryStore
@@ -226,19 +245,56 @@ func testStoreContract(t *testing.T, newStore func(t *testing.T) Store) {
 		appendContractMessage(t, store, "s1", Message{ID: "m2", Role: RoleAssistant, Text: "respuesta"})
 		// s2 llega despues: debe quedar antes que s1 (mas reciente).
 		appendContractMessage(t, store, "s2", Message{ID: "m3", Role: RoleUser, Text: "otra cosa"})
+
+		before, err := store.Sessions(ctx)
+		if err != nil {
+			t.Fatalf("Sessions before new s1 activity: unexpected error: %v", err)
+		}
+		beforeWant := []sessionSummaryProjection{
+			{ID: "s2", Title: "otra cosa"},
+			{ID: "s1", Title: "primera pregunta"},
+		}
+		if projected := projectSessionSummaries(before); !reflect.DeepEqual(projected, beforeWant) {
+			t.Fatalf("Sessions before new s1 activity: got %+v, want %+v", projected, beforeWant)
+		}
+		for _, summary := range before {
+			if summary.LastActivity.IsZero() {
+				t.Fatalf("Sessions before new s1 activity: summary %+v has zero LastActivity", summary)
+			}
+			if summary.LastActivity.Location() != time.UTC {
+				t.Fatalf("Sessions before new s1 activity: summary %+v LastActivity is not UTC", summary)
+			}
+		}
+		s1LastActivity := before[1].LastActivity
+
 		// s1 vuelve a tener actividad: pasa a ser la mas reciente.
+		lowerBound := time.Now().UTC()
 		appendContractMessage(t, store, "s1", Message{ID: "m4", Role: RoleUser, Text: "segunda pregunta"})
 
 		got, err := store.Sessions(ctx)
 		if err != nil {
 			t.Fatalf("Sessions: unexpected error: %v", err)
 		}
-		want := []SessionSummary{
+		want := []sessionSummaryProjection{
 			{ID: "s1", Title: "primera pregunta"},
 			{ID: "s2", Title: "otra cosa"},
 		}
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("Sessions: got %+v, want %+v", got, want)
+		if projected := projectSessionSummaries(got); !reflect.DeepEqual(projected, want) {
+			t.Fatalf("Sessions: got %+v, want %+v", projected, want)
+		}
+		for _, summary := range got {
+			if summary.LastActivity.IsZero() {
+				t.Fatalf("Sessions: summary %+v has zero LastActivity", summary)
+			}
+			if summary.LastActivity.Location() != time.UTC {
+				t.Fatalf("Sessions: summary %+v LastActivity is not UTC", summary)
+			}
+		}
+		if got[0].LastActivity.Before(s1LastActivity) {
+			t.Fatalf("Sessions: updated s1 LastActivity %v is before previous value %v", got[0].LastActivity, s1LastActivity)
+		}
+		if got[0].LastActivity.Before(lowerBound) {
+			t.Fatalf("Sessions: updated s1 LastActivity %v is before append lower bound %v", got[0].LastActivity, lowerBound)
 		}
 	})
 
@@ -255,9 +311,9 @@ func testStoreContract(t *testing.T, newStore func(t *testing.T) Store) {
 		if err != nil {
 			t.Fatalf("Sessions: unexpected error: %v", err)
 		}
-		want := []SessionSummary{{ID: "s1", Title: ""}}
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("Sessions: got %+v, want %+v", got, want)
+		want := []sessionSummaryProjection{{ID: "s1", Title: ""}}
+		if projected := projectSessionSummaries(got); !reflect.DeepEqual(projected, want) {
+			t.Fatalf("Sessions: got %+v, want %+v", projected, want)
 		}
 	})
 
@@ -277,9 +333,9 @@ func testStoreContract(t *testing.T, newStore func(t *testing.T) Store) {
 		if err != nil {
 			t.Fatalf("Sessions: unexpected error: %v", err)
 		}
-		want := []SessionSummary{{ID: "s1", Title: "Configuracion del proxy"}}
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("Sessions: got %+v, want %+v", got, want)
+		want := []sessionSummaryProjection{{ID: "s1", Title: "Configuracion del proxy"}}
+		if projected := projectSessionSummaries(got); !reflect.DeepEqual(projected, want) {
+			t.Fatalf("Sessions: got %+v, want %+v", projected, want)
 		}
 
 		// El titulo generado tambien se trunca a 80 runes, igual que el fallback.
@@ -324,9 +380,9 @@ func testStoreContract(t *testing.T, newStore func(t *testing.T) Store) {
 		if err != nil {
 			t.Fatalf("Sessions: unexpected error: %v", err)
 		}
-		want := []SessionSummary{{ID: "s1", Title: "hola", Cwd: "/home/u/proj"}}
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("Sessions: got %+v, want %+v", got, want)
+		want := []sessionSummaryProjection{{ID: "s1", Title: "hola", Cwd: "/home/u/proj"}}
+		if projected := projectSessionSummaries(got); !reflect.DeepEqual(projected, want) {
+			t.Fatalf("Sessions: got %+v, want %+v", projected, want)
 		}
 	})
 
@@ -341,9 +397,9 @@ func testStoreContract(t *testing.T, newStore func(t *testing.T) Store) {
 		if err != nil {
 			t.Fatalf("Sessions: unexpected error: %v", err)
 		}
-		want := []SessionSummary{{ID: "s1", Title: "hola", Cwd: ""}}
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("Sessions: got %+v, want %+v", got, want)
+		want := []sessionSummaryProjection{{ID: "s1", Title: "hola", Cwd: ""}}
+		if projected := projectSessionSummaries(got); !reflect.DeepEqual(projected, want) {
+			t.Fatalf("Sessions: got %+v, want %+v", projected, want)
 		}
 	})
 
@@ -583,6 +639,35 @@ func testStoreContract(t *testing.T, newStore func(t *testing.T) Store) {
 
 func TestMemoryStore_Contract(t *testing.T) {
 	testStoreContract(t, func(t *testing.T) Store { return NewMemoryStore() })
+}
+
+func TestMemoryStore_CommitCompactionRefreshesLastActivity(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore()
+
+	appendCompactionMessage(t, store, ctx, "s1", Message{ID: "u1", Role: RoleUser, Text: "first"})
+	coveredThroughSeq := appendCompactionMessage(t, store, ctx, "s1", Message{ID: "a1", Role: RoleAssistant, Text: "done"})
+	preservedFromSeq := appendCompactionMessage(t, store, ctx, "s1", Message{ID: "u2", Role: RoleUser, Text: "current"})
+	checkpoint := compactionCheckpoint(compactionEpoch(t, store, ctx, "s1"), coveredThroughSeq, preservedFromSeq, preservedFromSeq)
+
+	lowerBound := time.Now().UTC()
+	if _, err := store.CommitCompaction(ctx, "s1", checkpoint); err != nil {
+		t.Fatalf("CommitCompaction: %v", err)
+	}
+
+	summaries, err := store.Sessions(ctx)
+	if err != nil {
+		t.Fatalf("Sessions: %v", err)
+	}
+	if len(summaries) != 1 {
+		t.Fatalf("Sessions: got %+v, want one summary", summaries)
+	}
+	if summaries[0].LastActivity.Before(lowerBound) {
+		t.Fatalf("CommitCompaction LastActivity %v is before lower bound %v", summaries[0].LastActivity, lowerBound)
+	}
+	if summaries[0].LastActivity.Location() != time.UTC {
+		t.Fatalf("CommitCompaction LastActivity %v is not UTC", summaries[0].LastActivity)
+	}
 }
 
 func TestSQLiteStore_Contract(t *testing.T) {

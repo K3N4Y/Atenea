@@ -6,6 +6,7 @@ import (
 	"slices"
 	"sort"
 	"sync"
+	"time"
 )
 
 // MemoryStore es la implementacion en memoria del Store para M1..M9. Guarda el
@@ -18,17 +19,19 @@ type MemoryStore struct {
 	// lastSeen marca el orden global de insercion del ultimo evento de cada
 	// sesion: el equivalente en memoria del MAX(rowid) que ordena Sessions por
 	// recencia. Un contador monotonico global lo alimenta en cada AppendEvent.
-	lastSeen map[string]int
-	clock    int
+	lastSeen     map[string]int
+	lastActivity map[string]time.Time
+	clock        int
 }
 
 // NewMemoryStore crea un store vacio listo para usar.
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		sessions:    make(map[string][]SessionEvent),
-		epochs:      make(map[string]ContextEpoch),
-		checkpoints: make(map[string]CompactionCheckpoint),
-		lastSeen:    make(map[string]int),
+		sessions:     make(map[string][]SessionEvent),
+		epochs:       make(map[string]ContextEpoch),
+		checkpoints:  make(map[string]CompactionCheckpoint),
+		lastSeen:     make(map[string]int),
+		lastActivity: make(map[string]time.Time),
 	}
 }
 
@@ -61,6 +64,7 @@ func (s *MemoryStore) AppendEvent(ctx context.Context, sessionID string, ev Sess
 	}
 	s.clock++
 	s.lastSeen[sessionID] = s.clock
+	s.lastActivity[sessionID] = time.Now().UTC()
 	return seq, nil
 }
 
@@ -100,10 +104,11 @@ func (s *MemoryStore) Sessions(ctx context.Context) ([]SessionSummary, error) {
 	defer s.mu.Unlock()
 
 	type entry struct {
-		id    string
-		title string
-		cwd   string
-		last  int // posicion global del ultimo evento: aproxima MAX(rowid)
+		id           string
+		title        string
+		cwd          string
+		last         int // posicion global del ultimo evento: aproxima MAX(rowid)
+		lastActivity time.Time
 	}
 	entries := make([]entry, 0, len(s.sessions))
 	for id, raw := range s.sessions {
@@ -137,13 +142,19 @@ func (s *MemoryStore) Sessions(ctx context.Context) ([]SessionSummary, error) {
 		// sesiones eso no ordena por recencia. Igualamos al store durable usando un
 		// contador de insercion global; aqui lo reconstruimos por el orden de
 		// llegada que ya quedo en cada log via el contador del store.
-		entries = append(entries, entry{id: id, title: title, cwd: cwd, last: s.lastSeen[id]})
+		entries = append(entries, entry{
+			id:           id,
+			title:        title,
+			cwd:          cwd,
+			last:         s.lastSeen[id],
+			lastActivity: s.lastActivity[id],
+		})
 	}
 	sort.Slice(entries, func(a, b int) bool { return entries[a].last > entries[b].last })
 
 	out := make([]SessionSummary, 0, len(entries))
 	for _, e := range entries {
-		out = append(out, SessionSummary{ID: e.id, Title: e.title, Cwd: e.cwd})
+		out = append(out, SessionSummary{ID: e.id, Title: e.title, Cwd: e.cwd, LastActivity: e.lastActivity})
 	}
 	return out, nil
 }
@@ -266,6 +277,7 @@ func (s *MemoryStore) CommitCompaction(ctx context.Context, sessionID string, ch
 	s.checkpoints[sessionID] = checkpointCopy
 	s.clock++
 	s.lastSeen[sessionID] = s.clock
+	s.lastActivity[sessionID] = time.Now().UTC()
 	return seq, nil
 }
 
@@ -324,6 +336,7 @@ func (s *MemoryStore) DeleteSession(ctx context.Context, sessionID string) error
 	}
 	delete(s.sessions, sessionID)
 	delete(s.lastSeen, sessionID)
+	delete(s.lastActivity, sessionID)
 	delete(s.epochs, sessionID)
 	delete(s.checkpoints, sessionID)
 	return nil
