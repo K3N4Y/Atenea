@@ -19,6 +19,12 @@ Chroma highlighting for the viewer, run as `tea.Cmd` work. The model renders
 loading/error states and applies only results whose generation still matches
 the latest request, so slow disk work cannot block or overwrite newer input.
 
+All model, tool, filesystem, Git, provider, and error text crosses a terminal
+text boundary before Markdown, Chroma, or Lip Gloss render it. The boundary
+removes pre-existing ANSI/OSC sequences and C0/C1 controls (preserving line
+breaks and expanding tabs), so only styles generated inside the TUI reach the
+terminal.
+
 ```
 wails app:  agent.Service -> runner -> EmittingStore -> Bus -> runtime.EventsEmit -> frontend web
 atenea-tui: agent.Service -> runner -> EmittingStore -> Bus -> chan tea.Msg       -> Bubble Tea

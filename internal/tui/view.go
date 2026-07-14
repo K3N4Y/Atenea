@@ -71,6 +71,8 @@ const activityInset = "  "
 // resumen (`● bash     ls`). Sin resumen se recortan los espacios colgantes
 // de la alineacion para no dejar una cola invisible en la linea.
 func activityHeader(marker, name, summary string) string {
+	name = sanitizeTerminalText(name)
+	summary = sanitizeTerminalText(summary)
 	return strings.TrimRight(activityInset+marker+" "+fmt.Sprintf("%-*s", activityNameWidth, name)+" "+summary, " ")
 }
 
@@ -139,7 +141,7 @@ func (e entry) render(width int) string {
 		if width > 2*composerOuterMargin {
 			style = style.Width(width - 2*composerOuterMargin)
 		}
-		return lipgloss.NewStyle().Margin(0, composerOuterMargin).Render(style.Render(userMarkerStyle.Render("❯ ") + userTextStyle.Render(e.text)))
+		return lipgloss.NewStyle().Margin(0, composerOuterMargin).Render(style.Render(userMarkerStyle.Render("❯ ") + userTextStyle.Render(sanitizeTerminalText(e.text))))
 	case entryReasoning:
 		return e.renderThinking(width)
 	case entryTool:
@@ -159,9 +161,9 @@ func (e entry) render(width int) string {
 		return errorStyle.Render(activityHeader(activityFailMarker, "error", e.text))
 	case entryCompaction:
 		if e.err != "" {
-			return errorStyle.Render("[error] " + e.err)
+			return errorStyle.Render("[error] " + sanitizeTerminalText(e.err))
 		}
-		return statusStyle.Render("[context] " + e.text)
+		return statusStyle.Render("[context] " + sanitizeTerminalText(e.text))
 	default: // entryAssistant: texto plano sin marcador
 		// Los bloques asentados se rinden completos; durante el streaming se
 		// rinde solo el prefijo revelado para no filtrar el backlog pendiente.
@@ -193,7 +195,7 @@ const thinkingInset = "  "
 func (e entry) renderThinking(width int) string {
 	if !e.settled() {
 		lines := []string{statusStyle.Render("[pensando]")}
-		for _, line := range lastNonEmptyLines(e.revealedText(), thinkingPreviewLines) {
+		for _, line := range lastNonEmptyLines(sanitizeTerminalText(e.revealedText()), thinkingPreviewLines) {
 			lines = append(lines, statusStyle.Render(line))
 		}
 		return insetThinking(strings.Join(lines, "\n"))
@@ -208,7 +210,7 @@ func (e entry) renderThinking(width int) string {
 	// Expandido: cabecera de resumen seguida del texto completo del
 	// pensamiento, envuelto al ancho del viewport (0 = sin envolver) y en
 	// estilo tenue, con cada linea como UN segmento asertable.
-	body := e.revealedText()
+	body := sanitizeTerminalText(e.revealedText())
 	if width > len(thinkingInset) {
 		body = ansi.Wrap(body, width-len(thinkingInset), "")
 	}
@@ -279,7 +281,7 @@ func readFileName(raw string) string {
 			displayPath = displayPath[:i]
 		}
 	}
-	return path.Base(strings.ReplaceAll(displayPath, "\\", "/"))
+	return sanitizeTerminalText(path.Base(strings.ReplaceAll(displayPath, "\\", "/")))
 }
 
 // renderActivity es el render comun de las entradas de actividad de tool: el
@@ -312,7 +314,7 @@ func (e entry) renderActivity(name, summary string, showDetail bool) string {
 	case toolFailed:
 		// El error va debajo del header como linea de rail, no pegado a el.
 		return toolFailedStyle.Render(activityHeader(activityFailMarker, name, summary)) +
-			"\n" + toolFailedStyle.Render(activityRailPrefix+"error: "+e.err)
+			"\n" + toolFailedStyle.Render(activityRailPrefix+"error: "+sanitizeTerminalText(e.err))
 	default:
 		return toolRunningStyle.Render(activityHeader(activityRunMarker, name, summary))
 	}
@@ -344,7 +346,7 @@ func skillName(raw string) string {
 	if err := json.Unmarshal([]byte(raw), &input); err != nil {
 		return ""
 	}
-	return input.Name
+	return sanitizeTerminalText(input.Name)
 }
 
 // summarizeToolInput resume el JSON del Input de la tool para el header del
@@ -379,6 +381,7 @@ func summarizeToolInput(raw string) string {
 		}
 		summary = buf.String()
 	}
+	summary = sanitizeTerminalText(summary)
 	summary = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(summary)
 	return ansi.Truncate(summary, toolInputSummaryWidth, "…")
 }
@@ -390,6 +393,7 @@ func summarizeToolInput(raw string) string {
 // (N = ocultas) que acota el detalle para no inundar el transcript. Texto
 // vacio o solo whitespace devuelve "" (sin preview).
 func renderCappedLines(text string, maxLines int, renderLine func(line string) string) string {
+	text = sanitizeTerminalText(text)
 	if strings.TrimSpace(text) == "" {
 		return ""
 	}
@@ -509,6 +513,7 @@ func markdownRenderer(wrap int) (*glamour.TermRenderer, error) {
 // que perder contenido. Los saltos de linea de borde se recortan porque
 // renderTranscript ya separa los bloques con "\n\n".
 func renderMarkdown(text string, width int) string {
+	text = sanitizeTerminalText(text)
 	wrap := width
 	if wrap > 0 {
 		wrap = max(wrap-markdownDocMargin, 0)
@@ -835,9 +840,9 @@ func (m Model) menuView() string {
 		if i == m.menuSelected {
 			prefix = accentStyle.Render("❯ ")
 		}
-		line := prefix + item.label
+		line := prefix + sanitizeTerminalText(item.label)
 		if item.description != "" {
-			line += "  " + statusStyle.Render(item.description)
+			line += "  " + statusStyle.Render(sanitizeTerminalText(item.description))
 		}
 		if width := m.chatContentWidth(); m.ready && width > 0 {
 			line = ansi.Truncate(line, width, "…")
@@ -990,7 +995,7 @@ func (m Model) treeView() string {
 	if m.treeLoading {
 		lines = append(lines, statusStyle.Render("cargando workspace…"))
 	} else if m.treeError != "" {
-		lines = append(lines, statusStyle.Render(m.treeError))
+		lines = append(lines, statusStyle.Render(sanitizeTerminalText(m.treeError)))
 	} else {
 		rows := m.tree.visibleRows()
 		if len(rows) == 0 {
@@ -1010,7 +1015,7 @@ func (m Model) treeView() string {
 					icon = iconFolderOpen
 				}
 			}
-			line := strings.Repeat("  ", row.depth) + icon + " " + row.node.name
+			line := strings.Repeat("  ", row.depth) + icon + " " + sanitizeTerminalText(row.node.name)
 			if innerWidth > 0 {
 				line = ansi.Truncate(line, innerWidth, "…")
 			}

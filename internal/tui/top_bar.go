@@ -63,13 +63,13 @@ func (m Model) topBar() string {
 func (m Model) topBarLine() string {
 	left := ""
 	if m.branch != "" {
-		left = branchStyle.Render(branchGlyph + " " + m.branch)
+		left = branchStyle.Render(branchGlyph + " " + sanitizeTerminalText(m.branch))
 	}
 	if m.workDir != "" {
 		if left != "" {
-			left += "  " + statusStyle.Render(m.workDir)
+			left += "  " + statusStyle.Render(sanitizeTerminalText(m.workDir))
 		} else {
-			left = statusStyle.Render(m.workDir)
+			left = statusStyle.Render(sanitizeTerminalText(m.workDir))
 		}
 	}
 	right := m.topBarContext()

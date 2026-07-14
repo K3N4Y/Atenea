@@ -93,6 +93,7 @@ func openFileViewer(path string, content []byte) fileViewer {
 	}
 
 	normalized := strings.ReplaceAll(string(content), "\r\n", "\n")
+	normalized = sanitizeTerminalText(normalized)
 	normalized = strings.ReplaceAll(normalized, "\t", strings.Repeat(" ", fileViewerTabWidth))
 	lines := strings.Split(normalized, "\n")
 	if strings.HasSuffix(normalized, "\n") {
@@ -102,12 +103,13 @@ func openFileViewer(path string, content []byte) fileViewer {
 }
 
 func openFileViewerError(path string, err error) fileViewer {
-	message := fmt.Sprintf("no se puede abrir %s: %v", path, err)
+	safePath := sanitizeTerminalText(path)
+	message := fmt.Sprintf("no se puede abrir %s: %s", safePath, sanitizeTerminalText(err.Error()))
 	switch {
 	case errors.Is(err, ErrFileViewerBinary):
-		message = "archivo binario: " + path
+		message = "archivo binario: " + safePath
 	case errors.Is(err, ErrFileViewerTooLarge):
-		message = "archivo demasiado grande (> 1 MiB): " + path
+		message = "archivo demasiado grande (> 1 MiB): " + safePath
 	}
 	return fileViewer{path: path, message: message}
 }
@@ -163,14 +165,15 @@ func (v *fileViewer) scroll(delta, height int) {
 }
 
 func (v fileViewer) header(width, height int) string {
+	safePath := sanitizeTerminalText(v.path)
 	if v.message != "" || v.empty {
 		if width <= 0 {
-			return v.path
+			return safePath
 		}
-		return ansi.Truncate(v.path, width, "…")
+		return ansi.Truncate(safePath, width, "…")
 	}
 	first, last := v.visibleRange(height)
-	value := fmt.Sprintf("%s · %d-%d/%d", v.path, first+1, last, v.lineCount)
+	value := fmt.Sprintf("%s · %d-%d/%d", safePath, first+1, last, v.lineCount)
 	if width <= 0 {
 		return value
 	}
@@ -179,16 +182,18 @@ func (v fileViewer) header(width, height int) string {
 
 func (v fileViewer) render(width, height int) string {
 	if v.message != "" {
+		message := sanitizeTerminalText(v.message)
 		if width <= 0 {
-			return v.message
+			return message
 		}
-		return ansi.Truncate(v.message, width, "…")
+		return ansi.Truncate(message, width, "…")
 	}
 	if v.empty {
+		message := "archivo vacio: " + sanitizeTerminalText(v.path)
 		if width <= 0 {
-			return "archivo vacio: " + v.path
+			return message
 		}
-		return ansi.Truncate("archivo vacio: "+v.path, width, "…")
+		return ansi.Truncate(message, width, "…")
 	}
 	first, last := v.visibleRange(height)
 	gutterWidth := len(strconv.Itoa(v.lineCount))
