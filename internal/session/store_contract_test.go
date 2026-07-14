@@ -268,7 +268,7 @@ func testStoreContract(t *testing.T, newStore func(t *testing.T) Store) {
 		s1LastActivity := before[1].LastActivity
 
 		// s1 vuelve a tener actividad: pasa a ser la mas reciente.
-		lowerBound := time.Now().UTC()
+		lowerBound := time.UnixMilli(time.Now().UTC().UnixMilli()).UTC()
 		appendContractMessage(t, store, "s1", Message{ID: "m4", Role: RoleUser, Text: "segunda pregunta"})
 
 		got, err := store.Sessions(ctx)
@@ -650,7 +650,7 @@ func TestMemoryStore_CommitCompactionRefreshesLastActivity(t *testing.T) {
 	preservedFromSeq := appendCompactionMessage(t, store, ctx, "s1", Message{ID: "u2", Role: RoleUser, Text: "current"})
 	checkpoint := compactionCheckpoint(compactionEpoch(t, store, ctx, "s1"), coveredThroughSeq, preservedFromSeq, preservedFromSeq)
 
-	lowerBound := time.Now().UTC()
+	lowerBound := time.UnixMilli(time.Now().UTC().UnixMilli()).UTC()
 	if _, err := store.CommitCompaction(ctx, "s1", checkpoint); err != nil {
 		t.Fatalf("CommitCompaction: %v", err)
 	}

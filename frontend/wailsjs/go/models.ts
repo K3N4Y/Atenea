@@ -317,6 +317,7 @@ export namespace session {
 	    ID: string;
 	    Title: string;
 	    Cwd: string;
+	    LastActivity: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new SessionSummary(source);
@@ -327,10 +328,10 @@ export namespace session {
 	        this.ID = source["ID"];
 	        this.Title = source["Title"];
 	        this.Cwd = source["Cwd"];
+	        this.LastActivity = source["LastActivity"];
 	    }
 	}
 	
 	
 
 }
-

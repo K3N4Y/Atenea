@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS events (
 	checkpoint_prompt TEXT,
 	checkpoint_before_tree TEXT,
 	checkpoint_after_tree TEXT,
+	activity_at INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (session_id, seq)
 );
 
@@ -53,6 +54,18 @@ CREATE TABLE IF NOT EXISTS session_context (
   revision     INTEGER NOT NULL DEFAULT 0,
   checkpoint   BLOB
 );`
+
+const sqliteCurrentUnixMilli = `(CAST(strftime('%s', 'now') AS INTEGER) * 1000 + CAST(substr(strftime('%f', 'now'), 4, 3) AS INTEGER))`
+
+const activityTrigger = `
+CREATE TRIGGER IF NOT EXISTS events_fill_activity_at
+AFTER INSERT ON events
+WHEN NEW.activity_at = 0
+BEGIN
+  UPDATE events
+     SET activity_at = ` + sqliteCurrentUnixMilli + `
+   WHERE rowid = NEW.rowid;
+END;`
 
 // SQLiteStore implementa Store sobre SQLite via el driver puro Go modernc.org/sqlite.
 type SQLiteStore struct {
@@ -130,6 +143,7 @@ func migrateSQLiteSchema(db *sql.DB) error {
 		{"checkpoint_prompt", "TEXT"},
 		{"checkpoint_before_tree", "TEXT"},
 		{"checkpoint_after_tree", "TEXT"},
+		{"activity_at", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if columns[column.name] {
 			continue
@@ -143,6 +157,13 @@ func migrateSQLiteSchema(db *sql.DB) error {
 				return fmt.Errorf("migrate events column %q: %w", column.name, err)
 			}
 		}
+	}
+	if _, err := db.Exec(activityTrigger); err != nil {
+		return fmt.Errorf("create events activity trigger: %w", err)
+	}
+	activityAt := time.Now().UTC().UnixMilli()
+	if _, err := db.Exec(`UPDATE events SET activity_at = ? WHERE activity_at = 0`, activityAt); err != nil {
+		return fmt.Errorf("backfill events activity_at: %w", err)
 	}
 	return nil
 }
@@ -320,8 +341,8 @@ func (s *SQLiteStore) AppendEvent(ctx context.Context, sessionID string, ev Sess
 	var seq int64
 	if err := tx.QueryRowContext(ctx,
 		`INSERT INTO events
-		   (session_id, seq, kind, has_message, msg_id, role, text, call_id, tool_name, input, usage, error, tool_calls, tool_call_id, ev_text, diff, compaction, checkpoint_id, checkpoint_prompt, checkpoint_before_tree, checkpoint_after_tree)
-		 VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM events WHERE session_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		   (session_id, seq, kind, has_message, msg_id, role, text, call_id, tool_name, input, usage, error, tool_calls, tool_call_id, ev_text, diff, compaction, checkpoint_id, checkpoint_prompt, checkpoint_before_tree, checkpoint_after_tree, activity_at)
+		 VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM events WHERE session_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+sqliteCurrentUnixMilli+`)
 		 RETURNING seq`,
 		sessionID, sessionID, string(ev.Kind), hasMessage, msgID, role, text,
 		ev.CallID, ev.ToolName, []byte(ev.Input), usage, ev.Error, toolCalls, toolCallID, ev.Text, ev.Diff, compaction,
@@ -383,25 +404,32 @@ func (s *SQLiteStore) Messages(ctx context.Context, sessionID string, sinceSeq S
 }
 
 // Sessions devuelve un resumen por sesion con al menos un evento, ordenado por
-// actividad mas reciente primero. Ordena por MAX(rowid) DESC (el rowid implicito
-// es monotonico con la insercion, esta tabla NO es WITHOUT ROWID), y para cada
+// actividad mas reciente primero. Usa MAX(rowid) DESC como desempate estable
+// cuando varias sesiones comparten el mismo milisegundo de actividad. Para cada
 // sesion toma como Title el texto del primer mensaje del usuario (menor seq,
 // role=user, has_message=1), truncado. Title "" si la sesion no tiene aun uno.
 func (s *SQLiteStore) Sessions(ctx context.Context) ([]SessionSummary, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT session_id FROM events GROUP BY session_id ORDER BY MAX(rowid) DESC`,
+		`SELECT session_id, MAX(activity_at) AS last_activity
+		   FROM events
+		  GROUP BY session_id
+		  ORDER BY last_activity DESC, MAX(rowid) DESC`,
 	)
 	if err != nil {
 		return nil, err
 	}
-	ids := make([]string, 0)
+	type sessionActivity struct {
+		id         string
+		activityAt int64
+	}
+	activities := make([]sessionActivity, 0)
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var activity sessionActivity
+		if err := rows.Scan(&activity.id, &activity.activityAt); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		ids = append(ids, id)
+		activities = append(activities, activity)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -411,9 +439,9 @@ func (s *SQLiteStore) Sessions(ctx context.Context) ([]SessionSummary, error) {
 		return nil, err
 	}
 
-	out := make([]SessionSummary, 0, len(ids))
-	for _, id := range ids {
-		events, err := s.rawEvents(ctx, id)
+	out := make([]SessionSummary, 0, len(activities))
+	for _, activity := range activities {
+		events, err := s.rawEvents(ctx, activity.id)
 		if err != nil {
 			return nil, err
 		}
@@ -432,7 +460,12 @@ func (s *SQLiteStore) Sessions(ctx context.Context) ([]SessionSummary, error) {
 		if title == "" {
 			title = firstUser
 		}
-		out = append(out, SessionSummary{ID: id, Title: truncateTitle(title), Cwd: cwd})
+		out = append(out, SessionSummary{
+			ID:           activity.id,
+			Title:        truncateTitle(title),
+			Cwd:          cwd,
+			LastActivity: time.UnixMilli(activity.activityAt).UTC(),
+		})
 	}
 	return out, nil
 }
@@ -752,8 +785,8 @@ func (s *SQLiteStore) CommitCompaction(ctx context.Context, sessionID string, ch
 	}
 	var seq int64
 	if err := tx.QueryRowContext(ctx,
-		`INSERT INTO events (session_id, seq, kind, has_message, compaction)
-		 VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM events WHERE session_id = ?), ?, 0, ?)
+		`INSERT INTO events (session_id, seq, kind, has_message, compaction, activity_at)
+		 VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM events WHERE session_id = ?), ?, 0, ?, `+sqliteCurrentUnixMilli+`)
 		 RETURNING seq`,
 		sessionID, sessionID, string(KindContextCompacted), checkpointRaw,
 	).Scan(&seq); err != nil {
