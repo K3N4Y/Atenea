@@ -161,9 +161,11 @@ The opening follows this order, before creating the render:
 6. Detect lexer by name/path with Chroma. If there is no lexer, use
  plaintext lexer; opening an unknown format is never a mistake.
 
-The limit is evaluated on the bytes read. No previews or skipping of the
-end of a large file: the limit message is displayed to avoid an
-incomplete view that looks faithful.
+The reader rejects files whose reported size exceeds 1 MiB before opening
+them and limits every read to 1 MiB plus one byte. The second check covers a
+file that grows after `Stat` or a source whose reported size is inaccurate.
+No previews or skipping of the end of a large file: the limit message is
+displayed to avoid an incomplete view that looks faithful.
 
 Status messages are stable and assertable:
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -55,7 +56,28 @@ func WorkspaceFileReader(root string) FileReader {
 		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 			return nil, fmt.Errorf("ruta fuera del workspace: %s", path)
 		}
-		return os.ReadFile(candidate)
+		info, err := os.Stat(candidate)
+		if err != nil {
+			return nil, err
+		}
+		if info.Size() > maxFileViewerBytes {
+			return nil, ErrFileViewerTooLarge
+		}
+
+		file, err := os.Open(candidate)
+		if err != nil {
+			return nil, err
+		}
+		defer file.Close()
+
+		content, err := io.ReadAll(io.LimitReader(file, maxFileViewerBytes+1))
+		if err != nil {
+			return nil, err
+		}
+		if len(content) > maxFileViewerBytes {
+			return nil, ErrFileViewerTooLarge
+		}
+		return content, nil
 	}
 }
 

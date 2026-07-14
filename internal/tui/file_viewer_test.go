@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -98,6 +99,39 @@ func TestWorkspaceFileReader_ReadsRelativePathAndRejectsEscape(t *testing.T) {
 	}
 	if _, err := read("escape.txt"); err == nil {
 		t.Fatal("symlink escape must fail")
+	}
+}
+
+func TestWorkspaceFileReader_RejectsOversizedFileBeforeReading(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "large.txt")
+	if err := os.WriteFile(path, make([]byte, maxFileViewerBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+
+	_, err := WorkspaceFileReader(root)("large.txt")
+	if !errors.Is(err, ErrFileViewerTooLarge) {
+		t.Fatalf("error = %v, want %v", err, ErrFileViewerTooLarge)
+	}
+}
+
+func TestWorkspaceFileReader_AcceptsMaximumSize(t *testing.T) {
+	root := t.TempDir()
+	want := make([]byte, maxFileViewerBytes)
+	if err := os.WriteFile(filepath.Join(root, "maximum.txt"), want, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := WorkspaceFileReader(root)("maximum.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("bytes read = %d, want %d", len(got), len(want))
 	}
 }
 
