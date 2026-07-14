@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-09
+updated_at: 2026-07-13
 summary: Design specification for the read-only TUI file viewer.
 ---
 
@@ -144,7 +144,7 @@ alter the transcript or the composer: it opens the viewer with its error status 
 `listFiles` is still the source of tree paths. The read receives an explicit, injectable
 dependency, for example `readFile(path string)
 ([]byte, error)`, configured from the same workspace root as
-`Engine.ProjectFiles`. The production implementation must resolve the path and reject escapes outside the root before invoking `os.ReadFile`; the tests use
+`Engine.ProjectFiles`. The production implementation must resolve symlinks for both the workspace root and requested file, then reject any real path outside the root before invoking `os.ReadFile`; the tests use
 a fake in memory. The path shown and the path used to read are always
 relative, with separators `/`.
 

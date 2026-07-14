@@ -82,12 +82,22 @@ func TestWorkspaceFileReader_ReadsRelativePathAndRejectsEscape(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "ok.txt"), []byte("ok"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "escape.txt")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
 	read := WorkspaceFileReader(root)
 	if got, err := read("ok.txt"); err != nil || string(got) != "ok" {
 		t.Fatalf("read = %q, %v", got, err)
 	}
 	if _, err := read("../outside.txt"); err == nil {
 		t.Fatal("escape must fail")
+	}
+	if _, err := read("escape.txt"); err == nil {
+		t.Fatal("symlink escape must fail")
 	}
 }
 

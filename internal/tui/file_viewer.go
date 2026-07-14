@@ -36,6 +36,9 @@ type fileViewer struct {
 
 func WorkspaceFileReader(root string) FileReader {
 	cleanRoot, rootErr := filepath.Abs(root)
+	if rootErr == nil {
+		cleanRoot, rootErr = filepath.EvalSymlinks(cleanRoot)
+	}
 	return func(path string) ([]byte, error) {
 		if rootErr != nil {
 			return nil, rootErr
@@ -44,7 +47,10 @@ func WorkspaceFileReader(root string) FileReader {
 		if filepath.IsAbs(cleanPath) || cleanPath == "." || cleanPath == ".." || strings.HasPrefix(cleanPath, ".."+string(filepath.Separator)) {
 			return nil, fmt.Errorf("ruta fuera del workspace: %s", path)
 		}
-		candidate := filepath.Join(cleanRoot, cleanPath)
+		candidate, err := filepath.EvalSymlinks(filepath.Join(cleanRoot, cleanPath))
+		if err != nil {
+			return nil, err
+		}
 		relative, err := filepath.Rel(cleanRoot, candidate)
 		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 			return nil, fmt.Errorf("ruta fuera del workspace: %s", path)
