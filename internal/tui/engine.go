@@ -12,6 +12,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"atenea/internal/agent"
 	"atenea/internal/checkpoint"
 	"atenea/internal/command"
 	"atenea/internal/event"
@@ -62,13 +63,13 @@ type Engine struct {
 	inbox  session.Inbox
 	gate   *session.MemoryPermissionGate
 	runner *runner.Runner
+	agent  *agent.Service
 
-	// commands y glob alimentan el autocompletado del composer (espejo de
+	// agent y glob alimentan el autocompletado del composer (espejo de
 	// App.ListCommands/App.ListProjectFiles): los slash-commands derivados de
 	// las skills y el glob del @-menu de archivos. Inmutables tras NewEngine:
 	// se leen sin mu.
-	commands *command.Set
-	glob     *tool.GlobTool
+	glob *tool.GlobTool
 
 	// root y store espejan a.workspaceRoot()/a.store en la app Wails: la raiz
 	// del workspace y el store DECORADO con EmittingStore (el mismo que recibe
@@ -82,21 +83,8 @@ type Engine struct {
 	refreshingModels bool
 
 	mu                 sync.Mutex
-	runs               map[string]*engineRun // sessionID -> corrida en vuelo (identidad por puntero)
-	nextRunID          uint64
-	modes              map[string]session.Mode // sessionID -> modo (normal/plan); guardado con mu como runs
-	ops                map[string]*sync.Mutex
 	pendingCompactions map[string]bool
 	compacting         map[string]bool
-}
-
-// engineRun identifica una corrida en vuelo. Se compara por puntero porque
-// context.CancelFunc no es comparable.
-type engineRun struct {
-	id           uint64
-	cancel       context.CancelFunc
-	done         chan struct{}
-	checkpointID string
 }
 
 // Fija en compilacion que Engine satisface la interface Agent de la TUI.
@@ -112,9 +100,6 @@ func NewEngine(cfg EngineConfig) *Engine {
 		events:             make(chan tea.Msg, 256),
 		inbox:              session.NewMemoryInbox(),
 		gate:               session.NewMemoryPermissionGate(),
-		runs:               map[string]*engineRun{},
-		modes:              map[string]session.Mode{},
-		ops:                map[string]*sync.Mutex{},
 		pendingCompactions: map[string]bool{},
 		compacting:         map[string]bool{},
 	}
@@ -133,6 +118,7 @@ func NewEngine(cfg EngineConfig) *Engine {
 	e.root = cfg.Root
 	e.undoStore, _ = cfg.Store.(session.UndoStore)
 	e.store = event.NewEmittingStore(cfg.Store, bus)
+	e.agent = agent.NewService(e.inbox)
 	e.checkpoints = cfg.Checkpoints
 	e.models = cfg.Models
 	built := wiring.Build(wiring.Config{
@@ -145,10 +131,10 @@ func NewEngine(cfg EngineConfig) *Engine {
 		Bus:      bus,
 		Local:    cfg.Local,
 		NextID:   wiring.NewIDGen(),
-		Mode:     e.modeFor, // el runner consulta el modo por sesion al inicio de cada turno
+		Mode:     e.agent.Mode,
 	})
 	e.runner = built.Runner
-	e.commands = built.Commands
+	e.agent.Configure(built.Runner, built.Commands)
 	e.glob = built.Glob
 	return e
 }
@@ -208,7 +194,7 @@ func cloneProviderModels(in []providerconfig.ProviderModels) []providerconfig.Pr
 // Commands lista los slash-commands disponibles (nombre + descripcion) para el
 // menu "/" del composer, ordenados por nombre (espejo de App.ListCommands).
 func (e *Engine) Commands() []command.Command {
-	commands := e.commands.List()
+	commands := e.agent.Commands()
 	commands = append(commands, command.Command{Name: "undo", Description: "Undo the last prompt and its file changes"})
 	sort.Slice(commands, func(i, j int) bool { return commands[i].Name < commands[j].Name })
 	return commands
@@ -258,7 +244,7 @@ func (e *Engine) PromptHistory() ([]string, error) {
 				return nil, err
 			}
 			for _, message := range messages {
-				if message.Role == session.RoleUser && message.Text != acceptPlanPrompt {
+				if message.Role == session.RoleUser && message.Text != agent.AcceptPlanPrompt {
 					prompts = append(prompts, message.Text)
 				}
 			}
@@ -269,24 +255,6 @@ func (e *Engine) PromptHistory() ([]string, error) {
 		history = history[len(history)-historyLimit:]
 	}
 	return history, nil
-}
-
-// modeFor devuelve el modo de la sesion (normal/plan). Es el hook Mode de
-// wiring.Build: el runner lo consulta al inicio de cada turno. Guarda e.modes
-// con mu, igual que runs (espejo de App.modeFor).
-func (e *Engine) modeFor(sessionID string) session.Mode {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.modes[sessionID]
-}
-
-// setMode fija el modo de la sesion. Se llama SIEMPRE antes de send
-// (adquisiciones de lock separadas, nunca anidadas) porque send tambien toma
-// e.mu (espejo de App.setMode).
-func (e *Engine) setMode(sessionID string, m session.Mode) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.modes[sessionID] = m
 }
 
 // SendPrompt encola un prompt del usuario por el camino normal y devuelve la
@@ -308,199 +276,145 @@ func (e *Engine) SendPrompt(sessionID, text string) (RunHandle, error) {
 		e.requestCompaction(sessionID)
 		return RunHandle{SessionID: sessionID}, nil
 	}
-	e.setMode(sessionID, session.ModeNormal)
-	runID, err := e.send(sessionID, text, text)
+	run, err := e.agent.Send(sessionID, text, e.turnHooks(sessionID, text))
 	if err != nil {
 		return RunHandle{}, err
 	}
-	return RunHandle{SessionID: sessionID, RunID: runID}, nil
+	return RunHandle{SessionID: sessionID, RunID: run.ID}, nil
 }
 
 // SendPlanPrompt encola el prompt en plan-mode: investigacion de solo lectura
 // mas present_plan, con el contrato de plan-mode en el system prompt. Fija
 // ModePlan antes de arrancar (espejo de App.SendPlanPrompt).
 func (e *Engine) SendPlanPrompt(sessionID, text string) (RunHandle, error) {
-	e.setMode(sessionID, session.ModePlan)
-	runID, err := e.send(sessionID, text, text)
-	return RunHandle{SessionID: sessionID, RunID: runID}, err
+	run, err := e.agent.SendPlan(sessionID, text, e.turnHooks(sessionID, text))
+	return RunHandle{SessionID: sessionID, RunID: run.ID}, err
 }
 
-// expandCommand resuelve un slash-command ("/name args") al prompt expandido
-// segun el registro; el texto que no es un comando registrado pasa sin cambios
-// (espejo de App.expandCommand).
-func (e *Engine) expandCommand(text string) string {
-	if expanded, ok := e.commands.Resolve(text); ok {
-		return expanded
-	}
-	return text
-}
-
-// send expande el prompt si es un slash-command, lo encola y dispara la
-// corrida en una goroutine con un ctx cancelable registrado por sesion (espejo
-// de App.start): si habia una corrida previa de la misma sesion, se cancela y
-// la sustituta espera su cierre antes de entrar al runner. Al terminar se limpia
-// el handle y se publica RunDoneMsg con sessionID + runID; una cancelacion
-// deliberada (Stop, follow-up) es un cierre limpio, no un error.
-// Es el camino comun de SendPrompt y SendPlanPrompt: el modo de la sesion ya
-// quedo fijado antes de llamarlo.
-func (e *Engine) send(sessionID, text, composerPrompt string) (uint64, error) {
-	operation := e.operationLock(sessionID)
-	operation.Lock()
-	defer operation.Unlock()
-
+// turnHooks conserva las responsabilidades exclusivas de la TUI alrededor del
+// ciclo compartido: CWD, checkpoints, historial literal, RunDoneMsg y compactado.
+func (e *Engine) turnHooks(sessionID, composerPrompt string) agent.Hooks {
 	checkpointID := ""
-	var before checkpoint.Tree
-	if composerPrompt != "" && e.checkpoints != nil {
-		var err error
-		before, err = e.checkpoints.Capture(context.Background(), e.root)
-		if err != nil {
-			return 0, err
-		}
-	}
-	if _, err := e.store.LoadSession(context.Background(), sessionID); err != nil {
-		if _, err := e.store.AppendEvent(context.Background(), sessionID,
-			session.SessionEvent{Kind: session.KindSessionCwd, Text: e.root}); err != nil {
-			log.Printf("atenea-tui: no se pudo guardar la carpeta de %s: %v", sessionID, err)
-		}
-	}
-	if before != "" {
-		checkpointID = "checkpoint-" + strconv.FormatInt(time.Now().UnixNano(), 10)
-		if _, err := e.store.AppendEvent(context.Background(), sessionID, session.SessionEvent{
-			Kind:       session.KindPromptCheckpointStarted,
-			Checkpoint: &session.PromptCheckpoint{ID: checkpointID, Prompt: composerPrompt, BeforeTree: string(before)},
-		}); err != nil {
-			return 0, err
-		}
-	}
-	if err := e.inbox.Admit(context.Background(), sessionID,
-		session.Prompt{Text: e.expandCommand(text)}, session.DeliveryQueue); err != nil {
-		return 0, err
-	}
-	if composerPrompt != "" {
-		if _, err := e.store.AppendEvent(context.Background(), sessionID,
-			session.SessionEvent{Kind: session.KindComposerPrompt, Text: composerPrompt}); err != nil {
-			log.Printf("atenea-tui: no se pudo guardar el prompt en el historial de %s: %v", sessionID, err)
-		}
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	e.mu.Lock()
-	e.nextRunID++
-	h := &engineRun{id: e.nextRunID, cancel: cancel, done: make(chan struct{}), checkpointID: checkpointID}
-	old := e.runs[sessionID]
-	if old != nil {
-		old.cancel() // una corrida previa de la misma sesion no debe quedar viva
-	}
-	e.runs[sessionID] = h
-	e.mu.Unlock()
-
-	go func() {
-		if old != nil {
-			<-old.done
-		}
-		err := e.runner.Run(ctx, sessionID, false)
-		if h.checkpointID != "" {
-			operation.Lock()
-			after, captureErr := e.checkpoints.Capture(context.Background(), e.root)
-			if captureErr == nil {
-				_, captureErr = e.store.AppendEvent(context.Background(), sessionID, session.SessionEvent{
-					Kind:       session.KindPromptCheckpointFinished,
-					Checkpoint: &session.PromptCheckpoint{ID: h.checkpointID, AfterTree: string(after)},
-				})
+	return agent.Hooks{
+		BeforeAdmit: func() error {
+			var before checkpoint.Tree
+			if composerPrompt != "" && e.checkpoints != nil {
+				var err error
+				before, err = e.checkpoints.Capture(context.Background(), e.root)
+				if err != nil {
+					return err
+				}
 			}
-			operation.Unlock()
-			if err == nil {
-				err = captureErr
+			if _, err := e.store.LoadSession(context.Background(), sessionID); err != nil {
+				if _, err := e.store.AppendEvent(context.Background(), sessionID,
+					session.SessionEvent{Kind: session.KindSessionCwd, Text: e.root}); err != nil {
+					log.Printf("atenea-tui: no se pudo guardar la carpeta de %s: %v", sessionID, err)
+				}
 			}
-		}
-		compact := e.finishRun(sessionID, h)
-		msg := ""
-		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			msg = err.Error()
-		}
-		e.events <- RunDoneMsg{SessionID: sessionID, RunID: h.id, Err: msg}
-		close(h.done)
-		if compact {
-			operation.Lock()
-			e.compactLocked(sessionID)
-			operation.Unlock()
-		}
-	}()
-	return h.id, nil
+			if before != "" {
+				checkpointID = "checkpoint-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+				if _, err := e.store.AppendEvent(context.Background(), sessionID, session.SessionEvent{
+					Kind:       session.KindPromptCheckpointStarted,
+					Checkpoint: &session.PromptCheckpoint{ID: checkpointID, Prompt: composerPrompt, BeforeTree: string(before)},
+				}); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+		AfterAdmit: func() {
+			if composerPrompt == "" {
+				return
+			}
+			if _, err := e.store.AppendEvent(context.Background(), sessionID,
+				session.SessionEvent{Kind: session.KindComposerPrompt, Text: composerPrompt}); err != nil {
+				log.Printf("atenea-tui: no se pudo guardar el prompt en el historial de %s: %v", sessionID, err)
+			}
+		},
+		AfterRun: func(result agent.RunResult) {
+			err := result.Err
+			if checkpointID != "" {
+				after, captureErr := e.checkpoints.Capture(context.Background(), e.root)
+				if captureErr == nil {
+					_, captureErr = e.store.AppendEvent(context.Background(), sessionID, session.SessionEvent{
+						Kind:       session.KindPromptCheckpointFinished,
+						Checkpoint: &session.PromptCheckpoint{ID: checkpointID, AfterTree: string(after)},
+					})
+				}
+				if err == nil {
+					err = captureErr
+				}
+			}
+			compact := e.finishRun(sessionID, result.Current)
+			msg := ""
+			if err != nil {
+				msg = err.Error()
+			}
+			e.events <- RunDoneMsg{SessionID: sessionID, RunID: result.ID, Err: msg}
+			if compact {
+				go func() {
+					_ = e.agent.Synchronize(sessionID, func() error {
+						e.compactLocked(sessionID)
+						return nil
+					})
+				}()
+			}
+		},
+	}
 }
 
 func (e *Engine) Undo(sessionID string) (UndoResult, error) {
 	if e.undoStore == nil || e.checkpoints == nil {
 		return UndoResult{}, session.ErrNothingToUndo
 	}
-	e.mu.Lock()
-	run := e.runs[sessionID]
-	if run != nil {
-		run.cancel()
+	if run, ok := e.agent.Stop(sessionID); ok {
+		<-run.Done()
 	}
-	e.mu.Unlock()
-	if run != nil {
-		<-run.done
-	}
-
-	operation := e.operationLock(sessionID)
-	operation.Lock()
-	defer operation.Unlock()
-
-	boundary, err := e.undoStore.LatestPromptCheckpoint(context.Background(), sessionID)
-	if err != nil {
-		return UndoResult{}, err
-	}
-	if boundary.AfterTree != "" {
-		current, err := e.checkpoints.Capture(context.Background(), e.root)
+	var result UndoResult
+	err := e.agent.Synchronize(sessionID, func() error {
+		boundary, err := e.undoStore.LatestPromptCheckpoint(context.Background(), sessionID)
 		if err != nil {
-			return UndoResult{}, err
+			return err
 		}
-		if string(current) != boundary.AfterTree {
-			return UndoResult{}, ErrWorkspaceDiverged
-		}
-	}
-	if err := e.checkpoints.Restore(context.Background(), e.root, checkpoint.Tree(boundary.BeforeTree)); err != nil {
-		return UndoResult{}, err
-	}
-	if _, err := e.store.AppendEvent(context.Background(), sessionID, session.SessionEvent{
-		Kind:       session.KindPromptCheckpointReverted,
-		Checkpoint: &session.PromptCheckpoint{ID: boundary.ID},
-	}); err != nil {
 		if boundary.AfterTree != "" {
-			if restoreErr := e.checkpoints.Restore(context.Background(), e.root, checkpoint.Tree(boundary.AfterTree)); restoreErr != nil {
-				return UndoResult{}, errors.Join(err, restoreErr)
+			current, err := e.checkpoints.Capture(context.Background(), e.root)
+			if err != nil {
+				return err
+			}
+			if string(current) != boundary.AfterTree {
+				return ErrWorkspaceDiverged
 			}
 		}
-		return UndoResult{}, err
-	}
-	events, err := e.store.Events(context.Background(), sessionID, 0)
-	if err != nil {
-		return UndoResult{}, err
-	}
-	return UndoResult{Prompt: boundary.Prompt, Events: events}, nil
+		if err := e.checkpoints.Restore(context.Background(), e.root, checkpoint.Tree(boundary.BeforeTree)); err != nil {
+			return err
+		}
+		if _, err := e.store.AppendEvent(context.Background(), sessionID, session.SessionEvent{
+			Kind:       session.KindPromptCheckpointReverted,
+			Checkpoint: &session.PromptCheckpoint{ID: boundary.ID},
+		}); err != nil {
+			if boundary.AfterTree != "" {
+				if restoreErr := e.checkpoints.Restore(context.Background(), e.root, checkpoint.Tree(boundary.AfterTree)); restoreErr != nil {
+					return errors.Join(err, restoreErr)
+				}
+			}
+			return err
+		}
+		events, err := e.store.Events(context.Background(), sessionID, 0)
+		if err != nil {
+			return err
+		}
+		result = UndoResult{Prompt: boundary.Prompt, Events: events}
+		return nil
+	})
+	return result, err
 }
-
-func (e *Engine) operationLock(sessionID string) *sync.Mutex {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	lock := e.ops[sessionID]
-	if lock == nil {
-		lock = &sync.Mutex{}
-		e.ops[sessionID] = lock
-	}
-	return lock
-}
-
-// acceptPlanPrompt es el prompt fijo de implementacion del plan aprobado (espejo del const homonimo de app.go).
-const acceptPlanPrompt = "El plan fue aprobado. Implementalo ahora paso a paso siguiendo el plan."
 
 // AcceptPlan acepta y ejecuta el plan: vuelve la sesion a modo normal y
 // promueve el prompt fijo de implementacion como prompt del usuario,
 // arrancando la corrida (espejo de App.AcceptPlan).
 func (e *Engine) AcceptPlan(sessionID string) (RunHandle, error) {
-	e.setMode(sessionID, session.ModeNormal)
-	runID, err := e.send(sessionID, acceptPlanPrompt, "")
-	return RunHandle{SessionID: sessionID, RunID: runID}, err
+	run, err := e.agent.AcceptPlan(sessionID, e.turnHooks(sessionID, ""))
+	return RunHandle{SessionID: sessionID, RunID: run.ID}, err
 }
 
 // ResolvePermission resuelve una solicitud de permiso pendiente (ask-before-run).
@@ -510,23 +424,17 @@ func (e *Engine) ResolvePermission(sessionID, callID string, approved bool) {
 
 // Stop interrumpe la corrida en curso de la sesion. No-op si no corre.
 func (e *Engine) Stop(sessionID string) {
-	e.mu.Lock()
-	h := e.runs[sessionID]
-	e.mu.Unlock()
-	if h != nil {
-		h.cancel()
-	}
+	e.agent.Stop(sessionID)
 }
 
 // clear saca del mapa la corrida h solo si sigue siendo la vigente (un
 // SendPrompt mas nuevo pudo reemplazarla).
-func (e *Engine) finishRun(sessionID string, h *engineRun) bool {
+func (e *Engine) finishRun(sessionID string, current bool) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.runs[sessionID] != h {
+	if !current {
 		return false
 	}
-	delete(e.runs, sessionID)
 	if !e.pendingCompactions[sessionID] || e.compacting[sessionID] {
 		return false
 	}
@@ -541,7 +449,7 @@ func (e *Engine) requestCompaction(sessionID string) {
 		e.mu.Unlock()
 		return
 	}
-	if e.runs[sessionID] != nil {
+	if e.agent.Running(sessionID) {
 		e.pendingCompactions[sessionID] = true
 		e.mu.Unlock()
 		e.events <- CompactionStatusMsg{SessionID: sessionID, State: CompactionQueued}
@@ -550,11 +458,11 @@ func (e *Engine) requestCompaction(sessionID string) {
 	e.compacting[sessionID] = true
 	e.mu.Unlock()
 
-	operation := e.operationLock(sessionID)
-	operation.Lock()
 	go func() {
-		defer operation.Unlock()
-		e.compactLocked(sessionID)
+		_ = e.agent.Synchronize(sessionID, func() error {
+			e.compactLocked(sessionID)
+			return nil
+		})
 	}()
 }
 

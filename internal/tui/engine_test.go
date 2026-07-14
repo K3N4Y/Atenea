@@ -16,6 +16,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"atenea/internal/agent"
 	"atenea/internal/checkpoint"
 	"atenea/internal/llm"
 	"atenea/internal/session"
@@ -401,7 +402,7 @@ func TestEngine_PromptHistoryLoadsLatestTUIComposerPrompts(t *testing.T) {
 func TestEngine_PromptHistoryFallsBackToLegacyUserMessages(t *testing.T) {
 	store := session.NewMemoryStore()
 	ctx := context.Background()
-	for i, text := range []string{"viejo uno", acceptPlanPrompt, "viejo dos"} {
+	for i, text := range []string{"viejo uno", agent.AcceptPlanPrompt, "viejo dos"} {
 		if _, err := store.AppendEvent(ctx, "tui-legacy", session.SessionEvent{Message: &session.Message{
 			ID:   "m" + strconv.Itoa(i),
 			Role: session.RoleUser,
@@ -789,7 +790,7 @@ func TestEngine_ProjectFilesListsWorkspace(t *testing.T) {
 
 func TestEngine_SendPromptExpandsSlashCommand(t *testing.T) {
 	// SendPrompt expande un slash-command antes de encolarlo (espejo de
-	// App.expandCommand): el Message user promovido lleva el prompt EXPANDIDO
+	// agent.Service): el Message user promovido lleva el prompt EXPANDIDO
 	// de la plantilla de la skill, no el literal "/saluda ...". Un prompt que
 	// no es comando pasa sin cambios. Cubre tambien SendPlanPrompt: ambos
 	// comparten el camino comun de send.

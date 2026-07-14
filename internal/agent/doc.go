@@ -1,4 +1,5 @@
-// Package agent descubre y parsea definiciones de subagente del workspace.
+// Package agent owns the shared headless turn lifecycle and discovers
+// workspace subagent definitions.
 //
 // Un subagente se define en un archivo *.md: frontmatter (name, description,
 // model, tools) mas un cuerpo Markdown que es el Prompt. Parse separa el

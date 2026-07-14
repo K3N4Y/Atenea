@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"atenea/internal/agent"
 	"atenea/internal/llm"
 	"atenea/internal/session"
 )
@@ -591,7 +592,7 @@ func TestApp_SendPromptAfterPlanResetsToNormalTools(t *testing.T) {
 
 // TestApp_AcceptPlanRunsNormalModeAndAdmitsImplementPrompt: AcceptPlan corre en
 // modo normal (Request anuncia bash, no present_plan) y promueve el prompt fijo de
-// implementacion como Message del usuario (acceptPlanPrompt) al log de la sesion.
+// implementacion como Message del usuario (agent.AcceptPlanPrompt) al log.
 func TestApp_AcceptPlanRunsNormalModeAndAdmitsImplementPrompt(t *testing.T) {
 	rec := &recordingEmit{}
 	prov := &requestRecordingProvider{FakeProvider: llm.NewFakeProvider(
@@ -619,12 +620,12 @@ func TestApp_AcceptPlanRunsNormalModeAndAdmitsImplementPrompt(t *testing.T) {
 	}
 	var sawImplementPrompt bool
 	for _, ev := range got {
-		if ev.Message != nil && ev.Message.Role == session.RoleUser && ev.Message.Text == acceptPlanPrompt {
+		if ev.Message != nil && ev.Message.Role == session.RoleUser && ev.Message.Text == agent.AcceptPlanPrompt {
 			sawImplementPrompt = true
 		}
 	}
 	if !sawImplementPrompt {
-		t.Errorf("SessionHistory no contiene el prompt de implementacion (%q)", acceptPlanPrompt)
+		t.Errorf("SessionHistory no contiene el prompt de implementacion (%q)", agent.AcceptPlanPrompt)
 	}
 }
 

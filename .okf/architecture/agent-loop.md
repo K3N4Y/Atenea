@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-09
+updated_at: 2026-07-13
 summary: Architecture of Atenea’s Go agent execution loop.
 ---
 
@@ -44,9 +44,11 @@ that we want in Athena:
 
 ```text
 atenea/
-  app.go                      // bindings Wails, arranca/observa el Runner
+  app.go                      // adapter Wails sobre agent.Service
   main.go                     // wails.Run(...)
   internal/
+    agent/
+      service.go              // lifecycle shared by Wails and TUI
     session/
       session.go              // agregado durable: Session, Message, Seq
       inbox.go                // input durable: queue | steer
@@ -362,7 +364,18 @@ For Wails, a single SQLite DB in the app's data directory is enough
  to boot. The important point is that `Run` always rebuilds the request
 from the store, never from a live state between turns.
 
-## Integration with Wails
+## Shared headless service and Wails integration
+
+`internal/agent.Service` owns session modes, slash-command expansion, inbox
+admission, stable run identity, replacement, cancellation, and stale-run
+cleanup. It serializes admission and completion hooks per session, while
+independent sessions remain concurrent. `wiring.Build` receives
+`Service.Mode`, so Wails and the TUI use one authoritative mode source.
+
+The UI adapters retain only their presentation and persistence hooks. Wails
+captures the session CWD before admission, publishes hard errors, and performs
+deferred first-message titling. The TUI records checkpoints and literal
+composer history, publishes `RunDoneMsg`, and schedules manual compaction.
 
 The `EventBus` is the only point that knows Wails. The runner publishes neutral
 events and the bus forwards them to the frontend with `runtime.EventsEmit`:
@@ -374,26 +387,20 @@ func (b *Bus) Publish(ctx context.Context, ev session.SessionEvent) {
 }
 ```
 
-On the frontend, each fragment (`Step.*`, `Text.*`, `Tool.*`) is mapped to the streaming UI
-. `app.go` starts the runner in a goroutine when a prompt
- arrives from the frontend:
+On the frontend, each fragment (`Step.*`, `Text.*`, `Tool.*`) is mapped to the
+streaming UI. `app.go` delegates prompts to the shared service:
 
 ```go
 func (a *App) SendPrompt(sessionID, text string) error {
-    if err := a.inbox.Admit(a.ctx, sessionID, session.Prompt{Text: text}, session.DeliveryQueue); err != nil {
-        return err
-    }
-    go func() {
-        if err := a.runner.Run(context.Background(), sessionID, false); err != nil {
-            a.bus.PublishError(sessionID, err)
-        }
-    }()
-    return nil
+    job := a.titleJob(sessionID, text)
+    _, err := a.agent.Send(sessionID, text, a.turnHooks(sessionID, job))
+    return err
 }
 ```
 
-`Admit` is non-blocking and durable; the loop drains the inbox. Live steering is
-the same `Admit` with `DeliverySteer` while the runner is already running.
+The service admits to `Inbox`, cancels an older run for the same session, waits
+for it to finish, and then enters `Runner.Run`. Cancellation and deadlines are
+clean completion states; other errors return through the adapter hook.
 
 ## Key differences Go vs TS
 

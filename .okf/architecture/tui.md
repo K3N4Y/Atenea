@@ -20,8 +20,8 @@ loading/error states and applies only results whose generation still matches
 the latest request, so slow disk work cannot block or overwrite newer input.
 
 ```
-wails app:  runner -> EmittingStore -> Bus -> EmitFunc(runtime.EventsEmit) -> frontend web
-atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Model Bubble Tea
+wails app:  agent.Service -> runner -> EmittingStore -> Bus -> runtime.EventsEmit -> frontend web
+atenea-tui: agent.Service -> runner -> EmittingStore -> Bus -> chan tea.Msg       -> Bubble Tea
 ```
 
 ## Pieces
@@ -46,19 +46,18 @@ atenea-tui: runner -> EmittingStore -> Bus -> EmitFunc(chan tea.Msg)       -> Mo
   Successful completion is replaced by the durable `Context.Compacted` event;
   insufficient history is informational and provider failures use the normal
   error styling.
-- `internal/tui/engine.go` — the headless assembly of the agent. It creates
+- `internal/agent/service.go` — the UI-independent turn lifecycle shared with
+  Wails. It owns modes, slash-command expansion, prompt admission, stable run
+  IDs, replacement/cancellation ordering, completion hooks, and stale-run
+  cleanup. Its `Mode` method is the mode hook passed to `wiring.Build`.
+- `internal/tui/engine.go` — the terminal adapter and headless assembly. It creates
  inbox/gate/snapshots in memory, decorates the store with `EmittingStore` on a
  `event.Bus` whose `EmitFunc` bridges each `session.SessionEvent` to the
- TUI channel, and delegates the runner wiring to `wiring.Build` (the same source of
- truth as the app). Saves the mode per session (`modes` + `modeFor`, the hook
- `Mode` of `wiring.Build` that the runner consults each turn): `SendPrompt`
- sets normal mode and `SendPlanPrompt` sets plan-mode before queuing, mirror
- of `App.SendPrompt`/`App.SendPlanPrompt`. Both support inbox and run
- `Run` in a session-cancellable goroutine (mirror of `App.start`). Replacement
- runs receive a monotonic `runID`, cancel the previous run, and wait for its
- complete shutdown before entering the runner; at finish the engine publishes
- `RunDoneMsg` with `sessionID + runID`. Satisfies the `Agent` interface of
- Model and
+ TUI channel, and delegates runner wiring to `wiring.Build`. `SendPrompt`,
+ `SendPlanPrompt`, `AcceptPlan`, and `Stop` delegate their common behavior to
+ `agent.Service`; hooks retain TUI-only CWD persistence, checkpoints, literal
+ prompt history, `RunDoneMsg`, and pending compaction. It satisfies the `Agent`
+ interface of Model and
  exposes catalog, refresh, current-selection, and transactional selection
  operations to the optional model-selector boundary.
 - `internal/checkpoint/git.go` — prompt-level workspace snapshots for the TUI.
@@ -353,5 +352,5 @@ OPENROUTER_API_KEY=... ./build/bin/atenea-tui
  `· plan` to that model label. Changing the model
  from the TUI is still pending, so the label reflects the environment model fixed
  per run.
-- A new prompt while an activity is running cancels the previous run
- (same behavior as the Wails app today).
+- A new prompt while an activity is running uses the shared service to cancel
+  the previous run and waits for its complete shutdown before entering the runner.

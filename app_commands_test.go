@@ -65,10 +65,10 @@ func (r *recordingInbox) last() string {
 // del registro, ordenados por nombre, para el slash-menu del composer.
 func TestApp_ListCommandsReturnsRegisteredCommands(t *testing.T) {
 	app := newApp(demoProvider(), func(string, ...interface{}) {})
-	app.commands = command.New([]command.Command{
+	app.agent.SetCommands(command.New([]command.Command{
 		{Name: "commit", Description: "arma el commit"},
 		{Name: "abc", Description: "algo"},
-	})
+	}))
 
 	cmds, err := app.ListCommands()
 	if err != nil {
@@ -80,9 +80,8 @@ func TestApp_ListCommandsReturnsRegisteredCommands(t *testing.T) {
 }
 
 // TestApp_ListCommandsConcurrentWithSetWorkspace: ListCommands y SetWorkspace
-// compiten por el puntero a.commands (wire lo reemplaza bajo a.mu). Bajo -race,
-// si ListCommands lee el campo directo en vez del accessor con lock, esto detona
-// una carrera lectura/escritura. Tambien verifica que ListCommands sigue
+// compiten por el command set del servicio (wire lo reemplaza al reconfigurarlo).
+// Bajo -race, una lectura sin sincronizacion detonaria una carrera. Tambien verifica que ListCommands sigue
 // devolviendo una lista valida (no nil) mientras corre el swap.
 func TestApp_ListCommandsConcurrentWithSetWorkspace(t *testing.T) {
 	app := newApp(demoProvider(), func(string, ...interface{}) {})
@@ -92,7 +91,7 @@ func TestApp_ListCommandsConcurrentWithSetWorkspace(t *testing.T) {
 	done := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(2)
-	// Escritor: alterna el workspace en bucle, reemplazando a.commands bajo a.mu.
+	// Escritor: alterna el workspace en bucle, reconfigurando los comandos.
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 200; i++ {
@@ -217,9 +216,10 @@ func TestApp_SendPromptExpandsSlashCommand(t *testing.T) {
 	app := newApp(demoProvider(), func(string, ...interface{}) {})
 	rec := &recordingInbox{MemoryInbox: session.NewMemoryInbox()}
 	app.inbox = rec
-	app.commands = command.New([]command.Command{
+	app.agent.SetInbox(rec)
+	app.agent.SetCommands(command.New([]command.Command{
 		{Name: "foo", Template: "Hace foo.\n\n$ARGUMENTS"},
-	})
+	}))
 
 	if err := app.SendPrompt("s1", "/foo hola mundo"); err != nil {
 		t.Fatalf("SendPrompt: %v", err)
@@ -237,7 +237,8 @@ func TestApp_SendPromptLeavesNormalTextUnchanged(t *testing.T) {
 	app := newApp(demoProvider(), func(string, ...interface{}) {})
 	rec := &recordingInbox{MemoryInbox: session.NewMemoryInbox()}
 	app.inbox = rec
-	app.commands = command.New([]command.Command{{Name: "foo", Template: "x"}})
+	app.agent.SetInbox(rec)
+	app.agent.SetCommands(command.New([]command.Command{{Name: "foo", Template: "x"}}))
 
 	for _, text := range []string{"hola foo", "/desconocido algo"} {
 		if err := app.SendPrompt("s1", text); err != nil {
@@ -256,9 +257,10 @@ func TestApp_SendPlanPromptExpandsSlashCommand(t *testing.T) {
 	app := newApp(demoProvider(), func(string, ...interface{}) {})
 	rec := &recordingInbox{MemoryInbox: session.NewMemoryInbox()}
 	app.inbox = rec
-	app.commands = command.New([]command.Command{
+	app.agent.SetInbox(rec)
+	app.agent.SetCommands(command.New([]command.Command{
 		{Name: "foo", Template: "Hace foo.\n\n$ARGUMENTS"},
-	})
+	}))
 
 	if err := app.SendPlanPrompt("s1", "/foo contexto"); err != nil {
 		t.Fatalf("SendPlanPrompt: %v", err)

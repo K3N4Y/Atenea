@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-12
+updated_at: 2026-07-13
 summary: Navigation index for Atenea project documentation in the OKF convention.
 ---
 
@@ -54,6 +54,7 @@ uses Markdown and begins with `updated_at` and `summary` YAML metadata.
 
 ## Specifications
 
+- [Shared headless agent service](specs/2026-07-13-headless-agent-service-design.md)
 - [TUI file tree](specs/2026-07-08-tui-file-tree.md)
 - [Agent context compaction](specs/2026-07-09-agent-context-compaction.md)
 - [CI and CodeRabbit](specs/2026-07-10-ci-coderabbit.md)

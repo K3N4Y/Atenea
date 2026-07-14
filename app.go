@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -12,11 +11,11 @@ import (
 	"sync"
 	"time"
 
+	"atenea/internal/agent"
 	"atenea/internal/command"
 	"atenea/internal/event"
 	"atenea/internal/llm"
 	"atenea/internal/session"
-	"atenea/internal/session/runner"
 	"atenea/internal/skill"
 	"atenea/internal/terminal"
 	"atenea/internal/tool"
@@ -58,13 +57,12 @@ type ProviderConfig struct {
 type App struct {
 	ctx      context.Context // ctx de Wails; lo fija startup. Solo lo usa la EmitFunc real.
 	inbox    session.Inbox
-	runner   *runner.Runner
 	bus      *event.Bus
 	emit     event.EmitFunc                // la misma frontera que usa el bus; la tab Terminal empuja su salida por aca
 	store    session.Store                 // lectura del historial para la sidebar (ListSessions/SessionHistory)
 	gate     *session.MemoryPermissionGate // ask-before-run: the UI resolves via ResolveToolPermission
 	glob     *tool.GlobTool                // listado de archivos del workspace para el @-menu del composer (ListProjectFiles)
-	commands *command.Set                  // slash-commands del composer (ListCommands + expansion en SendPrompt)
+	agent    *agent.Service                // ciclo headless compartido con la TUI
 	provider llm.Provider                  // el modelo; mutable via SetProvider, leido con mu (currentProvider). Lo reusa el titler
 	snaps    *tool.SessionSnapshots        // read-state por sesion; sobrevive a los cambios de workspace (se crea una vez)
 	root     string                        // raiz del workspace; mutable via SetWorkspace, leida con mu (workspaceRoot)
@@ -89,17 +87,13 @@ type App struct {
 	// al fallback.
 	titler func(firstMessage string) string
 
-	mu    sync.Mutex
-	runs  map[string]*runHandle   // sessionID -> corrida en vuelo (identidad por puntero)
-	modes map[string]session.Mode // sessionID -> modo (normal/plan); guardado con mu como runs
-	wg    sync.WaitGroup          // los tests esperan a las corridas; la UI es fire-and-forget
+	mu sync.Mutex
+	// lifecycleMu hace atomico el swap root/glob/runner respecto de la admision
+	// de prompts, sin mezclar ese bloqueo con el estado general de App.
+	lifecycleMu sync.Mutex
 
 	term *terminal.Manager // las tabs Terminal: varias sesiones pty vivas por id
 }
-
-// runHandle identifica una corrida en vuelo. Se compara por puntero porque
-// context.CancelFunc no es comparable.
-type runHandle struct{ cancel context.CancelFunc }
 
 // newAppWithStore arma la app sobre un store, un provider y la frontera (emit)
 // inyectados. El store se decora con EmittingStore (puente Store -> UI) y el
@@ -107,7 +101,7 @@ type runHandle struct{ cancel context.CancelFunc }
 // Es el punto unico de ensamblado: los tests lo llaman via newApp (MemoryStore +
 // provider fake) y produccion via NewApp (SQLiteStore + provider real).
 func newAppWithStore(store session.Store, provider llm.Provider, emit event.EmitFunc) *App {
-	a := &App{runs: map[string]*runHandle{}, modes: map[string]session.Mode{}}
+	a := &App{}
 	a.provider = provider
 	// El watcher del data_version se ancla al store CRUDO (antes de decorarlo):
 	// solo el SQLiteStore sobre archivo sabe exponerlo; un MemoryStore no, y la
@@ -125,6 +119,7 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 	emitting := event.NewEmittingStore(store, a.bus)
 	a.store = emitting // las lecturas del historial delegan en inner sin emitir
 	a.inbox = session.NewMemoryInbox()
+	a.agent = agent.NewService(a.inbox)
 	// read, write y edit comparten snapshots por sesion: read graba hash + lineas
 	// vistas, edit lo lee para anclar ediciones, write crea archivos nuevos con su
 	// snapshot. El read-state es por sesion (no por carpeta): se crea una vez y
@@ -146,8 +141,8 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 // wire arma (o re-arma) todo el cableado anclado a root delegando en
 // wiring.Build (la unica fuente de verdad del ensamblado, compartida con el
 // engine headless de la TUI). Construye fuera del lock y publica los punteros
-// mutables (root, glob, commands, runner) bajo mu en un swap corto, asi un
-// SetWorkspace en vivo no compite con las lecturas. Lo llama el constructor
+// mutables (root y glob) bajo mu y reconfigura el servicio en el mismo swap,
+// asi SetWorkspace en vivo no compite con las lecturas. Lo llama el constructor
 // (root = cwd) y SetWorkspace (root nuevo).
 func (a *App) wire(root string) {
 	// El provider vigente se lee bajo mu (SetProvider puede cambiarlo): un snapshot
@@ -169,20 +164,16 @@ func (a *App) wire(root string) {
 		Bus:      a.bus,
 		Local:    local,
 		NextID:   wiring.NewIDGen(),
-		Mode:     a.modeFor,
+		Mode:     a.agent.Mode,
 	})
 
+	a.lifecycleMu.Lock()
 	a.mu.Lock()
-	// Cancelar las corridas viejas ANTES de swap: asi un SendPrompt concurrente
-	// (que toma el lock en start) espera a que termine el swap y captura el runner
-	// nuevo. Si cancelaramos fuera del lock, un SendPrompt podria colarse y
-	// capturar el runner viejo (tools del workspace anterior).
-	a.cancelRunsLocked()
 	a.root = root
 	a.glob = built.Glob
-	a.commands = built.Commands
-	a.runner = built.Runner
 	a.mu.Unlock()
+	a.agent.Configure(built.Runner, built.Commands)
+	a.lifecycleMu.Unlock()
 }
 
 // workspaceRoot devuelve la raiz vigente bajo mu (SetWorkspace la cambia en vivo).
@@ -192,18 +183,12 @@ func (a *App) workspaceRoot() string {
 	return a.root
 }
 
-// currentGlob y currentCommands devuelven los punteros vigentes bajo mu; wire los
-// reemplaza al cambiar de workspace, asi las lecturas no compiten con el swap.
+// currentGlob devuelve el puntero vigente bajo mu; wire lo reemplaza al cambiar
+// de workspace, asi las lecturas no compiten con el swap.
 func (a *App) currentGlob() *tool.GlobTool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.glob
-}
-
-func (a *App) currentCommands() *command.Set {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.commands
 }
 
 // newApp arma la app con un MemoryStore (no durable) y el provider/emit inyectados.
@@ -413,49 +398,15 @@ func (a *App) startup(ctx context.Context) {
 	}
 }
 
-// acceptPlanPrompt es el prompt fijo que AcceptPlan promueve para ejecutar el
-// plan aprobado: vuelve a modo normal e instruye al agente a implementarlo.
-const acceptPlanPrompt = "El plan fue aprobado. Implementalo ahora paso a paso siguiendo el plan."
-
-// modeFor devuelve el modo de la sesion (normal/plan). Lo consulta el runner cada
-// turno via el hook SetMode. Guarda a.modes con mu, igual que runs.
-func (a *App) modeFor(sessionID string) session.Mode {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.modes[sessionID]
-}
-
-// setMode fija el modo de la sesion. Se llama SIEMPRE antes de start (adquisiciones
-// de lock separadas, nunca anidadas) porque start tambien toma a.mu.
-func (a *App) setMode(sessionID string, m session.Mode) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.modes[sessionID] = m
-}
-
 // SendPrompt admite el texto como prompt en cola y arranca Run en una goroutine.
 // Es el binding que el frontend llama al enviar. Fija modo normal primero: una
 // sesion que estaba en plan-mode vuelve a las tools normales al enviar.
 func (a *App) SendPrompt(sessionID, text string) error {
-	a.setMode(sessionID, session.ModeNormal)
 	job := a.titleJob(sessionID, text)
-	a.captureCwd(sessionID)
-	if err := a.inbox.Admit(context.Background(), sessionID,
-		session.Prompt{Text: a.expandCommand(text)}, session.DeliveryQueue); err != nil {
-		return err
-	}
-	a.start(sessionID, job)
-	return nil
-}
-
-// expandCommand resuelve un slash-command ("/name args") al prompt expandido
-// segun el registro; el texto que no es un comando registrado pasa sin cambios.
-// Lo comparten SendPrompt y SendPlanPrompt para un comportamiento consistente.
-func (a *App) expandCommand(text string) string {
-	if expanded, ok := a.currentCommands().Resolve(text); ok {
-		return expanded
-	}
-	return text
+	a.lifecycleMu.Lock()
+	defer a.lifecycleMu.Unlock()
+	_, err := a.agent.Send(sessionID, text, a.turnHooks(sessionID, job))
+	return err
 }
 
 // auxTurnTimeout acota los turnos aislados auxiliares (titulo de sesion, mensaje de
@@ -574,48 +525,27 @@ func (a *App) SelectWorkspace() (string, error) {
 // cancelAllRuns corta toda corrida en vuelo. ponytail: las cancela pero no las
 // espera; cada runner viejo termina solo en su ctx cancelado mientras el nuevo ya
 // atiende los envios. Lo usa SetWorkspace antes de recablear.
-func (a *App) cancelAllRuns() {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.cancelRunsLocked()
-}
-
-// cancelRunsLocked asume a.mu YA tomado; lo usan cancelAllRuns y wire para
-// cancelar las corridas viejas antes de reemplazar el runner, sin soltar el lock
-// entre medio. Asi un SendPrompt concurrente no puede capturar el runner viejo
-// (el race que habia entre cancelAllRuns y wire).
-func (a *App) cancelRunsLocked() {
-	for _, h := range a.runs {
-		h.cancel()
-	}
-}
+func (a *App) cancelAllRuns() { a.agent.StopAll() }
 
 // SendPlanPrompt admite el texto en plan-mode: investigacion de solo lectura mas
 // present_plan, con el contrato de plan-mode en el system prompt. Fija ModePlan
 // antes de arrancar. Es el binding que el frontend llama al planear una feature.
 func (a *App) SendPlanPrompt(sessionID, text string) error {
-	a.setMode(sessionID, session.ModePlan)
 	job := a.titleJob(sessionID, text)
-	a.captureCwd(sessionID)
-	if err := a.inbox.Admit(context.Background(), sessionID,
-		session.Prompt{Text: a.expandCommand(text)}, session.DeliveryQueue); err != nil {
-		return err
-	}
-	a.start(sessionID, job)
-	return nil
+	a.lifecycleMu.Lock()
+	defer a.lifecycleMu.Unlock()
+	_, err := a.agent.SendPlan(sessionID, text, a.turnHooks(sessionID, job))
+	return err
 }
 
 // AcceptPlan acepta y ejecuta el plan: vuelve a modo normal y promueve el prompt
 // fijo de implementacion como prompt del usuario. Es el binding que el frontend
 // llama al aprobar un plan presentado.
 func (a *App) AcceptPlan(sessionID string) error {
-	a.setMode(sessionID, session.ModeNormal)
-	if err := a.inbox.Admit(context.Background(), sessionID,
-		session.Prompt{Text: acceptPlanPrompt}, session.DeliveryQueue); err != nil {
-		return err
-	}
-	a.start(sessionID, nil) // ejecutar un plan nunca es el primer mensaje: sin titulado
-	return nil
+	a.lifecycleMu.Lock()
+	defer a.lifecycleMu.Unlock()
+	_, err := a.agent.AcceptPlan(sessionID, a.turnHooks(sessionID, nil))
+	return err
 }
 
 // ListSessions devuelve el historial de chats para la sidebar: un resumen por
@@ -650,7 +580,7 @@ func (a *App) ListProjectFiles() ([]string, error) {
 // el menu del composer, ordenados por nombre. El frontend filtra/ordena en cliente
 // conforme el usuario escribe tras "/"; al enviar, el backend expande el comando.
 func (a *App) ListCommands() ([]command.Command, error) {
-	return a.currentCommands().List(), nil
+	return a.agent.Commands(), nil
 }
 
 // ResolveToolPermission delivers the user's decision on a gated tool call
@@ -665,72 +595,35 @@ func (a *App) ResolveToolPermission(sessionID, callID string, approved bool) {
 // de la sesion (si la hay), olvida su modo, y borra su log durable del store. Es
 // el binding que el frontend llama al borrar un chat de la sidebar.
 func (a *App) DeleteSession(sessionID string) error {
-	a.mu.Lock()
-	h := a.runs[sessionID]
-	delete(a.modes, sessionID)
-	a.mu.Unlock()
-	if h != nil {
-		h.cancel()
-	}
+	a.agent.Forget(sessionID)
 	return a.store.DeleteSession(context.Background(), sessionID)
 }
 
 // Stop cancela la corrida en vuelo de sessionID (boton stop). No-op si no corre.
 func (a *App) Stop(sessionID string) {
-	a.mu.Lock()
-	h := a.runs[sessionID]
-	a.mu.Unlock()
-	if h != nil {
-		h.cancel()
-	}
+	a.agent.Stop(sessionID)
 }
 
-// start lanza Run con un ctx cancelable registrado por sesion y lo limpia al
-// terminar; reenvia por PublishError el error duro con que Run corta la actividad.
-// afterRun (opcional) corre tras el turno en la misma goroutine: lo usa el titulado
-// del primer mensaje para no competirle el proveedor al turno (ver titleJob).
-func (a *App) start(sessionID string, afterRun func()) {
-	ctx, cancel := context.WithCancel(context.Background())
-	h := &runHandle{cancel: cancel}
-	a.mu.Lock()
-	if old := a.runs[sessionID]; old != nil {
-		old.cancel() // una corrida previa de la misma sesion no debe quedar viva
-	}
-	a.runs[sessionID] = h
-	r := a.runner // capturado bajo el lock: SetWorkspace puede cambiarlo en vuelo
-	a.mu.Unlock()
-
-	a.wg.Add(1)
-	go func() {
-		defer a.wg.Done()
-		defer a.clear(sessionID, h)
-		if err := r.Run(ctx, sessionID, false); err != nil {
-			// A deliberate cancellation (Stop, workspace change, follow-up) makes Run
-			// return context.Canceled/DeadlineExceeded: that is a clean shutdown, not
-			// a failure, so do NOT publish it as a red error in the UI.
-			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-				a.bus.PublishError(sessionID, err)
+func (a *App) turnHooks(sessionID string, afterRun func()) agent.Hooks {
+	return agent.Hooks{
+		BeforeAdmit: func() error {
+			a.captureCwd(sessionID)
+			return nil
+		},
+		AfterRun: func(result agent.RunResult) {
+			if result.Err != nil {
+				a.bus.PublishError(sessionID, result.Err)
 			}
-		}
-		if afterRun != nil {
-			afterRun()
-		}
-	}()
-}
-
-// clear saca del mapa la corrida h solo si sigue siendo la vigente (un start mas
-// nuevo pudo reemplazarla).
-func (a *App) clear(sessionID string, h *runHandle) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.runs[sessionID] == h {
-		delete(a.runs, sessionID)
+			if result.Current && afterRun != nil {
+				afterRun()
+			}
+		},
 	}
 }
 
 // wait bloquea hasta que terminen las corridas en vuelo. Solo lo usan los tests
 // para ser deterministas sin sleep; la UI no lo llama.
-func (a *App) wait() { a.wg.Wait() }
+func (a *App) wait() { a.agent.Wait() }
 
 // demoProvider arma un FakeProvider con un guion corto (texto + Step.Ended) para
 // que `wails dev` muestre streaming sin red. M10 lo cambia por el provider real.
