@@ -32,19 +32,25 @@ type fakeAgent struct {
 		sessionID, callID string
 		approved          bool
 	}
-	stopped    []string
-	accepted   []string
-	models     []providerconfig.ProviderModels
-	active     providerconfig.Active
-	selected   []struct{ providerID, model string }
-	refreshes  int
-	undos      []string
-	undoResult UndoResult
-	undoErr    error
-	sendErr    error
-	planErr    error
-	acceptErr  error
-	nextRunID  uint64
+	stopped        []string
+	accepted       []string
+	models         []providerconfig.ProviderModels
+	active         providerconfig.Active
+	selected       []struct{ providerID, model string }
+	refreshes      int
+	undos          []string
+	resumeLists    []string
+	resumeSessions []session.SessionSummary
+	resumeListErr  error
+	resumeLoads    []struct{ currentID, targetID string }
+	resume         ResumeResult
+	resumeErr      error
+	undoResult     UndoResult
+	undoErr        error
+	sendErr        error
+	planErr        error
+	acceptErr      error
+	nextRunID      uint64
 }
 
 func (f *fakeAgent) ModelCatalog() []providerconfig.ProviderModels {
@@ -112,6 +118,425 @@ func (f *fakeAgent) Stop(sessionID string) {
 func (f *fakeAgent) Undo(sessionID string) (UndoResult, error) {
 	f.undos = append(f.undos, sessionID)
 	return f.undoResult, f.undoErr
+}
+
+func (f *fakeAgent) ListResumeSessions(currentSessionID string) ([]session.SessionSummary, error) {
+	f.resumeLists = append(f.resumeLists, currentSessionID)
+	return append([]session.SessionSummary(nil), f.resumeSessions...), f.resumeListErr
+}
+
+func (f *fakeAgent) ResumeSessionByID(currentSessionID, targetSessionID string) (ResumeResult, error) {
+	f.resumeLoads = append(f.resumeLoads, struct{ currentID, targetID string }{currentSessionID, targetSessionID})
+	return f.resume, f.resumeErr
+}
+
+func TestModel_ResumePickerListsFiltersSelectsAndLoadsExactSession(t *testing.T) {
+	fake := &fakeAgent{
+		resumeSessions: []session.SessionSummary{
+			{ID: "tui-alpha", Title: "Alpha session"},
+			{ID: "tui-beta", Title: "Beta session"},
+			{ID: "tui-gamma", Title: "Gamma session"},
+		},
+		resume: ResumeResult{
+			SessionID: "tui-gamma",
+			Events:    []session.SessionEvent{{Message: &session.Message{ID: "u1", Role: session.RoleUser, Text: "restored transcript"}}},
+			Mode:      session.ModePlan,
+			History:   []string{"first restored prompt", "latest restored prompt"},
+		},
+	}
+	m := NewModel(fake, "tui-current", nil)
+	m.entries = []entry{{kind: entryUser, text: "current transcript"}}
+	m.history = []string{"current prompt"}
+	m.histIdx = len(m.history)
+	m = typeRunes(t, m, "/resume")
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if cmd == nil || !m.resumePicker.open || !m.resumePicker.loading {
+		t.Fatalf("resume submit = cmd:%v picker:%+v, want async open loading picker", cmd != nil, m.resumePicker)
+	}
+	if m.input.Value() != "" || len(m.menuItems) != 0 {
+		t.Fatalf("composer/menu = %q/%+v, want cleared", m.input.Value(), m.menuItems)
+	}
+	if len(m.entries) != 1 || m.entries[0].text != "current transcript" {
+		t.Fatalf("entries changed while listing: %+v", m.entries)
+	}
+
+	m = apply(t, m, cmd())
+	if len(fake.resumeLists) != 1 || fake.resumeLists[0] != "tui-current" {
+		t.Fatalf("ListResumeSessions calls = %q, want [tui-current]", fake.resumeLists)
+	}
+	if m.resumePicker.loading || len(m.resumePicker.filtered) != 3 {
+		t.Fatalf("listed picker = %+v, want three loaded sessions", m.resumePicker)
+	}
+
+	m = typeRunes(t, m, "a")
+	if got := sessionIDs(m.resumePicker.filtered); !slices.Equal(got, []string{"tui-alpha", "tui-beta", "tui-gamma"}) {
+		t.Fatalf("filtered IDs = %q, want all matching a", got)
+	}
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if cmd == nil || !m.resumePicker.open || !m.resumePicker.loading {
+		t.Fatalf("selection submit = cmd:%v picker:%+v, want async loading", cmd != nil, m.resumePicker)
+	}
+	m = apply(t, m, cmd())
+
+	if len(fake.resumeLoads) != 1 || fake.resumeLoads[0].currentID != "tui-current" || fake.resumeLoads[0].targetID != "tui-gamma" {
+		t.Fatalf("ResumeSessionByID calls = %+v, want current -> gamma", fake.resumeLoads)
+	}
+	if m.resumePicker.open || m.sessionID != "tui-gamma" || !m.planMode || m.working || m.activeRun != 0 || !m.followAgent {
+		t.Fatalf("restored model = picker:%+v session:%q plan:%v working:%v run:%d follow:%v", m.resumePicker, m.sessionID, m.planMode, m.working, m.activeRun, m.followAgent)
+	}
+	if len(m.entries) != 1 || m.entries[0].text != "restored transcript" {
+		t.Fatalf("entries = %+v, want restored transcript", m.entries)
+	}
+	if !slices.Equal(m.history, []string{"first restored prompt", "latest restored prompt"}) || m.histIdx != 2 {
+		t.Fatalf("history = %q idx=%d, want restored history at end", m.history, m.histIdx)
+	}
+}
+
+func TestModel_ResumePickerCapturesKeysAndEscapePreservesChat(t *testing.T) {
+	fake := &fakeAgent{resumeSessions: []session.SessionSummary{{ID: "tui-old", Title: "Old session"}}}
+	m := NewModel(fake, "tui-current", nil)
+	m.entries = []entry{{kind: entryUser, text: "keep chat"}}
+	m.history = []string{"keep history"}
+	m.histIdx = 1
+	m.ready = true
+	m.viewport.Height = 1
+	m.viewport.SetContent("one\ntwo\nthree")
+	m.viewport.SetYOffset(1)
+	m = typeRunes(t, m, "/resume")
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = apply(t, updated.(Model), cmd())
+	offset := m.viewport.YOffset
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyPgDown})
+	if m.viewport.YOffset != offset {
+		t.Fatalf("viewport offset = %d, want picker to capture PgDown at %d", m.viewport.YOffset, offset)
+	}
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.resumePicker.open || m.sessionID != "tui-current" || len(m.entries) != 1 || m.entries[0].text != "keep chat" || !slices.Equal(m.history, []string{"keep history"}) {
+		t.Fatalf("escape changed model: picker:%+v session:%q entries:%+v history:%q", m.resumePicker, m.sessionID, m.entries, m.history)
+	}
+}
+
+func TestModel_ResumePickerExposesNoMatches(t *testing.T) {
+	fake := &fakeAgent{resumeSessions: []session.SessionSummary{{ID: "tui-old", Title: "Old session"}}}
+	m := NewModel(fake, "tui-current", nil)
+	m = typeRunes(t, m, "/resume")
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = apply(t, updated.(Model), cmd())
+	m = typeRunes(t, m, "missing")
+
+	if !m.resumePicker.open || len(m.resumePicker.filtered) != 0 {
+		t.Fatalf("picker = %+v, want open no-matches state", m.resumePicker)
+	}
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyBackspace})
+	if m.resumePicker.query.Value() != "missin" || len(m.resumePicker.filtered) != 0 {
+		t.Fatalf("backspace query/filter = %q/%+v, want updated no-matches state", m.resumePicker.query.Value(), m.resumePicker.filtered)
+	}
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil || !updated.(Model).resumePicker.open || len(fake.resumeLoads) != 0 {
+		t.Fatalf("Enter with no matches = cmd:%v loads:%+v", cmd != nil, fake.resumeLoads)
+	}
+}
+
+func TestModel_ResumePickerErrorsPreserveCurrentSession(t *testing.T) {
+	t.Run("list", func(t *testing.T) {
+		fake := &fakeAgent{resumeListErr: errors.New("list failed")}
+		m := NewModel(fake, "tui-current", nil)
+		m.entries = []entry{{kind: entryUser, text: "keep chat"}}
+		m.history = []string{"keep history"}
+		m = typeRunes(t, m, "/resume")
+		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m = apply(t, updated.(Model), cmd())
+
+		if !m.resumePicker.open || m.resumePicker.loading || m.resumePicker.err == nil || m.resumePicker.err.Error() != "list failed" {
+			t.Fatalf("picker = %+v, want closable list failure", m.resumePicker)
+		}
+		if m.sessionID != "tui-current" || len(m.entries) != 1 || !slices.Equal(m.history, []string{"keep history"}) {
+			t.Fatalf("list failure changed current session: session=%q entries=%+v history=%q", m.sessionID, m.entries, m.history)
+		}
+	})
+
+	t.Run("load", func(t *testing.T) {
+		fake := &fakeAgent{
+			resumeSessions: []session.SessionSummary{{ID: "tui-target", Title: "Target"}},
+			resumeErr:      errors.New("load failed"),
+		}
+		m := NewModel(fake, "tui-current", nil)
+		m.entries = []entry{{kind: entryUser, text: "keep chat"}}
+		m.history = []string{"keep history"}
+		m.planMode = true
+		m.activeRun = 77
+		m.followAgent = false
+		m = typeRunes(t, m, "/resume")
+		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m = apply(t, updated.(Model), cmd())
+		updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m = apply(t, updated.(Model), cmd())
+
+		if !m.resumePicker.open || m.resumePicker.loading || m.resumePicker.err == nil || m.resumePicker.err.Error() != "load failed" {
+			t.Fatalf("picker = %+v, want load failure", m.resumePicker)
+		}
+		if m.sessionID != "tui-current" || len(m.entries) != 1 || m.entries[0].text != "keep chat" || !slices.Equal(m.history, []string{"keep history"}) || !m.planMode || m.activeRun != 77 || m.followAgent {
+			t.Fatalf("load failure changed session: session=%q entries=%+v history=%q plan=%v run=%d follow=%v", m.sessionID, m.entries, m.history, m.planMode, m.activeRun, m.followAgent)
+		}
+	})
+}
+
+func TestModel_ResumeCommandRejectsArgumentsAndActiveRunsLocally(t *testing.T) {
+	t.Run("arguments", func(t *testing.T) {
+		fake := &fakeAgent{}
+		m := NewModel(fake, "tui-current", nil)
+		m = typeRunes(t, m, "/resume extra")
+		m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+		if len(fake.resumeLists) != 0 || m.resumePicker.open || len(m.entries) != 1 || m.entries[0].text != "usage: /resume" {
+			t.Fatalf("argument rejection = lists:%q picker:%+v entries:%+v", fake.resumeLists, m.resumePicker, m.entries)
+		}
+	})
+
+	t.Run("active run", func(t *testing.T) {
+		fake := &fakeAgent{}
+		m := NewModel(fake, "tui-current", nil)
+		m.working = true
+		m.activeRun = 42
+		m = typeRunes(t, m, "/resume")
+		m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+		if len(fake.resumeLists) != 0 || m.resumePicker.open || len(m.entries) != 1 || m.entries[0].text != ErrResumeActiveRun.Error() {
+			t.Fatalf("active rejection = lists:%q picker:%+v entries:%+v", fake.resumeLists, m.resumePicker, m.entries)
+		}
+	})
+}
+
+func TestModel_ResumeBuiltinMenuEnterOpensPicker(t *testing.T) {
+	fake := &fakeAgent{resumeSessions: []session.SessionSummary{{ID: "tui-old", Title: "Old"}}}
+	m := NewModel(fake, "tui-current", nil).WithCompletions([]command.Command{{Name: "resume", Description: "Resume a session"}}, nil)
+	m = typeRunes(t, m, "/res")
+	if len(m.menuItems) != 1 || !m.menuItems[0].builtin || m.menuItems[0].label != "/resume" {
+		t.Fatalf("menuItems = %+v, want builtin /resume", m.menuItems)
+	}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if cmd == nil || !m.resumePicker.open || m.input.Value() != "" || len(m.menuItems) != 0 {
+		t.Fatalf("menu Enter = cmd:%v picker:%+v input:%q menu:%+v", cmd != nil, m.resumePicker, m.input.Value(), m.menuItems)
+	}
+	m = apply(t, m, cmd())
+	if len(fake.resumeLists) != 1 || fake.resumeLists[0] != "tui-current" {
+		t.Fatalf("resume list calls = %q", fake.resumeLists)
+	}
+}
+
+func TestModel_ResumePickerIgnoresListResultFromClosedGeneration(t *testing.T) {
+	fake := &fakeAgent{resumeSessions: []session.SessionSummary{{ID: "tui-a", Title: "Picker A"}}}
+	m := NewModel(fake, "tui-current", nil)
+	m = typeRunes(t, m, "/resume")
+	updated, listA := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	resultA := listA()
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	fake.resumeSessions = []session.SessionSummary{{ID: "tui-b", Title: "Picker B"}}
+	m = typeRunes(t, m, "/resume")
+	updated, listB := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+
+	m = apply(t, m, resultA)
+	if !m.resumePicker.open || !m.resumePicker.loading || len(m.resumePicker.sessions) != 0 {
+		t.Fatalf("stale A result changed picker B: %+v", m.resumePicker)
+	}
+	m = apply(t, m, listB())
+	if m.resumePicker.loading || !slices.Equal(sessionIDs(m.resumePicker.filtered), []string{"tui-b"}) {
+		t.Fatalf("current B result = %+v, want loaded picker B", m.resumePicker)
+	}
+}
+
+func TestModel_ResumePickerIgnoresLoadResultAfterCloseAndReopen(t *testing.T) {
+	fake := &fakeAgent{resumeSessions: []session.SessionSummary{{ID: "tui-old", Title: "Old target"}}}
+	m := NewModel(fake, "tui-current", nil)
+	m.entries = []entry{{kind: entryUser, text: "keep current chat"}}
+	m.history = []string{"keep current history"}
+	m = typeRunes(t, m, "/resume")
+	updated, listOld := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = apply(t, updated.(Model), listOld())
+	fake.resume = ResumeResult{
+		SessionID: "tui-old",
+		Events:    []session.SessionEvent{{Message: &session.Message{ID: "old", Role: session.RoleUser, Text: "old chat"}}},
+		History:   []string{"old history"},
+	}
+	updated, loadOld := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	resultOld := loadOld()
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.sessionID != "tui-current" || len(m.entries) != 1 || m.entries[0].text != "keep current chat" {
+		t.Fatalf("Esc during load changed current chat: session=%q entries=%+v", m.sessionID, m.entries)
+	}
+	fake.resumeSessions = []session.SessionSummary{{ID: "tui-new", Title: "New target"}}
+	m = typeRunes(t, m, "/resume")
+	updated, listNew := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = apply(t, updated.(Model), listNew())
+
+	m = apply(t, m, resultOld)
+	if !m.resumePicker.open || m.sessionID != "tui-current" || len(m.entries) != 1 || m.entries[0].text != "keep current chat" || !slices.Equal(m.history, []string{"keep current history"}) {
+		t.Fatalf("stale load replaced current session: picker=%+v session=%q entries=%+v history=%q", m.resumePicker, m.sessionID, m.entries, m.history)
+	}
+}
+
+func TestModel_ResumePickerAcceptsLoadFromCurrentGenerationAndTarget(t *testing.T) {
+	fake := &fakeAgent{
+		resumeSessions: []session.SessionSummary{{ID: "tui-target", Title: "Target"}},
+		resume: ResumeResult{
+			SessionID: "tui-target",
+			Events:    []session.SessionEvent{{Message: &session.Message{ID: "target", Role: session.RoleUser, Text: "target chat"}}},
+			History:   []string{"target history"},
+		},
+	}
+	m := NewModel(fake, "tui-current", nil)
+	m = typeRunes(t, m, "/resume")
+	updated, list := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = apply(t, updated.(Model), list())
+	updated, load := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = apply(t, updated.(Model), load())
+
+	if m.resumePicker.open || m.sessionID != "tui-target" || len(m.entries) != 1 || m.entries[0].text != "target chat" || !slices.Equal(m.history, []string{"target history"}) {
+		t.Fatalf("current load = picker:%+v session:%q entries:%+v history:%q", m.resumePicker, m.sessionID, m.entries, m.history)
+	}
+}
+
+func TestModel_ResumePickerIgnoresLoadForMismatchedTarget(t *testing.T) {
+	fake := &fakeAgent{resumeSessions: []session.SessionSummary{{ID: "tui-target", Title: "Target"}}}
+	m := NewModel(fake, "tui-current", nil)
+	m.entries = []entry{{kind: entryUser, text: "keep chat"}}
+	m = typeRunes(t, m, "/resume")
+	updated, list := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = apply(t, updated.(Model), list())
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+
+	m = apply(t, m, ResumeDoneMsg{
+		Generation: m.resumeGen,
+		SessionID:  "tui-other",
+		Result: ResumeResult{
+			SessionID: "tui-other",
+			Events:    []session.SessionEvent{{Message: &session.Message{ID: "other", Role: session.RoleUser, Text: "other chat"}}},
+		},
+	})
+	if !m.resumePicker.open || !m.resumePicker.loading || m.sessionID != "tui-current" || len(m.entries) != 1 || m.entries[0].text != "keep chat" {
+		t.Fatalf("mismatched target changed model: picker=%+v session=%q entries=%+v", m.resumePicker, m.sessionID, m.entries)
+	}
+}
+
+func TestModel_ResumePickerFailsVisibleWhenResultSessionMismatchesEnvelope(t *testing.T) {
+	fake := &fakeAgent{resumeSessions: []session.SessionSummary{{ID: "tui-target", Title: "Target"}}}
+	m := NewModel(fake, "tui-current", nil)
+	m.entries = []entry{{kind: entryUser, text: "keep chat"}}
+	m = typeRunes(t, m, "/resume")
+	updated, list := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = apply(t, updated.(Model), list())
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+
+	m = apply(t, m, ResumeDoneMsg{
+		Generation: m.resumeGen,
+		SessionID:  "tui-target",
+		Result: ResumeResult{
+			SessionID: "tui-other",
+			Events:    []session.SessionEvent{{Message: &session.Message{ID: "other", Role: session.RoleUser, Text: "other chat"}}},
+		},
+	})
+	if !m.resumePicker.open || m.resumePicker.loading || m.resumePicker.err == nil || m.resumePicker.err.Error() != "resume result session mismatch" {
+		t.Fatalf("mismatched result picker = %+v, want visible stable failure", m.resumePicker)
+	}
+	if m.sessionID != "tui-current" || len(m.entries) != 1 || m.entries[0].text != "keep chat" {
+		t.Fatalf("mismatched result changed current chat: session=%q entries=%+v", m.sessionID, m.entries)
+	}
+}
+
+func TestModel_ResumePickerCapturesMouseAndEscapePreservesChat(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "tui-current", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 10})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "settled reasoning"})
+	m = drainReveal(t, m)
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: "settled reasoning"})
+	m = drainReveal(t, m)
+	for i := 0; i < 20; i++ {
+		m.entries = append(m.entries, entry{kind: entryUser, text: fmt.Sprintf("message %02d", i)})
+	}
+	m.followAgent = false
+	m = m.syncViewport()
+	m.viewport.SetYOffset(0)
+	summaryRow := -1
+	for row, line := range m.entryLines() {
+		if strings.Contains(line.line, "[penso ") {
+			summaryRow = row
+			break
+		}
+	}
+	if summaryRow < 0 {
+		t.Fatal("reasoning summary not found")
+	}
+	clickY := topBarHeight + summaryRow
+	originalFocus := m.focus
+	originalOffset := m.viewport.YOffset
+	originalEntries := append([]entry(nil), m.entries...)
+	m = typeRunes(t, m, "/resume")
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 2, Y: clickY})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown, X: 2, Y: clickY})
+	if m.viewport.YOffset != originalOffset || m.focus != originalFocus || m.entries[0].expanded {
+		t.Fatalf("modal mouse changed chat: offset=%d focus=%v expanded=%v", m.viewport.YOffset, m.focus, m.entries[0].expanded)
+	}
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.resumePicker.open || m.sessionID != "tui-current" || !slices.EqualFunc(m.entries, originalEntries, func(a, b entry) bool {
+		return a.kind == b.kind && a.text == b.text && a.expanded == b.expanded
+	}) {
+		t.Fatalf("Esc after modal mouse changed chat: picker=%+v session=%q entries=%+v", m.resumePicker, m.sessionID, m.entries)
+	}
+}
+
+func TestModel_ResumePickerOwnsFocusAcrossTerminalFocusChanges(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "tui-current", nil)
+	m = typeRunes(t, m, "/resume")
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if m.input.Focused() || !m.resumePicker.query.Focused() {
+		t.Fatalf("open focus = composer:%v query:%v, want picker-only focus", m.input.Focused(), m.resumePicker.query.Focused())
+	}
+
+	m = apply(t, m, tea.BlurMsg{})
+	if m.input.Focused() || m.resumePicker.query.Focused() {
+		t.Fatalf("terminal blur focus = composer:%v query:%v, want both blurred", m.input.Focused(), m.resumePicker.query.Focused())
+	}
+	m = apply(t, m, tea.FocusMsg{})
+	if m.input.Focused() || !m.resumePicker.query.Focused() {
+		t.Fatalf("terminal refocus = composer:%v query:%v, want picker-only focus", m.input.Focused(), m.resumePicker.query.Focused())
+	}
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if !m.input.Focused() || m.resumePicker.query.Focused() {
+		t.Fatalf("picker close focus = composer:%v query:%v, want composer restored", m.input.Focused(), m.resumePicker.query.Focused())
+	}
+}
+
+func TestModel_WithSessionRestoresTranscriptAndModeWithinBuilderChain(t *testing.T) {
+	events := []session.SessionEvent{{Message: &session.Message{ID: "u1", Role: session.RoleUser, Text: "restored chat"}}}
+	m := NewModel(nil, "tui-session", nil).
+		WithSession(events, session.ModePlan).
+		WithHistory([]string{"restored history"})
+
+	if m.sessionID != "tui-session" || len(m.entries) != 1 || m.entries[0].text != "restored chat" || !m.planMode {
+		t.Fatalf("WithSession = session:%q entries:%+v plan:%v", m.sessionID, m.entries, m.planMode)
+	}
+	if !slices.Equal(m.history, []string{"restored history"}) {
+		t.Fatalf("builder history = %q, want supplied by WithHistory", m.history)
+	}
 }
 
 func TestModel_UndoIsNativeCommandAndRestoresComposer(t *testing.T) {

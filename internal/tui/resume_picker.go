@@ -20,6 +20,7 @@ type resumePicker struct {
 	sessions  []session.SessionSummary
 	filtered  []session.SessionSummary
 	selected  int
+	targetID  string
 	err       error
 }
 
@@ -43,6 +44,7 @@ func (p *resumePicker) setSessions(sessions []session.SessionSummary) {
 	p.loading = false
 	p.err = nil
 	p.selected = 0
+	p.targetID = ""
 	p.filter()
 }
 
@@ -93,11 +95,19 @@ func (p *resumePicker) close() {
 	p.open = false
 	p.loading = false
 	p.err = nil
+	p.targetID = ""
 	p.query.Blur()
+}
+
+func (p *resumePicker) beginLoad(targetID string) {
+	p.loading = true
+	p.err = nil
+	p.targetID = targetID
 }
 
 func (p *resumePicker) fail(message string) {
 	p.loading = false
+	p.targetID = ""
 	p.err = errors.New(message)
 }
 

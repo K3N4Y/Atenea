@@ -607,6 +607,117 @@ func TestEngine_ResumeSessionByIDLoadsExactTargetAndRestoresPlanMode(t *testing.
 	}
 }
 
+func TestEngine_ResumeSessionByIDRestoresOnlyTargetComposerHistory(t *testing.T) {
+	root := t.TempDir()
+	store := session.NewMemoryStore()
+	appendSessionEvent(t, store, "tui-current", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
+	appendSessionEvent(t, store, "tui-current", session.SessionEvent{Kind: session.KindComposerPrompt, Text: "current prompt"})
+	appendSessionEvent(t, store, "tui-target", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
+	appendSessionEvent(t, store, "tui-target", session.SessionEvent{Kind: session.KindComposerPrompt, Text: "target first"})
+	appendSessionEvent(t, store, "tui-target", session.SessionEvent{Kind: session.KindComposerPrompt, Text: "target latest"})
+	appendSessionEvent(t, store, "tui-other", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
+	appendSessionEvent(t, store, "tui-other", session.SessionEvent{Kind: session.KindComposerPrompt, Text: "other prompt"})
+
+	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store})
+	result, err := engine.ResumeSessionByID("tui-current", "tui-target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"target first", "target latest"}
+	if !slices.Equal(result.History, want) {
+		t.Fatalf("ResumeSessionByID history = %q, want target-only %q", result.History, want)
+	}
+}
+
+func TestEngine_ResumeSessionByIDFallsBackToCappedTargetUserHistory(t *testing.T) {
+	root := t.TempDir()
+	store := session.NewMemoryStore()
+	appendSessionEvent(t, store, "tui-current", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
+	appendSessionEvent(t, store, "tui-target", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
+	appendSessionEvent(t, store, "tui-target", session.SessionEvent{Message: &session.Message{ID: "internal", Role: session.RoleUser, Text: agent.AcceptPlanPrompt}})
+	for i := 1; i <= historyLimit+2; i++ {
+		appendSessionEvent(t, store, "tui-target", session.SessionEvent{Message: &session.Message{
+			ID: "u-" + strconv.Itoa(i), Role: session.RoleUser, Text: "legacy-" + strconv.Itoa(i),
+		}})
+	}
+
+	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store})
+	result, err := engine.ResumeSessionByID("tui-current", "tui-target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.History) != historyLimit || result.History[0] != "legacy-3" || result.History[len(result.History)-1] != "legacy-102" {
+		t.Fatalf("ResumeSessionByID fallback history = [%q ... %q] (%d), want capped target legacy prompts", result.History[0], result.History[len(result.History)-1], len(result.History))
+	}
+}
+
+func TestEngine_ResumeSessionByIDRestoresMixedLegacyAndComposerHistoryWithoutDuplicates(t *testing.T) {
+	root := t.TempDir()
+	store := session.NewMemoryStore()
+	appendSessionEvent(t, store, "tui-current", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
+	appendSessionEvent(t, store, "tui-target", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
+	appendSessionEvent(t, store, "tui-target", session.SessionEvent{Message: &session.Message{ID: "legacy-1", Role: session.RoleUser, Text: "legacy first"}})
+	appendSessionEvent(t, store, "tui-target", session.SessionEvent{Message: &session.Message{ID: "accept", Role: session.RoleUser, Text: agent.AcceptPlanPrompt}})
+	appendSessionEvent(t, store, "tui-target", session.SessionEvent{Message: &session.Message{ID: "legacy-2", Role: session.RoleUser, Text: "legacy second"}})
+	appendSessionEvent(t, store, "tui-target", session.SessionEvent{Kind: session.KindComposerPrompt, Text: "modern first"})
+	appendSessionEvent(t, store, "tui-target", session.SessionEvent{Message: &session.Message{ID: "modern-user-1", Role: session.RoleUser, Text: "modern first"}})
+	appendSessionEvent(t, store, "tui-target", session.SessionEvent{Kind: session.KindComposerPrompt, Text: "modern second"})
+	appendSessionEvent(t, store, "tui-target", session.SessionEvent{Message: &session.Message{ID: "modern-user-2", Role: session.RoleUser, Text: "modern second"}})
+
+	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store})
+	result, err := engine.ResumeSessionByID("tui-current", "tui-target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"legacy first", "legacy second", "modern first", "modern second"}
+	if !slices.Equal(result.History, want) {
+		t.Fatalf("ResumeSessionByID mixed history = %q, want %q", result.History, want)
+	}
+}
+
+func TestResumeHistory_PreservesUserPromptWhenLaterComposerMarkerIsMissing(t *testing.T) {
+	events := []session.SessionEvent{
+		{Kind: session.KindComposerPrompt, Text: "marked prompt"},
+		{Message: &session.Message{ID: "marked-user", Role: session.RoleUser, Text: "marked prompt"}},
+		{Message: &session.Message{ID: "missing-marker-user", Role: session.RoleUser, Text: "marker write failed prompt"}},
+	}
+
+	want := []string{"marked prompt", "marker write failed prompt"}
+	if got := resumeHistory(events); !slices.Equal(got, want) {
+		t.Fatalf("resumeHistory = %q, want %q", got, want)
+	}
+}
+
+func TestResumeHistory_ConsumesRepeatedIdenticalMarkersByCount(t *testing.T) {
+	events := []session.SessionEvent{
+		{Kind: session.KindComposerPrompt, Text: "same prompt"},
+		{Kind: session.KindComposerPrompt, Text: "same prompt"},
+		{Message: &session.Message{ID: "marked-user-1", Role: session.RoleUser, Text: "same prompt"}},
+		{Message: &session.Message{ID: "marked-user-2", Role: session.RoleUser, Text: "same prompt"}},
+		{Message: &session.Message{ID: "missing-marker-user", Role: session.RoleUser, Text: "same prompt"}},
+	}
+
+	want := []string{"same prompt", "same prompt", "same prompt"}
+	if got := resumeHistory(events); !slices.Equal(got, want) {
+		t.Fatalf("resumeHistory = %q, want counted marker suppression %q", got, want)
+	}
+}
+
+func TestResumeHistory_PreservesMarkerOrderAroundFailedMiddleMarker(t *testing.T) {
+	events := []session.SessionEvent{
+		{Kind: session.KindComposerPrompt, Text: "A"},
+		{Kind: session.KindComposerPrompt, Text: "C"},
+		{Message: &session.Message{ID: "user-a", Role: session.RoleUser, Text: "A"}},
+		{Message: &session.Message{ID: "user-b", Role: session.RoleUser, Text: "B"}},
+		{Message: &session.Message{ID: "user-c", Role: session.RoleUser, Text: "C"}},
+	}
+
+	want := []string{"A", "B", "C"}
+	if got := resumeHistory(events); !slices.Equal(got, want) {
+		t.Fatalf("resumeHistory = %q, want ordered marker reconstruction %q", got, want)
+	}
+}
+
 func TestEngine_ResumeOperationsRejectActiveRun(t *testing.T) {
 	root := t.TempDir()
 	store := session.NewMemoryStore()
@@ -734,18 +845,6 @@ func TestEngine_ResumeSessionByIDSerializesTargetAdmission(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("SendPrompt did not proceed after resume released admission lock")
-	}
-}
-
-func TestEngine_ResumePreviousReturnsNotResumableSentinelWhenNoPreviousSession(t *testing.T) {
-	root := t.TempDir()
-	store := session.NewMemoryStore()
-	appendSessionEvent(t, store, "tui-current", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
-	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store})
-
-	_, err := engine.ResumePrevious("tui-current")
-	if !errors.Is(err, ErrSessionNotResumable) {
-		t.Fatalf("ResumePrevious error = %v, want ErrSessionNotResumable", err)
 	}
 }
 

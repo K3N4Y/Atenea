@@ -45,6 +45,21 @@ type UndoDoneMsg struct {
 	Err    string
 }
 
+type ResumeDoneMsg struct {
+	Generation uint64
+	SessionID  string
+	Result     ResumeResult
+	Err        string
+}
+
+type ResumeSessionsDoneMsg struct {
+	Generation uint64
+	Sessions   []session.SessionSummary
+	Err        string
+}
+
+const resumeResultSessionMismatch = "resume result session mismatch"
+
 type CompactionState int
 
 const (
@@ -94,6 +109,8 @@ type Agent interface {
 	// AcceptPlan acepta el plan presentado: vuelve a modo normal y ejecuta.
 	AcceptPlan(sessionID string) (RunHandle, error)
 	Undo(sessionID string) (UndoResult, error)
+	ListResumeSessions(currentSessionID string) ([]session.SessionSummary, error)
+	ResumeSessionByID(currentSessionID, targetSessionID string) (ResumeResult, error)
 	ResolvePermission(sessionID, callID string, approved bool)
 	Stop(sessionID string)
 }
@@ -283,6 +300,9 @@ type Model struct {
 	history []string
 	histIdx int
 
+	resumePicker resumePicker
+	resumeGen    uint64
+
 	leaderPending    bool
 	leaderGeneration uint64
 	treeOpen         bool
@@ -374,6 +394,15 @@ func (m Model) WithHistory(history []string) Model {
 	}
 	m.history = append([]string(nil), history...)
 	m.histIdx = len(m.history)
+	return m
+}
+
+// WithSession restaura el transcript y modo de una sesion durable. El ID de
+// sesion y el historial del composer se suministran por separado mediante
+// NewModel y WithHistory dentro de la misma cadena de builders.
+func (m Model) WithSession(events []session.SessionEvent, mode session.Mode) Model {
+	m = m.replaceEvents(events)
+	m.planMode = mode == session.ModePlan
 	return m
 }
 
@@ -473,6 +502,43 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.menuItems = nil
 		m.working = false
 		return m.resizeViewport(), nil
+	case ResumeDoneMsg:
+		if !m.resumePicker.open || ev.Generation != m.resumeGen || ev.SessionID == "" || ev.SessionID != m.resumePicker.targetID {
+			return m, nil
+		}
+		if ev.Err != "" {
+			m.resumePicker.fail(ev.Err)
+			return m, nil
+		}
+		if ev.Result.SessionID != ev.SessionID {
+			m.resumePicker.fail(resumeResultSessionMismatch)
+			return m, nil
+		}
+		m.resumePicker.close()
+		m.sessionID = ev.Result.SessionID
+		m = m.replaceEvents(ev.Result.Events)
+		m.planMode = ev.Result.Mode == session.ModePlan
+		m.activeRun = 0
+		m.working = false
+		m.followAgent = true
+		m.input.SetValue("")
+		m.menuItems = nil
+		m.history = append([]string(nil), ev.Result.History...)
+		if len(m.history) > historyLimit {
+			m.history = m.history[len(m.history)-historyLimit:]
+		}
+		m.histIdx = len(m.history)
+		return m.resizeViewport(), nil
+	case ResumeSessionsDoneMsg:
+		if !m.resumePicker.open || ev.Generation != m.resumeGen {
+			return m, nil
+		}
+		if ev.Err != "" {
+			m.resumePicker.fail(ev.Err)
+			return m, nil
+		}
+		m.resumePicker.setSessions(ev.Sessions)
+		return m, nil
 	case ModelsRefreshedMsg:
 		next, cmd := m.refreshMenu()
 		return next, tea.Batch(cmd, waitForEvent(m.events))
@@ -567,6 +633,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKey(ev)
 	case tea.MouseMsg:
+		if m.resumePicker.open {
+			return m, nil
+		}
 		// La top bar ocupa la fila 0 de la pantalla, asi que el contenido del
 		// cuerpo empieza una fila mas abajo: se traslada el clic a coordenadas
 		// del cuerpo antes de leer ev.Y. Los handlers de abajo ya tratan una Y
@@ -692,6 +761,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.stopRun()
 		return m, tea.Quit
 	}
+	if m.resumePicker.open {
+		return m.handleResumePickerKey(msg)
+	}
 	if perm, ok := m.pendingPermission(); ok {
 		if msg.Type == tea.KeyPgUp || msg.Type == tea.KeyPgDown {
 			return m.scrollViewport(msg)
@@ -719,7 +791,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyPgUp || msg.Type == tea.KeyPgDown {
 		return m.scrollViewport(msg)
 	}
-	if msg.Type == tea.KeyEnter && (m.input.Value() == "/new" || m.input.Value() == "/compact") {
+	if msg.Type == tea.KeyEnter && (m.input.Value() == "/new" || m.input.Value() == "/compact" || m.input.Value() == "/resume") {
 		return m.submitPrompt()
 	}
 	if len(m.menuItems) > 0 {
@@ -734,7 +806,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// Tab aplica la seleccion; no alterna el modo build/plan.
 			return m.applySelection()
 		case tea.KeyEnter:
-			if m.menuItems[m.menuSelected].builtin && (m.menuItems[m.menuSelected].label == "/new" || m.menuItems[m.menuSelected].label == "/compact") {
+			if m.menuItems[m.menuSelected].builtin && (m.menuItems[m.menuSelected].label == "/new" || m.menuItems[m.menuSelected].label == "/compact" || m.menuItems[m.menuSelected].label == "/resume") {
 				m.input.SetValue(m.menuItems[m.menuSelected].label)
 				m.input.SetCursor(len([]rune(m.menuItems[m.menuSelected].label)))
 				return m.closeMenu().submitPrompt()
@@ -786,6 +858,47 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// autocompletado desde el estado nuevo del input.
 	next, refreshCmd := m.refreshMenu()
 	return next, tea.Batch(cmd, refreshCmd)
+}
+
+func (m Model) handleResumePickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		m.resumePicker.close()
+		return m, nil
+	case tea.KeyUp:
+		m.resumePicker.move(-1)
+		return m, nil
+	case tea.KeyDown:
+		m.resumePicker.move(1)
+		return m, nil
+	case tea.KeyEnter:
+		if m.resumePicker.loading {
+			return m, nil
+		}
+		selected, ok := m.resumePicker.selectedSession()
+		if !ok {
+			return m, nil
+		}
+		m.resumePicker.beginLoad(selected.ID)
+		currentSessionID := m.sessionID
+		targetSessionID := selected.ID
+		generation := m.resumeGen
+		agent := m.agent
+		return m, func() tea.Msg {
+			result, err := agent.ResumeSessionByID(currentSessionID, targetSessionID)
+			if err != nil {
+				return ResumeDoneMsg{Generation: generation, SessionID: targetSessionID, Err: err.Error()}
+			}
+			return ResumeDoneMsg{Generation: generation, SessionID: targetSessionID, Result: result}
+		}
+	case tea.KeyPgUp, tea.KeyPgDown:
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	m.resumePicker.query, cmd = m.resumePicker.query.Update(msg)
+	m.resumePicker.filter()
+	return m, cmd
 }
 
 func (m Model) handleKeyRuneBatch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -873,6 +986,17 @@ func (m Model) reloadTree(loadNow bool) (Model, tea.Cmd) {
 }
 
 func (m *Model) syncComposerFocus() tea.Cmd {
+	if m.resumePicker.open {
+		m.input.Blur()
+		if m.terminalFocused {
+			if !m.resumePicker.query.Focused() {
+				return m.resumePicker.query.Focus()
+			}
+			return nil
+		}
+		m.resumePicker.query.Blur()
+		return nil
+	}
 	_, permissionPending := m.pendingPermission()
 	if m.terminalFocused && m.normalizedFocus() == chatFocus && !permissionPending && !m.hasPendingPlan() {
 		if !m.input.Focused() {
@@ -1279,6 +1403,28 @@ func (m Model) submitPrompt() (Model, tea.Cmd) {
 				return UndoDoneMsg{Err: err.Error()}
 			}
 			return UndoDoneMsg{Result: result}
+		}
+	}
+	if strings.HasPrefix(trimmed, "/resume") {
+		if trimmed != "/resume" {
+			return m.appendError("usage: /resume"), nil
+		}
+		if m.working {
+			return m.appendError(ErrResumeActiveRun.Error()), nil
+		}
+		sessionID := m.sessionID
+		agent := m.agent
+		m.input.SetValue("")
+		m.menuItems = nil
+		m.resumeGen++
+		m.resumePicker = newResumePicker(sessionID)
+		generation := m.resumeGen
+		return m, func() tea.Msg {
+			sessions, err := agent.ListResumeSessions(sessionID)
+			if err != nil {
+				return ResumeSessionsDoneMsg{Generation: generation, Err: err.Error()}
+			}
+			return ResumeSessionsDoneMsg{Generation: generation, Sessions: sessions}
 		}
 	}
 	if strings.HasPrefix(strings.TrimSpace(text), "/model") {

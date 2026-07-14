@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,6 +46,7 @@ type ResumeResult struct {
 	SessionID string
 	Events    []session.SessionEvent
 	Mode      session.Mode
+	History   []string
 }
 
 var (
@@ -220,7 +222,7 @@ func cloneProviderModels(in []providerconfig.ProviderModels) []providerconfig.Pr
 func (e *Engine) Commands() []command.Command {
 	commands := e.agent.Commands()
 	commands = append(commands,
-		command.Command{Name: "resume", Description: "Resume the previous TUI session in this workspace"},
+		command.Command{Name: "resume", Description: "Resume a TUI session in this workspace"},
 		command.Command{Name: "undo", Description: "Undo the last prompt and its file changes"},
 	)
 	sort.Slice(commands, func(i, j int) bool { return commands[i].Name < commands[j].Name })
@@ -389,36 +391,39 @@ func (e *Engine) resumeSessionByIDUnlocked(currentSessionID, targetSessionID str
 	if err != nil {
 		return ResumeResult{}, err
 	}
+	history := resumeHistory(events)
 	mode := modeFromEvents(events)
 	if _, err := e.store.AppendEvent(context.Background(), targetSessionID,
 		session.SessionEvent{Kind: session.KindSessionMode, Text: string(mode)}); err != nil {
 		return ResumeResult{}, err
 	}
-	return ResumeResult{SessionID: targetSessionID, Events: events, Mode: mode}, nil
+	return ResumeResult{SessionID: targetSessionID, Events: events, Mode: mode, History: history}, nil
 }
 
-// ResumePrevious mantiene compatibilidad temporal con Model hasta Task 5. La
-// seleccion secuencial se limita a adaptar las APIs explicitas y se eliminara
-// cuando el picker llame ResumeSessionByID directamente.
-func (e *Engine) ResumePrevious(sessionID string) (ResumeResult, error) {
-	e.resumeMu.Lock()
-	defer e.resumeMu.Unlock()
-
-	summaries, err := e.listResumeSessionsUnlocked(sessionID)
-	if err != nil {
-		return ResumeResult{}, err
-	}
-	targetIndex := 0
-	for index, summary := range summaries {
-		if summary.ID == sessionID {
-			targetIndex = index + 1
-			break
+func resumeHistory(events []session.SessionEvent) []string {
+	history := make([]string, 0, historyLimit)
+	pendingMarkers := make([]string, 0)
+	for _, event := range events {
+		if event.Kind == session.KindComposerPrompt {
+			pendingMarkers = append(pendingMarkers, event.Text)
+			continue
 		}
+		if event.Message == nil || event.Message.Role != session.RoleUser || event.Message.Text == agent.AcceptPlanPrompt {
+			continue
+		}
+		text := event.Message.Text
+		if index := slices.Index(pendingMarkers, text); index >= 0 {
+			history = append(history, pendingMarkers[:index+1]...)
+			pendingMarkers = pendingMarkers[index+1:]
+			continue
+		}
+		history = append(history, text)
 	}
-	if targetIndex >= len(summaries) {
-		return ResumeResult{}, ErrSessionNotResumable
+	history = append(history, pendingMarkers...)
+	if len(history) > historyLimit {
+		history = history[len(history)-historyLimit:]
 	}
-	return e.resumeSessionByIDUnlocked(sessionID, summaries[targetIndex].ID)
+	return history
 }
 
 func modeFromEvents(events []session.SessionEvent) session.Mode {

@@ -362,7 +362,7 @@ func (m Model) refreshMenu() (Model, tea.Cmd) {
 			reserved++
 		}
 		for _, cmd := range filterCommands(m.commands, q.query, menuLimit-reserved) {
-			m.menuItems = append(m.menuItems, menuItem{label: "/" + cmd.Name, description: cmd.Description})
+			m.menuItems = append(m.menuItems, menuItem{label: "/" + cmd.Name, description: cmd.Description, builtin: cmd.Name == "resume"})
 		}
 		if includeCompact {
 			item := menuItem{label: "/compact", description: "Compact conversation context", builtin: true}
