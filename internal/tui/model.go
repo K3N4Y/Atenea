@@ -662,6 +662,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	if perm, ok := m.pendingPermission(); ok {
+		if msg.Type == tea.KeyPgUp || msg.Type == tea.KeyPgDown {
+			return m.scrollViewport(msg)
+		}
 		m.resolvePermissionKey(msg, perm)
 		return m, nil
 	}

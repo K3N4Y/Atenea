@@ -2303,9 +2303,20 @@ func TestModel_PgUpScrollsHistoryBack(t *testing.T) {
 	fake := &fakeAgent{}
 	m2 := NewModel(fake, "s1", nil)
 	m2 = apply(t, m2, tea.WindowSizeMsg{Width: 40, Height: 10})
+	for i := 0; i < 30; i++ {
+		m2 = apply(t, m2, EventMsg{Message: &session.Message{
+			ID:   fmt.Sprintf("permission-history-%02d", i),
+			Role: session.RoleUser,
+			Text: fmt.Sprintf("mensaje-permiso-%02d", i),
+		}})
+	}
 	m2 = apply(t, m2, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"ls"}`)})
 	m2 = apply(t, m2, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"ls"}`)})
+	beforeOffset := m2.viewport.YOffset
 	m2 = apply(t, m2, tea.KeyMsg{Type: tea.KeyPgUp})
+	if got := m2.viewport.YOffset; got >= beforeOffset {
+		t.Fatalf("viewport.YOffset = %d, want less than %d: PgUp con permiso pendiente debe desplazar el transcript", got, beforeOffset)
+	}
 	if len(fake.resolved) != 0 {
 		t.Fatalf("ResolvePermission fue llamado %d veces, PgUp NO debe disparar el gate de permisos", len(fake.resolved))
 	}
