@@ -42,19 +42,19 @@ func TestExpand_SinPlaceholderAnexaArgs(t *testing.T) {
 // comando /<name> con su descripcion y una plantilla que referencia la skill.
 func TestFromSkills_DerivaUnComandoPorSkill(t *testing.T) {
 	skills := []skill.Info{
-		{Name: "tdd-cycle-evidence", Description: "TDD con evidencia"},
+		{Name: "code-review", Description: "Revision de codigo"},
 		{Name: "deep-research", Description: "investigacion profunda"},
 	}
 	cmds := FromSkills(skills)
 	if len(cmds) != 2 {
 		t.Fatalf("FromSkills devolvio %d comandos, want 2", len(cmds))
 	}
-	if cmds[0].Name != "tdd-cycle-evidence" || cmds[0].Description != "TDD con evidencia" {
+	if cmds[0].Name != "code-review" || cmds[0].Description != "Revision de codigo" {
 		t.Fatalf("comando[0] = %+v", cmds[0])
 	}
 	// La plantilla debe nombrar la skill para que el agente la cargue por su tool.
 	exp := Expand(cmds[0].Template, "")
-	if exp == "" || !contains(exp, "tdd-cycle-evidence") {
+	if exp == "" || !contains(exp, "code-review") {
 		t.Fatalf("la plantilla no referencia la skill: %q", exp)
 	}
 }

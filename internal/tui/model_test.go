@@ -1100,23 +1100,23 @@ func TestModel_RendersToolCallLifecycle(t *testing.T) {
 func TestModel_RendersSkillToolAsSkillLine(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
-	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "skill", Input: json.RawMessage(`{"name":"tdd-cycle-evidence"}`)})
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "skill", Input: json.RawMessage(`{"name":"code-review"}`)})
 	view := m.View()
-	if !strings.Contains(view, "● skill    tdd-cycle-evidence") {
-		t.Fatalf("View() = %q, la tool skill en ejecucion debe rendirse como linea dedicada %q (nombre = campo name del Input)", view, "● skill    tdd-cycle-evidence")
+	if !strings.Contains(view, "● skill    code-review") {
+		t.Fatalf("View() = %q, la tool skill en ejecucion debe rendirse como linea dedicada %q (nombre = campo name del Input)", view, "● skill    code-review")
 	}
 	if strings.Contains(view, `{"name"`) {
 		t.Fatalf("View() = %q, NO debe filtrar el Input crudo al header: la linea dedicada lleva el nombre pelado como resumen", view)
 	}
 
-	body := "<skill_content name=\"tdd-cycle-evidence\">\ncuerpo del skill para el modelo\n</skill_content>"
+	body := "<skill_content name=\"code-review\">\ncuerpo del skill para el modelo\n</skill_content>"
 	m = apply(t, m, EventMsg{
 		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "skill", Text: body,
 		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: body, ToolCallID: "c1"},
 	})
 	view = m.View()
-	if !strings.Contains(view, "✓ skill    tdd-cycle-evidence") {
-		t.Fatalf("View() = %q, la tool skill exitosa debe asentarse como %q", view, "✓ skill    tdd-cycle-evidence")
+	if !strings.Contains(view, "✓ skill    code-review") {
+		t.Fatalf("View() = %q, la tool skill exitosa debe asentarse como %q", view, "✓ skill    code-review")
 	}
 	if strings.Contains(view, "skill_content") {
 		t.Fatalf("View() = %q, NO debe contener %q: en exito la linea de skill va sin preview del output, el cuerpo del SKILL.md es para el modelo y no para el transcript", view, "skill_content")

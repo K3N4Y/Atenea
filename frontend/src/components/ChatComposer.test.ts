@@ -179,7 +179,7 @@ describe('ChatComposer @-menciones de archivos', () => {
 describe('ChatComposer slash-commands', () => {
   const commands = [
     { name: 'commit', description: 'arma el mensaje y commitea' },
-    { name: 'tdd-cycle-evidence', description: 'TDD con evidencia' },
+    { name: 'code-review', description: 'Revision de codigo' },
     { name: 'deep-research', description: 'investigacion profunda' },
   ]
 
@@ -223,7 +223,7 @@ describe('ChatComposer slash-commands', () => {
     await ta.trigger('keydown', { key: 'Enter' })
 
     expect((ta.element as HTMLTextAreaElement).value).toBe(
-      '/tdd-cycle-evidence ',
+      '/code-review ',
     )
   })
 
@@ -243,11 +243,11 @@ describe('ChatComposer slash-commands', () => {
     const wrapper = mount(ChatComposer, { props: { running: false, commands } })
     const ta = wrapper.find('textarea')
 
-    await ta.setValue('/tdd')
+    await ta.setValue('/code')
     await wrapper.findAll('[role="option"]')[0].trigger('mousedown')
 
     expect((ta.element as HTMLTextAreaElement).value).toBe(
-      '/tdd-cycle-evidence ',
+      '/code-review ',
     )
   })
 

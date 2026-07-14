@@ -1,8 +1,7 @@
 # AGENTS.md
 
 How `atenea` is worked on. This is the default way of working for any agent
-(human or AI) touching this repo. It is based on the skill
-`.claude/skills/tdd-cycle-evidence/SKILL.md`: verifiable TDD with evidence.
+(human or AI) touching this repo.
 
 ## Guidelines
 - when making a technical decisions, do not give much weight to development cost.
@@ -26,18 +25,6 @@ if you see one, even if it is no caused by what you are working on right now, st
 - Update the relevant `.okf/` documentation whenever a change affects the
   documented behavior, architecture, specification, plan, or research.
 
-## Core rule: TDD with evidence
-
-To implement features, fix bugs, or change existing code, follow the verifiable
-TDD cycle with evidence. Do not skip steps:
-
-`Safety net -> Understand -> RED -> GREEN -> TRIANGULATE -> REFACTOR -> Evidence`
-
-The full cycle, the per-phase gates, and the `TDD Cycle Evidence` table live in
-the skill `.claude/skills/tdd-cycle-evidence/SKILL.md`. That skill is the source
-of truth: read it and follow it, and include the evidence table in the progress
-and the final response.
-
 ## Commands
 
 Tests (Go uses `_test.go` next to the code; tests are the source of truth):
@@ -46,7 +33,7 @@ Tests (Go uses `_test.go` next to the code; tests are the source of truth):
 # Whole suite (broad safety net)
 go test ./...
 
-# A single test (RED/GREEN, preferred during the cycle)
+# A focused test during development
 go test -run TestName ./internal/session/runner
 
 # With detail when the failure needs to be visible

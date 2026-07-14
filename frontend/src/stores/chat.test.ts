@@ -1332,7 +1332,7 @@ describe('chat store: uso de tokens (Usage)', () => {
     // los normaliza a la forma minuscula que consume el composer.
     vi.mocked(App.ListCommands).mockResolvedValueOnce([
       { Name: 'commit', Description: 'arma el commit', Template: 'x' },
-      { Name: 'tdd-cycle-evidence', Description: 'TDD', Template: 'y' },
+      { Name: 'code-review', Description: 'Review', Template: 'y' },
     ] as Awaited<ReturnType<typeof App.ListCommands>>)
     const store = useChatStore()
 
@@ -1341,7 +1341,7 @@ describe('chat store: uso de tokens (Usage)', () => {
     expect(App.ListCommands).toHaveBeenCalled()
     expect(store.commands).toEqual([
       { name: 'commit', description: 'arma el commit' },
-      { name: 'tdd-cycle-evidence', description: 'TDD' },
+      { name: 'code-review', description: 'Review' },
     ])
   })
 

@@ -13,8 +13,8 @@ describe('detectCommand', () => {
   })
 
   it('escribiendo el nombre: activo con la query', () => {
-    const m = detectCommand('/tdd', 4)
-    expect(m).toEqual({ active: true, query: 'tdd', start: 0, end: 4 })
+    const m = detectCommand('/rev', 4)
+    expect(m).toEqual({ active: true, query: 'rev', start: 0, end: 4 })
   })
 
   it('caret a mitad del nombre: query hasta el caret', () => {
@@ -44,7 +44,7 @@ describe('detectCommand', () => {
 describe('filterCommands', () => {
   const commands: Command[] = [
     { name: 'commit', description: 'arma el mensaje y commitea' },
-    { name: 'tdd-cycle-evidence', description: 'TDD con evidencia' },
+    { name: 'code-review', description: 'Revision de codigo' },
     { name: 'deep-research', description: 'investigacion profunda' },
   ]
 
@@ -67,9 +67,9 @@ describe('filterCommands', () => {
   })
 
   it('tambien matchea por descripcion cuando el nombre no coincide', () => {
-    const got = filterCommands(commands, 'evidencia')
+    const got = filterCommands(commands, 'revision')
     expect(got).toHaveLength(1)
-    expect(got[0].name).toBe('tdd-cycle-evidence')
+    expect(got[0].name).toBe('code-review')
   })
 
   it('sin coincidencias: lista vacia', () => {
@@ -84,8 +84,8 @@ describe('filterCommands', () => {
 describe('applyCommand', () => {
   it('reemplaza el token por "/nombre " y deja el caret tras el espacio', () => {
     const m = detectCommand('/td', 3)
-    const out = applyCommand('/td', m, 'tdd-cycle-evidence')
-    expect(out.text).toBe('/tdd-cycle-evidence ')
+    const out = applyCommand('/co', m, 'code-review')
+    expect(out.text).toBe('/code-review ')
     expect(out.caret).toBe(out.text.length)
   })
 })

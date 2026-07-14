@@ -6,7 +6,7 @@ import type { Command } from '../lib/command'
 
 const commands: Command[] = [
   { name: 'commit', description: 'arma el mensaje y commitea' },
-  { name: 'tdd-cycle-evidence', description: 'TDD con evidencia' },
+  { name: 'code-review', description: 'Revision de codigo' },
 ]
 
 describe('CommandMenu', () => {
@@ -41,7 +41,7 @@ describe('CommandMenu', () => {
       props: { items: commands, activeIndex: 0 },
     })
     await wrapper.findAll('[role="option"]')[1].trigger('mousedown')
-    expect(wrapper.emitted('select')?.[0]).toEqual(['tdd-cycle-evidence'])
+    expect(wrapper.emitted('select')?.[0]).toEqual(['code-review'])
   })
 
   it('hover sobre una opcion emite hover con su indice', async () => {
