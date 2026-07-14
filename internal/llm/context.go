@@ -13,6 +13,14 @@ var contextWindows = map[string]int{
 	"anthropic/claude-3.5-sonnet": 200_000,
 	"openai/gpt-4o":               128_000,
 	"google/gemini-2.5-pro":       1_048_576,
+	// OpenAI oficial devuelve ids sin prefijo de proveedor (gpt-4o, no
+	// openai/gpt-4o), asi que se listan aparte para que el selector muestre su
+	// ventana de contexto.
+	"gpt-4.1":     1_047_576,
+	"gpt-4o":      128_000,
+	"gpt-4o-mini": 128_000,
+	"gpt-5":       400_000,
+	"gpt-5-mini":  400_000,
 }
 
 type ContextOverflowError struct {

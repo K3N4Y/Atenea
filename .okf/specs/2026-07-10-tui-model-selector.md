@@ -170,10 +170,15 @@ selection, validates the required API-key environment variable, constructs the
 provider, and starts the TUI with that active provider/model pair.
 
 When `providers.json` does not exist, Atenea retains the current startup
-behavior based on `OPENROUTER_API_KEY` and `OPENROUTER_MODEL`, including the
-existing demo fallback. Atenea does not create `providers.json` implicitly in
-this path. This avoids surprising configuration writes and keeps existing
-installations working.
+behavior based on the environment, in order of precedence: `OPENROUTER_API_KEY`
+(model from `OPENROUTER_MODEL`), then `OPENAI_API_KEY` (model from `OPENAI_MODEL`,
+defaulting to `gpt-4.1`), and finally the demo fallback when neither key is set.
+The OpenAI fallback constructs its provider with the OpenRouter `reasoning`
+extension disabled, since the official OpenAI API rejects that field. Atenea does
+not create `providers.json` implicitly in this path. This avoids surprising
+configuration writes and keeps existing installations working. Both OpenRouter
+and OpenAI ship as seeded default provider definitions, so `/model` lists both
+even before any `providers.json` exists.
 
 When `providers.json` exists but is invalid, Atenea reports the configuration
 error clearly and uses the existing environment-based startup behavior as a

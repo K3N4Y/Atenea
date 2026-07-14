@@ -33,6 +33,14 @@ const (
 	openRouterBaseURL = "https://openrouter.ai/api/v1"
 	// defaultModel es el modelo por defecto en OpenRouter; override por OPENROUTER_MODEL.
 	defaultModel = "openrouter/free"
+
+	// openAIBaseURL es la API oficial de OpenAI, tambien OpenAI-compatible: entra
+	// por la misma abstraccion (providerconfig.OpenAICompatible) apuntando el base
+	// URL aca, sin adaptador nuevo. A diferencia de OpenRouter NO entiende el campo
+	// top-level `reasoning`, asi que su provider se arma con OpenRouterReasoning=false.
+	openAIBaseURL = "https://api.openai.com/v1"
+	// openAIDefaultModel es el modelo por defecto de OpenAI; override por OPENAI_MODEL.
+	openAIDefaultModel = "gpt-4.1"
 )
 
 func main() {
@@ -145,27 +153,35 @@ func displayDir(root string) string {
 	return root
 }
 
-// providerFromEnv elige el provider igual que la config inicial de la app Wails:
-// OpenRouter si hay OPENROUTER_API_KEY (modelo por OPENROUTER_MODEL), y si no el
-// demo sin red para probar la TUI sin configurar nada. Devuelve ademas la
-// etiqueta del modelo para el pie del composer: "demo" con el provider fake, o
-// el modelo real de OpenRouter.
+// providerFromEnv elige el provider por entorno, en orden de precedencia:
+// OpenRouter si hay OPENROUTER_API_KEY (modelo por OPENROUTER_MODEL), luego OpenAI
+// si hay OPENAI_API_KEY (modelo por OPENAI_MODEL), y si no el demo sin red para
+// probar la TUI sin configurar nada. Devuelve ademas la etiqueta del modelo para
+// el pie del composer: "demo" con el provider fake, o el modelo real elegido.
 func providerFromEnv() (llm.Provider, string) {
 	snapshot := environmentFallbackSnapshot()
 	return snapshot.Provider, snapshot.Model
 }
 
 func environmentFallbackSnapshot() llm.ProviderSnapshot {
-	key := os.Getenv("OPENROUTER_API_KEY")
-	if key == "" {
-		log.Print("atenea-tui: sin OPENROUTER_API_KEY; usando provider de demo (sin red)")
-		return llm.ProviderSnapshot{ProviderID: "demo", ProviderName: "Demo", BaseURL: "demo://local", Model: "demo", Provider: demoProvider()}
+	if key := os.Getenv("OPENROUTER_API_KEY"); key != "" {
+		model := os.Getenv("OPENROUTER_MODEL")
+		if model == "" {
+			model = defaultModel
+		}
+		return llm.ProviderSnapshot{ProviderID: "openrouter", ProviderName: "OpenRouter", BaseURL: openRouterBaseURL, Model: model, Provider: llm.NewOpenAIProvider(key, openRouterBaseURL, model)}
 	}
-	model := os.Getenv("OPENROUTER_MODEL")
-	if model == "" {
-		model = defaultModel
+	// OpenAI no entiende el campo `reasoning` de OpenRouter: se apaga con
+	// WithoutOpenRouterReasoning para no mandar una extension que rechazaria.
+	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
+		model := os.Getenv("OPENAI_MODEL")
+		if model == "" {
+			model = openAIDefaultModel
+		}
+		return llm.ProviderSnapshot{ProviderID: "openai", ProviderName: "OpenAI", BaseURL: openAIBaseURL, Model: model, Provider: llm.NewOpenAIProvider(key, openAIBaseURL, model, llm.WithoutOpenRouterReasoning())}
 	}
-	return llm.ProviderSnapshot{ProviderID: "openrouter", ProviderName: "OpenRouter", BaseURL: openRouterBaseURL, Model: model, Provider: llm.NewOpenAIProvider(key, openRouterBaseURL, model)}
+	log.Print("atenea-tui: sin OPENROUTER_API_KEY ni OPENAI_API_KEY; usando provider de demo (sin red)")
+	return llm.ProviderSnapshot{ProviderID: "demo", ProviderName: "Demo", BaseURL: "demo://local", Model: "demo", Provider: demoProvider()}
 }
 
 func openProviderService() (*providerconfig.Service, error) {
@@ -173,11 +189,22 @@ func openProviderService() (*providerconfig.Service, error) {
 }
 
 func defaultProviderConfig() providerconfig.Config {
-	return providerconfig.Config{Providers: []providerconfig.Provider{{
-		ID: "openrouter", Name: "OpenRouter", Type: providerconfig.OpenAICompatible,
-		BaseURL: openRouterBaseURL, APIKeyEnv: "OPENROUTER_API_KEY", OpenRouterReasoning: true,
-		Models: []string{"tencent/hy3:free", "poolside/laguna-xs-2.1:free", "cohere/north-mini-code:free"},
-	}}}
+	return providerconfig.Config{Providers: []providerconfig.Provider{
+		{
+			ID: "openrouter", Name: "OpenRouter", Type: providerconfig.OpenAICompatible,
+			BaseURL: openRouterBaseURL, APIKeyEnv: "OPENROUTER_API_KEY", OpenRouterReasoning: true,
+			Models: []string{"tencent/hy3:free", "poolside/laguna-xs-2.1:free", "cohere/north-mini-code:free"},
+		},
+		{
+			// OpenAI oficial: mismo tipo OpenAI-compatible, pero SIN el campo
+			// `reasoning` de OpenRouter (OpenRouterReasoning omitido = false). Los
+			// modelos son semillas para el dropdown; el catalogo se refresca desde
+			// GET /models con la OPENAI_API_KEY.
+			ID: "openai", Name: "OpenAI", Type: providerconfig.OpenAICompatible,
+			BaseURL: openAIBaseURL, APIKeyEnv: "OPENAI_API_KEY",
+			Models: []string{"gpt-4.1", "gpt-4o", "gpt-4o-mini", "gpt-5", "gpt-5-mini"},
+		},
+	}}
 }
 
 // demoProvider arma un FakeProvider con un guion corto (texto + Step.Ended) para
