@@ -15,9 +15,15 @@ session store. Shutdown stops active runs, cancels and waits for context
 compactions, and disables further Bubble Tea messages once its event loop has
 ended. This preserves final events and prompt checkpoints before SQLite closes.
 
-The composer also owns two built-in session commands that never become model
-messages: `/new` creates a session and `/compact` requests durable context
+The composer also owns three built-in session commands that never become model
+messages: `/new` creates a session, `/resume` opens a searchable picker of TUI
+sessions from the same workspace, and `/compact` requests durable context
 compaction for the active session.
+
+At startup, the TUI resumes the most recently active `tui-` session whose
+persisted `Session.Cwd` matches the current workspace. Its durable events
+rehydrate the transcript, and `Session.Mode` restores the last submitted build
+or plan mode. If no matching session exists, startup allocates a new session ID.
 
 Workspace globbing for the explorer and `@` completion, plus file reading and
 Chroma highlighting for the viewer, run as `tea.Cmd` work. The model renders
@@ -45,8 +51,9 @@ atenea-tui: agent.Service -> runner -> EmittingStore -> Bus -> chan tea.Msg     
  selection is available. It diverts
  the standard log to a temporary file (do not paint over the alternative screen),
  opens the SQLite SHARED with the app via `session.OpenDefault` (fallback to
- memory if it fails, with `Close` on exit) and runs `tea.NewProgram` with
- alt-screen. Without its own testable logic.
+ memory if it fails, with `Close` on exit), resumes the latest TUI session for
+ the current workspace, and runs `tea.NewProgram` with alt-screen. Without its
+ own testable logic.
 - `internal/tui/engine.go` — coordinates `/compact` per session. An idle session
   starts immediately; an active run records one deduplicated pending request and
   drains it after normal completion or cancellation. Prompt execution and
@@ -67,8 +74,8 @@ atenea-tui: agent.Service -> runner -> EmittingStore -> Bus -> chan tea.Msg     
  TUI channel, and delegates runner wiring to `wiring.Build`. `SendPrompt`,
  `SendPlanPrompt`, `AcceptPlan`, and `Stop` delegate their common behavior to
  `agent.Service`; hooks retain TUI-only CWD persistence, checkpoints, literal
- prompt history, `RunDoneMsg`, and pending compaction. It satisfies the `Agent`
- interface of Model and
+ prompt history, durable session mode, `RunDoneMsg`, and pending compaction. It
+ satisfies the `Agent` interface of Model and
  exposes catalog, refresh, current-selection, and transactional selection
  operations to the optional model-selector boundary.
 - `internal/checkpoint/git.go` — prompt-level workspace snapshots for the TUI.

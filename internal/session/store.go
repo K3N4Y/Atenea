@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // ErrSessionNotFound se devuelve al leer una sesion que nunca recibio un evento.
@@ -19,11 +20,13 @@ type PendingTool struct {
 // sesion y un Title derivado del primer mensaje del usuario. Title queda "" si la
 // sesion aun no tiene mensaje de usuario (el frontend cae a un placeholder). Cwd
 // es la carpeta de trabajo en que se creo la sesion (del ultimo Session.Cwd); ""
-// en sesiones viejas anteriores a la captura de carpeta. La sidebar agrupa por Cwd.
+// en sesiones viejas anteriores a la captura de carpeta. LastActivity es el
+// instante UTC del ultimo evento durable de la sesion. La sidebar agrupa por Cwd.
 type SessionSummary struct {
-	ID    string
-	Title string
-	Cwd   string
+	ID           string
+	Title        string
+	Cwd          string
+	LastActivity time.Time
 }
 
 // titleMaxRunes es el largo maximo del Title de una sesion. Un corte por rune
@@ -63,7 +66,8 @@ type Store interface {
 	// Sessions devuelve un resumen por sesion con al menos un evento, ordenado
 	// por actividad mas reciente primero. El Title es el primer mensaje del
 	// usuario de la sesion (truncado); "" si aun no hay uno. Lista vacia si no
-	// hay sesiones. Alimenta el historial de chats de la sidebar.
+	// hay sesiones. LastActivity es no cero y refleja el ultimo evento durable.
+	// Alimenta el historial de chats de la sidebar.
 	Sessions(ctx context.Context) ([]SessionSummary, error)
 
 	// Events devuelve todos los SessionEvent durables de la sesion en orden de

@@ -107,12 +107,17 @@ func TestSQLiteStore_SessionsOrderSurvivesReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Sessions tras reabrir: %v", err)
 	}
-	want := []SessionSummary{
+	want := []sessionSummaryProjection{
 		{ID: "new", Title: "nueva"},
 		{ID: "old", Title: "vieja"},
 	}
-	if !reflect.DeepEqual(got, want) {
+	if projected := projectSessionSummaries(got); !reflect.DeepEqual(projected, want) {
 		t.Fatalf("Sessions tras reabrir: got %+v, want %+v (el orden por recencia no sobrevivio)", got, want)
+	}
+	for _, summary := range got {
+		if summary.LastActivity.IsZero() || summary.LastActivity.Location() != time.UTC {
+			t.Fatalf("Sessions tras reabrir: LastActivity invalido en %+v", summary)
+		}
 	}
 }
 
@@ -156,11 +161,14 @@ func TestSQLiteStore_DeleteSessionSurvivesReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Sessions tras reabrir: %v", err)
 	}
-	want := []SessionSummary{
+	want := []sessionSummaryProjection{
 		{ID: "keep", Title: "me quedo"},
 	}
-	if !reflect.DeepEqual(got, want) {
+	if projected := projectSessionSummaries(got); !reflect.DeepEqual(projected, want) {
 		t.Fatalf("Sessions tras reabrir: got %+v, want %+v (el borrado o el sobreviviente no sobrevivieron)", got, want)
+	}
+	if got[0].LastActivity.IsZero() || got[0].LastActivity.Location() != time.UTC {
+		t.Fatalf("Sessions tras reabrir: LastActivity invalido en %+v", got[0])
 	}
 }
 
@@ -507,7 +515,9 @@ func TestSQLiteStore_MigratesLegacyDatabaseWithZeroEpoch(t *testing.T) {
 		  PRIMARY KEY (session_id, seq)
 		);
 		INSERT INTO events (session_id, seq, kind, has_message, msg_id, role, text)
-		VALUES ('s1', 1, '', 1, 'u1', 'user', 'legacy');
+		VALUES
+		  ('s1', 1, '', 1, 'u1', 'user', 'legacy'),
+		  ('s2', 1, '', 1, 'u2', 'user', 'legacy too');
 	`)
 	if err != nil {
 		db.Close()
@@ -529,9 +539,138 @@ func TestSQLiteStore_MigratesLegacyDatabaseWithZeroEpoch(t *testing.T) {
 	if got.Epoch != (ContextEpoch{}) || got.Checkpoint != nil || len(got.Messages) != 1 || got.Messages[0].Text != "legacy" {
 		t.Fatalf("legacy context = %+v", got)
 	}
+
+	var firstActivity, secondActivity int64
+	if err := store.db.QueryRow(`SELECT activity_at FROM events WHERE session_id = 's1'`).Scan(&firstActivity); err != nil {
+		t.Fatalf("activity_at s1: %v", err)
+	}
+	if err := store.db.QueryRow(`SELECT activity_at FROM events WHERE session_id = 's2'`).Scan(&secondActivity); err != nil {
+		t.Fatalf("activity_at s2: %v", err)
+	}
+	if firstActivity == 0 || secondActivity != firstActivity {
+		t.Fatalf("legacy activity_at values = (%d, %d), want one shared non-zero backfill", firstActivity, secondActivity)
+	}
+	summaries, err := store.Sessions(ctx)
+	if err != nil {
+		t.Fatalf("Sessions legacy: %v", err)
+	}
+	for _, summary := range summaries {
+		if summary.LastActivity.IsZero() || summary.LastActivity.Location() != time.UTC {
+			t.Fatalf("Sessions legacy: LastActivity invalido en %+v", summary)
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close legacy: %v", err)
+	}
+
+	reopened, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore legacy reopened: %v", err)
+	}
+	t.Cleanup(func() { reopened.Close() })
+	var reopenedActivity int64
+	if err := reopened.db.QueryRow(`SELECT activity_at FROM events WHERE session_id = 's1'`).Scan(&reopenedActivity); err != nil {
+		t.Fatalf("activity_at reopened: %v", err)
+	}
+	if reopenedActivity != firstActivity {
+		t.Fatalf("activity_at after reopen = %d, want stable %d", reopenedActivity, firstActivity)
+	}
+}
+
+func TestSQLiteStore_ReopenPreservesLastActivity(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "activity.db")
+	store, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	lowerBound := time.UnixMilli(time.Now().UTC().UnixMilli()).UTC()
+	if _, err := store.AppendEvent(ctx, "s1", SessionEvent{Kind: KindStepStarted}); err != nil {
+		t.Fatalf("AppendEvent: %v", err)
+	}
+	summaries, err := store.Sessions(ctx)
+	if err != nil {
+		t.Fatalf("Sessions: %v", err)
+	}
+	wantActivity := summaries[0].LastActivity
+	if wantActivity.Before(lowerBound) || wantActivity.Location() != time.UTC {
+		t.Fatalf("LastActivity before reopen = %v, want UTC after %v", wantActivity, lowerBound)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	reopened, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore reopened: %v", err)
+	}
+	t.Cleanup(func() { reopened.Close() })
+	summaries, err = reopened.Sessions(ctx)
+	if err != nil {
+		t.Fatalf("Sessions reopened: %v", err)
+	}
+	if got := summaries[0].LastActivity; !got.Equal(wantActivity) || got.Location() != time.UTC {
+		t.Fatalf("LastActivity after reopen = %v, want stable UTC %v", got, wantActivity)
+	}
+}
+
+func TestSQLiteStore_CommitCompactionPersistsLastActivity(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewSQLiteStore(":memory:")
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	appendCompactionMessage(t, store, ctx, "s1", Message{ID: "u1", Role: RoleUser, Text: "first"})
+	coveredThroughSeq := appendCompactionMessage(t, store, ctx, "s1", Message{ID: "a1", Role: RoleAssistant, Text: "done"})
+	preservedFromSeq := appendCompactionMessage(t, store, ctx, "s1", Message{ID: "u2", Role: RoleUser, Text: "current"})
+	checkpoint := compactionCheckpoint(compactionEpoch(t, store, ctx, "s1"), coveredThroughSeq, preservedFromSeq, preservedFromSeq)
+
+	lowerBound := time.UnixMilli(time.Now().UTC().UnixMilli()).UTC()
+	if _, err := store.CommitCompaction(ctx, "s1", checkpoint); err != nil {
+		t.Fatalf("CommitCompaction: %v", err)
+	}
+	summaries, err := store.Sessions(ctx)
+	if err != nil {
+		t.Fatalf("Sessions: %v", err)
+	}
+	if summaries[0].LastActivity.Before(lowerBound) || summaries[0].LastActivity.Location() != time.UTC {
+		t.Fatalf("CommitCompaction LastActivity = %v, want UTC after %v", summaries[0].LastActivity, lowerBound)
+	}
+}
+
+func TestSQLiteStore_SessionsBreaksActivityTiesByLatestRowID(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewSQLiteStore(":memory:")
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	const activityAt = int64(1_700_000_000_123)
+	for _, sessionID := range []string{"first", "second"} {
+		if _, err := store.db.Exec(`INSERT INTO events (session_id, seq, kind, has_message, activity_at) VALUES (?, 1, '', 0, ?)`, sessionID, activityAt); err != nil {
+			t.Fatalf("insert %s: %v", sessionID, err)
+		}
+	}
+	summaries, err := store.Sessions(ctx)
+	if err != nil {
+		t.Fatalf("Sessions: %v", err)
+	}
+	if got := projectSessionSummaries(summaries); !reflect.DeepEqual(got, []sessionSummaryProjection{{ID: "second"}, {ID: "first"}}) {
+		t.Fatalf("Sessions = %+v, want latest rowid first", got)
+	}
+	wantActivity := time.UnixMilli(activityAt).UTC()
+	for _, summary := range summaries {
+		if !summary.LastActivity.Equal(wantActivity) || summary.LastActivity.Location() != time.UTC {
+			t.Fatalf("LastActivity = %v, want %v UTC", summary.LastActivity, wantActivity)
+		}
+	}
 }
 
 func TestSQLiteStore_ConcurrentLegacyMigration(t *testing.T) {
+	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "legacy.db")
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -542,7 +681,11 @@ func TestSQLiteStore_ConcurrentLegacyMigration(t *testing.T) {
 		has_message INTEGER NOT NULL, msg_id TEXT, role TEXT, text TEXT,
 		call_id TEXT, tool_name TEXT, input BLOB, usage BLOB, error TEXT,
 		PRIMARY KEY (session_id, seq)
-	)`); err != nil {
+	);
+	INSERT INTO events (session_id, seq, kind, has_message, msg_id, role, text)
+	VALUES
+	  ('legacy-a', 1, '', 1, 'u1', 'user', 'old a'),
+	  ('legacy-b', 1, '', 1, 'u2', 'user', 'old b')`); err != nil {
 		db.Close()
 		t.Fatal(err)
 	}
@@ -579,7 +722,32 @@ func TestSQLiteStore_ConcurrentLegacyMigration(t *testing.T) {
 		}
 	}
 	close(stores)
+	opened := make([]*SQLiteStore, 0, 2)
 	for store := range stores {
+		opened = append(opened, store)
+	}
+	if _, err := opened[0].db.ExecContext(ctx,
+		`INSERT INTO events (session_id, seq, kind, has_message, msg_id, role, text)
+		 VALUES ('old-binary', 1, '', 1, 'u3', 'user', 'new from old binary')`); err != nil {
+		t.Fatalf("old-style insert after migration: %v", err)
+	}
+	summaries, err := opened[1].Sessions(ctx)
+	if err != nil {
+		t.Fatalf("Sessions after concurrent migration: %v", err)
+	}
+	if got := projectSessionSummaries(summaries); !reflect.DeepEqual(got, []sessionSummaryProjection{
+		{ID: "old-binary", Title: "new from old binary"},
+		{ID: "legacy-b", Title: "old b"},
+		{ID: "legacy-a", Title: "old a"},
+	}) {
+		t.Fatalf("Sessions after concurrent migration = %+v", got)
+	}
+	for _, summary := range summaries {
+		if summary.LastActivity.IsZero() || summary.LastActivity.Location() != time.UTC {
+			t.Fatalf("Sessions after concurrent migration: LastActivity invalido en %+v", summary)
+		}
+	}
+	for _, store := range opened {
 		if err := store.Close(); err != nil {
 			t.Fatal(err)
 		}

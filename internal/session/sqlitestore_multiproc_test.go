@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 )
 
 // Estos tests fijan el contrato multi-proceso del SQLiteStore: la TUI y la app
@@ -80,6 +81,9 @@ func TestSQLiteStore_SharedFile_ConcurrentAppendsAcrossStores(t *testing.T) {
 		}
 		seen := make(map[string]bool, len(got))
 		for _, s := range got {
+			if s.LastActivity.IsZero() || s.LastActivity.Location() != time.UTC {
+				t.Fatalf("Sessions (store %s): LastActivity invalido en %+v", name, s)
+			}
 			seen[s.ID] = true
 		}
 		if !seen["proc-a"] || !seen["proc-b"] {
@@ -151,6 +155,69 @@ func TestSQLiteStore_SharedFile_ConcurrentAppendsSameSession(t *testing.T) {
 	}
 }
 
+func TestSQLiteStore_LegacyInsertTriggerTimestampsAfterWriteLock(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "atenea.db")
+
+	locker, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore (locker): %v", err)
+	}
+	t.Cleanup(func() { locker.Close() })
+	writer, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore (writer): %v", err)
+	}
+	t.Cleanup(func() { writer.Close() })
+
+	tx, err := locker.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO session_context (session_id) VALUES ('write-lock')`); err != nil {
+		tx.Rollback()
+		t.Fatalf("acquire write lock: %v", err)
+	}
+
+	result := make(chan error, 1)
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		_, err := writer.db.ExecContext(ctx,
+			`INSERT INTO events (session_id, seq, kind, has_message) VALUES ('blocked', 1, '', 0)`,
+		)
+		result <- err
+	}()
+	<-started
+	select {
+	case err := <-result:
+		tx.Rollback()
+		t.Fatalf("legacy insert returned before write lock release: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	lowerBound := time.UnixMilli(time.Now().UTC().UnixMilli()).UTC()
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("release write lock: %v", err)
+	}
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("legacy insert after write lock: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("legacy insert remained blocked after write lock release")
+	}
+
+	summaries, err := writer.Sessions(ctx)
+	if err != nil {
+		t.Fatalf("Sessions: %v", err)
+	}
+	if got := summaries[0].LastActivity; got.Before(lowerBound) {
+		t.Fatalf("LastActivity = %v, want timestamp sampled after lock release %v", got, lowerBound)
+	}
+}
+
 // TestSQLiteStore_SharedFile_WriterClosesReaderStillReads: el escritor (la app)
 // escribe una sesion y CIERRA su store (el cierre en WAL dispara el checkpoint
 // del -wal hacia la base); el lector (la TUI), abierto ANTES de ese cierre
@@ -212,9 +279,12 @@ func TestSQLiteStore_SharedFile_WriterClosesReaderStillReads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Sessions (reader) tras el Close del writer: %v", err)
 	}
-	want := []SessionSummary{{ID: "compartida", Title: "hola desde la app", Cwd: "/home/u/proj"}}
-	if !reflect.DeepEqual(sums, want) {
+	want := []sessionSummaryProjection{{ID: "compartida", Title: "hola desde la app", Cwd: "/home/u/proj"}}
+	if projected := projectSessionSummaries(sums); !reflect.DeepEqual(projected, want) {
 		t.Fatalf("Sessions (reader): got %+v, want %+v", sums, want)
+	}
+	if sums[0].LastActivity.IsZero() || sums[0].LastActivity.Location() != time.UTC {
+		t.Fatalf("Sessions (reader): LastActivity invalido en %+v", sums[0])
 	}
 }
 

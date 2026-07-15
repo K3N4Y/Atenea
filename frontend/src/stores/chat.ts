@@ -183,6 +183,7 @@ export interface SessionSummary {
   // Carpeta de trabajo en que se creo la sesion; '' en chats viejos anteriores a
   // la captura. La sidebar agrupa por esta carpeta (groupSessionsByFolder).
   Cwd: string
+  LastActivity: string
 }
 
 export const useChatStore = defineStore(

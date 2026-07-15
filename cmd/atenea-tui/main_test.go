@@ -58,10 +58,11 @@ func TestTUI_PromptHistorySurvivesRestartUnderPTY(t *testing.T) {
 
 	firstCmd, firstTerminal, firstOutput, firstDone := startTUIUnderPTY(t, binary, workdir, database)
 	waitForPTYText(t, firstOutput, " demo ─╯")
+	beforeSubmit := firstOutput.String()
 	if _, err := firstTerminal.Write([]byte("mensaje persistente\r")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYText(t, firstOutput, "mensaje persistente")
+	waitForPTYTextAfter(t, firstOutput, beforeSubmit, "Hola desde atenea.")
 	if _, err := firstTerminal.Write([]byte("\x03")); err != nil {
 		t.Fatal(err)
 	}
@@ -81,6 +82,105 @@ func TestTUI_PromptHistorySurvivesRestartUnderPTY(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForPTYExit(t, secondDone)
+}
+
+func TestTUI_ResumesLatestWorkspaceSessionUnderPTY(t *testing.T) {
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "atenea-tui")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea-tui")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, output)
+	}
+	database := filepath.Join(t.TempDir(), "atenea.db")
+	workdir := filepath.Join(repoRoot, "cmd/atenea-tui/testdata/file-viewer/project")
+
+	firstCmd, firstTerminal, firstOutput, firstDone := startTUIUnderPTY(t, binary, workdir, database)
+	waitForPTYText(t, firstOutput, " demo ─╯")
+	beforeSubmit := firstOutput.String()
+	if _, err := firstTerminal.Write([]byte("\tcontinuidad tui\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYTextAfter(t, firstOutput, beforeSubmit, "Hola desde atenea.")
+	if _, err := firstTerminal.Write([]byte("\x03")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYExit(t, firstDone)
+	_ = firstTerminal.Close()
+	_ = firstCmd.Wait()
+
+	secondCmd, secondTerminal, secondOutput, secondDone := startTUIUnderPTY(t, binary, workdir, database)
+	defer stopPTYProcess(secondCmd, secondTerminal)
+	waitForPTYText(t, secondOutput, "continuidad tui")
+	waitForPTYText(t, secondOutput, " demo · plan ─╯")
+	if _, err := secondTerminal.Write([]byte("\x03")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYExit(t, secondDone)
+}
+
+func TestTUI_ResumeCommandOpensPreviousWorkspaceSessionUnderPTY(t *testing.T) {
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "atenea-tui")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea-tui")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, output)
+	}
+	database := filepath.Join(t.TempDir(), "atenea.db")
+	workdir := filepath.Join(repoRoot, "cmd/atenea-tui/testdata/file-viewer/project")
+
+	firstCmd, firstTerminal, firstOutput, firstDone := startTUIUnderPTY(t, binary, workdir, database)
+	waitForPTYText(t, firstOutput, " demo ─╯")
+	if _, err := firstTerminal.Write([]byte("\tsesion anterior\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, firstOutput, "sesion anterior")
+	if _, err := firstTerminal.Write([]byte("\x03")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYExit(t, firstDone)
+	_ = firstTerminal.Close()
+	_ = firstCmd.Wait()
+
+	secondCmd, secondTerminal, secondOutput, secondDone := startTUIUnderPTY(t, binary, workdir, database)
+	waitForPTYText(t, secondOutput, "sesion anterior")
+	if _, err := secondTerminal.Write([]byte("/new\r")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := secondTerminal.Write([]byte("sesion actual\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, secondOutput, "sesion actual")
+	if _, err := secondTerminal.Write([]byte("\x03")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYExit(t, secondDone)
+	_ = secondTerminal.Close()
+	_ = secondCmd.Wait()
+
+	thirdCmd, thirdTerminal, thirdOutput, thirdDone := startTUIUnderPTY(t, binary, workdir, database)
+	defer stopPTYProcess(thirdCmd, thirdTerminal)
+	waitForPTYText(t, thirdOutput, "sesion actual")
+	before := thirdOutput.String()
+	if _, err := thirdTerminal.Write([]byte("/resume\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYTextAfter(t, thirdOutput, before, "sesion anterior")
+	if _, err := thirdTerminal.Write([]byte("\x1b[B\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYTextAfter(t, thirdOutput, before, " demo · plan ─╯")
+	if _, err := thirdTerminal.Write([]byte("\x03")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYExit(t, thirdDone)
 }
 
 func TestTUI_ModelSelectorPersistsSelectionUnderPTY(t *testing.T) {

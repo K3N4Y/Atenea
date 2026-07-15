@@ -2,7 +2,12 @@ import { describe, it, expect } from 'vitest'
 import { groupSessionsByFolder, knownWorkspaces } from './sessions'
 import type { SessionSummary } from '../stores/chat'
 
-const s = (ID: string, Cwd: string): SessionSummary => ({ ID, Title: ID, Cwd })
+const s = (ID: string, Cwd: string): SessionSummary => ({
+  ID,
+  Title: ID,
+  Cwd,
+  LastActivity: '2026-07-14T00:00:00Z',
+})
 
 // La sidebar agrupa los chats por carpeta de proyecto preservando la recencia.
 describe('groupSessionsByFolder', () => {
