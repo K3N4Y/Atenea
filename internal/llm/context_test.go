@@ -15,6 +15,21 @@ func TestContextWindow_KnownAndUnknownModels(t *testing.T) {
 	}
 }
 
+func TestContextWindow_CurrentOpenAIModels(t *testing.T) {
+	tests := map[string]int{
+		"gpt-5.6":       1_050_000,
+		"gpt-5.6-terra": 1_050_000,
+		"gpt-5.6-luna":  131_072,
+		"gpt-5.4-mini":  400_000,
+		"gpt-5.4-nano":  400_000,
+	}
+	for model, want := range tests {
+		if got, ok := ContextWindow(model); !ok || got != want {
+			t.Errorf("ContextWindow(%q) = (%d, %v), want (%d, true)", model, got, ok, want)
+		}
+	}
+}
+
 func TestEstimateRequestTokens_IncludesSystemToolsMessagesAndOutputReserve(t *testing.T) {
 	req := Request{
 		Model:           "anthropic/claude-opus-4.8",

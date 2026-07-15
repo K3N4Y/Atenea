@@ -61,6 +61,13 @@ func Open(path, cachePath string, fallback llm.ProviderSnapshot, getenv func(str
 		}
 		return s, fmt.Errorf("load provider config: %w", loadErr)
 	}
+	if len(defaults) > 0 {
+		defaultConfig := defaults[0]
+		if err := normalizeAndValidate(&defaultConfig); err != nil {
+			return s, fmt.Errorf("validate default provider config: %w", err)
+		}
+		cfg = mergeMissingProviders(cfg, defaultConfig)
+	}
 	s.config = cfg
 	s.catalog = NewCatalog(cfg, cachePath, getenv, list)
 	provider, ok := findProvider(cfg, cfg.Selected.Provider)
@@ -77,6 +84,20 @@ func Open(path, cachePath string, fallback llm.ProviderSnapshot, getenv func(str
 	}
 	s.switcher.Swap(snapshot(provider, cfg.Selected.Model, delegate))
 	return s, nil
+}
+
+func mergeMissingProviders(cfg, defaults Config) Config {
+	seen := make(map[string]struct{}, len(cfg.Providers))
+	for _, provider := range cfg.Providers {
+		seen[provider.ID] = struct{}{}
+	}
+	for _, provider := range defaults.Providers {
+		if _, ok := seen[provider.ID]; ok {
+			continue
+		}
+		cfg.Providers = append(cfg.Providers, provider)
+	}
+	return cfg
 }
 
 func (s *Service) Provider() *llm.SwitchableProvider { return s.switcher }

@@ -16,6 +16,32 @@ import (
 	"github.com/creack/pty"
 )
 
+func TestEnvironmentFallbackSnapshot_UsesCurrentOpenAIDefault(t *testing.T) {
+	t.Setenv("OPENROUTER_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "openai-key")
+	t.Setenv("OPENAI_MODEL", "")
+
+	got := environmentFallbackSnapshot()
+	if got.ProviderID != "openai" || got.Model != "gpt-5.6-terra" {
+		t.Fatalf("fallback = %#v, want OpenAI gpt-5.6-terra", got)
+	}
+}
+
+func TestDefaultProviderConfig_UsesCuratedOpenAIModels(t *testing.T) {
+	cfg := defaultProviderConfig()
+	if len(cfg.Providers) != 2 {
+		t.Fatalf("providers = %#v, want OpenRouter and OpenAI", cfg.Providers)
+	}
+	openAI := cfg.Providers[1]
+	want := []string{"gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"}
+	if !openAI.DisableModelDiscovery {
+		t.Fatal("OpenAI model discovery must stay disabled because GET /models includes incompatible model types")
+	}
+	if strings.Join(openAI.Models, ",") != strings.Join(want, ",") {
+		t.Fatalf("OpenAI models = %#v, want %#v", openAI.Models, want)
+	}
+}
+
 func TestTUI_PromptHistorySurvivesRestartUnderPTY(t *testing.T) {
 	repoRoot, err := filepath.Abs("../..")
 	if err != nil {
@@ -32,10 +58,11 @@ func TestTUI_PromptHistorySurvivesRestartUnderPTY(t *testing.T) {
 
 	firstCmd, firstTerminal, firstOutput, firstDone := startTUIUnderPTY(t, binary, workdir, database)
 	waitForPTYText(t, firstOutput, " demo ─╯")
+	beforeSubmit := firstOutput.String()
 	if _, err := firstTerminal.Write([]byte("mensaje persistente\r")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYText(t, firstOutput, "mensaje persistente")
+	waitForPTYTextAfter(t, firstOutput, beforeSubmit, "Hola desde atenea.")
 	if _, err := firstTerminal.Write([]byte("\x03")); err != nil {
 		t.Fatal(err)
 	}
@@ -73,10 +100,11 @@ func TestTUI_ResumesLatestWorkspaceSessionUnderPTY(t *testing.T) {
 
 	firstCmd, firstTerminal, firstOutput, firstDone := startTUIUnderPTY(t, binary, workdir, database)
 	waitForPTYText(t, firstOutput, " demo ─╯")
+	beforeSubmit := firstOutput.String()
 	if _, err := firstTerminal.Write([]byte("\tcontinuidad tui\r")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYText(t, firstOutput, "continuidad tui")
+	waitForPTYTextAfter(t, firstOutput, beforeSubmit, "Hola desde atenea.")
 	if _, err := firstTerminal.Write([]byte("\x03")); err != nil {
 		t.Fatal(err)
 	}

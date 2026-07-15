@@ -13,13 +13,14 @@ import (
 const OpenAICompatible = "openai-compatible"
 
 type Provider struct {
-	ID                  string   `json:"id"`
-	Name                string   `json:"name"`
-	Type                string   `json:"type"`
-	BaseURL             string   `json:"base_url"`
-	APIKeyEnv           string   `json:"api_key_env,omitempty"`
-	OpenRouterReasoning bool     `json:"openrouter_reasoning,omitempty"`
-	Models              []string `json:"models,omitempty"`
+	ID                    string   `json:"id"`
+	Name                  string   `json:"name"`
+	Type                  string   `json:"type"`
+	BaseURL               string   `json:"base_url"`
+	APIKeyEnv             string   `json:"api_key_env,omitempty"`
+	OpenRouterReasoning   bool     `json:"openrouter_reasoning,omitempty"`
+	DisableModelDiscovery bool     `json:"disable_model_discovery,omitempty"`
+	Models                []string `json:"models,omitempty"`
 }
 
 type Selection struct {

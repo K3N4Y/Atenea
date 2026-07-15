@@ -52,6 +52,32 @@ func TestService_OpenUsesDefaultCatalogWhenConfigIsAbsent(t *testing.T) {
 	}
 }
 
+func TestService_OpenMergesMissingDefaultProvidersIntoPersistedConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "providers.json")
+	if err := os.WriteFile(path, []byte(`{"providers":[{"id":"openrouter","name":"Custom Router","type":"openai-compatible","base_url":"http://custom","models":["custom-model"]}],"selected":{"provider":"openrouter","model":"custom-model"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	defaults := Config{Providers: []Provider{
+		{ID: "openrouter", Name: "OpenRouter", Type: OpenAICompatible, BaseURL: "https://openrouter.ai/api/v1", Models: []string{"default-model"}},
+		{ID: "openai", Name: "OpenAI", Type: OpenAICompatible, BaseURL: "https://api.openai.com/v1", Models: []string{"gpt-5.6-terra"}},
+	}}
+	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil }, nil, nil, defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := s.Catalog()
+	if len(got) != 2 {
+		t.Fatalf("catalog providers = %#v, want persisted provider plus missing default", got)
+	}
+	if got[0].ID != "openrouter" || got[0].Name != "Custom Router" || got[0].Models[0] != "custom-model" {
+		t.Fatalf("persisted provider was overwritten: %#v", got[0])
+	}
+	if got[1].ID != "openai" || got[1].Models[0] != "gpt-5.6-terra" {
+		t.Fatalf("missing default provider was not appended: %#v", got[1])
+	}
+}
+
 func TestService_SelectSaveFailureKeepsPreviousSelection(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "providers.json")
 	if err := os.WriteFile(path, []byte(`{"providers":[{"id":"p","name":"Provider","type":"openai-compatible","base_url":"http://p","models":["one","two"]}],"selected":{"provider":"p","model":"one"}}`), 0o600); err != nil {

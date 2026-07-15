@@ -222,9 +222,7 @@ describe('ChatComposer slash-commands', () => {
     await ta.trigger('keydown', { key: 'ArrowDown' }) // baja al segundo de la lista
     await ta.trigger('keydown', { key: 'Enter' })
 
-    expect((ta.element as HTMLTextAreaElement).value).toBe(
-      '/code-review ',
-    )
+    expect((ta.element as HTMLTextAreaElement).value).toBe('/code-review ')
   })
 
   it('Escape cierra el menu; un Enter posterior envia normal', async () => {
@@ -246,9 +244,7 @@ describe('ChatComposer slash-commands', () => {
     await ta.setValue('/code')
     await wrapper.findAll('[role="option"]')[0].trigger('mousedown')
 
-    expect((ta.element as HTMLTextAreaElement).value).toBe(
-      '/code-review ',
-    )
+    expect((ta.element as HTMLTextAreaElement).value).toBe('/code-review ')
   })
 
   it('"/" a mitad del mensaje NO abre el menu (el comando es todo el mensaje)', async () => {
