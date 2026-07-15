@@ -358,7 +358,7 @@ func TestRipgrepGlobSearcher_UsesProductionRipgrepArgs(t *testing.T) {
 	if len(res.Entries) != 1 || res.Entries[0].Path != "a.go" {
 		t.Fatalf("Entries = %+v", res.Entries)
 	}
-	wantArgs := []string{"--no-config", "--files", "--glob=*.go", "--glob=!**/.git/**", "--glob=!**/node_modules/**", "."}
+	wantArgs := []string{"--no-config", "--files", "--hidden", "--glob=*.go", "--glob=!**/.git/**", "--glob=!**/node_modules/**", "."}
 	if !reflect.DeepEqual(runner.calls[0].args, wantArgs) {
 		t.Fatalf("args\nwant %v\ngot  %v", wantArgs, runner.calls[0].args)
 	}

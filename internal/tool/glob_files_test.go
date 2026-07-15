@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -62,7 +63,7 @@ func TestRipgrepGlobSearcher_EmptyPatternListsAllFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Glob: %v", err)
 	}
-	wantArgs := []string{"--no-config", "--files", "--glob=!**/.git/**", "--glob=!**/node_modules/**", "."}
+	wantArgs := []string{"--no-config", "--files", "--hidden", "--glob=!**/.git/**", "--glob=!**/node_modules/**", "."}
 	if !reflect.DeepEqual(runner.calls[0].args, wantArgs) {
 		t.Fatalf("args\nwant %v\ngot  %v", wantArgs, runner.calls[0].args)
 	}
@@ -89,6 +90,36 @@ func TestRipgrepGlobSearcher_ExcludesNodeModules(t *testing.T) {
 	}
 	if len(res.Entries) != 1 || res.Entries[0].Path != "app.go" {
 		t.Fatalf("Entries = %+v, want [app.go]", res.Entries)
+	}
+}
+
+// TestRipgrepGlobSearcher_FindsFilesInHiddenDirs: with real rg, patterns that
+// target dot-directories (e.g. ".okf/*.md") return matches; without --hidden
+// rg skips them silently. .git stays excluded.
+func TestRipgrepGlobSearcher_FindsFilesInHiddenDirs(t *testing.T) {
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skipf("rg unavailable: %v", err)
+	}
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, ".okf", "README.md"), "# docs")
+	mustWrite(t, filepath.Join(root, ".git", "config"), "[core]")
+
+	res, err := (&RipgrepGlobSearcher{}).Glob(context.Background(), GlobSearch{Cwd: root, Pattern: ".okf/*.md", Limit: 10})
+	if err != nil {
+		t.Fatalf("Glob: %v", err)
+	}
+	if len(res.Entries) != 1 || res.Entries[0].Path != ".okf/README.md" {
+		t.Fatalf("Entries = %+v, want [.okf/README.md]", res.Entries)
+	}
+
+	res, err = (&RipgrepGlobSearcher{}).Glob(context.Background(), GlobSearch{Cwd: root, Pattern: "", Limit: 10})
+	if err != nil {
+		t.Fatalf("Glob: %v", err)
+	}
+	for _, e := range res.Entries {
+		if strings.HasPrefix(e.Path, ".git/") {
+			t.Fatalf(".git no fue excluido: %+v", res.Entries)
+		}
 	}
 }
 

@@ -221,11 +221,13 @@ func (s *RipgrepGlobSearcher) Glob(ctx context.Context, input GlobSearch) (GlobS
 	}
 	// Un pattern vacio lista todos los archivos: se omite el include --glob
 	// porque un include (p. ej. "*") des-ignoraria lo que .gitignore excluye.
-	// .git y node_modules se excluyen siempre: git no se ignora a si mismo y
-	// node_modules solo esta en .gitignore por convencion, no garantizado.
-	args := []string{"--no-config", "--files", "--glob=!**/.git/**", "--glob=!**/node_modules/**", "."}
+	// --hidden: without it rg silently skips dot-dirs, so patterns like
+	// ".okf/*.md" match nothing. With it, .git must be excluded explicitly
+	// (git never ignores itself); node_modules se excluye porque solo esta en
+	// .gitignore por convencion, no garantizado.
+	args := []string{"--no-config", "--files", "--hidden", "--glob=!**/.git/**", "--glob=!**/node_modules/**", "."}
 	if input.Pattern != "" {
-		args = []string{"--no-config", "--files", "--glob=" + input.Pattern, "--glob=!**/.git/**", "--glob=!**/node_modules/**", "."}
+		args = []string{"--no-config", "--files", "--hidden", "--glob=" + input.Pattern, "--glob=!**/.git/**", "--glob=!**/node_modules/**", "."}
 	}
 	lines, truncated, err := runner.RunLines(ctx, input.Cwd, binary, args, input.Limit)
 	if err != nil {
