@@ -525,6 +525,169 @@ func TestModel_ResumePickerOwnsFocusAcrossTerminalFocusChanges(t *testing.T) {
 	}
 }
 
+func TestModel_ResumePickerRendersFullScreenRows(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "tui-current", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 72, Height: 18})
+	m.entries = []entry{{kind: entryUser, text: "hidden chat text"}}
+	m = m.syncViewport()
+	m.resumePicker = newResumePicker("tui-current")
+	m.resumePicker.setSessions([]session.SessionSummary{
+		{
+			ID:           "tui-current",
+			Title:        "Current session",
+			LastActivity: time.Date(2026, time.July, 14, 9, 5, 0, 0, time.Local),
+		},
+		{
+			ID:           "tui-other",
+			Title:        "Selected session",
+			LastActivity: time.Date(2026, time.July, 13, 17, 45, 0, 0, time.Local),
+		},
+		{ID: "tui-untitled"},
+	})
+	m.resumePicker.selected = 1
+
+	view := m.View()
+	plain := ansi.Strip(view)
+	if strings.Contains(plain, "hidden chat text") || strings.Contains(plain, "chat *") {
+		t.Fatalf("View() rendered hidden chat chrome: %q", plain)
+	}
+	if !strings.Contains(plain, "╭") || !strings.Contains(plain, "╰") || !strings.Contains(plain, "Search sessions") {
+		t.Fatalf("View() missing rounded focused search box: %q", plain)
+	}
+	currentLine := lineContaining(t, plain, "Current session")
+	for _, want := range []string{"current", "Jul 14, 2026 09:05"} {
+		if !strings.Contains(currentLine, want) {
+			t.Fatalf("current row = %q, want %q", currentLine, want)
+		}
+	}
+	selectedLine := lineContaining(t, plain, "Selected session")
+	if !strings.Contains(selectedLine, "❯") || !strings.Contains(selectedLine, "Jul 13, 2026 17:45") {
+		t.Fatalf("selected row = %q", selectedLine)
+	}
+	if !strings.Contains(view, accentStyle.Render("❯")) {
+		t.Fatalf("View() does not accent selected indicator: %q", view)
+	}
+	if !strings.Contains(view, statusStyle.Render("current")) || !strings.Contains(view, statusStyle.Render("Jul 14, 2026 09:05")) {
+		t.Fatalf("View() does not mute current marker and unselected timestamp: %q", view)
+	}
+	if !strings.Contains(plain, "Untitled session") {
+		t.Fatalf("View() missing stable empty-title placeholder: %q", plain)
+	}
+	if currentIndex, selectedIndex := lineIndexWith(t, plain, "Current session"), lineIndexWith(t, plain, "Selected session"); currentIndex >= selectedIndex {
+		t.Fatalf("filtered row order changed: current=%d selected=%d", currentIndex, selectedIndex)
+	}
+	if got := len(strings.Split(view, "\n")); got != 18 {
+		t.Fatalf("View() lines = %d, want terminal height 18: %q", got, plain)
+	}
+	assertNoLineWiderThan(t, view, 72)
+}
+
+func TestModel_ResumePickerRendersLoadingErrorAndExactEmptyState(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*resumePicker)
+		want  string
+	}{
+		{name: "loading", want: "Loading sessions…"},
+		{name: "error", setup: func(picker *resumePicker) { picker.fail("sessions unavailable") }, want: "sessions unavailable"},
+		{name: "empty", setup: func(picker *resumePicker) { picker.setSessions(nil) }, want: "No sessions found"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewModel(&fakeAgent{}, "tui-current", nil)
+			m = apply(t, m, tea.WindowSizeMsg{Width: 42, Height: 9})
+			m.resumePicker = newResumePicker("tui-current")
+			if tt.setup != nil {
+				tt.setup(&m.resumePicker)
+			}
+
+			view := m.View()
+			plain := ansi.Strip(view)
+			if !strings.Contains(plain, tt.want) {
+				t.Fatalf("View() = %q, want %q", plain, tt.want)
+			}
+			if tt.name == "loading" && !strings.Contains(view, statusStyle.Render(tt.want)) {
+				t.Fatalf("loading state is not muted: %q", view)
+			}
+			if tt.name == "error" && !strings.Contains(view, errorStyle.Render(tt.want)) {
+				t.Fatalf("error state does not use error style: %q", view)
+			}
+			if tt.name == "empty" && strings.TrimSpace(lineContaining(t, plain, tt.want)) != "No sessions found" {
+				t.Fatalf("empty row = %q, want exact text", lineContaining(t, plain, tt.want))
+			}
+			assertNoLineWiderThan(t, view, 42)
+		})
+	}
+}
+
+func TestModel_ResumePickerRowsStayANSIAndUnicodeWidthSafe(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "tui-current", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 24, Height: 8})
+	m.resumePicker = newResumePicker("tui-current")
+	m.resumePicker.setSessions([]session.SessionSummary{{
+		ID:           "tui-current",
+		Title:        "\x1b[31m非常に長いセッション名 with more text\x1b[0m",
+		LastActivity: time.Date(2026, time.July, 14, 9, 5, 0, 0, time.Local),
+	}})
+
+	view := m.View()
+	plain := ansi.Strip(view)
+	if strings.Contains(plain, "[31m") || !strings.Contains(plain, "非常") {
+		t.Fatalf("View() did not safely render ANSI/unicode title: %q", plain)
+	}
+	assertNoLineWiderThan(t, view, 24)
+
+	for _, size := range []tea.WindowSizeMsg{{Width: 1, Height: 2}, {Width: 2, Height: 1}} {
+		tiny := NewModel(&fakeAgent{}, "tui-current", nil)
+		tiny = apply(t, tiny, size)
+		tiny.resumePicker = m.resumePicker
+		tiny.resumePicker.open = true
+		tinyView := tiny.View()
+		assertNoLineWiderThan(t, tinyView, size.Width)
+		if got := len(strings.Split(tinyView, "\n")); got > size.Height {
+			t.Fatalf("tiny View() lines = %d, want at most %d: %q", got, size.Height, ansi.Strip(tinyView))
+		}
+	}
+
+	beforeSize := NewModel(&fakeAgent{}, "tui-current", nil)
+	beforeSize.resumePicker = newResumePicker("tui-current")
+	beforeSize.resumePicker.setSessions([]session.SessionSummary{{ID: "one", Title: "Before size"}})
+	_ = beforeSize.View()
+}
+
+func TestModel_ResumePickerKeepsSelectedRowVisible(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "tui-current", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
+	m.resumePicker = newResumePicker("tui-current")
+	sessions := make([]session.SessionSummary, 24)
+	for i := range sessions {
+		sessions[i] = session.SessionSummary{ID: fmt.Sprintf("session-%02d", i), Title: fmt.Sprintf("Session %02d", i)}
+	}
+	m.resumePicker.setSessions(sessions)
+	m.resumePicker.selected = 19
+
+	plain := ansi.Strip(m.View())
+	if !strings.Contains(plain, "Session 19") || strings.Contains(plain, "Session 00") {
+		t.Fatalf("View() = %q, selected row must be visible in derived window", plain)
+	}
+	if got := strings.Count(plain, "Session "); got > 5 {
+		t.Fatalf("View() rendered %d session rows, want at most available height: %q", got, plain)
+	}
+	assertNoLineWiderThan(t, m.View(), 40)
+}
+
+func lineContaining(t *testing.T, view, needle string) string {
+	t.Helper()
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, needle) {
+			return line
+		}
+	}
+	t.Fatalf("View() = %q, want line containing %q", view, needle)
+	return ""
+}
+
 func TestModel_WithSessionRestoresTranscriptAndModeWithinBuilderChain(t *testing.T) {
 	events := []session.SessionEvent{{Message: &session.Message{ID: "u1", Role: session.RoleUser, Text: "restored chat"}}}
 	m := NewModel(nil, "tui-session", nil).
