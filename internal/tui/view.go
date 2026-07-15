@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 
 	"atenea/internal/llm"
 	"atenea/internal/session"
@@ -442,15 +444,108 @@ func renderDiffPreview(diff string) string {
 	})
 }
 
-// markdownStyle es el estilo del markdown asentado del assistant: el tema
-// "dark" de glamour con el color del documento anulado. El gris 252 que fija
-// Document.Color en el tema apaga el texto del assistant frente al resto de
-// la vista; con nil el documento hereda el color por defecto de la terminal.
-// El resto del tema (headings, code, etc.) queda igual.
+// markdownRuleWidth is the fixed width of the horizontal rule glyph run:
+// glamour renders HR as a literal format string, so the rule cannot follow
+// the terminal width. 40 cells reads as a deliberate separator at the usual
+// widths without overflowing narrow terminals.
+const markdownRuleWidth = 40
+
+// markdownCodeBackground is the subtle background that separates code from
+// the conversational flow (visual identity §8), shared by inline code and
+// code blocks. ANSI 236 for termenv-styled parts; chroma styles only take
+// hex, so markdownCodeBackgroundHex is its truecolor twin.
+const (
+	markdownCodeBackground    = "236"
+	markdownCodeBackgroundHex = "#303030"
+)
+
+// markdownCodeBlockMarker brackets each rendered code block so
+// paintCodeBlockBackgrounds can find it in glamour's output. NUL bytes never
+// survive sanitizeTerminalText, so assistant content cannot forge a marker;
+// the marker lines themselves are removed from the final render.
+const markdownCodeBlockMarker = "\x00code\x00"
+
+// markdownStyle is the TUI's own glamour theme for assistant markdown. The
+// stock dark theme clashes with the TUI identity (indigo H1 chip, literal
+// ##/### prefixes, "--------" rules, double-styled links, code blocks with
+// no background and an extra indent). This theme sticks to the ANSI palette
+// the rest of view.go already uses — accent 6, gray 8 — plus neutral gray
+// 236 for subtle backgrounds over the #141414 canvas. Heading hierarchy
+// comes from weight (H1 bold accent, H2 bold, H3-H6 bold gray; gray instead
+// of faint because glamour's renderText ignores the Faint field), never from
+// prefixes or background chips. The document color stays nil so text
+// inherits the terminal default. In the Ascii profile (tests, no TTY) all of
+// this degrades to plain contiguous text, keeping the content assertable.
 var markdownStyle = func() glamouransi.StyleConfig {
-	s := styles.DarkStyleConfig
-	s.Document.StylePrimitive.Color = nil
-	return s
+	str := func(v string) *string { return &v }
+	yes := func() *bool { v := true; return &v }
+	num := func(v uint) *uint { return &v }
+
+	// Syntax colors reuse the stock dark chroma set (already curated for a
+	// dark background), with the block background on EVERY token entry:
+	// chroma's TTY formatters clear the style-level Background before
+	// formatting, so a background only renders when each token carries its
+	// own. The reflection loop covers every entry so none is left as a hole
+	// in the block.
+	chromaTheme := *styles.DarkStyleConfig.CodeBlock.Chroma
+	entries := reflect.ValueOf(&chromaTheme).Elem()
+	for i := 0; i < entries.NumField(); i++ {
+		entry := entries.Field(i).Addr().Interface().(*glamouransi.StylePrimitive)
+		entry.BackgroundColor = str(markdownCodeBackgroundHex)
+	}
+
+	return glamouransi.StyleConfig{
+		Document: glamouransi.StyleBlock{
+			StylePrimitive: glamouransi.StylePrimitive{BlockPrefix: "\n", BlockSuffix: "\n"},
+			Margin:         num(2),
+		},
+		BlockQuote: glamouransi.StyleBlock{
+			Indent:      num(1),
+			IndentToken: str("│ "),
+		},
+		List: glamouransi.StyleList{LevelIndent: 2},
+		Heading: glamouransi.StyleBlock{
+			StylePrimitive: glamouransi.StylePrimitive{BlockSuffix: "\n", Bold: yes()},
+		},
+		H1:            glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{Color: str("6")}},
+		H3:            glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{Color: str("8")}},
+		H4:            glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{Color: str("8")}},
+		H5:            glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{Color: str("8")}},
+		H6:            glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{Color: str("8")}},
+		Strikethrough: glamouransi.StylePrimitive{CrossedOut: yes()},
+		Emph:          glamouransi.StylePrimitive{Italic: yes()},
+		Strong:        glamouransi.StylePrimitive{Bold: yes()},
+		HorizontalRule: glamouransi.StylePrimitive{
+			Color:  str("8"),
+			Format: "\n" + strings.Repeat("─", markdownRuleWidth) + "\n",
+		},
+		Item:        glamouransi.StylePrimitive{BlockPrefix: "• "},
+		Enumeration: glamouransi.StylePrimitive{BlockPrefix: ". "},
+		Task:        glamouransi.StyleTask{Ticked: "[✓] ", Unticked: "[ ] "},
+		// One single quiet link style: text and URL both underlined accent,
+		// instead of the stock green-bold text next to a cyan URL.
+		Link:      glamouransi.StylePrimitive{Color: str("6"), Underline: yes()},
+		LinkText:  glamouransi.StylePrimitive{Color: str("6"), Underline: yes()},
+		Image:     glamouransi.StylePrimitive{Color: str("6"), Underline: yes()},
+		ImageText: glamouransi.StylePrimitive{Color: str("8"), Format: "Image: {{.text}} →"},
+		Code: glamouransi.StyleBlock{
+			StylePrimitive: glamouransi.StylePrimitive{
+				Prefix: " ", Suffix: " ", BackgroundColor: str(markdownCodeBackground),
+			},
+		},
+		// No CodeBlock margin: the block aligns with the body at the document
+		// margin (column 2) instead of the stock extra indent (column 4). The
+		// marker lines bracket the block for paintCodeBlockBackgrounds.
+		CodeBlock: glamouransi.StyleCodeBlock{
+			StyleBlock: glamouransi.StyleBlock{
+				StylePrimitive: glamouransi.StylePrimitive{
+					BlockPrefix: markdownCodeBlockMarker + "\n",
+					BlockSuffix: markdownCodeBlockMarker + "\n",
+				},
+			},
+			Chroma: &chromaTheme,
+		},
+	}
 }()
 
 // markdownDocMargin es el margen izquierdo del documento del estilo del
@@ -465,6 +560,61 @@ var markdownDocMargin = func() int {
 	return 0
 }()
 
+// markdownCodeBlockPadStyle paints the spaces that square a code block line
+// up to the width of the block's widest line, in the same background the
+// chroma tokens carry.
+var markdownCodeBlockPadStyle = lipgloss.NewStyle().Background(lipgloss.Color(markdownCodeBackground))
+
+// paintCodeBlockBackgrounds squares up the background of every code block in
+// glamour's rendered output. Chroma's TTY formatters only paint background
+// behind the tokens they emit (the style-level background is cleared before
+// formatting), which leaves each line's background ragged on the right; this
+// pass pads every line of a block — bracketed by markdownCodeBlockMarker
+// lines, which are dropped — with background-styled spaces up to the block's
+// widest line. Glamour's own right-padding on wrapped code lines is unstyled,
+// so it is trimmed before measuring and repainted by the pad; blank code
+// lines lose their unstyled document margin to the same trim and get it back
+// before the pad so the background never starts at column 0.
+func paintCodeBlockBackgrounds(rendered string) string {
+	if !strings.Contains(rendered, markdownCodeBlockMarker) {
+		return rendered
+	}
+	isMarker := func(line string) bool { return strings.Contains(line, markdownCodeBlockMarker) }
+	lines := strings.Split(rendered, "\n")
+	out := make([]string, 0, len(lines))
+	for i := 0; i < len(lines); i++ {
+		if !isMarker(lines[i]) {
+			out = append(out, lines[i])
+			continue
+		}
+		start := i + 1
+		end := start
+		for end < len(lines) && !isMarker(lines[end]) {
+			end++
+		}
+		block := lines[start:end]
+		width := 0
+		for j, line := range block {
+			line = strings.TrimRight(line, " ")
+			if w := lipgloss.Width(line); w < markdownDocMargin {
+				line += strings.Repeat(" ", markdownDocMargin-w)
+			}
+			block[j] = line
+			if w := lipgloss.Width(line); w > width {
+				width = w
+			}
+		}
+		for _, line := range block {
+			if pad := width - lipgloss.Width(line); pad > 0 {
+				line += markdownCodeBlockPadStyle.Render(strings.Repeat(" ", pad))
+			}
+			out = append(out, line)
+		}
+		i = end // skip the closing marker; the loop increment moves past it
+	}
+	return strings.Join(out, "\n")
+}
+
 // markdownRendererCache memoiza el ultimo TermRenderer construido, clavado al
 // ancho de envolvimiento con el que se creo. renderTranscript corre en cada
 // Update (cada delta del streaming) y rinde cada bloque assistant cerrado:
@@ -476,6 +626,7 @@ var markdownDocMargin = func() int {
 // concurrentemente.
 var markdownRendererCache struct {
 	wrap     int
+	profile  termenv.Profile
 	renderer *glamour.TermRenderer
 }
 
@@ -486,20 +637,24 @@ var markdownRendererCache struct {
 // llamadas. El perfil de COLOR sigue al de lipgloss, igual que el resto de
 // estilos de la vista: sin TTY (tests) es Ascii y el contenido rendido queda
 // como texto plano contiguo asertable (glamour con colores parte cada palabra
-// en su propio segmento ANSI); en terminal real colorea.
+// en su propio segmento ANSI); en terminal real colorea. El renderer captura
+// el perfil al construirse, asi que el cache tambien se clava al perfil: los
+// tests que fuerzan un perfil no deben reusar un renderer construido con otro.
 func markdownRenderer(wrap int) (*glamour.TermRenderer, error) {
-	if markdownRendererCache.renderer != nil && markdownRendererCache.wrap == wrap {
+	profile := lipgloss.ColorProfile()
+	if markdownRendererCache.renderer != nil && markdownRendererCache.wrap == wrap && markdownRendererCache.profile == profile {
 		return markdownRendererCache.renderer, nil
 	}
 	r, err := glamour.NewTermRenderer(
 		glamour.WithStyles(markdownStyle),
 		glamour.WithWordWrap(wrap),
-		glamour.WithColorProfile(lipgloss.ColorProfile()),
+		glamour.WithColorProfile(profile),
 	)
 	if err != nil {
 		return nil, err
 	}
 	markdownRendererCache.wrap = wrap
+	markdownRendererCache.profile = profile
 	markdownRendererCache.renderer = r
 	return r, nil
 }
@@ -527,7 +682,7 @@ func renderMarkdown(text string, width int) string {
 	if err != nil {
 		return text
 	}
-	return strings.Trim(out, "\n")
+	return strings.Trim(paintCodeBlockBackgrounds(out), "\n")
 }
 
 // compactActivityJoin decide si la entrada cur se une a prev SIN linea en

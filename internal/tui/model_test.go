@@ -1815,20 +1815,18 @@ func TestModel_ViewDarkCanvasWithoutWindowSizeDoesNotPad(t *testing.T) {
 	}
 }
 
-func TestModel_AssistantMarkdownKeepsDarkThemeAccents(t *testing.T) {
-	// TRIANGULATE: una implementacion pobre "arregla" el gris del documento
-	// cambiando al estilo notty/ascii o quitando TODOS los colores del tema:
-	// pasa el test del gris (no queda ningun 38;5;252 porque no queda ningun
-	// color) pero apaga los acentos del tema dark. Anular Document.Color debe
-	// ser quirurgico: un heading markdown asentado sigue rendiendo el color de
-	// headings del tema dark (Color "39" -> SGR 38;5;39 en ANSI256) a la vez
-	// que el gris 252 del documento no aparece.
+func TestModel_AssistantMarkdownKeepsOwnThemeAccents(t *testing.T) {
+	// TRIANGULATE: a poor implementation "themes" the markdown by falling back
+	// to the notty/ascii style or stripping ALL colors: the noise goes away
+	// but so do the accents. A settled markdown H1 must still render the TUI
+	// accent (color "6" + bold -> SGR 36;1 in ANSI256) while the stock
+	// dark-theme colors (document gray 252, heading blue 39) stay gone.
 	forceANSI256Profile(t)
 
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	text := "## Titulo\n\ntexto"
+	text := "# Titulo\n\ntexto"
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
 	m = apply(t, m, EventMsg{
@@ -1839,13 +1837,15 @@ func TestModel_AssistantMarkdownKeepsDarkThemeAccents(t *testing.T) {
 
 	view := m.View()
 	if plain := ansi.Strip(view); !strings.Contains(plain, "Titulo") {
-		t.Fatalf("View() sin ANSI = %q, debe contener %q: conservar el tema no debe perder el contenido del heading", plain, "Titulo")
+		t.Fatalf("View() without ANSI = %q, must contain %q: theming must not lose the heading content", plain, "Titulo")
 	}
-	if !strings.Contains(view, "38;5;39") {
-		t.Fatalf("View() = %q, debe contener la secuencia SGR %q: el heading markdown asentado conserva el color de headings del tema dark de glamour; quitar TODOS los colores (o caer al estilo notty/ascii) no es la solucion al gris del documento", view, "38;5;39")
+	if !strings.Contains(view, "36;1") {
+		t.Fatalf("View() = %q, must contain the SGR sequence %q: a settled markdown H1 renders the TUI accent (bold color 6); stripping all colors is not a theme", view, "36;1")
 	}
-	if strings.Contains(view, "38;5;252") {
-		t.Fatalf("View() = %q, NO debe contener la secuencia SGR %q: solo se anula el gris del documento, no el resto del tema", view, "38;5;252")
+	for _, stock := range []string{"38;5;252", "38;5;39"} {
+		if strings.Contains(view, stock) {
+			t.Fatalf("View() = %q, must NOT contain the stock dark-theme SGR sequence %q: the TUI ships its own markdown theme", view, stock)
+		}
 	}
 }
 

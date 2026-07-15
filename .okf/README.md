@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-13
+updated_at: 2026-07-14
 summary: Navigation index for Atenea project documentation in the OKF convention.
 ---
 
@@ -32,6 +32,7 @@ uses Markdown and begins with `updated_at` and `summary` YAML metadata.
 ## Design
 
 - [Frontend](design/frontend.md)
+- [TUI markdown theme](design/tui-markdown-theme.md)
 - [Visual identity and UX](design/visual-identity.md)
 
 ## Plans
