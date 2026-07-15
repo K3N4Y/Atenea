@@ -700,6 +700,9 @@ func (m Model) entryLines() []entryLine {
 // pie tenue con el agente y el modelo la sigue. El alto sigue acotado porque
 // reservedLines ya las descuenta del viewport.
 func (m Model) View() string {
+	if m.modelPicker.open {
+		return m.modelPickerView()
+	}
 	if m.resumePicker.open {
 		return m.resumePickerView()
 	}

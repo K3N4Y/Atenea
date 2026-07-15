@@ -15,10 +15,11 @@ session store. Shutdown stops active runs, cancels and waits for context
 compactions, and disables further Bubble Tea messages once its event loop has
 ended. This preserves final events and prompt checkpoints before SQLite closes.
 
-The composer also owns three built-in session commands that never become model
-messages: `/new` creates a session, `/resume` opens a searchable picker of TUI
-sessions from the same workspace, and `/compact` requests durable context
-compaction for the active session.
+The composer also owns built-in commands that never become model messages:
+`/new` creates a session, `/resume` opens a searchable picker of TUI sessions
+from the same workspace, `/compact` requests durable context compaction for the
+active session, and `/model` opens a full-screen two-column picker with
+providers on the left and the selected provider's models on the wider right.
 
 At startup, the TUI resumes the most recently active `tui-` session whose
 persisted `Session.Cwd` matches the current workspace. Its durable events

@@ -302,6 +302,7 @@ type Model struct {
 
 	resumePicker resumePicker
 	resumeGen    uint64
+	modelPicker  modelPicker
 
 	leaderPending    bool
 	leaderGeneration uint64
@@ -540,6 +541,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resumePicker.setSessions(ev.Sessions)
 		return m, nil
 	case ModelsRefreshedMsg:
+		if m.modelPicker.open {
+			m.modelPicker.setProviders(ev.Providers)
+			return m, waitForEvent(m.events)
+		}
 		next, cmd := m.refreshMenu()
 		return next, tea.Batch(cmd, waitForEvent(m.events))
 	case filesListedMsg:
@@ -764,6 +769,45 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.resumePicker.open {
 		return m.handleResumePickerKey(msg)
 	}
+	if m.modelPicker.open {
+		switch msg.Type {
+		case tea.KeyEsc:
+			m.modelPicker.open = false
+		case tea.KeyLeft:
+			m.modelPicker.modelsFocused = false
+		case tea.KeyRight:
+			m.modelPicker.modelsFocused = true
+		case tea.KeyTab:
+			m.modelPicker.modelsFocused = !m.modelPicker.modelsFocused
+		case tea.KeyUp:
+			m.modelPicker.move(-1)
+		case tea.KeyDown:
+			m.modelPicker.move(1)
+		case tea.KeyEnter:
+			if !m.modelPicker.modelsFocused {
+				m.modelPicker.modelsFocused = true
+				return m, nil
+			}
+			provider, providerOK := m.modelPicker.selectedProvider()
+			model, modelOK := m.modelPicker.selectedModel()
+			if !providerOK || !modelOK {
+				return m, nil
+			}
+			controller, ok := m.agent.(modelAgent)
+			if !ok {
+				m.modelPicker.err = "model selection is unavailable"
+				return m, nil
+			}
+			active, err := controller.SelectModel(provider.ID, model)
+			if err != nil {
+				m.modelPicker.err = err.Error()
+				return m, nil
+			}
+			m.model = active.Model
+			m.modelPicker.open = false
+		}
+		return m, nil
+	}
 	if perm, ok := m.pendingPermission(); ok {
 		if msg.Type == tea.KeyPgUp || msg.Type == tea.KeyPgDown {
 			return m.scrollViewport(msg)
@@ -806,7 +850,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// Tab aplica la seleccion; no alterna el modo build/plan.
 			return m.applySelection()
 		case tea.KeyEnter:
-			if m.menuItems[m.menuSelected].builtin && (m.menuItems[m.menuSelected].label == "/new" || m.menuItems[m.menuSelected].label == "/compact" || m.menuItems[m.menuSelected].label == "/resume") {
+			if m.menuItems[m.menuSelected].builtin && (m.menuItems[m.menuSelected].label == "/new" || m.menuItems[m.menuSelected].label == "/compact" || m.menuItems[m.menuSelected].label == "/resume" || m.menuItems[m.menuSelected].label == "/model") {
 				m.input.SetValue(m.menuItems[m.menuSelected].label)
 				m.input.SetCursor(len([]rune(m.menuItems[m.menuSelected].label)))
 				return m.closeMenu().submitPrompt()
@@ -986,6 +1030,10 @@ func (m Model) reloadTree(loadNow bool) (Model, tea.Cmd) {
 }
 
 func (m *Model) syncComposerFocus() tea.Cmd {
+	if m.modelPicker.open {
+		m.input.Blur()
+		return nil
+	}
 	if m.resumePicker.open {
 		m.input.Blur()
 		if m.terminalFocused {
@@ -1433,6 +1481,13 @@ func (m Model) submitPrompt() (Model, tea.Cmd) {
 			return m.appendError("model selection is unavailable"), nil
 		}
 		parts := strings.Fields(text)
+		if len(parts) == 1 && parts[0] == "/model" {
+			m.input.SetValue("")
+			m.menuItems = nil
+			m.modelPicker = newModelPicker(controller.ModelCatalog(), controller.CurrentModel())
+			controller.RefreshModels()
+			return m.resizeViewport(), nil
+		}
 		if len(parts) != 3 || parts[0] != "/model" {
 			return m.appendError("usage: /model <provider-id> <model-id>"), nil
 		}

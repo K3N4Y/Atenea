@@ -6,14 +6,15 @@ summary: Design specification for selecting and persisting OpenAI-compatible pro
 # Design: provider and model selector in the TUI
 
 Date: 2026-07-10
-Status: approved in brainstorming; implementation plan pending
+Status: implemented
 
 ## Objective
 
-Add a local `/model` command to `atenea-tui` that opens a compact model
-selector. The selector changes the active provider, endpoint, and model as one
-atomic selection, persists that selection globally, and applies it to every
-session from its next LLM call.
+Add a local `/model` command to `atenea-tui` that opens a full-screen model
+selector. Providers occupy the narrower left column and the selected provider's
+models occupy the wider right column. The selector changes the active provider,
+endpoint, and model as one atomic selection, persists that selection globally,
+and applies it to every session from its next LLM call.
 
 Providers are declared manually in a global user configuration file. Atenea
 does not create, edit, or delete provider definitions in this version. It may
@@ -53,9 +54,13 @@ their provider-specific catalogs:
 - Read providers from one global user configuration file.
 - Support OpenAI-compatible providers with a base URL and optional API-key
   environment-variable reference.
-- Open a grouped, filterable selector with `/model`.
-- Open the same selector with an initial filter using `/model <query>`.
-- Display one provider heading followed only by its model identifiers.
+- Open a two-column selector with `/model`.
+- Keep `/model <query>` as the compact inline autocomplete path for users who
+  already know part of the provider or model name.
+- Display providers in the left column and only the selected provider's models
+  in the wider right column.
+- Move within a column with Up/Down, switch columns with Left/Right or Tab,
+  select with Enter, and close with Escape.
 - Mark the active provider/model pair with `●`.
 - Combine configured, discovered, and cached model identifiers without
   duplicates.
