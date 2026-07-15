@@ -4,11 +4,28 @@ import (
 	"strconv"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"atenea/internal/llm"
 	"atenea/internal/providerconfig"
 )
+
+var modelPrices = map[string]string{
+	"gpt-5.6":       "$5/$30",
+	"gpt-5.6-terra": "$7.5/$45",
+	"gpt-5.6-luna":  "$0.25/$2",
+	"gpt-5.4-mini":  "$0.75/$4.5",
+	"gpt-5.4-nano":  "$0.20/$1.25",
+	"gpt-5":         "$1.25/$10",
+	"gpt-5-mini":    "$0.25/$2",
+	"gpt-4.1":       "$2/$8",
+	"gpt-4.1-mini":  "$0.40/$1.60",
+	"gpt-4.1-nano":  "$0.10/$0.40",
+	"gpt-4o":        "$2.50/$10",
+	"gpt-4o-mini":   "$0.15/$0.60",
+}
 
 type modelPicker struct {
 	open             bool
@@ -87,72 +104,223 @@ func wrapSelection(value, count int) int {
 	return value
 }
 
-func (m Model) modelPickerView() string {
+// modelPickerLayout congela las medidas del panel para que la vista y el
+// hit-testing del raton compartan la misma geometria.
+type modelPickerLayout struct {
+	marginLeft  int
+	innerWidth  int
+	innerHeight int
+	leftWidth   int
+	rightWidth  int
+	itemRows    int
+}
+
+func (m Model) modelPickerLayout() modelPickerLayout {
 	width := m.width
 	if width <= 0 {
 		width = 80
 	}
-	bodyHeight := 0
-	if m.ready {
-		bodyHeight = max(m.height-4, 0)
+	height := m.height
+	if height <= 0 {
+		height = 16
 	}
-	itemRows := 0
-	if bodyHeight > 0 {
-		itemRows = max(bodyHeight-4, 0)
+	innerWidth := max(width-2*composerOuterMargin-composerBoxBorderWidth, 0)
+	innerHeight := max(max(height-2, 0)-composerBoxBorderWidth, 0)
+	leftWidth := max(innerWidth/4, 18)
+	leftWidth = min(leftWidth, max(innerWidth-1, 0))
+	return modelPickerLayout{
+		marginLeft:  min(composerOuterMargin, width),
+		innerWidth:  innerWidth,
+		innerHeight: innerHeight,
+		leftWidth:   leftWidth,
+		rightWidth:  max(innerWidth-leftWidth-1, 0),
+		itemRows:    max(innerHeight-4, 0),
 	}
-	contentWidth := max(width-2*composerOuterMargin, 0)
-	gap := 1
-	leftWidth := max(contentWidth/3, 18)
-	leftWidth = min(leftWidth, max(contentWidth-gap, 0))
-	rightWidth := max(contentWidth-leftWidth-gap, 0)
+}
 
-	providers := []string{"Providers", ""}
+// rowAt traduce coordenadas de pantalla a una fila visible del panel. La
+// pantalla del picker es: fila 0 en blanco, 1 borde superior, 2 cabecera,
+// 3 separador y de ahi las filas de items; en X, el contenido empieza tras
+// el margen y el borde izquierdo, con la columna divisoria entre listas.
+func (l modelPickerLayout) rowAt(x, y int) (overModels bool, row int, ok bool) {
+	row = y - 4
+	if row < 0 || row >= l.itemRows {
+		return false, 0, false
+	}
+	x -= l.marginLeft + 1
+	if x >= 0 && x < l.leftWidth {
+		return false, row, true
+	}
+	if x > l.leftWidth && x <= l.leftWidth+l.rightWidth {
+		return true, row, true
+	}
+	return false, 0, false
+}
+
+func (m Model) modelPickerView() string {
+	layout := m.modelPickerLayout()
+	innerWidth := layout.innerWidth
+	leftWidth := layout.leftWidth
+	rightWidth := layout.rightWidth
+	itemRows := layout.itemRows
+
+	providers := make([]string, 0, itemRows)
 	providerStart, providerEnd := modelPickerWindow(len(m.modelPicker.providers), m.modelPicker.providerSelected, itemRows)
 	for index := providerStart; index < providerEnd; index++ {
 		provider := m.modelPicker.providers[index]
 		prefix := "  "
 		if !m.modelPicker.modelsFocused && index == m.modelPicker.providerSelected {
-			prefix = "❯ "
+			prefix = "> "
 		} else if provider.ID == m.modelPicker.active.ProviderID {
 			prefix = "● "
 		}
-		providers = append(providers, modelPickerProviderRow(prefix, provider.Name, len(provider.Models), leftWidth-composerBoxBorderWidth))
+		row := modelPickerProviderRow(prefix, provider.Name, len(provider.Models), leftWidth)
+		if !m.modelPicker.modelsFocused && index == m.modelPicker.providerSelected {
+			row = accentStyle.Render(row)
+		}
+		providers = append(providers, row)
 	}
 	if len(m.modelPicker.providers) == 0 {
-		providers = append(providers, "  No providers available")
+		providers = append(providers, modelPickerCell("  No providers", leftWidth))
 	}
 
-	models := []string{"Models", ""}
+	models := make([]string, 0, itemRows)
 	if m.modelPicker.err != "" {
-		models = append(models, errorStyle.Render(sanitizeTerminalText(m.modelPicker.err)), "")
+		models = append(models, errorStyle.Render(modelPickerCell(m.modelPicker.err, rightWidth)))
 	}
-	if provider, ok := m.modelPicker.selectedProvider(); ok {
-		modelStart, modelEnd := modelPickerWindow(len(provider.Models), m.modelPicker.modelSelected, itemRows)
+	selectedProvider, hasProvider := m.modelPicker.selectedProvider()
+	if hasProvider {
+		modelStart, modelEnd := modelPickerWindow(len(selectedProvider.Models), m.modelPicker.modelSelected, itemRows-len(models))
 		for index := modelStart; index < modelEnd; index++ {
-			model := provider.Models[index]
+			model := selectedProvider.Models[index]
 			prefix := "  "
 			if m.modelPicker.modelsFocused && index == m.modelPicker.modelSelected {
-				prefix = "❯ "
-			} else if provider.ID == m.modelPicker.active.ProviderID && model == m.modelPicker.active.Model {
+				prefix = "> "
+			} else if selectedProvider.ID == m.modelPicker.active.ProviderID && model == m.modelPicker.active.Model {
 				prefix = "● "
 			}
-			models = append(models, prefix+sanitizeTerminalText(model))
+			row := modelPickerModelRow(prefix, model, rightWidth)
+			if m.modelPicker.modelsFocused && index == m.modelPicker.modelSelected {
+				row = accentStyle.Render(row)
+			}
+			models = append(models, row)
 		}
-		if len(provider.Models) == 0 {
-			models = append(models, "  No models available")
+		if len(selectedProvider.Models) == 0 {
+			models = append(models, modelPickerCell("  No models available", rightWidth))
 		}
 	} else {
-		models = append(models, "  No models available")
+		models = append(models, modelPickerCell("  No models available", rightWidth))
 	}
 
-	left := modelPickerColumn(strings.Join(providers, "\n"), leftWidth, bodyHeight)
-	right := modelPickerColumn(strings.Join(models, "\n"), rightWidth, bodyHeight)
-	body := lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", gap), right)
-	title := accentStyle.Render("Select model")
-	help := statusStyle.Render("↑↓ move · ←→ switch column · enter select · esc close")
-	margin := strings.Repeat(" ", min(composerOuterMargin, width))
-	body = lipgloss.NewStyle().MarginLeft(len(margin)).Render(body)
-	return m.renderFullCanvas("\n" + ansi.Truncate(margin+title, width, "") + "\n" + ansi.Truncate(margin+help, width, "") + "\n\n" + body)
+	for len(providers) < itemRows {
+		providers = append(providers, strings.Repeat(" ", leftWidth))
+	}
+	for len(models) < itemRows {
+		models = append(models, strings.Repeat(" ", rightWidth))
+	}
+
+	providerName := ""
+	if hasProvider {
+		providerName = " · " + sanitizeTerminalText(selectedProvider.Name)
+	}
+	lines := []string{
+		modelPickerCell(" Providers", leftWidth) + "│" + modelPickerModelHeader(" Available models"+providerName, rightWidth),
+		strings.Repeat("─", leftWidth) + "┼" + strings.Repeat("─", rightWidth),
+	}
+	for index := 0; index < itemRows; index++ {
+		lines = append(lines, modelPickerCell(providers[index], leftWidth)+"│"+modelPickerCell(models[index], rightWidth))
+	}
+	lines = append(lines,
+		strings.Repeat("─", leftWidth)+"┴"+strings.Repeat("─", rightWidth),
+		modelPickerCell(" ↑↓ move · ←→ column · enter select · esc close", innerWidth),
+	)
+
+	panelStyle := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("8")).
+		Width(innerWidth)
+	if layout.innerHeight > 0 {
+		panelStyle = panelStyle.Height(layout.innerHeight)
+	}
+	panel := modelPickerPanelTitle(panelStyle.Render(strings.Join(lines, "\n")))
+	panel = lipgloss.NewStyle().MarginLeft(layout.marginLeft).Render(panel)
+	return m.renderFullCanvas("\n" + panel)
+}
+
+// handleModelPickerMouse traduce el raton a las mismas acciones del teclado:
+// la rueda mueve la seleccion de la columna con foco, un clic en la columna
+// de providers la selecciona y un clic sobre un modelo lo confirma (el mismo
+// camino que enter). El picker se pinta a pantalla completa sin top bar, asi
+// que las coordenadas llegan sin trasladar.
+func (m Model) handleModelPickerMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
+	if msg.Action != tea.MouseActionPress {
+		return m, nil
+	}
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		m.modelPicker.move(-1)
+	case tea.MouseButtonWheelDown:
+		m.modelPicker.move(1)
+	case tea.MouseButtonLeft:
+		layout := m.modelPickerLayout()
+		overModels, row, ok := layout.rowAt(msg.X, msg.Y)
+		if !ok {
+			return m, nil
+		}
+		if !overModels {
+			start, end := modelPickerWindow(len(m.modelPicker.providers), m.modelPicker.providerSelected, layout.itemRows)
+			index := start + row
+			if index >= end {
+				return m, nil
+			}
+			if m.modelPicker.providerSelected != index {
+				m.modelPicker.modelSelected = 0
+			}
+			m.modelPicker.providerSelected = index
+			m.modelPicker.modelsFocused = false
+			return m, nil
+		}
+		provider, hasProvider := m.modelPicker.selectedProvider()
+		if !hasProvider {
+			return m, nil
+		}
+		errRows := 0
+		if m.modelPicker.err != "" {
+			errRows = 1
+		}
+		start, end := modelPickerWindow(len(provider.Models), m.modelPicker.modelSelected, layout.itemRows-errRows)
+		index := start + row - errRows
+		if row < errRows || index >= end {
+			return m, nil
+		}
+		m.modelPicker.modelsFocused = true
+		m.modelPicker.modelSelected = index
+		return m.confirmModelSelection()
+	}
+	return m, nil
+}
+
+// confirmModelSelection aplica el modelo seleccionado (enter o clic) y cierra
+// el picker; los fallos quedan visibles en el propio panel via err.
+func (m Model) confirmModelSelection() (Model, tea.Cmd) {
+	provider, providerOK := m.modelPicker.selectedProvider()
+	model, modelOK := m.modelPicker.selectedModel()
+	if !providerOK || !modelOK {
+		return m, nil
+	}
+	controller, ok := m.agent.(modelAgent)
+	if !ok {
+		m.modelPicker.err = "model selection is unavailable"
+		return m, nil
+	}
+	active, err := controller.SelectModel(provider.ID, model)
+	if err != nil {
+		m.modelPicker.err = err.Error()
+		return m, nil
+	}
+	m.model = active.Model
+	m.modelPicker.open = false
+	return m, nil
 }
 
 func modelPickerProviderRow(prefix, name string, count, width int) string {
@@ -164,33 +332,80 @@ func modelPickerProviderRow(prefix, name string, count, width int) string {
 	return ansi.Truncate(row+strings.Repeat(" ", gap)+countText+" ", width, "")
 }
 
+func modelPickerCell(value string, width int) string {
+	value = ansi.Truncate(value, max(width, 0), "…")
+	return value + strings.Repeat(" ", max(width-lipgloss.Width(value), 0))
+}
+
+func modelPickerModelHeader(title string, width int) string {
+	nameWidth, contextWidth, priceWidth := modelPickerMetadataWidths(width)
+	return modelPickerCell(title, nameWidth) + modelPickerCell("Context", contextWidth) + modelPickerRightCell("Price $/1M", priceWidth)
+}
+
+func modelPickerModelRow(prefix, model string, width int) string {
+	nameWidth, contextWidth, priceWidth := modelPickerMetadataWidths(width)
+	return modelPickerCell(prefix+sanitizeTerminalText(model), nameWidth) +
+		modelPickerCell(modelContextLabel(model), contextWidth) +
+		modelPickerRightCell(modelPriceLabel(model), priceWidth)
+}
+
+func modelPickerMetadataWidths(width int) (int, int, int) {
+	priceWidth := min(12, max(width/4, 0))
+	contextWidth := min(9, max((width-priceWidth)/4, 0))
+	return max(width-contextWidth-priceWidth, 0), contextWidth, priceWidth
+}
+
+func modelPickerRightCell(value string, width int) string {
+	value = ansi.Truncate(value, max(width, 0), "…")
+	return strings.Repeat(" ", max(width-lipgloss.Width(value), 0)) + value
+}
+
+func modelContextLabel(model string) string {
+	if window, ok := llm.ContextWindow(model); ok {
+		if window >= 1_000_000 {
+			value := strconv.FormatFloat(float64(window)/1_000_000, 'f', 2, 64)
+			return strings.TrimRight(strings.TrimRight(value, "0"), ".") + "M"
+		}
+		if window >= 1_000 {
+			return strconv.Itoa((window+500)/1_000) + "K"
+		}
+		return strconv.Itoa(window)
+	}
+	if context := curatedModelContext[model]; context != "" {
+		return context
+	}
+	return "—"
+}
+
+func modelPriceLabel(model string) string {
+	if price := modelPrices[model]; price != "" {
+		return price
+	}
+	if strings.HasSuffix(model, ":free") {
+		return "free"
+	}
+	return "—"
+}
+
+func modelPickerPanelTitle(panel string) string {
+	lines := strings.Split(panel, "\n")
+	if len(lines) == 0 {
+		return panel
+	}
+	width := ansi.StringWidth(lines[0])
+	const title = "Models"
+	remaining := max(width-ansi.StringWidth(title)-5, 0)
+	border := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	lines[0] = border.Render("┌─ ") + accentStyle.Render(title) + border.Render(" "+strings.Repeat("─", remaining)+"┐")
+	return strings.Join(lines, "\n")
+}
+
 func modelPickerWindow(total, selected, visible int) (int, int) {
 	if visible <= 0 || total <= visible {
 		return 0, total
 	}
 	start := resumePickerWindowStart(total, selected, visible)
 	return start, min(start+visible, total)
-}
-
-func modelPickerColumn(content string, width, height int) string {
-	if width <= composerBoxBorderWidth {
-		return ansi.Truncate(content, max(width, 0), "")
-	}
-	lines := strings.Split(content, "\n")
-	if height > composerBoxBorderWidth && len(lines) > height-composerBoxBorderWidth {
-		lines = lines[:height-composerBoxBorderWidth]
-	}
-	for index, line := range lines {
-		lines[index] = ansi.Truncate(line, width-composerBoxBorderWidth, "…")
-	}
-	style := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("8")).
-		Width(width - composerBoxBorderWidth)
-	if height > composerBoxBorderWidth {
-		style = style.Height(height - composerBoxBorderWidth)
-	}
-	return style.Render(strings.Join(lines, "\n"))
 }
 
 func (p modelPicker) selectedProvider() (providerconfig.ProviderModels, bool) {

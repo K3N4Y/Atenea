@@ -208,7 +208,7 @@ func TestTUI_ModelSelectorPersistsSelectionUnderPTY(t *testing.T) {
 
 	cmd := exec.Command(binary)
 	cmd.Dir = t.TempDir()
-	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+configRoot, "OPENROUTER_API_KEY=", "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
+	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+configRoot, "OPENROUTER_API_KEY=", "OPENAI_API_KEY=", "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
 	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 24})
 	if err != nil {
 		t.Fatal(err)
@@ -252,7 +252,7 @@ func TestTUI_DefaultOpenRouterModelsShowContextUnderPTY(t *testing.T) {
 	}
 	cmd := exec.Command(binary)
 	cmd.Dir = t.TempDir()
-	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+t.TempDir(), "OPENROUTER_API_KEY=test", "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
+	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+t.TempDir(), "OPENROUTER_API_KEY=test", "OPENAI_API_KEY=", "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
 	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 120, Rows: 24})
 	if err != nil {
 		t.Fatal(err)
@@ -288,7 +288,7 @@ func TestTUI_FocusedComposerShowsBlinkingCursorUnderPTY(t *testing.T) {
 			cmd.Env = append(cmd.Env, variable)
 		}
 	}
-	cmd.Env = append(cmd.Env, "TERM=xterm-256color", "CLICOLOR_FORCE=1", "OPENROUTER_API_KEY=", "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
+	cmd.Env = append(cmd.Env, "TERM=xterm-256color", "CLICOLOR_FORCE=1", "OPENROUTER_API_KEY=", "OPENAI_API_KEY=", "XDG_CONFIG_HOME="+t.TempDir(), "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
 	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 24})
 	if err != nil {
 		t.Fatal(err)
@@ -468,7 +468,7 @@ func TestTUI_FileTreeMouseWheelAndClickUnderPTY(t *testing.T) {
 	}
 	cmd := exec.Command(binary)
 	cmd.Dir = filepath.Join(repoRoot, "cmd/atenea-tui/testdata/file-tree-mouse/project")
-	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY=", "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
+	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY=", "OPENAI_API_KEY=", "XDG_CONFIG_HOME="+t.TempDir(), "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
 	// Rows: 11 = 8 filas de cuerpo (la geometria del arbol/visor que este test
 	// ejercita) mas las 3 filas del chrome de la top bar; asi el cuerpo conserva
 	// el mismo alto que antes de la barra y los clics de mouse suman 3 a su fila.
@@ -568,7 +568,10 @@ func startTUIUnderPTY(t *testing.T, binary, workdir, database string) (*exec.Cmd
 	t.Helper()
 	cmd := exec.Command(binary)
 	cmd.Dir = workdir
-	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY=", "ATENEA_DB="+database, "ATENEA_CHECKPOINTS="+filepath.Join(filepath.Dir(database), "checkpoints"))
+	// Los tests dependen del provider demo: se vacian ambas API keys y se aisla
+	// XDG_CONFIG_HOME para que ni el entorno ni el providers.json real del
+	// desarrollador cuelen un provider de red.
+	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY=", "OPENAI_API_KEY=", "XDG_CONFIG_HOME="+t.TempDir(), "ATENEA_DB="+database, "ATENEA_CHECKPOINTS="+filepath.Join(filepath.Dir(database), "checkpoints"))
 	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 24})
 	if err != nil {
 		t.Fatal(err)

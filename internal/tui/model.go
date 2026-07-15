@@ -641,6 +641,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.resumePicker.open {
 			return m, nil
 		}
+		if m.modelPicker.open {
+			return m.handleModelPickerMouse(ev)
+		}
 		// La top bar ocupa la fila 0 de la pantalla, asi que el contenido del
 		// cuerpo empieza una fila mas abajo: se traslada el clic a coordenadas
 		// del cuerpo antes de leer ev.Y. Los handlers de abajo ya tratan una Y
@@ -788,23 +791,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.modelPicker.modelsFocused = true
 				return m, nil
 			}
-			provider, providerOK := m.modelPicker.selectedProvider()
-			model, modelOK := m.modelPicker.selectedModel()
-			if !providerOK || !modelOK {
-				return m, nil
-			}
-			controller, ok := m.agent.(modelAgent)
-			if !ok {
-				m.modelPicker.err = "model selection is unavailable"
-				return m, nil
-			}
-			active, err := controller.SelectModel(provider.ID, model)
-			if err != nil {
-				m.modelPicker.err = err.Error()
-				return m, nil
-			}
-			m.model = active.Model
-			m.modelPicker.open = false
+			return m.confirmModelSelection()
 		}
 		return m, nil
 	}

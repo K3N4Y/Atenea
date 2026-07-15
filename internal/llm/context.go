@@ -18,7 +18,7 @@ var contextWindows = map[string]int{
 	// ventana de contexto.
 	"gpt-5.6":       1_050_000,
 	"gpt-5.6-terra": 1_050_000,
-	"gpt-5.6-luna":  131_072,
+	"gpt-5.6-luna":  1_050_000,
 	"gpt-5.4-mini":  400_000,
 	"gpt-5.4-nano":  400_000,
 	"gpt-5":         400_000,

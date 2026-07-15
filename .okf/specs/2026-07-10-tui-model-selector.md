@@ -59,6 +59,11 @@ their provider-specific catalogs:
   already know part of the provider or model name.
 - Display providers in the left column and only the selected provider's models
   in the wider right column.
+- Render both columns inside one bordered panel with the title embedded in the
+  top border, a vertical divider, flat list rows, and keyboard help in the footer.
+- Show each known model's context window and bundled input/output price per one
+  million tokens in right-aligned columns; unknown metadata degrades to `—`, and
+  models ending in `:free` display `free`.
 - Move within a column with Up/Down, switch columns with Left/Right or Tab,
   select with Enter, and close with Escape.
 - Mark the active provider/model pair with `●`.
@@ -83,8 +88,7 @@ their provider-specific catalogs:
 - Per-session provider or model selection.
 - Different models for normal mode, plan mode, subagents, or individual tools.
 - External model metadata from `models.dev` or another catalog service.
-- Pricing, context-window, capability, popularity, or benchmark metadata in the
-  selector.
+- Capability, popularity, or benchmark metadata in the selector.
 - Switching the provider underneath an LLM call already in progress.
 - Automatically testing every model before listing it.
 
@@ -274,6 +278,10 @@ Ollama local
 - Up/Down moves among selectable model rows and skips headings.
 - `Enter` selects the highlighted row.
 - `Esc` closes the selector without changing anything.
+- A left click on a provider row focuses that provider; a left click on a
+  model row confirms it (same path as `Enter`). The mouse wheel moves the
+  highlight in the focused column. Clicks on headers, dividers, or empty
+  rows are inert.
 - Typing edits the filter; Backspace removes one rune.
 - Filtering is case-insensitive and matches the provider display name,
   provider ID, or model identifier. A provider heading remains visible when

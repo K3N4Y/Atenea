@@ -1032,7 +1032,7 @@ func TestModel_ModelCommandOpensTwoColumnPicker(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	view := ansi.Strip(m.View())
-	for _, want := range []string{"Select model", "Providers", "Models", "OpenRouter", "OpenAI", "openai/chatgpt5.5"} {
+	for _, want := range []string{"Models", "Providers", "Available models", "OpenRouter", "OpenAI", "openai/chatgpt5.5"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("model picker missing %q:\n%s", want, view)
 		}
@@ -1069,6 +1069,49 @@ func TestModel_ModelPickerSelectsModelFromAnotherProvider(t *testing.T) {
 	}
 	if strings.Contains(ansi.Strip(m.View()), "Select model") {
 		t.Fatalf("model picker remained open after selection:\n%s", m.View())
+	}
+}
+
+func TestModel_ModelPickerClickSelectsModel(t *testing.T) {
+	agent := &fakeAgent{
+		models: []providerconfig.ProviderModels{
+			{ID: "openrouter", Name: "OpenRouter", Models: []string{"old", "openai/chatgpt5.5"}},
+			{ID: "openai", Name: "OpenAI", Models: []string{"chatgpt5.5"}},
+		},
+		active: providerconfig.Active{ProviderID: "openrouter", ProviderName: "OpenRouter", Model: "old"},
+	}
+	m := NewModel(agent, "s1", nil).WithStatus("build", "old")
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = typeRunes(t, m, "/model")
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	// Con 80x24: margen 2 + borde 1, columna de providers de 18 celdas y la
+	// primera fila de items en Y=4. Clic en el segundo provider (OpenAI).
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 4, Y: 5})
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "chatgpt5.5") || strings.Contains(view, "openai/chatgpt5.5") {
+		t.Fatalf("click on provider did not switch the models column:\n%s", view)
+	}
+	if len(agent.selected) != 0 {
+		t.Fatalf("provider click must not select a model, selected = %#v", agent.selected)
+	}
+
+	// Clic en el divisor: inerte.
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 21, Y: 4})
+	if len(agent.selected) != 0 {
+		t.Fatalf("divider click must be inert, selected = %#v", agent.selected)
+	}
+
+	// Clic en la primera fila de modelos: confirma como enter.
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 25, Y: 4})
+	if len(agent.selected) != 1 || agent.selected[0].providerID != "openai" || agent.selected[0].model != "chatgpt5.5" {
+		t.Fatalf("selected = %#v", agent.selected)
+	}
+	if got := m.model; got != "chatgpt5.5" {
+		t.Fatalf("footer model = %q", got)
+	}
+	if strings.Contains(ansi.Strip(m.View()), "Available models") {
+		t.Fatalf("model picker remained open after click selection:\n%s", m.View())
 	}
 }
 
@@ -1127,7 +1170,7 @@ func TestModel_ModelPickerLeavesTopMargin(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	lines := strings.Split(ansi.Strip(m.View()), "\n")
-	if len(lines) < 2 || strings.TrimSpace(lines[0]) != "" || !strings.Contains(lines[1], "Select model") {
+	if len(lines) < 2 || strings.TrimSpace(lines[0]) != "" || !strings.Contains(lines[1], "Models") {
 		t.Fatalf("model picker top lines = %q, want blank line then title", lines[:min(len(lines), 2)])
 	}
 }
@@ -1145,7 +1188,7 @@ func TestModel_ModelPickerShowsModelCountRightAligned(t *testing.T) {
 	m = typeRunes(t, m, "/model")
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
-	line := lineWith(t, ansi.Strip(m.View()), "OpenRouter")
+	line := lineWith(t, ansi.Strip(m.View()), "> OpenRouter")
 	firstBorder := strings.Index(line, "│")
 	providerBorder := -1
 	if firstBorder >= 0 {
@@ -1155,6 +1198,50 @@ func TestModel_ModelPickerShowsModelCountRightAligned(t *testing.T) {
 	}
 	if firstBorder < 0 || providerBorder <= firstBorder || !strings.HasSuffix(line[firstBorder+1:providerBorder], "2 ") {
 		t.Fatalf("provider row does not end with model count: %q", line)
+	}
+}
+
+func TestModel_ModelPickerUsesSingleBorderedPanel(t *testing.T) {
+	agent := &fakeAgent{
+		models: []providerconfig.ProviderModels{
+			{ID: "openrouter", Name: "OpenRouter", Models: []string{"model-a"}},
+			{ID: "openai", Name: "OpenAI", Models: []string{"gpt-5.6"}},
+		},
+		active: providerconfig.Active{ProviderID: "openrouter", Model: "model-a"},
+	}
+	m := NewModel(agent, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 16})
+	m = typeRunes(t, m, "/model")
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	lines := strings.Split(ansi.Strip(m.View()), "\n")
+	if len(lines) < 3 || !strings.Contains(lines[1], "Models") || strings.Count(lines[1], "┌") != 1 {
+		t.Fatalf("model picker does not have one titled outer border: %q", lines[:min(len(lines), 3)])
+	}
+	header := lineWith(t, strings.Join(lines, "\n"), "Available models")
+	if !strings.Contains(header, "Providers") || strings.Count(header, "│") < 3 {
+		t.Fatalf("model picker header lacks internal columns: %q", header)
+	}
+}
+
+func TestModel_ModelPickerShowsContextBeforePrice(t *testing.T) {
+	agent := &fakeAgent{
+		models: []providerconfig.ProviderModels{{ID: "openai", Name: "OpenAI", Models: []string{"gpt-4.1"}}},
+		active: providerconfig.Active{ProviderID: "openai", Model: "gpt-4.1"},
+	}
+	m := NewModel(agent, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 100, Height: 16})
+	m = typeRunes(t, m, "/model")
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := ansi.Strip(m.View())
+	header := lineWith(t, view, "Available models")
+	if contextIndex, priceIndex := strings.Index(header, "Context"), strings.Index(header, "Price"); contextIndex < 0 || priceIndex <= contextIndex {
+		t.Fatalf("metadata headers are missing or out of order: %q", header)
+	}
+	line := lineWith(t, view, "gpt-4.1")
+	if contextIndex, priceIndex := strings.Index(line, "1.05M"), strings.Index(line, "$2/$8"); contextIndex < 0 || priceIndex <= contextIndex {
+		t.Fatalf("model metadata is missing or out of order: %q", line)
 	}
 }
 
