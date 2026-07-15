@@ -31,6 +31,28 @@ func TestCatalog_RefreshRetainsUsableModelsOnFailure(t *testing.T) {
 	}
 }
 
+func TestCatalog_RefreshSkipsProvidersWithDiscoveryDisabled(t *testing.T) {
+	var calls atomic.Int32
+	c := NewCatalog(Config{Providers: []Provider{{
+		ID: "openai", Name: "OpenAI", Type: OpenAICompatible, BaseURL: "https://api.openai.com/v1",
+		DisableModelDiscovery: true, Models: []string{"gpt-5.6-terra"},
+	}}}, "", nil, func(context.Context, string, string) ([]string, error) {
+		calls.Add(1)
+		return []string{"gpt-image-2"}, nil
+	})
+
+	got, err := c.Refresh(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("model lister calls = %d, want 0", calls.Load())
+	}
+	if len(got) != 1 || !reflect.DeepEqual(got[0].Models, []string{"gpt-5.6-terra"}) {
+		t.Fatalf("catalog = %#v, want curated models only", got)
+	}
+}
+
 func TestCatalog_ConcurrentRefreshesShareInflightResult(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})

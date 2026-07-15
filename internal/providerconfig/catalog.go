@@ -63,7 +63,7 @@ func NewCatalog(cfg Config, cachePath string, getenv func(string) string, list M
 		if data, err := os.ReadFile(cachePath); err == nil && json.Unmarshal(data, &c.cache) == nil {
 			for _, entry := range c.cache.Providers {
 				for _, provider := range cfg.Providers {
-					if entry.ID == provider.ID && entry.BaseURL == provider.BaseURL {
+					if entry.ID == provider.ID && entry.BaseURL == provider.BaseURL && !provider.DisableModelDiscovery {
 						c.cached[entry.ID] = append([]string(nil), entry.Models...)
 					}
 				}
@@ -136,6 +136,9 @@ func (c *Catalog) refresh(ctx context.Context) ([]ProviderModels, error) {
 	now := time.Now()
 	cache := Cache{}
 	for _, provider := range c.config.Providers {
+		if provider.DisableModelDiscovery {
+			continue
+		}
 		models, err := c.list(ctx, provider.BaseURL, c.getenv(provider.APIKeyEnv))
 		if err != nil {
 			warnings = append(warnings, fmt.Errorf("refresh %s: %w", provider.ID, err))

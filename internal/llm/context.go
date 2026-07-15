@@ -16,11 +16,18 @@ var contextWindows = map[string]int{
 	// OpenAI oficial devuelve ids sin prefijo de proveedor (gpt-4o, no
 	// openai/gpt-4o), asi que se listan aparte para que el selector muestre su
 	// ventana de contexto.
-	"gpt-4.1":     1_047_576,
-	"gpt-4o":      128_000,
-	"gpt-4o-mini": 128_000,
-	"gpt-5":       400_000,
-	"gpt-5-mini":  400_000,
+	"gpt-5.6":       1_050_000,
+	"gpt-5.6-terra": 1_050_000,
+	"gpt-5.6-luna":  131_072,
+	"gpt-5.4-mini":  400_000,
+	"gpt-5.4-nano":  400_000,
+	"gpt-5":         400_000,
+	"gpt-5-mini":    400_000,
+	"gpt-4.1":       1_047_576,
+	"gpt-4.1-mini":  1_047_576,
+	"gpt-4.1-nano":  1_047_576,
+	"gpt-4o":        128_000,
+	"gpt-4o-mini":   128_000,
 }
 
 type ContextOverflowError struct {

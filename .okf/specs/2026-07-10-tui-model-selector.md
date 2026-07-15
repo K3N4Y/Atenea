@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-10
+updated_at: 2026-07-14
 summary: Design specification for selecting and persisting OpenAI-compatible providers, endpoints, and models from the TUI.
 ---
 
@@ -172,13 +172,17 @@ provider, and starts the TUI with that active provider/model pair.
 When `providers.json` does not exist, Atenea retains the current startup
 behavior based on the environment, in order of precedence: `OPENROUTER_API_KEY`
 (model from `OPENROUTER_MODEL`), then `OPENAI_API_KEY` (model from `OPENAI_MODEL`,
-defaulting to `gpt-4.1`), and finally the demo fallback when neither key is set.
+defaulting to `gpt-5.6-terra`), and finally the demo fallback when neither key is set.
 The OpenAI fallback constructs its provider with the OpenRouter `reasoning`
 extension disabled, since the official OpenAI API rejects that field. Atenea does
 not create `providers.json` implicitly in this path. This avoids surprising
 configuration writes and keeps existing installations working. Both OpenRouter
-and OpenAI ship as seeded default provider definitions, so `/model` lists both
-even before any `providers.json` exists.
+and OpenAI ship as seeded default provider definitions. Missing default providers
+are merged into existing configurations by provider ID without overwriting user
+definitions. OpenAI uses a curated list of agent-compatible models and does not
+consume `GET /models`, because that endpoint also returns image, audio, embedding,
+moderation, and realtime models that cannot satisfy Atenea's streaming tool-calling
+contract.
 
 When `providers.json` exists but is invalid, Atenea reports the configuration
 error clearly and uses the existing environment-based startup behavior as a

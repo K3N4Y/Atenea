@@ -40,7 +40,7 @@ const (
 	// top-level `reasoning`, asi que su provider se arma con OpenRouterReasoning=false.
 	openAIBaseURL = "https://api.openai.com/v1"
 	// openAIDefaultModel es el modelo por defecto de OpenAI; override por OPENAI_MODEL.
-	openAIDefaultModel = "gpt-4.1"
+	openAIDefaultModel = "gpt-5.6-terra"
 )
 
 func main() {
@@ -196,13 +196,9 @@ func defaultProviderConfig() providerconfig.Config {
 			Models: []string{"tencent/hy3:free", "poolside/laguna-xs-2.1:free", "cohere/north-mini-code:free"},
 		},
 		{
-			// OpenAI oficial: mismo tipo OpenAI-compatible, pero SIN el campo
-			// `reasoning` de OpenRouter (OpenRouterReasoning omitido = false). Los
-			// modelos son semillas para el dropdown; el catalogo se refresca desde
-			// GET /models con la OPENAI_API_KEY.
 			ID: "openai", Name: "OpenAI", Type: providerconfig.OpenAICompatible,
-			BaseURL: openAIBaseURL, APIKeyEnv: "OPENAI_API_KEY",
-			Models: []string{"gpt-4.1", "gpt-4o", "gpt-4o-mini", "gpt-5", "gpt-5-mini"},
+			BaseURL: openAIBaseURL, APIKeyEnv: "OPENAI_API_KEY", DisableModelDiscovery: true,
+			Models: []string{"gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"},
 		},
 	}}
 }
