@@ -452,6 +452,14 @@ func (e *Engine) SendPrompt(sessionID, text string) (RunHandle, error) {
 	defer e.resumeMu.Unlock()
 
 	if text == "/new" {
+		// A run still streaming into the old session would keep appending
+		// durable events after the new session is created, leaving the old
+		// session with the latest activity: on restart, ResumeSession would
+		// bring the old conversation back. Stop it and wait for its completion
+		// hook so the new session ends up as the most recent one.
+		if run, ok := e.agent.Stop(sessionID); ok {
+			<-run.Done()
+		}
 		newSessionID := "tui-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 		_, err := e.store.AppendEvent(context.Background(), newSessionID,
 			session.SessionEvent{Kind: session.KindSessionCwd, Text: e.root})

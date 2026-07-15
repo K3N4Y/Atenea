@@ -16,7 +16,9 @@ compactions, and disables further Bubble Tea messages once its event loop has
 ended. This preserves final events and prompt checkpoints before SQLite closes.
 
 The composer also owns built-in commands that never become model messages:
-`/new` creates a session, `/resume` opens a searchable picker of TUI sessions
+`/new` stops any in-flight run and then creates a session (otherwise the old
+session would keep collecting events and win the resume-on-startup ordering),
+`/resume` opens a searchable picker of TUI sessions
 from the same workspace, `/compact` requests durable context compaction for the
 active session, and `/model` opens a full-screen two-column picker with
 providers on the left and the selected provider's models on the wider right.

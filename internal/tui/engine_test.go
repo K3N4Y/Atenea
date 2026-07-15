@@ -45,6 +45,41 @@ type resumeBlockingProvider struct {
 	started chan struct{}
 }
 
+// releasableProvider blocks its first turn until release closes (or the run is
+// canceled) and then streams a short text answer: a deterministic stand-in for
+// a run that is still streaming while the user does something else.
+type releasableProvider struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (p *releasableProvider) Stream(ctx context.Context, _ llm.Request) (<-chan llm.Event, error) {
+	out := make(chan llm.Event)
+	go func() {
+		defer close(out)
+		close(p.started)
+		select {
+		case <-ctx.Done():
+			return
+		case <-p.release:
+		}
+		for _, event := range []llm.Event{
+			{Kind: llm.StepStarted},
+			{Kind: llm.TextStarted},
+			{Kind: llm.TextDelta, Text: "old conversation answer"},
+			{Kind: llm.TextEnded},
+			{Kind: llm.StepEnded},
+		} {
+			select {
+			case <-ctx.Done():
+				return
+			case out <- event:
+			}
+		}
+	}()
+	return out, nil
+}
+
 type failingCheckpointStore struct{ err error }
 
 type fixedCheckpointStore struct{ tree checkpoint.Tree }
@@ -845,6 +880,85 @@ func TestEngine_ResumeSessionByIDSerializesTargetAdmission(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("SendPrompt did not proceed after resume released admission lock")
+	}
+}
+
+// TestEngine_SlashNewKeepsNewSessionAsRestartResumeTarget reproduces the
+// "old conversation comes back after a restart" bug end to end on the real
+// SQLite store: a run is still streaming into the old session when /new
+// creates a fresh one, so the old session keeps writing durable events with a
+// later activity timestamp and a restarted engine resumes it instead of the
+// new session.
+func TestEngine_SlashNewKeepsNewSessionAsRestartResumeTarget(t *testing.T) {
+	root := t.TempDir()
+	dbPath := filepath.Join(t.TempDir(), "atenea.db")
+	store, err := session.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	provider := &releasableProvider{started: make(chan struct{}), release: make(chan struct{})}
+	engine := NewEngine(EngineConfig{Root: root, Provider: provider, Store: store})
+	oldRun, err := engine.SendPrompt("tui-old", "old conversation prompt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-provider.started:
+	case <-time.After(time.Second):
+		t.Fatal("old run did not start streaming")
+	}
+
+	newRun, err := engine.SendPrompt("tui-old", "/new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	close(provider.release)
+	waitRunDone(t, engine.Events(), oldRun.RunID)
+	if err := engine.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Restart: a fresh engine over a fresh handle to the same database.
+	restartedStore, err := session.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { restartedStore.Close() })
+	restarted := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: restartedStore})
+	sessionID, events, _, err := restarted.ResumeSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != newRun.SessionID {
+		t.Fatalf("restart resumed %q, want the /new session %q", sessionID, newRun.SessionID)
+	}
+	for _, event := range events {
+		if event.Message != nil {
+			t.Fatalf("restart resumed old conversation content: %+v", event)
+		}
+	}
+}
+
+// waitRunDone drains the engine event pump until the given run reports done.
+func waitRunDone(t *testing.T, ch <-chan tea.Msg, runID uint64) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			t.Fatalf("timeout waiting for run %d to finish", runID)
+		case msg, ok := <-ch:
+			if !ok {
+				t.Fatal("engine event channel closed before the run finished")
+			}
+			if done, isDone := msg.(RunDoneMsg); isDone && done.RunID == runID {
+				return
+			}
+		}
 	}
 }
 
