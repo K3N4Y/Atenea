@@ -93,18 +93,13 @@ func run() error {
 		log.Printf("atenea-tui: no se pudo cargar el historial del composer: %v", err)
 	}
 
-	sessionID, events, mode, err := engine.ResumeSession()
-	if err != nil {
-		log.Printf("atenea-tui: no se pudo reanudar la ultima sesion: %v", err)
-	}
+	// Every launch starts a fresh conversation: no transcript from previous
+	// runs on screen. Older sessions of this workspace stay one /resume away.
+	sessionID := engine.NewSessionID()
 
-	// El modo restaurado se alterna con Tab; el engine fija el modo por sesion
-	// via su hook Mode de wiring.Build. El modelo si queda fijo por corrida: no
-	// hay forma de cambiarlo desde la TUI.
 	// El autocompletado del composer sale del engine: los slash-commands de las
 	// skills para el menu "/" y el listado del workspace para el @-menu.
 	m := tui.NewModel(engine, sessionID, engine.Events()).
-		WithSession(events, mode).
 		WithHistory(history).
 		WithStatus("build", active.Model).
 		WithWorkspaceRoot(gitBranch(root), displayDir(root), root).

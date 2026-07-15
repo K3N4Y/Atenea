@@ -459,27 +459,18 @@ func appendSessionEvent(t *testing.T, store session.Store, sessionID string, eve
 	}
 }
 
-func TestEngine_ResumeSessionLoadsLatestWorkspaceSessionAndMode(t *testing.T) {
+func TestEngine_NewSessionIDReservesFreshTUISessions(t *testing.T) {
 	root := t.TempDir()
 	store := session.NewMemoryStore()
 	appendSessionEvent(t, store, "tui-older", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
-	appendSessionEvent(t, store, "tui-newer", session.SessionEvent{Kind: session.KindSessionCwd, Text: filepath.Join(root, ".")})
-	appendSessionEvent(t, store, "tui-newer", session.SessionEvent{Kind: session.KindSessionMode, Text: string(session.ModePlan)})
-	appendSessionEvent(t, store, "tui-other", session.SessionEvent{Kind: session.KindSessionCwd, Text: t.TempDir()})
 
 	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store})
-	sessionID, events, mode, err := engine.ResumeSession()
-	if err != nil {
-		t.Fatal(err)
+	sessionID := engine.NewSessionID()
+	if !strings.HasPrefix(sessionID, "tui-") || sessionID == "tui-older" {
+		t.Fatalf("NewSessionID = %q, want a fresh tui- session", sessionID)
 	}
-	if sessionID != "tui-newer" {
-		t.Fatalf("ResumeSession ID = %q, want tui-newer", sessionID)
-	}
-	if mode != session.ModePlan {
-		t.Fatalf("ResumeSession mode = %q, want %q", mode, session.ModePlan)
-	}
-	if len(events) != 2 || events[0].Kind != session.KindSessionCwd || events[1].Kind != session.KindSessionMode {
-		t.Fatalf("ResumeSession events = %+v, want exact persisted transcript", events)
+	if _, err := store.Events(context.Background(), sessionID, 0); !errors.Is(err, session.ErrSessionNotFound) {
+		t.Fatalf("Events(%q) error = %v, want ErrSessionNotFound (no durable session until the first prompt)", sessionID, err)
 	}
 }
 
@@ -883,13 +874,12 @@ func TestEngine_ResumeSessionByIDSerializesTargetAdmission(t *testing.T) {
 	}
 }
 
-// TestEngine_SlashNewKeepsNewSessionAsRestartResumeTarget reproduces the
-// "old conversation comes back after a restart" bug end to end on the real
-// SQLite store: a run is still streaming into the old session when /new
-// creates a fresh one, so the old session keeps writing durable events with a
-// later activity timestamp and a restarted engine resumes it instead of the
-// new session.
-func TestEngine_SlashNewKeepsNewSessionAsRestartResumeTarget(t *testing.T) {
+// TestEngine_SlashNewStopsOldRunSoNewSessionStaysMostRecent covers, end to
+// end on the real SQLite store, that /new stops a run still streaming into
+// the old session before creating the fresh one. Otherwise the old session
+// keeps writing durable events with a later activity timestamp and, after a
+// restart, outranks the /new session in the /resume picker.
+func TestEngine_SlashNewStopsOldRunSoNewSessionStaysMostRecent(t *testing.T) {
 	root := t.TempDir()
 	dbPath := filepath.Join(t.TempDir(), "atenea.db")
 	store, err := session.NewSQLiteStore(dbPath)
@@ -929,16 +919,20 @@ func TestEngine_SlashNewKeepsNewSessionAsRestartResumeTarget(t *testing.T) {
 	}
 	t.Cleanup(func() { restartedStore.Close() })
 	restarted := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: restartedStore})
-	sessionID, events, _, err := restarted.ResumeSession()
+	summaries, err := restarted.ListResumeSessions(restarted.NewSessionID())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sessionID != newRun.SessionID {
-		t.Fatalf("restart resumed %q, want the /new session %q", sessionID, newRun.SessionID)
+	if len(summaries) == 0 || summaries[0].ID != newRun.SessionID {
+		t.Fatalf("most recent resumable session = %+v, want the /new session %q first", summaries, newRun.SessionID)
+	}
+	events, err := restartedStore.Events(context.Background(), newRun.SessionID, 0)
+	if err != nil {
+		t.Fatal(err)
 	}
 	for _, event := range events {
 		if event.Message != nil {
-			t.Fatalf("restart resumed old conversation content: %+v", event)
+			t.Fatalf("/new session carries old conversation content: %+v", event)
 		}
 	}
 }

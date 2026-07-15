@@ -84,7 +84,11 @@ func TestTUI_PromptHistorySurvivesRestartUnderPTY(t *testing.T) {
 	waitForPTYExit(t, secondDone)
 }
 
-func TestTUI_ResumesLatestWorkspaceSessionUnderPTY(t *testing.T) {
+// TestTUI_StartsFreshSessionOnLaunchUnderPTY pins the launch contract end to
+// end: a new run of the binary starts an empty conversation, without the
+// transcript or the plan mode of the previous run. Old sessions stay
+// reachable only through /resume.
+func TestTUI_StartsFreshSessionOnLaunchUnderPTY(t *testing.T) {
 	repoRoot, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
@@ -114,8 +118,12 @@ func TestTUI_ResumesLatestWorkspaceSessionUnderPTY(t *testing.T) {
 
 	secondCmd, secondTerminal, secondOutput, secondDone := startTUIUnderPTY(t, binary, workdir, database)
 	defer stopPTYProcess(secondCmd, secondTerminal)
-	waitForPTYText(t, secondOutput, "continuidad tui")
-	waitForPTYText(t, secondOutput, " demo · plan ─╯")
+	// The build-mode footer (no "· plan") is the full-render signal: the plan
+	// mode of the previous run must not survive the restart either.
+	waitForPTYText(t, secondOutput, " demo ─╯")
+	if rendered := ansi.Strip(secondOutput.String()); strings.Contains(rendered, "continuidad tui") {
+		t.Fatalf("a fresh launch must not show transcripts from previous runs:\n%s", rendered)
+	}
 	if _, err := secondTerminal.Write([]byte("\x03")); err != nil {
 		t.Fatal(err)
 	}
@@ -149,11 +157,10 @@ func TestTUI_ResumeCommandOpensPreviousWorkspaceSessionUnderPTY(t *testing.T) {
 	_ = firstTerminal.Close()
 	_ = firstCmd.Wait()
 
+	// The second launch starts fresh, so its conversation becomes a second
+	// resumable session without needing /new.
 	secondCmd, secondTerminal, secondOutput, secondDone := startTUIUnderPTY(t, binary, workdir, database)
-	waitForPTYText(t, secondOutput, "sesion anterior")
-	if _, err := secondTerminal.Write([]byte("/new\r")); err != nil {
-		t.Fatal(err)
-	}
+	waitForPTYText(t, secondOutput, " demo ─╯")
 	if _, err := secondTerminal.Write([]byte("sesion actual\r")); err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +174,7 @@ func TestTUI_ResumeCommandOpensPreviousWorkspaceSessionUnderPTY(t *testing.T) {
 
 	thirdCmd, thirdTerminal, thirdOutput, thirdDone := startTUIUnderPTY(t, binary, workdir, database)
 	defer stopPTYProcess(thirdCmd, thirdTerminal)
-	waitForPTYText(t, thirdOutput, "sesion actual")
+	waitForPTYText(t, thirdOutput, " demo ─╯")
 	before := thirdOutput.String()
 	if _, err := thirdTerminal.Write([]byte("/resume\r")); err != nil {
 		t.Fatal(err)

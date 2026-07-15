@@ -286,28 +286,10 @@ func (e *Engine) PromptHistory() ([]string, error) {
 	return history, nil
 }
 
-// ResumeSession devuelve la sesion TUI mas reciente del workspace actual, su
-// transcript y el ultimo modo usado. Si no existe, reserva un ID nuevo.
-func (e *Engine) ResumeSession() (string, []session.SessionEvent, session.Mode, error) {
-	e.resumeMu.Lock()
-	defer e.resumeMu.Unlock()
-
-	newSessionID := func() string {
-		return "tui-" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	}
-	summaries, err := e.resumeSessions(context.Background())
-	if err != nil {
-		return newSessionID(), nil, session.ModeNormal, err
-	}
-	for _, summary := range summaries {
-		events, err := e.store.Events(context.Background(), summary.ID, 0)
-		if err != nil {
-			return newSessionID(), nil, session.ModeNormal, err
-		}
-		mode := modeFromEvents(events)
-		return summary.ID, events, mode, nil
-	}
-	return newSessionID(), nil, session.ModeNormal, nil
+// NewSessionID reserves a fresh session ID. Every launch starts with an empty
+// conversation; previous sessions stay reachable through /resume.
+func (e *Engine) NewSessionID() string {
+	return "tui-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 }
 
 // ListResumeSessions devuelve las sesiones TUI resumibles del workspace actual
@@ -460,7 +442,7 @@ func (e *Engine) SendPrompt(sessionID, text string) (RunHandle, error) {
 		if run, ok := e.agent.Stop(sessionID); ok {
 			<-run.Done()
 		}
-		newSessionID := "tui-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+		newSessionID := e.NewSessionID()
 		_, err := e.store.AppendEvent(context.Background(), newSessionID,
 			session.SessionEvent{Kind: session.KindSessionCwd, Text: e.root})
 		if err != nil {

@@ -23,10 +23,11 @@ from the same workspace, `/compact` requests durable context compaction for the
 active session, and `/model` opens a full-screen two-column picker with
 providers on the left and the selected provider's models on the wider right.
 
-At startup, the TUI resumes the most recently active `tui-` session whose
-persisted `Session.Cwd` matches the current workspace. Its durable events
-rehydrate the transcript, and `Session.Mode` restores the last submitted build
-or plan mode. If no matching session exists, startup allocates a new session ID.
+At startup, the TUI allocates a fresh session ID: launching never shows
+transcripts from previous runs. Earlier `tui-` sessions whose persisted
+`Session.Cwd` matches the current workspace stay reachable through `/resume`,
+which rehydrates the selected transcript and restores its last submitted build
+or plan mode. The composer prompt history does persist across launches.
 
 Workspace globbing for the explorer and `@` completion, plus file reading and
 Chroma highlighting for the viewer, run as `tea.Cmd` work. The model renders
