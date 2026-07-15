@@ -1518,9 +1518,12 @@ func TestModel_ClosedMarkdownWrapsToTerminalWidth(t *testing.T) {
 	// cerrado debe envolverse al ancho de la terminal por el propio renderer:
 	// todo el texto visible y cada linea envuelta conservando su margen.
 	m := NewModel(nil, "s1", nil)
-	m = apply(t, m, tea.WindowSizeMsg{Width: 30, Height: 12})
+	// Height 24: glamour v1 wraps this paragraph into more lines than v0.8 and
+	// the whole block must stay visible for the per-line margin asserts below.
+	m = apply(t, m, tea.WindowSizeMsg{Width: 30, Height: 24})
 
-	text := "este parrafo largo con **enfasis** debe envolverse al ancho angosto de la terminal para poder leerse entero hasta el token fin-markdown"
+	// Hyphen-free sentinel: glamour v1 breaks lines at hyphens.
+	text := "este parrafo largo con **enfasis** debe envolverse al ancho angosto de la terminal para poder leerse entero hasta el token finmarkdown"
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
 	m = apply(t, m, EventMsg{
@@ -1530,11 +1533,11 @@ func TestModel_ClosedMarkdownWrapsToTerminalWidth(t *testing.T) {
 	m = drainReveal(t, m)
 
 	view := m.View()
-	if !strings.Contains(view, "fin-markdown") {
-		t.Fatalf("View() = %q, el final del texto %q debe estar visible: el markdown cerrado debe envolverse al ancho de la terminal, no truncarse", view, "fin-markdown")
+	if !strings.Contains(view, "finmarkdown") {
+		t.Fatalf("View() = %q, el final del texto %q debe estar visible: el markdown cerrado debe envolverse al ancho de la terminal, no truncarse", view, "finmarkdown")
 	}
 	assertNoLineWiderThan(t, view, 30)
-	for _, token := range []string{"enfasis", "fin-markdown"} {
+	for _, token := range []string{"enfasis", "finmarkdown"} {
 		line := ansi.Strip(lineWith(t, view, token))
 		if !strings.HasPrefix(line, "  ") {
 			t.Fatalf("linea con %q = %q, debe conservar el margen del render markdown: una linea rendida mas ancha que la terminal la re-parte el envolvimiento de emergencia del viewport y deja el resto huerfano en la columna 0", token, line)
@@ -3656,14 +3659,16 @@ func TestModel_WrapsLongAssistantTextToTerminalWidth(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
 
-	long := "esta es una respuesta larga del assistant que en una terminal angosta debe hacer wrap a varias lineas para leerse entera fin-de-respuesta"
+	// The sentinel token has no hyphens: glamour v1 breaks lines at hyphens,
+	// which would split it across the wrap and defeat the Contains assert.
+	long := "esta es una respuesta larga del assistant que en una terminal angosta debe hacer wrap a varias lineas para leerse entera finrespuesta"
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: long})
 	m = drainReveal(t, m)
 
 	view := m.View()
-	if !strings.Contains(view, "fin-de-respuesta") {
-		t.Fatalf("View() = %q, el final del texto %q debe estar visible: el texto mas ancho que la terminal debe hacer wrap a varias lineas, no truncarse", view, "fin-de-respuesta")
+	if !strings.Contains(view, "finrespuesta") {
+		t.Fatalf("View() = %q, el final del texto %q debe estar visible: el texto mas ancho que la terminal debe hacer wrap a varias lineas, no truncarse", view, "finrespuesta")
 	}
 	assertNoLineWiderThan(t, view, 40)
 }
@@ -3675,7 +3680,8 @@ func TestModel_RewrapsOnResize(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
 
-	long := "esta respuesta larga del assistant debe re-envolverse cuando la terminal cambia de ancho fin-de-respuesta"
+	// Hyphen-free sentinel: glamour v1 breaks lines at hyphens.
+	long := "esta respuesta larga del assistant debe re-envolverse cuando la terminal cambia de ancho finrespuesta"
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: long})
 	m = drainReveal(t, m)
@@ -3684,8 +3690,8 @@ func TestModel_RewrapsOnResize(t *testing.T) {
 	m = apply(t, m, tea.WindowSizeMsg{Width: 24, Height: 10})
 
 	view := m.View()
-	if !strings.Contains(view, "fin-de-respuesta") {
-		t.Fatalf("View() = %q, el final del texto %q debe seguir visible tras el resize: el transcript debe re-envolverse al ancho nuevo", view, "fin-de-respuesta")
+	if !strings.Contains(view, "finrespuesta") {
+		t.Fatalf("View() = %q, el final del texto %q debe seguir visible tras el resize: el transcript debe re-envolverse al ancho nuevo", view, "finrespuesta")
 	}
 	assertNoLineWiderThan(t, view, 24)
 }
