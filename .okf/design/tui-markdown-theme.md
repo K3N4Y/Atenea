@@ -53,5 +53,10 @@ No fixed 256-color accents (the stock 63/228/39/203 are all gone).
   contiguous text so content stays assertable; behavior tests live in
   `internal/tui/view_test.go`.
 - Requires glamour v1.0.0 (v0.8.0 wraps long list items and URLs past the
-  terminal width). Known upstream leftover: a blockquote that wraps at
-  narrow widths can drop a word onto an unrailed continuation line.
+  terminal width). glamour word-wraps but never splits a token longer than the
+  wrap width, so a long URL, path, or code identifier still overflows as one
+  line; `hardWrapOverflow` hard-breaks only those lines (before the code-block
+  background pass, and again in `syncViewport`), re-indenting each continuation
+  to the line's own margin so it stays in rhythm instead of orphaning at
+  column 0. Known upstream leftover: a blockquote that wraps at narrow widths
+  can drop a word onto an unrailed continuation line.

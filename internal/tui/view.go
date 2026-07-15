@@ -659,12 +659,86 @@ func markdownRenderer(wrap int) (*glamour.TermRenderer, error) {
 	return r, nil
 }
 
+// hardWrapOverflow hard-breaks only the lines whose display width exceeds the
+// limit, leaving every other line — and its layout and color — byte-identical.
+// glamour word-wraps but never splits a token longer than the wrap width, so a
+// long URL, path, or code identifier overflows the viewport as a single line;
+// the stock emergency word-wrap then re-broke it at column 0 with a blank line
+// in front, orphaning the continuation out of rhythm. This breaks the overflow
+// inside the line and re-indents every continuation to the line's own leading
+// margin, so a wrapped long token stays aligned like any other wrapped line.
+// ANSI-aware throughout: widths and breaks count display cells, and
+// ansi.Hardwrap carries the active SGR state onto each continuation. limit <= 0
+// disables wrapping.
+func hardWrapOverflow(s string, limit int) string {
+	if limit <= 0 {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	changed := false
+	for i, line := range lines {
+		if ansi.StringWidth(line) <= limit {
+			continue
+		}
+		indent, body := splitLeadingSpaces(line)
+		if indent >= limit {
+			indent = 0
+		}
+		pad := strings.Repeat(" ", indent)
+		segs := strings.Split(ansi.Hardwrap(body, limit-indent, false), "\n")
+		for j := range segs {
+			segs[j] = pad + segs[j]
+		}
+		lines[i] = strings.Join(segs, "\n")
+		changed = true
+	}
+	if !changed {
+		return s
+	}
+	return strings.Join(lines, "\n")
+}
+
+// splitLeadingSpaces peels a line's leading margin — the run of spaces before
+// the first visible cell — off the rest, returning the margin's display width
+// and the body with those spaces removed but every ANSI escape kept in place
+// (so the body's color state, and thus each continuation's, is unchanged).
+func splitLeadingSpaces(line string) (spaces int, body string) {
+	var b strings.Builder
+	i := 0
+	for i < len(line) {
+		if line[i] == 0x1b { // ESC: copy a CSI/SGR sequence through to its final byte
+			j := i + 1
+			if j < len(line) && line[j] == '[' { // skip the CSI intro before the params
+				j++
+			}
+			for j < len(line) && (line[j] < 0x40 || line[j] > 0x7e) { // params/intermediates
+				j++
+			}
+			if j < len(line) { // include the final byte (0x40–0x7e)
+				j++
+			}
+			b.WriteString(line[i:j])
+			i = j
+			continue
+		}
+		if line[i] == ' ' {
+			spaces++
+			i++
+			continue
+		}
+		break
+	}
+	b.WriteString(line[i:])
+	return spaces, b.String()
+}
+
 // renderMarkdown rinde texto markdown al ancho dado (0 = sin envolver) con
 // markdownStyle, fijo: deterministico, sin detectar el fondo de la terminal.
 // El envolvimiento se pide al ancho MENOS el margen del documento del estilo:
-// glamour pade cada linea a WordWrap + margen, y una linea mas ancha que el
-// viewport la re-parte el envolvimiento de emergencia de syncViewport dejando
-// palabras huerfanas sin margen en la columna 0.
+// glamour pade cada linea a WordWrap + margen. Un token mas ancho que ese hueco
+// (URL, ruta o identificador largo) glamour no lo parte y desborda el viewport;
+// hardWrapOverflow lo corta antes de pintar los fondos de codigo para que estos
+// cuadren dentro del ancho util en vez de dejar palabras huerfanas.
 // Ante cualquier error se devuelve el texto tal cual: mejor markdown crudo
 // que perder contenido. Los saltos de linea de borde se recortan porque
 // renderTranscript ya separa los bloques con "\n\n".
@@ -682,6 +756,7 @@ func renderMarkdown(text string, width int) string {
 	if err != nil {
 		return text
 	}
+	out = hardWrapOverflow(out, width)
 	return strings.Trim(paintCodeBlockBackgrounds(out), "\n")
 }
 
@@ -766,12 +841,13 @@ func (m Model) resizeViewport() Model {
 
 // syncViewport vuelca el transcript al viewport y sigue la cola solo mientras
 // followAgent siga activo. Si el usuario esta leyendo historial, conserva el
-// offset y marca actividad nueva cuando cambia el transcript. El transcript se
-// envuelve al ancho del viewport antes de
-// SetContent porque el viewport trunca horizontalmente cada linea (ansi.Cut),
-// no envuelve; pre-envolver ademas deja correcto el conteo de lineas que usa
-// GotoBottom. Con ancho <= 0 (terminal minuscula) no se envuelve. Sin tamano
-// conocido (ready == false) es no-op.
+// offset y marca actividad nueva cuando cambia el transcript. Antes de
+// SetContent el transcript pasa por hardWrapOverflow al ancho del viewport,
+// porque el viewport trunca horizontalmente cada linea (ansi.Cut), no envuelve:
+// las lineas que exceden el ancho (un token que glamour no supo partir) se
+// cortan en su sitio, con la sangria intacta. Ademas deja correcto el conteo de
+// lineas que usa GotoBottom. Con ancho <= 0 (terminal minuscula) no se envuelve.
+// Sin tamano conocido (ready == false) es no-op.
 func (m Model) syncViewport() Model {
 	return m.syncViewportContent(false)
 }
@@ -787,10 +863,7 @@ func (m Model) syncViewportContent(agentActivity bool) Model {
 	rawTranscript := m.renderTranscript()
 	contentChanged := rawTranscript != m.lastTranscript
 	offset := m.viewport.YOffset
-	transcript := rawTranscript
-	if m.viewport.Width > 0 {
-		transcript = ansi.Wrap(transcript, m.viewport.Width, "")
-	}
+	transcript := hardWrapOverflow(rawTranscript, m.viewport.Width)
 	m.viewport.SetContent(transcript)
 	if m.followAgent {
 		m.viewport.GotoBottom()
@@ -837,11 +910,12 @@ func (m Model) entryLines() []entryLine {
 			// de lineas diverjan.
 			out = append(out, entryLine{idx: -1, line: ""})
 		}
-		block := e.render(width)
+		// hardWrapOverflow (mismo que syncViewport) puede partir una linea larga
+		// en varias fisicas; cada una es su propio entryLine para que la fila N
+		// de esta lista sea la fila N absoluta del viewport y el mapeo de clics
+		// no se corra.
+		block := hardWrapOverflow(e.render(width), width)
 		for _, l := range strings.Split(block, "\n") {
-			if width > 0 {
-				l = ansi.Wrap(l, width, "")
-			}
 			out = append(out, entryLine{idx: i, line: l})
 		}
 	}

@@ -73,6 +73,51 @@ func TestRenderMarkdown_CodeBlockLinesSharePaddedWidth(t *testing.T) {
 	}
 }
 
+// assertWrappedInRhythm checks the two failures the emergency wrap used to
+// cause on tokens longer than the wrap width: a line overflowing the viewport,
+// and a continuation orphaned flush-left (column 0) after a blank line. Every
+// non-empty visible line must fit the width and keep the document margin.
+func assertWrappedInRhythm(t *testing.T, out string, width int) {
+	t.Helper()
+	for _, line := range strings.Split(out, "\n") {
+		if ansi.StringWidth(line) > width {
+			t.Fatalf("line %q width %d exceeds viewport width %d: a token longer than the wrap width must be hard-broken", line, ansi.StringWidth(line), width)
+		}
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, strings.Repeat(" ", markdownDocMargin)) {
+			t.Fatalf("line %q lost the %d-cell margin: a wrapped continuation must stay indented, not orphan at column 0", line, markdownDocMargin)
+		}
+	}
+}
+
+func TestRenderMarkdown_LongURLWrapsInRhythm(t *testing.T) {
+	const width = 40
+	md := "Ver [enlace](https://example.com/una/ruta/larguisima/que/excede/de/sobra/el/ancho/del/viewport) aqui"
+	out := ansi.Strip(renderMarkdown(md, width))
+	assertWrappedInRhythm(t, out, width)
+	for _, seg := range []string{"https://example.", "larguisima", "viewport"} {
+		if !strings.Contains(out, seg) {
+			t.Fatalf("renderMarkdown() = %q, the URL segment %q must survive the wrap", out, seg)
+		}
+	}
+}
+
+func TestRenderMarkdown_LongCodeTokenWrapsInRhythm(t *testing.T) {
+	const width = 40
+	md := "```\nshort\nhttps://example.com/una/ruta/larguisima/que/excede/de/sobra/el/ancho\nfin\n```"
+	out := ansi.Strip(renderMarkdown(md, width))
+	assertWrappedInRhythm(t, out, width)
+	// The overflow does not drag the whole block wider than the viewport: every
+	// code line, padded to the block's widest, still fits.
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "short") && ansi.StringWidth(line) > width {
+			t.Fatalf("code line %q width %d: an unbreakable token must not pad the whole block past the viewport", line, ansi.StringWidth(line))
+		}
+	}
+}
+
 func TestRenderMarkdown_DocumentMarginStaysConsistent(t *testing.T) {
 	if markdownDocMargin != 2 {
 		t.Fatalf("markdownDocMargin = %d, the theme must keep the 2-cell document margin renderMarkdown discounts from the wrap width", markdownDocMargin)
