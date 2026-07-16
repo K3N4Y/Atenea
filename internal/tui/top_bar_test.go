@@ -301,15 +301,15 @@ func TestModel_TopBarRowClickIsInertBodyRowClickHits(t *testing.T) {
 	}
 
 	// Parte A (inerte): un clic sobre la fila 0 (la barra) no debe expandir el
-	// pensamiento. El resumen sigue colapsado ("[penso ") y NO aparece el cuerpo.
+	// pensamiento. El resumen sigue colapsado ("◆ Thought") y NO aparece el cuerpo.
 	mA := build(t)
-	if !strings.Contains(ansi.Strip(mA.View()), "[penso ") {
-		t.Fatalf("precondicion: el pensamiento asentado debe colapsar a %q", "[penso ")
+	if !strings.Contains(ansi.Strip(mA.View()), "◆ Thought") {
+		t.Fatalf("precondicion: el pensamiento asentado debe colapsar a %q", "◆ Thought")
 	}
 	mA = apply(t, mA, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 2, Y: 0})
 	viewA := ansi.Strip(mA.View())
-	if !strings.Contains(viewA, "[penso ") {
-		t.Fatalf("un clic sobre la fila de la barra (Y=0) debe ser inerte: el resumen %q debe seguir; View = %q", "[penso ", viewA)
+	if !strings.Contains(viewA, "◆ Thought") {
+		t.Fatalf("un clic sobre la fila de la barra (Y=0) debe ser inerte: el resumen %q debe seguir; View = %q", "◆ Thought", viewA)
 	}
 	for _, body := range []string{"razon-2", "razon-3"} {
 		if strings.Contains(viewA, body) {
@@ -319,7 +319,7 @@ func TestModel_TopBarRowClickIsInertBodyRowClickHits(t *testing.T) {
 
 	// Parte B (impacta): el clic sobre la fila visible del resumen si expande.
 	mB := build(t)
-	summaryY := lineIndexWith(t, ansi.Strip(mB.View()), "[penso ")
+	summaryY := lineIndexWith(t, ansi.Strip(mB.View()), "◆ Thought")
 	mB = apply(t, mB, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 2, Y: summaryY})
 	viewB := ansi.Strip(mB.View())
 	for _, want := range []string{"razon-1", "razon-2", "razon-3"} {

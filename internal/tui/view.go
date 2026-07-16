@@ -116,6 +116,7 @@ var (
 	permissionStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
 	errorStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 	statusStyle         = lipgloss.NewStyle().Faint(true)
+	thinkingLabelStyle  = lipgloss.NewStyle().Bold(true) // "◆ Thought"/"◆ Thinking…" label of the thinking block header
 	composerBorderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	treeCursorStyle     = lipgloss.NewStyle().Reverse(true)
 	treeBorderStyle     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder())
@@ -184,30 +185,30 @@ const thinkingPreviewLines = 4
 
 const thinkingInset = "  "
 
-// renderThinking rinde el bloque de pensamiento (paridad con el ThinkingBlock
-// del escritorio). Mientras esta en vivo o queda backlog por revelar: la
-// cabecera "[pensando]" y debajo solo las ultimas thinkingPreviewLines lineas
-// no vacias del texto revelado, todo en estilo tenue con cada linea como UN
-// segmento (contenido plano asertable); nunca markdown, es un vistazo al
-// pensamiento y no una respuesta. Asentado (cerrado y drenado) colapsa a una
-// unica linea de resumen "[penso <duracion>]"; con expanded en true la vista
-// rinde en su lugar el texto completo del pensamiento bajo la cabecera
-// "[penso <duracion>]" (tambien tenue, envuelto a width; ver toggleThinking).
-// width es el ancho util del viewport (0 = sin envolver); solo lo usa el
-// render del pensamiento expandido, el resto de formas ignora el ancho.
+// renderThinking renders the thinking block (parity with the desktop
+// ThinkingBlock). While live or with backlog left to reveal: the header
+// "◆ Thinking…" and below it only the last thinkingPreviewLines non-empty
+// lines of the revealed text, each line ONE segment (plain assertable
+// content); never markdown, it is a glimpse of the thought, not an answer.
+// Settled (closed and drained) it collapses to a single summary line
+// "◆ Thought for <duration>" — the "◆ Thought" label as one bold segment and
+// the duration as a faint one; with expanded set the view renders instead the
+// full thinking text under that same header (faint, wrapped to width; see
+// toggleThinking). width is the usable viewport width (0 = no wrapping); only
+// the expanded body uses it, the other shapes ignore it.
 func (e entry) renderThinking(width int) string {
 	if !e.settled() {
-		lines := []string{statusStyle.Render("[pensando]")}
+		lines := []string{thinkingLabelStyle.Render("◆ Thinking…")}
 		for _, line := range lastNonEmptyLines(sanitizeTerminalText(e.revealedText()), thinkingPreviewLines) {
 			lines = append(lines, statusStyle.Render(line))
 		}
 		return insetThinking(strings.Join(lines, "\n"))
 	}
-	summary := statusStyle.Render("[penso " + formatThinkingDuration(e.duration) + "]")
+	summary := thinkingLabelStyle.Render("◆ Thought") + statusStyle.Render(" for "+formatThinkingDuration(e.duration))
 	if !e.expanded {
-		// Resumen colapsado: una linea con el hint de la tecla que lo expande.
-		// El prefijo "[penso " es estable para los tests; el hint " ⇧Tab" va al
-		// final para no romperlos (asertan por substring).
+		// Collapsed summary: one line with the hint of the key that expands
+		// it. The "◆ Thought" label is stable for the tests; the " ⇧Tab" hint
+		// goes at the end so substring asserts keep working.
 		return insetThinking(summary + statusStyle.Render(" ⇧Tab"))
 	}
 	// Expandido: cabecera de resumen seguida del texto completo del
@@ -239,12 +240,12 @@ func lastNonEmptyLines(text string, limit int) []string {
 	return kept
 }
 
-// formatThinkingDuration rinde la duracion del pensamiento legible y corta:
-// "<1s" para menos de un segundo, si no la duracion redondeada a segundos
-// (p.ej. "12s", "1m5s").
+// formatThinkingDuration renders the thinking duration short and readable:
+// seconds with one decimal under a minute ("0.0s", "3.4s"), otherwise the
+// duration rounded to seconds ("1m5s").
 func formatThinkingDuration(d time.Duration) string {
-	if d < time.Second {
-		return "<1s"
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
 	}
 	return d.Round(time.Second).String()
 }

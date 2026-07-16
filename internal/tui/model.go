@@ -179,8 +179,8 @@ type entry struct {
 
 	// Campos del bloque de pensamiento (kind == entryReasoning): startedAt es
 	// el instante en que Reasoning.Started abrio el bloque y duration la que
-	// tomo pensar, computada al cerrarlo; el resumen colapsado "[penso <dur>]"
-	// la rinde legible (ver renderThinking).
+	// tomo pensar, computada al cerrarlo; el resumen colapsado
+	// "◆ Thought for <dur>" la rinde legible (ver renderThinking).
 	startedAt time.Time
 	duration  time.Duration
 
