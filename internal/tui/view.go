@@ -267,6 +267,12 @@ func (e entry) renderTool() string {
 	if e.tool == "skill" {
 		return e.renderActivity("skill", skillName(e.input), false)
 	}
+	if e.tool == "task" {
+		// Subagent launches read as `SubAgent <type>` (the subagent_type of
+		// the Input) instead of the raw JSON; success keeps the output
+		// preview, which is the subagent's report.
+		return e.renderActivity("SubAgent", subagentType(e.input), true)
+	}
 	return e.renderActivity(e.tool, summarizeToolInput(e.input), true)
 }
 
@@ -319,7 +325,13 @@ func (e entry) renderActivity(name, summary string, showDetail bool) string {
 		return toolFailedStyle.Render(activityHeader(activityFailMarker, name, summary)) +
 			"\n" + toolFailedStyle.Render(activityRailPrefix+"error: "+sanitizeTerminalText(e.err))
 	default:
-		return toolRunningStyle.Render(activityHeader(activityRunMarker, name, summary))
+		// A running entry with a live spinner frame (subagents) animates its
+		// marker; the rest keep the static run marker.
+		marker := activityRunMarker
+		if e.spin != "" {
+			marker = e.spin
+		}
+		return toolRunningStyle.Render(activityHeader(marker, name, summary))
 	}
 }
 
@@ -338,6 +350,18 @@ func diffStat(diff string) (added, removed int) {
 		}
 	}
 	return added, removed
+}
+
+// subagentType extracts the "subagent_type" field from the task tool Input
+// JSON; invalid JSON or a missing field yields "" and the header stays bare.
+func subagentType(raw string) string {
+	var input struct {
+		Type string `json:"subagent_type"`
+	}
+	if err := json.Unmarshal([]byte(raw), &input); err != nil {
+		return ""
+	}
+	return sanitizeTerminalText(input.Type)
 }
 
 // skillName extrae el campo "name" del Input JSON de la tool skill; con JSON

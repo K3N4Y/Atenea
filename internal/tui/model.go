@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"atenea/internal/command"
 	"atenea/internal/providerconfig"
@@ -192,6 +193,10 @@ type entry struct {
 	// permiso y Tool.Called, y en ambos alimenta el resumen del header de
 	// actividad (`● bash     ls`, `? bash     ls`) via summarizeToolInput.
 	input string
+	// spin is the live spinner frame that animates the run marker of a
+	// running "task" (subagent) entry; the spinner tick refreshes it while
+	// the subagent runs. Empty means the static run marker.
+	spin string
 	// output es el resultado de Tool.Success (ev.Text): alimenta el preview de
 	// hasta 4 lineas bajo el header (ver renderOutputPreview).
 	output string
@@ -620,6 +625,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(ev)
+		// Running subagents animate their transcript marker with the live
+		// spinner frame. ponytail: this re-renders the whole transcript per
+		// tick while a task runs; cache per-entry renders if CPU ever matters.
+		frame := ansi.Strip(m.spinner.View())
+		dirty := false
+		for i := range m.entries {
+			if m.entries[i].kind == entryTool && m.entries[i].tool == "task" && m.entries[i].status == toolRunning && m.entries[i].spin != frame {
+				m.entries[i].spin = frame
+				dirty = true
+			}
+		}
+		if dirty {
+			m = m.syncViewport()
+		}
 		return m, cmd
 	case tea.BlurMsg:
 		m.terminalFocused = false

@@ -1909,6 +1909,42 @@ func TestModel_RendersToolCallLifecycle(t *testing.T) {
 	}
 }
 
+// Contract for the "task" tool render: the header reads `SubAgent <type>`
+// (the subagent_type field of the Input, never the raw JSON) and, while the
+// subagent runs, the spinner tick animates the run marker with the live
+// spinner frame instead of the static one. Success settles it as `✓`.
+func TestModel_RendersTaskToolAsSubAgentWithSpinner(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "task", Input: json.RawMessage(`{"subagent_type":"explore","prompt":"find the config loader"}`)})
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "● SubAgent explore") {
+		t.Fatalf("View() = %q, a running task must render as %q (SubAgent + subagent_type)", view, "● SubAgent explore")
+	}
+	if strings.Contains(view, `{"subagent_type"`) {
+		t.Fatalf("View() = %q, the raw Input JSON must not leak into the header", view)
+	}
+
+	m.working = true
+	m = apply(t, m, spinner.TickMsg{})
+	frame := ansi.Strip(m.spinner.View())
+	view = ansi.Strip(m.View())
+	if !strings.Contains(view, frame+" SubAgent explore") {
+		t.Fatalf("View() = %q, a running task must animate its marker with the spinner frame %q", view, frame)
+	}
+	if strings.Contains(view, "● SubAgent") {
+		t.Fatalf("View() = %q, the spinner frame must replace the static run marker", view)
+	}
+
+	m = apply(t, m, EventMsg{
+		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "task", Text: "subagent report",
+		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "subagent report", ToolCallID: "c1"},
+	})
+	if got := ansi.Strip(m.View()); !strings.Contains(got, "✓ SubAgent explore") {
+		t.Fatalf("View() = %q, a finished task must settle as %q", got, "✓ SubAgent explore")
+	}
+}
+
 // Contrato del render de la tool "skill": usa la gramatica de actividad con
 // el nombre de la skill como resumen (`● skill    <nombre>`), donde el nombre
 // es el campo "name" del Input JSON, sin filtrar el Input crudo al header. En
