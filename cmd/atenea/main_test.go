@@ -47,14 +47,14 @@ func TestTUI_PromptHistorySurvivesRestartUnderPTY(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary := filepath.Join(t.TempDir(), "atenea-tui")
+	binary := filepath.Join(t.TempDir(), "atenea")
 	build := exec.Command("go", "build", "-o", binary, ".")
-	build.Dir = filepath.Join(repoRoot, "cmd/atenea-tui")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, output)
 	}
 	database := filepath.Join(t.TempDir(), "atenea.db")
-	workdir := filepath.Join(repoRoot, "cmd/atenea-tui/testdata/file-viewer/project")
+	workdir := filepath.Join(repoRoot, "cmd/atenea/testdata/file-viewer/project")
 
 	firstCmd, firstTerminal, firstOutput, firstDone := startTUIUnderPTY(t, binary, workdir, database)
 	waitForPTYText(t, firstOutput, " demo ─╯")
@@ -93,14 +93,14 @@ func TestTUI_StartsFreshSessionOnLaunchUnderPTY(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary := filepath.Join(t.TempDir(), "atenea-tui")
+	binary := filepath.Join(t.TempDir(), "atenea")
 	build := exec.Command("go", "build", "-o", binary, ".")
-	build.Dir = filepath.Join(repoRoot, "cmd/atenea-tui")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, output)
 	}
 	database := filepath.Join(t.TempDir(), "atenea.db")
-	workdir := filepath.Join(repoRoot, "cmd/atenea-tui/testdata/file-viewer/project")
+	workdir := filepath.Join(repoRoot, "cmd/atenea/testdata/file-viewer/project")
 
 	firstCmd, firstTerminal, firstOutput, firstDone := startTUIUnderPTY(t, binary, workdir, database)
 	waitForPTYText(t, firstOutput, " demo ─╯")
@@ -135,14 +135,14 @@ func TestTUI_ResumeCommandOpensPreviousWorkspaceSessionUnderPTY(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary := filepath.Join(t.TempDir(), "atenea-tui")
+	binary := filepath.Join(t.TempDir(), "atenea")
 	build := exec.Command("go", "build", "-o", binary, ".")
-	build.Dir = filepath.Join(repoRoot, "cmd/atenea-tui")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, output)
 	}
 	database := filepath.Join(t.TempDir(), "atenea.db")
-	workdir := filepath.Join(repoRoot, "cmd/atenea-tui/testdata/file-viewer/project")
+	workdir := filepath.Join(repoRoot, "cmd/atenea/testdata/file-viewer/project")
 
 	firstCmd, firstTerminal, firstOutput, firstDone := startTUIUnderPTY(t, binary, workdir, database)
 	waitForPTYText(t, firstOutput, " demo ─╯")
@@ -195,9 +195,9 @@ func TestTUI_ModelSelectorPersistsSelectionUnderPTY(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary := filepath.Join(t.TempDir(), "atenea-tui")
+	binary := filepath.Join(t.TempDir(), "atenea")
 	build := exec.Command("go", "build", "-o", binary, ".")
-	build.Dir = filepath.Join(repoRoot, "cmd/atenea-tui")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, output)
 	}
@@ -251,9 +251,9 @@ func TestTUI_DefaultOpenRouterModelsShowContextUnderPTY(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary := filepath.Join(t.TempDir(), "atenea-tui")
+	binary := filepath.Join(t.TempDir(), "atenea")
 	build := exec.Command("go", "build", "-o", binary, ".")
-	build.Dir = filepath.Join(repoRoot, "cmd/atenea-tui")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, output)
 	}
@@ -281,13 +281,13 @@ func TestTUI_FocusedComposerShowsBlinkingCursorUnderPTY(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary := filepath.Join(t.TempDir(), "atenea-tui")
+	binary := filepath.Join(t.TempDir(), "atenea")
 	build := exec.Command("go", "build", "-o", binary, ".")
-	build.Dir = filepath.Join(repoRoot, "cmd/atenea-tui")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, output)
 	}
-	workdir := filepath.Join(repoRoot, "cmd/atenea-tui/testdata/file-viewer/project")
+	workdir := filepath.Join(repoRoot, "cmd/atenea/testdata/file-viewer/project")
 	cmd := exec.Command(binary)
 	cmd.Dir = workdir
 	for _, variable := range os.Environ() {
@@ -319,13 +319,13 @@ func TestTUI_EnablesTerminalFocusReportingUnderPTY(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary := filepath.Join(t.TempDir(), "atenea-tui")
+	binary := filepath.Join(t.TempDir(), "atenea")
 	build := exec.Command("go", "build", "-o", binary, ".")
-	build.Dir = filepath.Join(repoRoot, "cmd/atenea-tui")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, output)
 	}
-	workdir := filepath.Join(repoRoot, "cmd/atenea-tui/testdata/file-viewer/project")
+	workdir := filepath.Join(repoRoot, "cmd/atenea/testdata/file-viewer/project")
 	cmd, terminal, output, _ := startTUIUnderPTY(t, binary, workdir, filepath.Join(t.TempDir(), "atenea.db"))
 	defer stopPTYProcess(cmd, terminal)
 
@@ -344,13 +344,13 @@ func TestTUI_CtrlJCreatesMultilineComposerUnderPTY(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary := filepath.Join(t.TempDir(), "atenea-tui")
+	binary := filepath.Join(t.TempDir(), "atenea")
 	build := exec.Command("go", "build", "-o", binary, ".")
-	build.Dir = filepath.Join(repoRoot, "cmd/atenea-tui")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, output)
 	}
-	workdir := filepath.Join(repoRoot, "cmd/atenea-tui/testdata/file-viewer/project")
+	workdir := filepath.Join(repoRoot, "cmd/atenea/testdata/file-viewer/project")
 	cmd, terminal, output, _ := startTUIUnderPTY(t, binary, workdir, filepath.Join(t.TempDir(), "atenea.db"))
 	defer stopPTYProcess(cmd, terminal)
 	waitForPTYText(t, output, " demo ─╯")
@@ -373,13 +373,13 @@ func TestTUI_PlanModeAppearsAfterModelUnderPTY(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary := filepath.Join(t.TempDir(), "atenea-tui")
+	binary := filepath.Join(t.TempDir(), "atenea")
 	build := exec.Command("go", "build", "-o", binary, ".")
-	build.Dir = filepath.Join(repoRoot, "cmd/atenea-tui")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, output)
 	}
-	workdir := filepath.Join(repoRoot, "cmd/atenea-tui/testdata/file-viewer/project")
+	workdir := filepath.Join(repoRoot, "cmd/atenea/testdata/file-viewer/project")
 	cmd, terminal, output, _ := startTUIUnderPTY(t, binary, workdir, filepath.Join(t.TempDir(), "atenea.db"))
 	defer stopPTYProcess(cmd, terminal)
 	waitForPTYText(t, output, " demo ─╯")
@@ -395,13 +395,13 @@ func TestTUI_FileViewerFlowUnderPTY(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary := filepath.Join(t.TempDir(), "atenea-tui")
+	binary := filepath.Join(t.TempDir(), "atenea")
 	build := exec.Command("go", "build", "-o", binary, ".")
-	build.Dir = filepath.Join(repoRoot, "cmd/atenea-tui")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, output)
 	}
-	workdir := filepath.Join(repoRoot, "cmd/atenea-tui/testdata/file-viewer/project")
+	workdir := filepath.Join(repoRoot, "cmd/atenea/testdata/file-viewer/project")
 	cmd, terminal, output, done := startTUIUnderPTY(t, binary, workdir, filepath.Join(t.TempDir(), "atenea.db"))
 	defer stopPTYProcess(cmd, terminal)
 	waitForPTYText(t, output, " demo ─╯")
@@ -429,9 +429,9 @@ func TestTUI_FileViewerScrollsToLastLineUnderPTY(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary := filepath.Join(t.TempDir(), "atenea-tui")
+	binary := filepath.Join(t.TempDir(), "atenea")
 	build := exec.Command("go", "build", "-o", binary, ".")
-	build.Dir = filepath.Join(repoRoot, "cmd/atenea-tui")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, output)
 	}
@@ -467,14 +467,14 @@ func TestTUI_FileTreeMouseWheelAndClickUnderPTY(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary := filepath.Join(t.TempDir(), "atenea-tui")
+	binary := filepath.Join(t.TempDir(), "atenea")
 	build := exec.Command("go", "build", "-o", binary, ".")
-	build.Dir = filepath.Join(repoRoot, "cmd/atenea-tui")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, output)
 	}
 	cmd := exec.Command(binary)
-	cmd.Dir = filepath.Join(repoRoot, "cmd/atenea-tui/testdata/file-tree-mouse/project")
+	cmd.Dir = filepath.Join(repoRoot, "cmd/atenea/testdata/file-tree-mouse/project")
 	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY=", "OPENAI_API_KEY=", "XDG_CONFIG_HOME="+t.TempDir(), "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
 	// Rows: 11 = 8 filas de cuerpo (la geometria del arbol/visor que este test
 	// ejercita) mas las 3 filas del chrome de la top bar; asi el cuerpo conserva
@@ -525,13 +525,13 @@ func TestTUI_ExplorerLeaderRapidSequencesUnderPTY(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary := filepath.Join(t.TempDir(), "atenea-tui")
+	binary := filepath.Join(t.TempDir(), "atenea")
 	build := exec.Command("go", "build", "-o", binary, ".")
-	build.Dir = filepath.Join(repoRoot, "cmd/atenea-tui")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, output)
 	}
-	workdir := filepath.Join(repoRoot, "cmd/atenea-tui/testdata/file-viewer/project")
+	workdir := filepath.Join(repoRoot, "cmd/atenea/testdata/file-viewer/project")
 	cmd, terminal, output, done := startTUIUnderPTY(t, binary, workdir, filepath.Join(t.TempDir(), "atenea.db"))
 	defer stopPTYProcess(cmd, terminal)
 	waitForPTYText(t, output, " demo ─╯")

@@ -1,4 +1,4 @@
-// atenea-tui es la interfaz de terminal (estilo Claude Code) del agente atenea.
+// atenea es la interfaz de terminal (estilo Claude Code) del agente atenea.
 // Es la frontera delgada equivalente al main.go de Wails: arma el provider desde
 // el entorno, ensambla el Engine headless (internal/tui) anclado al cwd y corre
 // el programa Bubble Tea. La logica testeable vive en internal/tui.
@@ -43,7 +43,7 @@ const (
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "atenea-tui:", err)
+		fmt.Fprintln(os.Stderr, "atenea:", err)
 		os.Exit(1)
 	}
 }
@@ -64,7 +64,7 @@ func run() error {
 	// usable: la TUI sigue funcionando, solo que sin persistir.
 	store, err := session.OpenDefault()
 	if err != nil {
-		log.Printf("atenea-tui: no se pudo abrir el SQLite (%v); las sesiones NO van a persistir (store en memoria)", err)
+		log.Printf("atenea: no se pudo abrir el SQLite (%v); las sesiones NO van a persistir (store en memoria)", err)
 	}
 	closer, _ := store.(io.Closer)
 
@@ -77,7 +77,7 @@ func run() error {
 	// alimenta al engine y al pie del composer (no duplicar la resolucion).
 	providerService, warning := openProviderService()
 	if warning != nil {
-		log.Printf("atenea-tui: provider config: %v", warning)
+		log.Printf("atenea: provider config: %v", warning)
 	}
 	active := providerService.Active()
 
@@ -90,7 +90,7 @@ func run() error {
 	})
 	history, err := engine.PromptHistory()
 	if err != nil {
-		log.Printf("atenea-tui: no se pudo cargar el historial del composer: %v", err)
+		log.Printf("atenea: no se pudo cargar el historial del composer: %v", err)
 	}
 
 	// Every launch starts a fresh conversation: no transcript from previous
@@ -174,7 +174,7 @@ func environmentFallbackSnapshot() llm.ProviderSnapshot {
 		}
 		return llm.ProviderSnapshot{ProviderID: "openai", ProviderName: "OpenAI", BaseURL: openAIBaseURL, Model: model, Provider: llm.NewOpenAIProvider(key, openAIBaseURL, model, llm.WithoutOpenRouterReasoning())}
 	}
-	log.Print("atenea-tui: sin OPENROUTER_API_KEY ni OPENAI_API_KEY; usando provider de demo (sin red)")
+	log.Print("atenea: sin OPENROUTER_API_KEY ni OPENAI_API_KEY; usando provider de demo (sin red)")
 	return llm.ProviderSnapshot{ProviderID: "demo", ProviderName: "Demo", BaseURL: "demo://local", Model: "demo", Provider: demoProvider()}
 }
 
@@ -213,7 +213,7 @@ func demoProvider() llm.Provider {
 // corromper el render de la terminal. Si no se puede abrir, se descarta a
 // /dev/null antes que pintar sobre la pantalla.
 func redirectLog() {
-	path := filepath.Join(os.TempDir(), "atenea-tui.log")
+	path := filepath.Join(os.TempDir(), "atenea.log")
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		log.SetOutput(devNull{})

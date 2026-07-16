@@ -10,14 +10,14 @@ func TestTree_BuildsFromPaths(t *testing.T) {
 		"go.mod",
 		"internal/tui/model.go",
 		"internal/tui/tree.go",
-		"cmd/atenea-tui/main.go",
+		"cmd/atenea/main.go",
 	})
 
 	got := tree.paths()
 	want := []string{
 		"cmd",
-		"cmd/atenea-tui",
-		"cmd/atenea-tui/main.go",
+		"cmd/atenea",
+		"cmd/atenea/main.go",
 		"internal",
 		"internal/tui",
 		"internal/tui/model.go",

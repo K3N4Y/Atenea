@@ -1,14 +1,18 @@
 ---
-updated_at: 2026-07-14
+updated_at: 2026-07-16
 summary: Architecture and behavior of the Atenea terminal user interface.
 ---
 
-# atenea-tui: the terminal interface
+# atenea: the terminal interface
 
-`atenea-tui` is the second frontend of the agent: a Claude Code-style TUI that
+`atenea` is the second frontend of the agent: a Claude Code-style TUI that
 runs in the terminal. Reuse the SAME agent loop as the Wails app (the
 runner, the tools, the ask-before-run, the skills and the subagents); the only thing that
 changes is the presentation border.
+
+The executable lives in `cmd/atenea`. Running `atenea` uses the process current
+working directory as the workspace root, so the shell remains the only project
+selector and no launcher or project-discovery layer is needed.
 
 On exit, the executable calls `Engine.Shutdown` before closing the shared
 session store. Shutdown stops active runs, cancels and waits for context

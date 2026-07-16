@@ -20,7 +20,16 @@ To build a redistributable, production mode package, use `wails build`.
 
 ## TUI provider selection
 
-`atenea-tui` supports a local `/model` command. Type `/model ` followed by any
+Install the terminal agent once and run it from any workspace:
+
+```bash
+go install ./cmd/atenea
+cd /path/to/project
+atenea
+```
+
+`atenea` uses the current directory as its workspace and supports a local
+`/model` command. Type `/model ` followed by any
 provider or model fragment, select a result from the normal composer popup,
 then press Enter again to apply it. Provider definitions are read
 from `providers.json` inside the Atenea directory returned by

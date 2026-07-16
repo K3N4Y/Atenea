@@ -489,7 +489,7 @@ func (e *Engine) turnHooks(sessionID, composerPrompt string, mode session.Mode) 
 			if _, err := e.store.LoadSession(context.Background(), sessionID); err != nil {
 				if _, err := e.store.AppendEvent(context.Background(), sessionID,
 					session.SessionEvent{Kind: session.KindSessionCwd, Text: e.root}); err != nil {
-					log.Printf("atenea-tui: no se pudo guardar la carpeta de %s: %v", sessionID, err)
+					log.Printf("atenea: no se pudo guardar la carpeta de %s: %v", sessionID, err)
 				}
 			}
 			if _, err := e.store.AppendEvent(context.Background(), sessionID,
@@ -513,7 +513,7 @@ func (e *Engine) turnHooks(sessionID, composerPrompt string, mode session.Mode) 
 			}
 			if _, err := e.store.AppendEvent(context.Background(), sessionID,
 				session.SessionEvent{Kind: session.KindComposerPrompt, Text: composerPrompt}); err != nil {
-				log.Printf("atenea-tui: no se pudo guardar el prompt en el historial de %s: %v", sessionID, err)
+				log.Printf("atenea: no se pudo guardar el prompt en el historial de %s: %v", sessionID, err)
 			}
 		},
 		AfterRun: func(result agent.RunResult) {
