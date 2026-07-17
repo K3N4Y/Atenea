@@ -28,6 +28,7 @@ vi.mock('../../wailsjs/go/main/App', () => ({
     Promise.resolve({ kind: '', baseURL: '', model: '' }),
   ),
   ListModels: vi.fn(() => Promise.resolve([])),
+  ListMCPs: vi.fn(() => Promise.resolve([])),
 }))
 
 import { EventsOn } from '../../wailsjs/runtime/runtime'

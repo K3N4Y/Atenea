@@ -60,6 +60,8 @@ type Config struct {
 	// Mode es el hook de modo por sesion (normal/plan) que el runner consulta
 	// cada turno; nil = siempre modo normal.
 	Mode func(sessionID string) session.Mode
+	// MCPTools son las tools descubiertas de servidores MCP ya conectados.
+	MCPTools []tool.Tool
 }
 
 // Built son las piezas mutables que el caller publica tras el ensamblado: el
@@ -135,14 +137,21 @@ func Build(cfg Config) Built {
 	})
 	// present_plan se registra para que el runner pueda ejecutarla, pero NO entra
 	// en los Permissions normales: solo se anuncia en plan-mode (SetPlanMode).
-	registry := tool.NewRegistry(tool.NewOutputStore(outputLimit),
+	registryTools := []tool.Tool{
 		tool.NewReadToolWithSnapshotProvider(root, cfg.Snaps), tool.NewWriteToolWithSnapshotProvider(root, cfg.Snaps),
 		tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, cfg.Snaps),
 		tool.NewGlobTool(root), tool.NewGrepToolWithSnapshotProvider(root, cfg.Snaps),
 		tool.NewBashTool(root), tool.NewPresentPlanTool(root), tool.NewSkillTool(skills), taskTool,
-		tool.NewWebFetchTool(cfg.Provider), tool.TodoWriteTool{})
+		tool.NewWebFetchTool(cfg.Provider), tool.TodoWriteTool{},
+	}
+	registryTools = append(registryTools, cfg.MCPTools...)
+	registry := tool.NewRegistry(tool.NewOutputStore(outputLimit), registryTools...)
+	permissions := tool.Permissions{"read": true, "write": true, "edit": true, "glob": true, "grep": true, "bash": true, "skill": true, "task": true, "web_fetch": true, "todo_write": true}
+	for _, mcpTool := range cfg.MCPTools {
+		permissions[mcpTool.Name()] = true
+	}
 	r := runner.NewRunner(cfg.Store, cfg.Inbox, cfg.Provider, registry,
-		tool.Permissions{"read": true, "write": true, "edit": true, "glob": true, "grep": true, "bash": true, "skill": true, "task": true, "web_fetch": true, "todo_write": true},
+		permissions,
 		cfg.NextID)
 	r.SetCompactor(runner.NewContextCompactor(cfg.Store, cfg.Provider))
 	r.SetSystemPrompt(systemPromptBuilder(root, skillsBlock, cfg.Local))

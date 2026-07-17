@@ -1,32 +1,11 @@
 <script lang="ts" setup>
-import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
-import gsap from 'gsap'
-import { Flip } from 'gsap/Flip'
-import {
-  PhX,
-  PhGear,
-  PhPlugs,
-  PhSparkle,
-  PhArrowLeft,
-} from '@phosphor-icons/vue'
-import { mcpCatalog, mcpIcon } from '../lib/mcps'
-import McpCard from './McpCard.vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { PhX, PhGear, PhPlugs, PhSparkle } from '@phosphor-icons/vue'
+import { ConnectMCP, DisconnectMCP, ListMCPs } from '../../wailsjs/go/main/App'
 import ProviderSettings from './ProviderSettings.vue'
 import { useChatStore } from '../stores/chat'
-import { prefersReducedMotion } from '../lib/motion'
 
-// El selector de modelo (pestania General) lee la config del provider vigente del
-// store y le delega los cambios: aplicar recablea el backend (setProvider) y cargar
-// modelos consulta el endpoint (listModels). El resto del panel es presentacional.
 const chat = useChatStore()
-
-gsap.registerPlugin(Flip)
-
-// Full-screen settings panel (frontend-only, no backend): tabs on the left and
-// content on the right, covering the full viewport (not a floating modal).
-// The MCPs tab shows the marketplace-style list with hardcoded data. It is
-// presentational: emits `close` and leaves the open state to the view that
-// mounts it.
 const emit = defineEmits<{ close: [] }>()
 
 type TabId = 'general' | 'mcps' | 'skills'
@@ -36,75 +15,123 @@ const tabs = [
   { id: 'skills', label: 'Skills', icon: PhSparkle },
 ] as const
 
+interface MCPServer {
+  name: string
+  command: string
+  args: string[]
+  connected: boolean
+  tools: number
+}
+
 const active = ref<TabId>('general')
+const connectedServers = ref<MCPServer[]>([])
+const servers = computed<MCPServer[]>(() => {
+  const connectedByName = new Map(
+    connectedServers.value.map((server) => [server.name, server]),
+  )
+  const configuredNames = new Set(chat.mcpServers.map((server) => server.name))
+  const configuredServers = chat.mcpServers.map((config) => {
+    const connected = connectedByName.get(config.name)
+    return {
+      ...config,
+      connected: connected?.connected ?? false,
+      tools: connected?.tools ?? 0,
+    }
+  })
 
-// MCP detail sub-view: clicking a card expands it into a detail where the image
-// spans the full width and the title moves up and grows. The transition is a
-// GSAP Flip on the shared image and title (matched by data-flip-id).
-const selectedId = ref<string | null>(null)
-const selected = computed(
-  () => mcpCatalog.find((entry) => entry.id === selectedId.value) ?? null,
-)
+  return [
+    ...configuredServers,
+    ...connectedServers.value.filter(
+      (server) => !configuredNames.has(server.name),
+    ),
+  ]
+})
+const serverName = ref('')
+const command = ref('')
+const args = ref('')
+const mcpError = ref('')
+const connecting = ref(false)
 
-// Records the shared image/title, applies the state change, then Flips from the
-// recorded layout to the new one. This is a shared-element morph (the same idea
-// as the View Transitions API): the destination layout is committed instantly
-// and only the image and title animate, via transforms, from their old box to
-// the new one. We avoid `absolute` so the surrounding content does not jump,
-// and `scale: true` makes the size change morph smoothly instead of reflowing.
-// Honors prefers-reduced-motion by skipping the animation.
-async function flipTo(id: string, mutate: () => void) {
-  if (prefersReducedMotion()) {
-    mutate()
-    return
+async function refreshMCPs() {
+  connectedServers.value = await ListMCPs()
+}
+
+async function connectMCP() {
+  mcpError.value = ''
+  connecting.value = true
+  try {
+    const config = {
+      name: serverName.value.trim(),
+      command: command.value.trim(),
+      args: args.value
+        .split('\n')
+        .map((arg) => arg.trim())
+        .filter(Boolean),
+    }
+    await ConnectMCP(config)
+    chat.saveMCPServer(config)
+    serverName.value = ''
+    command.value = ''
+    args.value = ''
+    await refreshMCPs()
+  } catch (error) {
+    mcpError.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    connecting.value = false
   }
-  const selector = `[data-flip-id="mcp-img-${id}"], [data-flip-id="mcp-title-${id}"]`
-  const state = Flip.getState(selector)
-  mutate()
-  await nextTick()
-  // `targets` must point at the NEW (post-swap) elements: the list and detail
-  // are different DOM nodes, so without it Flip would animate the detached old
-  // nodes and the morph would look instant.
-  //
-  // Lift the morphing image/title above everything else for the duration: when
-  // collapsing back, the full list reappears and the image flies down to its
-  // card, so without a raised z-index the sibling cards would paint over it.
-  Flip.from(state, {
-    targets: selector,
-    duration: 0.5,
-    ease: 'power2.inOut',
-    scale: true,
-    onStart: () => gsap.set(selector, { zIndex: 50 }),
-    onComplete: () => gsap.set(selector, { clearProps: 'zIndex' }),
-  })
 }
 
-function openDetail(id: string) {
-  flipTo(id, () => {
-    selectedId.value = id
-  })
+async function disconnectMCP(name: string) {
+  mcpError.value = ''
+  try {
+    await DisconnectMCP(name)
+    await refreshMCPs()
+  } catch (error) {
+    mcpError.value = error instanceof Error ? error.message : String(error)
+  }
 }
 
-function closeDetail() {
-  const id = selectedId.value
-  if (!id) return
-  flipTo(id, () => {
-    selectedId.value = null
-  })
+async function reconnectMCP(server: MCPServer) {
+  mcpError.value = ''
+  connecting.value = true
+  try {
+    await ConnectMCP({
+      name: server.name,
+      command: server.command,
+      args: server.args,
+    })
+    await refreshMCPs()
+  } catch (error) {
+    mcpError.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    connecting.value = false
+  }
+}
+
+async function removeMCP(server: MCPServer) {
+  mcpError.value = ''
+  try {
+    if (server.connected) await DisconnectMCP(server.name)
+    chat.removeMCPServer(server.name)
+    await refreshMCPs()
+  } catch (error) {
+    mcpError.value = error instanceof Error ? error.message : String(error)
+  }
 }
 
 function selectTab(id: TabId) {
   active.value = id
-  selectedId.value = null
+  if (id === 'mcps') void refreshMCPs()
 }
 
-// Escape backs out of the detail first; otherwise it closes the panel.
-function onKeydown(e: KeyboardEvent) {
-  if (e.key !== 'Escape') return
-  if (selectedId.value) closeDetail()
-  else emit('close')
+function onKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') emit('close')
 }
-onMounted(() => window.addEventListener('keydown', onKeydown))
+
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown)
+  void refreshMCPs()
+})
 onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
@@ -115,7 +142,6 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
     aria-label="Configuracion"
     class="fixed inset-0 z-40 flex bg-paper"
   >
-    <!-- Tabs column. -->
     <nav
       role="tablist"
       aria-label="Configuracion"
@@ -141,7 +167,6 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       </button>
     </nav>
 
-    <!-- Content panel. -->
     <section class="relative flex min-w-0 flex-1 flex-col overflow-y-auto">
       <button
         type="button"
@@ -165,53 +190,116 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
         </template>
 
         <template v-else-if="active === 'mcps'">
-          <!-- Detail sub-view: image full-width, title on top, description below. -->
-          <div v-if="selected" class="flex flex-col">
-            <button
-              type="button"
-              aria-label="Back to MCPs"
-              class="flex w-fit items-center gap-1.5 rounded-full py-1 pr-3 text-sm opacity-60 transition hover:opacity-100 active:scale-[0.97]"
-              @click="closeDetail"
-            >
-              <PhArrowLeft :size="18" weight="regular" />
-              MCPs
-            </button>
-
-            <h2
-              :data-flip-id="`mcp-title-${selected.id}`"
-              class="relative mt-4 text-2xl tracking-tight"
-            >
-              {{ selected.name }}
-            </h2>
-
-            <img
-              :src="selected.image ?? mcpIcon(selected)"
-              :alt="selected.name"
-              :data-flip-id="`mcp-img-${selected.id}`"
-              class="relative mt-5 aspect-[16/9] w-full rounded-soft object-cover"
-            />
-
-            <p class="mt-5 text-sm leading-relaxed opacity-70">
-              {{ selected.description }}
-            </p>
-          </div>
-
-          <!-- List sub-view. -->
-          <template v-else>
-            <h2 class="text-lg tracking-tight">MCPs</h2>
-            <p class="mt-1 text-sm opacity-50">
-              Servidores disponibles para conectar con atenea.
-            </p>
-            <!-- Same width as the chat column (max-w-3xl), centered. -->
-            <div class="mx-auto mt-6 flex w-full max-w-3xl flex-col gap-4">
-              <McpCard
-                v-for="entry in mcpCatalog"
-                :key="entry.id"
-                :entry="entry"
-                @select="openDetail"
+          <h2 class="text-lg tracking-tight">MCP servers</h2>
+          <p class="mt-1 text-sm opacity-50">
+            Configurations stay on this device. Servers run only after you
+            explicitly connect them.
+          </p>
+          <form
+            class="mt-6 grid gap-4 rounded-soft border border-black/5 bg-black/[0.02] p-5"
+            @submit.prevent="connectMCP"
+          >
+            <label class="grid gap-1.5 text-sm">
+              Name
+              <input
+                v-model="serverName"
+                data-mcp-name
+                required
+                pattern="[A-Za-z0-9_-]{1,48}"
+                class="rounded-lg border border-black/10 bg-paper px-3 py-2"
+                placeholder="github"
               />
-            </div>
-          </template>
+            </label>
+            <label class="grid gap-1.5 text-sm">
+              Command
+              <input
+                v-model="command"
+                data-mcp-command
+                required
+                class="rounded-lg border border-black/10 bg-paper px-3 py-2 font-mono text-xs"
+                placeholder="npx"
+              />
+            </label>
+            <label class="grid gap-1.5 text-sm">
+              Arguments <span class="opacity-50">(one per line)</span>
+              <textarea
+                v-model="args"
+                data-mcp-args
+                rows="3"
+                class="rounded-lg border border-black/10 bg-paper px-3 py-2 font-mono text-xs"
+                placeholder="-y&#10;@modelcontextprotocol/server-github"
+              />
+            </label>
+            <p v-if="mcpError" role="alert" class="text-sm text-red-700">
+              {{ mcpError }}
+            </p>
+            <button
+              data-connect-mcp
+              type="submit"
+              :disabled="connecting"
+              class="w-fit rounded-full bg-ink px-4 py-2 text-sm text-paper transition disabled:opacity-50"
+            >
+              {{ connecting ? 'Connecting…' : 'Connect server' }}
+            </button>
+          </form>
+          <div class="mt-6 grid gap-3">
+            <p v-if="servers.length === 0" class="text-sm opacity-50">
+              No MCP servers configured.
+            </p>
+            <article
+              v-for="server in servers"
+              :key="server.name"
+              class="flex items-center justify-between gap-4 rounded-soft border border-black/5 bg-black/[0.02] p-4"
+            >
+              <div class="min-w-0">
+                <h3 class="font-medium">{{ server.name }}</h3>
+                <p class="mt-1 truncate font-mono text-xs opacity-60">
+                  {{ [server.command, ...server.args].join(' ') }}
+                </p>
+                <p
+                  :data-mcp-status="server.name"
+                  class="mt-2 text-xs font-medium"
+                  :class="
+                    server.connected ? 'text-emerald-700' : 'text-stone-500'
+                  "
+                >
+                  <template v-if="server.connected">
+                    Connected · {{ server.tools }} tools available
+                  </template>
+                  <template v-else> Disconnected </template>
+                </p>
+              </div>
+              <div class="flex shrink-0 gap-2">
+                <button
+                  v-if="server.connected"
+                  type="button"
+                  :data-disconnect-mcp="server.name"
+                  class="rounded-full border border-black/10 px-3 py-1.5 text-sm transition hover:bg-black/[0.05]"
+                  @click="disconnectMCP(server.name)"
+                >
+                  Disconnect
+                </button>
+                <button
+                  v-else
+                  type="button"
+                  :data-reconnect-mcp="server.name"
+                  :disabled="connecting"
+                  class="rounded-full bg-ink px-3 py-1.5 text-sm text-paper transition disabled:opacity-50"
+                  @click="reconnectMCP(server)"
+                >
+                  Connect
+                </button>
+                <button
+                  type="button"
+                  :data-remove-mcp="server.name"
+                  class="rounded-full border border-black/10 px-3 py-1.5 text-sm transition hover:bg-black/[0.05]"
+                  @click="removeMCP(server)"
+                >
+                  Remove
+                </button>
+              </div>
+            </article>
+          </div>
         </template>
 
         <template v-else>

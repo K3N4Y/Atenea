@@ -15,6 +15,7 @@ import (
 	"atenea/internal/command"
 	"atenea/internal/event"
 	"atenea/internal/llm"
+	"atenea/internal/mcpclient"
 	"atenea/internal/session"
 	"atenea/internal/skill"
 	"atenea/internal/terminal"
@@ -93,6 +94,7 @@ type App struct {
 	lifecycleMu sync.Mutex
 
 	term *terminal.Manager // las tabs Terminal: varias sesiones pty vivas por id
+	mcp  *mcpclient.Manager
 }
 
 // newAppWithStore arma la app sobre un store, un provider y la frontera (emit)
@@ -134,6 +136,7 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 	if err != nil {
 		root = "."
 	}
+	a.mcp = mcpclient.NewManager(root)
 	a.wire(root)
 	return a
 }
@@ -145,6 +148,7 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 // asi SetWorkspace en vivo no compite con las lecturas. Lo llama el constructor
 // (root = cwd) y SetWorkspace (root nuevo).
 func (a *App) wire(root string) {
+	a.mcp.SetRoot(root)
 	// El provider vigente se lee bajo mu (SetProvider puede cambiarlo): un snapshot
 	// para que el cableado nuevo (runner, taskTool, web_fetch) quede anclado a un
 	// unico provider sin competir con el swap. SetProvider lo fija ANTES de llamar wire.
@@ -165,6 +169,7 @@ func (a *App) wire(root string) {
 		Local:    local,
 		NextID:   wiring.NewIDGen(),
 		Mode:     a.agent.Mode,
+		MCPTools: a.mcp.Tools(),
 	})
 
 	a.lifecycleMu.Lock()
@@ -503,6 +508,29 @@ func (a *App) SetWorkspace(path string) error {
 	a.wire(path)
 	return nil
 }
+
+// ConnectMCP starts a local stdio MCP server and makes its discovered tools
+// available to subsequent agent turns.
+func (a *App) ConnectMCP(config mcpclient.ServerConfig) (mcpclient.ServerStatus, error) {
+	status, err := a.mcp.Connect(context.Background(), config)
+	if err != nil {
+		return mcpclient.ServerStatus{}, err
+	}
+	a.wire(a.workspaceRoot())
+	return status, nil
+}
+
+// DisconnectMCP removes a local MCP server and its tools from future turns.
+func (a *App) DisconnectMCP(name string) error {
+	if err := a.mcp.Disconnect(name); err != nil {
+		return err
+	}
+	a.wire(a.workspaceRoot())
+	return nil
+}
+
+// ListMCPs returns all currently connected local MCP servers.
+func (a *App) ListMCPs() []mcpclient.ServerStatus { return a.mcp.Status() }
 
 // SelectWorkspace abre el dialogo nativo de carpeta y, si el usuario elige una, la
 // fija con SetWorkspace; devuelve la carpeta vigente resultante. Es la frontera

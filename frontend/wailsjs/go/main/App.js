@@ -14,8 +14,16 @@ export function Commit(arg1) {
   return window['go']['main']['App']['Commit'](arg1);
 }
 
+export function ConnectMCP(arg1) {
+  return window['go']['main']['App']['ConnectMCP'](arg1);
+}
+
 export function DeleteSession(arg1) {
   return window['go']['main']['App']['DeleteSession'](arg1);
+}
+
+export function DisconnectMCP(arg1) {
+  return window['go']['main']['App']['DisconnectMCP'](arg1);
 }
 
 export function FileDiff(arg1) {
@@ -36,6 +44,10 @@ export function InitRepo() {
 
 export function ListCommands() {
   return window['go']['main']['App']['ListCommands']();
+}
+
+export function ListMCPs() {
+  return window['go']['main']['App']['ListMCPs']();
 }
 
 export function ListModels(arg1) {

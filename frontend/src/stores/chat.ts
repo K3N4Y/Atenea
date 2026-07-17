@@ -186,6 +186,15 @@ export interface SessionSummary {
   LastActivity: string
 }
 
+// MCPServerConfig is the durable, non-secret definition of a local MCP server.
+// A connection is deliberately not persisted: reopening Atenea must not execute
+// an arbitrary command without an explicit action from the user.
+export interface MCPServerConfig {
+  name: string
+  command: string
+  args: string[]
+}
+
 export const useChatStore = defineStore(
   'chat',
   () => {
@@ -220,6 +229,10 @@ export const useChatStore = defineStore(
     // (LM Studio, Ollama) no necesita key.
     const providerKind = ref('')
     const baseURL = ref('')
+    // Configuraciones de servidores MCP locales. Se guardan para que el usuario no
+    // tenga que volver a escribirlas tras reiniciar Atenea; la conexion real sigue
+    // siendo efimera y se inicia explicitamente desde Settings.
+    const mcpServers = ref<MCPServerConfig[]>([])
     // Catalogo de modelos del endpoint activo, poblado bajo demanda por listModels
     // para el dropdown del selector. Estado vivo de UI: no se persiste.
     const availableModels = ref<string[]>([])
@@ -599,6 +612,23 @@ export const useChatStore = defineStore(
       model.value = m
     }
 
+    function saveMCPServer(config: MCPServerConfig): void {
+      const index = mcpServers.value.findIndex(
+        (server) => server.name === config.name,
+      )
+      if (index === -1) {
+        mcpServers.value.push(config)
+        return
+      }
+      mcpServers.value[index] = config
+    }
+
+    function removeMCPServer(name: string): void {
+      mcpServers.value = mcpServers.value.filter(
+        (server) => server.name !== name,
+      )
+    }
+
     // listModels trae el catalogo de modelos de un endpoint OpenAI-compatible para el
     // dropdown del selector (LM Studio, Ollama exponen GET baseURL/models). Lo guarda
     // en availableModels y lo devuelve. Si el endpoint no responde, degrada a lista
@@ -789,6 +819,7 @@ export const useChatStore = defineStore(
       model,
       providerKind,
       baseURL,
+      mcpServers,
       availableModels,
       projectFiles,
       commands,
@@ -805,6 +836,8 @@ export const useChatStore = defineStore(
       loadProvider,
       restoreProvider,
       setProvider,
+      saveMCPServer,
+      removeMCPServer,
       listModels,
       loadProjectFiles,
       loadCommands,
@@ -823,13 +856,16 @@ export const useChatStore = defineStore(
     }
   },
   {
-    // Se persiste la carpeta de trabajo y la config del provider (kind/baseURL/model):
+    // Se persisten la carpeta de trabajo, la config del provider (kind/baseURL/model)
+    // y las definiciones MCP locales:
     // asi un chat nuevo sigue en la ultima carpeta y con el ultimo modelo elegido tras
     // cerrar y reabrir la app (restoreWorkspace/restoreProvider los re-aplican al
     // backend). No se guardan secretos (la key de OpenRouter vive en el entorno). El
     // resto del store es estado vivo (log, streaming, suscripcion, availableModels)
     // cuya fuente de verdad es el backend; no debe ir a localStorage.
-    persist: { pick: ['workspace', 'providerKind', 'baseURL', 'model'] },
+    persist: {
+      pick: ['workspace', 'providerKind', 'baseURL', 'model', 'mcpServers'],
+    },
   },
 )
 

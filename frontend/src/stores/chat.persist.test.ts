@@ -4,10 +4,9 @@ import { createApp, nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import piniaPluginPersistedstate from 'pinia-plugin-persistedstate'
 
-// La carpeta de trabajo del chat nuevo debe sobrevivir al cierre de la app: si el
-// ultimo chat fue en /kanban, al reabrir un chat nuevo sigue apuntando a /kanban y
-// no a la carpeta por defecto. Solo se persiste `workspace` (el historial es del
-// backend); el resto del store es estado vivo que no debe ir a localStorage.
+// La configuracion del chat debe sobrevivir al cierre de la app: la carpeta, el
+// provider y las definiciones MCP se restauran desde localStorage. El historial y
+// las conexiones MCP reales siguen siendo estado vivo del backend.
 //
 // Como en ui.test.ts, los plugins de pinia solo corren con pinia instalado en una
 // app Vue, asi que montamos una app minima para activar la persistencia.
@@ -51,7 +50,7 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
-describe('chat store: persistencia de la carpeta entre reinicios', () => {
+describe('chat store: persistencia entre reinicios', () => {
   it('rehidrata workspace desde localStorage al iniciar', () => {
     localStorage.setItem(
       'chat',
@@ -64,12 +63,17 @@ describe('chat store: persistencia de la carpeta entre reinicios', () => {
     expect(store.workspace).toBe('/home/u/kanban')
   })
 
-  it('persiste workspace y la config del provider en localStorage', async () => {
+  it('persiste workspace, provider y configuraciones MCP en localStorage', async () => {
     installPinia()
     const store = useChatStore()
 
     await store.pickWorkspace('/home/u/kanban')
     await store.setProvider('local', 'http://localhost:1234/v1', 'qwen')
+    store.saveMCPServer({
+      name: 'github',
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-github'],
+    })
     await nextTick()
 
     const stored = JSON.parse(localStorage.getItem('chat') as string)
@@ -77,10 +81,18 @@ describe('chat store: persistencia de la carpeta entre reinicios', () => {
     expect(stored.providerKind).toBe('local')
     expect(stored.baseURL).toBe('http://localhost:1234/v1')
     expect(stored.model).toBe('qwen')
-    // Solo carpeta + config del provider (sin secretos): ni el log ni los punteros
-    // de streaming ni availableModels van a localStorage.
+    expect(stored.mcpServers).toEqual([
+      {
+        name: 'github',
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-github'],
+      },
+    ])
+    // Solo las preferencias durables: ni el log, ni los punteros de streaming, ni
+    // el estado de conexion MCP, ni availableModels van a localStorage.
     expect(Object.keys(stored).sort()).toEqual([
       'baseURL',
+      'mcpServers',
       'model',
       'providerKind',
       'workspace',
@@ -103,5 +115,31 @@ describe('chat store: persistencia de la carpeta entre reinicios', () => {
     expect(store.providerKind).toBe('local')
     expect(store.baseURL).toBe('http://localhost:1234/v1')
     expect(store.model).toBe('qwen')
+  })
+
+  it('rehidrata las configuraciones MCP sin conectarlas al iniciar', () => {
+    localStorage.setItem(
+      'chat',
+      JSON.stringify({
+        mcpServers: [
+          {
+            name: 'github',
+            command: 'npx',
+            args: ['-y', '@modelcontextprotocol/server-github'],
+          },
+        ],
+      }),
+    )
+    installPinia()
+
+    const store = useChatStore()
+
+    expect(store.mcpServers).toEqual([
+      {
+        name: 'github',
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-github'],
+      },
+    ])
   })
 })
