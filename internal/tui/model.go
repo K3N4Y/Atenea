@@ -1525,6 +1525,7 @@ func (m Model) submitPrompt() (Model, tea.Cmd) {
 		m.reasoningBytes = 0
 		m.toolInputBytes = 0
 		m.input.SetValue("")
+		m.menuItems = nil
 		return m.resizeViewport(), nil
 	}
 	if text == "/compact" {

@@ -5051,6 +5051,9 @@ func TestModel_CommandMenuPrioritizesNewAndEnterCreatesSession(t *testing.T) {
 	if got := m.input.Value(); got != "" {
 		t.Fatalf("input.Value() = %q, ejecutar /new desde el menu debe limpiar el composer sin dejar un espacio", got)
 	}
+	if got := menuSelectedLine(m.View()); got != "" {
+		t.Fatalf("linea seleccionada del menu = %q, ejecutar /new debe cerrar el menu de comandos", got)
+	}
 	if got := fake.sent; len(got) != 1 || got[0].text != "/new" {
 		t.Fatalf("SendPrompt llamadas = %#v, Enter sobre /new debe ejecutar el comando reservado exactamente una vez", got)
 	}
@@ -5113,6 +5116,9 @@ func TestModel_ExactNewEnterBeatsFuzzySkillSelection(t *testing.T) {
 	}
 	if got := m.input.Value(); got != "" {
 		t.Fatalf("input.Value() = %q, Enter con /new escrito debe ejecutarlo, no completar una skill", got)
+	}
+	if got := menuSelectedLine(m.View()); got != "" {
+		t.Fatalf("linea seleccionada del menu = %q, Enter con /new escrito debe cerrar el menu de comandos", got)
 	}
 }
 
