@@ -1,8 +1,9 @@
 <script lang="ts" setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { PhSidebarSimple, PhWrench } from '@phosphor-icons/vue'
+import { PhSidebarSimple, PhWrench, PhPlugs } from '@phosphor-icons/vue'
 import AppSidebar from '../components/AppSidebar.vue'
 import DevToolsPanel from '../components/DevToolsPanel.vue'
+import McpMenu from '../components/McpMenu.vue'
 import MessageList from '../components/MessageList.vue'
 import ErrorNotice from '../components/ErrorNotice.vue'
 import ChatComposer from '../components/ChatComposer.vue'
@@ -35,6 +36,19 @@ const git = useGitStore()
 // Settings panel open state: ephemeral UI state of the view (not persisted, so
 // it does not reappear on app relaunch).
 const settingsOpen = ref(false)
+
+// MCP servers menu: dialog con Flip desde el boton. El estado de conexion vive
+// en el store MCP; aqui solo trackeamos abierto/cerrado para aria-expanded.
+const mcpMenu = ref<{
+  open: (e: Event) => void
+  close: () => void
+  isOpen: boolean
+} | null>(null)
+
+function toggleMcpMenu(e: MouseEvent) {
+  if (mcpMenu.value?.isOpen) mcpMenu.value.close()
+  else mcpMenu.value?.open(e)
+}
 
 // Un chat nuevo e inactivo (sin mensajes, sin plan, sin corrida en vuelo) muestra
 // el composer al centro con el selector de carpeta; al primer envio (running) o
@@ -102,25 +116,40 @@ onUnmounted(() => chat.teardown())
           <PhSidebarSimple :size="20" weight="regular" />
         </button>
 
-        <!-- Uso de contexto: alineado a la derecha (el engranaje vive ahora al
-             fondo de la sidebar). -->
-        <ContextUsedBar
-          class="ml-auto"
-          :usage="chat.usage"
-          :model="chat.model"
-        />
+        <!-- Controles a la derecha: el ml-auto vive en el grupo, no en
+             ContextUsedBar (ese se oculta sin usage y si lleva el margin,
+             MCP y dev tools se van a la izquierda). -->
+        <div class="ml-auto flex items-center">
+          <ContextUsedBar :usage="chat.usage" :model="chat.model" />
 
-        <!-- Abre/cierra el panel de herramientas de desarrollo (git, ...). -->
-        <button
-          type="button"
-          aria-label="Toggle developer tools"
-          :aria-pressed="ui.devPanelOpen"
-          class="ml-2 flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-black/[0.05] active:scale-95"
-          :class="ui.devPanelOpen ? 'text-accent' : ''"
-          @click="ui.toggleDevPanel()"
-        >
-          <PhWrench :size="20" weight="regular" />
-        </button>
+          <!-- Menu de servidores MCP: Flip desde el boton. Va a la izquierda
+               de las herramientas de desarrollo. -->
+          <div class="relative ml-2">
+            <button
+              type="button"
+              aria-label="MCP servers"
+              :aria-expanded="mcpMenu?.isOpen ?? false"
+              class="flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-black/[0.05] active:scale-95"
+              :class="mcpMenu?.isOpen ? 'text-accent' : ''"
+              @click="toggleMcpMenu"
+            >
+              <PhPlugs :size="20" weight="regular" />
+            </button>
+            <McpMenu ref="mcpMenu" />
+          </div>
+
+          <!-- Abre/cierra el panel de herramientas de desarrollo (git, ...). -->
+          <button
+            type="button"
+            aria-label="Toggle developer tools"
+            :aria-pressed="ui.devPanelOpen"
+            class="ml-2 flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-black/[0.05] active:scale-95"
+            :class="ui.devPanelOpen ? 'text-accent' : ''"
+            @click="ui.toggleDevPanel()"
+          >
+            <PhWrench :size="20" weight="regular" />
+          </button>
+        </div>
       </header>
 
       <!-- Checklist de tareas en vivo: flota arriba a la derecha (estilo Codex),

@@ -1,11 +1,13 @@
 <script lang="ts" setup>
-import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { PhX, PhGear, PhPlugs, PhSparkle } from '@phosphor-icons/vue'
-import { ConnectMCP, DisconnectMCP, ListMCPs } from '../../wailsjs/go/main/App'
+import { ConnectMCP, DisconnectMCP } from '../../wailsjs/go/main/App'
 import ProviderSettings from './ProviderSettings.vue'
 import { useChatStore } from '../stores/chat'
+import { useMcpStore } from '../stores/mcp'
 
 const chat = useChatStore()
+const mcp = useMcpStore()
 const emit = defineEmits<{ close: [] }>()
 
 type TabId = 'general' | 'mcps' | 'skills'
@@ -15,47 +17,16 @@ const tabs = [
   { id: 'skills', label: 'Skills', icon: PhSparkle },
 ] as const
 
-interface MCPServer {
-  name: string
-  command: string
-  args: string[]
-  connected: boolean
-  tools: number
-}
-
 const active = ref<TabId>('general')
-const connectedServers = ref<MCPServer[]>([])
-const servers = computed<MCPServer[]>(() => {
-  const connectedByName = new Map(
-    connectedServers.value.map((server) => [server.name, server]),
-  )
-  const configuredNames = new Set(chat.mcpServers.map((server) => server.name))
-  const configuredServers = chat.mcpServers.map((config) => {
-    const connected = connectedByName.get(config.name)
-    return {
-      ...config,
-      connected: connected?.connected ?? false,
-      tools: connected?.tools ?? 0,
-    }
-  })
-
-  return [
-    ...configuredServers,
-    ...connectedServers.value.filter(
-      (server) => !configuredNames.has(server.name),
-    ),
-  ]
-})
 const serverName = ref('')
 const command = ref('')
 const args = ref('')
 const mcpError = ref('')
 const connecting = ref(false)
 
-async function refreshMCPs() {
-  connectedServers.value = await ListMCPs()
-}
-
+// Agregar un servidor es lo unico que no vive en el store MCP: conecta contra
+// el backend, persiste la config (para no perderla al reiniciar) y refresca el
+// estado. El resto (listar, conectar/desconectar existentes) delega al store.
 async function connectMCP() {
   mcpError.value = ''
   connecting.value = true
@@ -73,7 +44,7 @@ async function connectMCP() {
     serverName.value = ''
     command.value = ''
     args.value = ''
-    await refreshMCPs()
+    await mcp.refresh()
   } catch (error) {
     mcpError.value = error instanceof Error ? error.message : String(error)
   } finally {
@@ -81,39 +52,12 @@ async function connectMCP() {
   }
 }
 
-async function disconnectMCP(name: string) {
-  mcpError.value = ''
-  try {
-    await DisconnectMCP(name)
-    await refreshMCPs()
-  } catch (error) {
-    mcpError.value = error instanceof Error ? error.message : String(error)
-  }
-}
-
-async function reconnectMCP(server: MCPServer) {
-  mcpError.value = ''
-  connecting.value = true
-  try {
-    await ConnectMCP({
-      name: server.name,
-      command: server.command,
-      args: server.args,
-    })
-    await refreshMCPs()
-  } catch (error) {
-    mcpError.value = error instanceof Error ? error.message : String(error)
-  } finally {
-    connecting.value = false
-  }
-}
-
-async function removeMCP(server: MCPServer) {
+async function removeMCP(server: (typeof mcp.servers)[number]) {
   mcpError.value = ''
   try {
     if (server.connected) await DisconnectMCP(server.name)
     chat.removeMCPServer(server.name)
-    await refreshMCPs()
+    await mcp.refresh()
   } catch (error) {
     mcpError.value = error instanceof Error ? error.message : String(error)
   }
@@ -121,7 +65,7 @@ async function removeMCP(server: MCPServer) {
 
 function selectTab(id: TabId) {
   active.value = id
-  if (id === 'mcps') void refreshMCPs()
+  if (id === 'mcps') void mcp.refresh()
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -130,7 +74,7 @@ function onKeydown(event: KeyboardEvent) {
 
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
-  void refreshMCPs()
+  void mcp.refresh()
 })
 onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 </script>
@@ -243,11 +187,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
             </button>
           </form>
           <div class="mt-6 grid gap-3">
-            <p v-if="servers.length === 0" class="text-sm opacity-50">
+            <p v-if="mcp.servers.length === 0" class="text-sm opacity-50">
               No MCP servers configured.
             </p>
             <article
-              v-for="server in servers"
+              v-for="server in mcp.servers"
               :key="server.name"
               class="flex items-center justify-between gap-4 rounded-soft border border-black/5 bg-black/[0.02] p-4"
             >
@@ -274,8 +218,9 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
                   v-if="server.connected"
                   type="button"
                   :data-disconnect-mcp="server.name"
-                  class="rounded-full border border-black/10 px-3 py-1.5 text-sm transition hover:bg-black/[0.05]"
-                  @click="disconnectMCP(server.name)"
+                  :disabled="mcp.isPending(server.name)"
+                  class="rounded-full border border-black/10 px-3 py-1.5 text-sm transition hover:bg-black/[0.05] disabled:opacity-50"
+                  @click="mcp.disconnect(server.name)"
                 >
                   Disconnect
                 </button>
@@ -283,9 +228,9 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
                   v-else
                   type="button"
                   :data-reconnect-mcp="server.name"
-                  :disabled="connecting"
+                  :disabled="mcp.isPending(server.name)"
                   class="rounded-full bg-ink px-3 py-1.5 text-sm text-paper transition disabled:opacity-50"
-                  @click="reconnectMCP(server)"
+                  @click="mcp.connect(server.name)"
                 >
                   Connect
                 </button>
