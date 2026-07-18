@@ -57,10 +57,9 @@ func (m Model) permissionPanelHeight() int {
 	if m.chatPanelVisible() {
 		contentHeight -= 4
 	}
+	// No working-line reservation: a pending permission suppresses it (see
+	// showsWorking), so the panel takes that row too.
 	baseReserved := m.composerReservedLines() + len(m.menuItems)
-	if m.working {
-		baseReserved++
-	}
 	available := max(contentHeight-baseReserved, 0)
 	if len(m.entries) > 0 && available > 0 {
 		available--
@@ -83,9 +82,6 @@ func (m Model) permissionPanelLayout() (permissionPanelLayout, bool) {
 	}
 	x := margin
 	y := m.viewport.Height + len(m.menuItems)
-	if m.working {
-		y++
-	}
 	if m.chatPanelVisible() {
 		x += m.treePanelWidth() + 2
 		y += 2

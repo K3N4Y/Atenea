@@ -2240,6 +2240,24 @@ func TestModel_RunningToolHiddenWhilePermissionPending(t *testing.T) {
 	}
 }
 
+// A pending permission blocks on the user, so the agent is not working: the
+// "working" status line must disappear while the ask is open and return once it
+// is resolved (the run keeps going). "Working directory" in the panel is capital
+// W, so the lowercase " working" check does not collide with it.
+func TestModel_WorkingLineHiddenWhilePermissionPending(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).WithWorkspace("main", "~/dev/atenea")
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.working = true
+	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"ls"}`)})
+	if got := m.View(); strings.Contains(got, " working") {
+		t.Fatalf("View() = %q, the working line must be hidden while a permission is pending", got)
+	}
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if got := m.View(); !strings.Contains(got, " working") {
+		t.Fatalf("View() = %q, resolving restores the working line while the run continues", got)
+	}
+}
+
 func TestModel_ShowsStepFailedError(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
@@ -3678,26 +3696,26 @@ func TestModel_WorkingIndicatorVisibleWhileRunning(t *testing.T) {
 	m := NewModel(fake, "s1", nil)
 
 	// Sin corrida en curso no hay indicador.
-	if got := m.View(); strings.Contains(got, "trabajando") {
+	if got := m.View(); strings.Contains(got, "working") {
 		t.Fatalf("View() = %q, sin corrida en curso NO debe verse el indicador de trabajo", got)
 	}
 
 	// El usuario envia un prompt: aparece el indicador estable.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if got := m.View(); !strings.Contains(got, "trabajando") {
-		t.Fatalf("View() = %q, debe mostrar el indicador %q mientras la corrida sigue", got, "trabajando")
+	if got := m.View(); !strings.Contains(got, "working") {
+		t.Fatalf("View() = %q, debe mostrar el indicador %q mientras la corrida sigue", got, "working")
 	}
 
 	// Con ready (tamano de terminal conocido) el indicador tambien se ve.
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
-	if got := m.View(); !strings.Contains(got, "trabajando") {
-		t.Fatalf("View() = %q, con ready el indicador %q tambien debe verse", got, "trabajando")
+	if got := m.View(); !strings.Contains(got, "working") {
+		t.Fatalf("View() = %q, con ready el indicador %q tambien debe verse", got, "working")
 	}
 
 	// Fin de corrida limpio: el indicador desaparece.
 	m = apply(t, m, activeRunDone(m, ""))
-	if got := m.View(); strings.Contains(got, "trabajando") {
+	if got := m.View(); strings.Contains(got, "working") {
 		t.Fatalf("View() = %q, RunDoneMsg debe retirar el indicador de trabajo", got)
 	}
 }
@@ -3721,8 +3739,8 @@ func TestModel_ViewFitsHeightWithIndicator(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	view := m.View()
-	if !strings.Contains(view, "trabajando") {
-		t.Fatalf("View() = %q, con corrida en curso debe verse el indicador %q", view, "trabajando")
+	if !strings.Contains(view, "working") {
+		t.Fatalf("View() = %q, con corrida en curso debe verse el indicador %q", view, "working")
 	}
 	if lines := strings.Count(view, "\n") + 1; lines > 12 {
 		t.Fatalf("View() tiene %d lineas, la linea de estado NO debe romper el alto acotado (<= 12)", lines)
@@ -3733,7 +3751,7 @@ func TestModel_ViewFitsHeightWithIndicator(t *testing.T) {
 }
 
 // TestModel_WorkingIndicatorAlignsWithComposerLeftMargin cubre el margen
-// izquierdo de la linea de estado "trabajando": el resto de la vista (la caja
+// izquierdo de la linea de estado "working": el resto de la vista (la caja
 // del composer y la barra superior) arranca a composerOuterMargin columnas del
 // borde izquierdo de la terminal, pero la linea del spinner arranca en la
 // columna 0 (pegada al borde). El glifo del spinner debe alinearse con el
@@ -3748,7 +3766,7 @@ func TestModel_WorkingIndicatorAlignsWithComposerLeftMargin(t *testing.T) {
 
 	view := m.View()
 	// La linea de estado se ubica por el glifo del spinner, no por la palabra
-	// "trabajando": esta prueba es sobre alineacion de columnas, no sobre el
+	// "working": esta prueba es sobre alineacion de columnas, no sobre el
 	// texto exacto de la linea (ese es un bug preexistente no relacionado, se
 	// arregla aparte en la fase GREEN).
 	lines := strings.Split(view, "\n")
@@ -3781,7 +3799,7 @@ func TestModel_WorkingIndicatorAlignsWithComposerLeftMargin(t *testing.T) {
 		t.Fatalf("columna del spinner = %d, columna del borde ╭ del composer = %d; ambas deben coincidir (mismo margen izquierdo)", spinnerCol, composerCol)
 	}
 	if spinnerCol != composerOuterMargin {
-		t.Fatalf("columna del spinner+%q = %d, se esperaba composerOuterMargin (%d)", "trabajando", spinnerCol, composerOuterMargin)
+		t.Fatalf("columna del spinner+%q = %d, se esperaba composerOuterMargin (%d)", "working", spinnerCol, composerOuterMargin)
 	}
 }
 
@@ -3835,7 +3853,7 @@ func TestModel_WorkingIndicatorAlignsWithComposerLeftMargin_WiderTerminal(t *tes
 		t.Fatalf("columna del spinner = %d, columna del borde ╭ del composer = %d; ambas deben coincidir con ancho 100", spinnerCol, composerCol)
 	}
 	if spinnerCol != composerOuterMargin {
-		t.Fatalf("columna del spinner+%q con ancho 100 = %d, se esperaba composerOuterMargin (%d), no un valor dependiente del ancho", "trabajando", spinnerCol, composerOuterMargin)
+		t.Fatalf("columna del spinner+%q con ancho 100 = %d, se esperaba composerOuterMargin (%d), no un valor dependiente del ancho", "working", spinnerCol, composerOuterMargin)
 	}
 }
 
@@ -4477,7 +4495,7 @@ func TestModel_ViewFitsHeightWithBoxModelAndIndicator(t *testing.T) {
 	if lines := strings.Count(view, "\n") + 1; lines > 12 {
 		t.Fatalf("View() tiene %d lineas, caja + pie + indicador no deben romper el alto acotado (<= 12)", lines)
 	}
-	for _, want := range []string{"mensaje-29", "trabajando", "openrouter/free"} {
+	for _, want := range []string{"mensaje-29", "working", "openrouter/free"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("View() = %q, debe contener %q (cola del transcript, indicador de trabajo y pie de status)", view, want)
 		}
@@ -4705,8 +4723,8 @@ func TestModel_PlanApprovalCapturesKeyboard(t *testing.T) {
 	if strings.Contains(view, "· plan") {
 		t.Fatalf("View() = %q, tras aceptar el plan el pie NO debe seguir mostrando %q", view, "· plan")
 	}
-	if !strings.Contains(view, "trabajando") {
-		t.Fatalf("View() = %q, tras aceptar el plan la corrida queda en curso: debe verse el indicador %q", view, "trabajando")
+	if !strings.Contains(view, "working") {
+		t.Fatalf("View() = %q, tras aceptar el plan la corrida queda en curso: debe verse el indicador %q", view, "working")
 	}
 }
 
@@ -5426,7 +5444,7 @@ func TestModel_MenuLinesTruncateToTerminalWidth(t *testing.T) {
 }
 
 // Contrato del indicador animado: mientras hay una corrida en curso la linea
-// de estado muestra un glifo de spinner seguido de " trabajando"; el prefijo
+// de estado muestra un glifo de spinner seguido de " working"; el prefijo
 // estatico "... " desaparece. Arrancar la corrida (Enter con texto) devuelve
 // un tea.Cmd no nil que bombea la animacion: ejecutarlo produce un mensaje
 // que, aplicado a Update, avanza el glifo del spinner (la linea de estado
@@ -5451,19 +5469,19 @@ func TestModel_WorkingIndicatorAnimatesOnTicks(t *testing.T) {
 		t.Fatalf("Update(Enter) devolvio cmd nil, arrancar la corrida debe devolver el cmd que bombea la animacion: sin cmd el spinner queda congelado")
 	}
 
-	// b) La linea de estado conserva "trabajando" pero sin el marcador
-	// estatico viejo "... trabajando": ahora el prefijo es el glifo animado.
+	// b) La linea de estado conserva "working" pero sin el marcador
+	// estatico viejo "... working": ahora el prefijo es el glifo animado.
 	view := m.View()
-	if !strings.Contains(view, "trabajando") {
-		t.Fatalf("View() = %q, con corrida en curso debe verse la linea de estado con %q", view, "trabajando")
+	if !strings.Contains(view, "working") {
+		t.Fatalf("View() = %q, con corrida en curso debe verse la linea de estado con %q", view, "working")
 	}
-	if strings.Contains(view, "... trabajando") {
-		t.Fatalf("View() = %q, NO debe contener el marcador estatico %q: el prefijo fijo se reemplaza por el glifo del spinner", view, "... trabajando")
+	if strings.Contains(view, "... working") {
+		t.Fatalf("View() = %q, NO debe contener el marcador estatico %q: el prefijo fijo se reemplaza por el glifo del spinner", view, "... working")
 	}
 
 	// c) Ejecutar el cmd produce el mensaje de tick; aplicarlo a Update debe
 	// avanzar el glifo del spinner: la linea de estado cambia.
-	before := lineWith(t, view, "trabajando")
+	before := lineWith(t, view, "working")
 	msg := cmd()
 	if msg == nil {
 		t.Fatalf("cmd() = nil, el cmd de la animacion debe producir un mensaje aplicable a Update")
@@ -5473,7 +5491,7 @@ func TestModel_WorkingIndicatorAnimatesOnTicks(t *testing.T) {
 	if !ok {
 		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
 	}
-	after := lineWith(t, m.View(), "trabajando")
+	after := lineWith(t, m.View(), "working")
 	if after == before {
 		t.Fatalf("linea de estado tras el tick = %q, identica a la previa: el tick debe avanzar el frame del spinner, una linea identica significa animacion congelada", after)
 	}
@@ -5516,8 +5534,8 @@ func TestModel_SpinnerTickDiesAfterRunDone(t *testing.T) {
 	if tickCmd != nil {
 		t.Fatalf("Update(tick) tras RunDoneMsg devolvio cmd no nil, el loop de animacion NO debe re-agendarse cuando la corrida termino: sin este corte la TUI queda despertando para siempre")
 	}
-	if got := m.View(); strings.Contains(got, "trabajando") {
-		t.Fatalf("View() = %q, tras RunDoneMsg el tick viejo NO debe revivir la linea de estado %q", got, "trabajando")
+	if got := m.View(); strings.Contains(got, "working") {
+		t.Fatalf("View() = %q, tras RunDoneMsg el tick viejo NO debe revivir la linea de estado %q", got, "working")
 	}
 }
 
@@ -5544,7 +5562,7 @@ func TestModel_AcceptPlanStartsSpinner(t *testing.T) {
 		t.Fatalf("Update('y') devolvio cmd nil, aceptar el plan arranca la corrida y debe devolver el cmd que bombea la animacion: sin cmd el spinner queda congelado en el camino del plan")
 	}
 
-	before := lineWith(t, m.View(), "trabajando")
+	before := lineWith(t, m.View(), "working")
 	msg := cmd()
 	if batch, ok := msg.(tea.BatchMsg); ok {
 		for _, batched := range batch {
@@ -5560,7 +5578,7 @@ func TestModel_AcceptPlanStartsSpinner(t *testing.T) {
 		t.Fatalf("cmd() = nil, el cmd de la animacion debe producir un mensaje aplicable a Update")
 	}
 	m = apply(t, m, msg)
-	after := lineWith(t, m.View(), "trabajando")
+	after := lineWith(t, m.View(), "working")
 	if after == before {
 		t.Fatalf("linea de estado tras el tick = %q, identica a la previa: el tick del camino del plan debe avanzar el frame del spinner", after)
 	}
@@ -5598,13 +5616,13 @@ func TestModel_SecondRunRestartsSpinner(t *testing.T) {
 		t.Fatalf("Update(Enter) de la segunda corrida devolvio cmd nil, cada corrida debe reencender la animacion: un loop de un solo uso deja el spinner muerto en la segunda corrida")
 	}
 
-	before := lineWith(t, m.View(), "trabajando")
+	before := lineWith(t, m.View(), "working")
 	msg := cmd2()
 	if msg == nil {
 		t.Fatalf("cmd() = nil, el cmd de la animacion de la segunda corrida debe producir un mensaje aplicable a Update")
 	}
 	m = apply(t, m, msg)
-	after := lineWith(t, m.View(), "trabajando")
+	after := lineWith(t, m.View(), "working")
 	if after == before {
 		t.Fatalf("linea de estado tras el tick = %q, identica a la previa: el tick de la segunda corrida debe avanzar el frame del spinner", after)
 	}

@@ -835,11 +835,21 @@ func (m Model) renderTranscript() string {
 // corrida en curso la linea de estado del indicador de trabajo.
 func (m Model) reservedLines() int {
 	reserved := m.composerReservedLines() + len(m.menuItems)
-	if m.working {
+	if m.showsWorking() {
 		reserved++
 	}
 	reserved += m.permissionPanelHeight()
 	return reserved
+}
+
+// showsWorking reports whether the "working" status line is rendered: a run is
+// in flight AND no permission is pending. A pending permission blocks on the
+// user, so the agent is not working — its panel replaces the line.
+func (m Model) showsWorking() bool {
+	if _, pending := m.pendingPermission(); pending {
+		return false
+	}
+	return m.working
 }
 
 func (m Model) composerReservedLines() int {
@@ -1219,10 +1229,10 @@ func restoreCanvasBackground(content string) string {
 
 func (m Model) chatContent() string {
 	status := ""
-	if m.working {
-		// La linea de estado es "<glifo> trabajando": el glifo animado del
+	if m.showsWorking() {
+		// La linea de estado es "<glifo> working": el glifo animado del
 		// spinner (ya estilizado por su propio Style) seguido del texto en
-		// estilo tenue, con " trabajando" como UN segmento para que el
+		// estilo tenue, con " working" como UN segmento para que el
 		// contenido plano siga siendo asertable por los tests.
 		// Se antepone composerOuterMargin espacios como prefijo plano (no
 		// lipgloss.Margin, que tambien agregaria relleno a la derecha) para
@@ -1235,7 +1245,7 @@ func (m Model) chatContent() string {
 		if m.ready {
 			margin = min(composerOuterMargin, m.chatContentWidth()/2)
 		}
-		status = strings.Repeat(" ", margin) + m.spinner.View() + statusStyle.Render(" trabajando") + "\n"
+		status = strings.Repeat(" ", margin) + m.spinner.View() + statusStyle.Render(" working") + "\n"
 	}
 	return m.transcriptView() + m.menuView() + status + m.permissionPanelView() + m.composerView()
 }
