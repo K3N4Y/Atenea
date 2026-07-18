@@ -183,6 +183,19 @@ describe('ChatView', () => {
     expect(alert.text()).toContain('the provider is unavailable')
   })
 
+  it('sale de Working y muestra el error cuando SendPrompt rechaza', async () => {
+    vi.clearAllMocks()
+    vi.mocked(App.SendPrompt).mockRejectedValueOnce(new Error('binding failed'))
+    const wrapper = mountView()
+
+    await wrapper.find('textarea[aria-label="Message atenea"]').setValue('hola')
+    await wrapper.find('button[aria-label="Send"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[role="status"]').exists()).toBe(false)
+    expect(wrapper.find('[role="alert"]').text()).toContain('binding failed')
+  })
+
   it('descarta el error al cerrar el aviso y deja de mostrarlo', async () => {
     vi.clearAllMocks()
     const wrapper = mountView()

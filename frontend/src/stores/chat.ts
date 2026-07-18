@@ -694,10 +694,15 @@ export const useChatStore = defineStore(
       // Un envio nuevo cierra cualquier plan vigente; el agente lo reabrira con
       // present_plan si vuelve a planificar.
       plan.value = null
-      if (mode.value === 'plan') {
-        await SendPlanPrompt(sessionID.value, trimmed)
-      } else {
-        await SendPrompt(sessionID.value, trimmed)
+      try {
+        if (mode.value === 'plan') {
+          await SendPlanPrompt(sessionID.value, trimmed)
+        } else {
+          await SendPrompt(sessionID.value, trimmed)
+        }
+      } catch (error) {
+        applyError(error instanceof Error ? error.message : String(error))
+        return
       }
       // Refresca el historial: una conversacion nueva (o reactivada) debe aparecer
       // y reordenarse en la sidebar.
