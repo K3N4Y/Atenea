@@ -66,3 +66,20 @@ wails build         # production build
   the runner against a fake `EventBus`, not against Wails.
 - Documentation lives in `.okf/`, uses Markdown files, and is written in
   English.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues (`K3N4Y/Atenea`, via the `gh` CLI). See
+`docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default triage vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`,
+`ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` at the repo root; ADRs under
+`.okf/architecture/adr/`. See `docs/agents/domain.md`.
