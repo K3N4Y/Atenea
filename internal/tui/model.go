@@ -157,6 +157,14 @@ const (
 	toolRunning toolStatus = iota // Tool.Called sin desenlace todavia
 	toolOK                        // Tool.Success del mismo CallID
 	toolFailed                    // Tool.Failed del mismo CallID
+	toolDenied                    // permiso denegado por el usuario; no es fallo del sistema
+)
+
+type permissionChoice int
+
+const (
+	permissionDeny permissionChoice = iota
+	permissionAllowOnce
 )
 
 // entry es un bloque de la conversacion.
@@ -335,6 +343,9 @@ type Model struct {
 	viewerReturnY    int
 	focus            panelFocus
 	terminalFocused  bool
+
+	permissionChoice permissionChoice
+	permissionScroll int
 }
 
 // NewModel construye el Model raiz de la TUI.
@@ -474,7 +485,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch ev := msg.(type) {
 	case EventMsg:
+		permissionHeight := m.permissionPanelHeight()
 		m = m.foldEvent(ev)
+		permissionLayoutChanged := permissionHeight != m.permissionPanelHeight()
 		var treeCmd, workspaceCmd tea.Cmd
 		if ev.Kind == session.KindToolSuccess && ev.Diff != "" {
 			m, treeCmd = m.reloadTree(m.treeOpen)
@@ -486,6 +499,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Un evento que deja texto sin revelar arranca el loop de ticks del
 		// reveal si no hay uno corriendo (ver revealing); el tick viaja
 		// batcheado con la bomba de eventos.
+		if permissionLayoutChanged {
+			m = m.resizeViewport()
+		}
 		if !m.revealing && m.hasBacklog() {
 			m.revealing = true
 			return m.syncViewportActivity(), tea.Batch(pump, treeCmd, workspaceCmd, revealTick())
@@ -703,6 +719,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.ready {
 			ev.Y -= topBarHeight
 		}
+		if perm, ok := m.pendingPermission(); ok {
+			if next, handled := m.handlePermissionMouse(ev, perm); handled {
+				return next, nil
+			}
+		}
 		if m.newActivityIndicatorHit(ev) {
 			return m, nil
 		}
@@ -854,8 +875,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if msg.Type == tea.KeyPgUp || msg.Type == tea.KeyPgDown {
 			return m.scrollViewport(msg)
 		}
-		m.resolvePermissionKey(msg, perm)
-		return m, nil
+		return m.handlePermissionKey(msg, perm), nil
 	}
 	if m.hasPendingPlan() {
 		return m.resolvePlanKey(msg)
@@ -1423,20 +1443,51 @@ func pathParent(nodePath string) string {
 // Esc) es no-op: no alimenta el input ni envia prompts mientras se espera la
 // decision. Resuelve con el SessionID que trajo el evento de permiso (puede
 // ser una sesion hija de un subagente); sin SessionID usa la sesion del Model.
-func (m Model) resolvePermissionKey(msg tea.KeyMsg, perm entry) {
-	if msg.Type != tea.KeyRunes || m.agent == nil {
-		return
+func (m Model) handlePermissionKey(msg tea.KeyMsg, perm entry) Model {
+	switch msg.Type {
+	case tea.KeyLeft:
+		m.permissionChoice = permissionDeny
+		return m
+	case tea.KeyRight:
+		m.permissionChoice = permissionAllowOnce
+		return m
+	case tea.KeyTab:
+		m.permissionChoice = permissionChoice(1 - int(m.permissionChoice))
+		return m
+	case tea.KeyUp:
+		m.permissionScroll = max(m.permissionScroll-1, 0)
+		return m
+	case tea.KeyDown:
+		m.permissionScroll++
+		return m
+	case tea.KeyEsc:
+		return m.resolvePermission(perm, false)
+	case tea.KeyEnter:
+		return m.resolvePermission(perm, m.permissionChoice == permissionAllowOnce)
+	case tea.KeyRunes:
+		switch strings.ToLower(string(msg.Runes)) {
+		case "y":
+			return m.resolvePermission(perm, true)
+		case "n":
+			return m.resolvePermission(perm, false)
+		}
+	}
+	return m
+}
+
+func (m Model) resolvePermission(perm entry, approved bool) Model {
+	if m.agent == nil {
+		return m
 	}
 	sessionID := perm.sessionID
 	if sessionID == "" {
 		sessionID = m.sessionID
 	}
-	switch string(msg.Runes) {
-	case "y":
-		m.agent.ResolvePermission(sessionID, perm.callID, true)
-	case "n":
-		m.agent.ResolvePermission(sessionID, perm.callID, false)
-	}
+	m.agent.ResolvePermission(sessionID, perm.callID, approved)
+	m = m.applyPermissionDecision(perm, approved)
+	m.permissionChoice = permissionDeny
+	m.permissionScroll = 0
+	return m.resizeViewport()
 }
 
 // resolvePlanKey atiende el teclado en modo aprobacion de plan: 'y' acepta el

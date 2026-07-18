@@ -150,6 +150,50 @@ predicate `compactActivityJoin` keeps `renderTranscript` and `entryLines`
 (click targeting) in lockstep. Full contract:
 [TUI transcript activity hierarchy](../specs/2026-07-11-tui-transcript-activity-hierarchy.md).
 
+### Tool permission panel
+
+An ask-before-run request keeps its compact `? <tool> <summary>` activity in
+the transcript and opens a blocking, borderless panel immediately above the
+composer. The runner emits `Tool.Called` (running `● <tool>`) immediately
+before `Tool.Permission.Requested` (`? <tool>`) for the same call, so while the
+gate is open the transcript hides the running header and shows only the `?`
+ask; the same call is never duplicated on two adjacent rows. Approving reveals
+the running header again (the tool proceeds); denial settles it to the neutral
+`– <tool> Denied by user` state. `renderTranscript` and `entryLines` share the
+gating predicate so line numbering — and therefore click targeting — stays in
+lockstep. The panel uses the existing two-cell composer inset and width, a
+`#303030` surface, and a `#3A3A3A` command surface. Its title reuses ANSI green
+`2`; the selected action stays in the terminal foreground and uses bold plus
+the `›` marker, so selection remains legible without implying approval through
+color. Visible copy is English: `Permission required`, the specialized
+`Bash command` label (or a generic `<tool> request`), request origin, working
+directory, `Deny`, and `Allow once`.
+
+Permissions are processed FIFO. With multiple pending requests the active
+panel shows `1 of N`; a single request omits the redundant `1 of 1`. The panel
+identifies a request surfaced from a child session as `Requested by subagent`, and resolves
+through the event's `SessionID` so a child gate is never answered on the parent
+session. Bash input renders the exact command; other tools fall back to pretty
+JSON. The command wraps to the available width and exposes up to four lines;
+`Up`/`Down` or the mouse wheel over the command scrolls longer input and
+`↓ more` marks hidden rows.
+
+`Deny` is selected by default. `Left`/`Right` or `Tab` selects an action,
+`Enter` confirms it, `Esc` denies immediately, and `y`/`n` remain silent direct
+shortcuts. Clicking either action resolves it directly. While the panel owns
+input, the composer stays visible and preserves its draft but is blurred and
+read-only; `PgUp`/`PgDn` and the mouse wheel outside the panel continue to
+scroll the transcript. On short terminals the composer drops its Git-summary
+margin and the panel progressively omits help, command rows, and secondary
+metadata while preserving the title and actions and leaving at least one
+transcript row when possible.
+
+Resolving removes the panel immediately to prevent duplicate decisions and
+reveals the next queued request. Approval leaves the existing tool activity
+running. Denial changes it to the neutral `– <tool> Denied by user` state; the
+durable `Tool.Failed` event with `tool denied by the user` does not repaint that
+expected user decision as a red system error.
+
 ### Root Canvas
 
 `Model.View` routes every chat, explorer, and file-viewer layout through one

@@ -110,6 +110,7 @@ var (
 	toolRunningStyle    = lipgloss.NewStyle().Faint(true)
 	toolOKStyle         = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("2"))
 	toolFailedStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	toolDeniedStyle     = lipgloss.NewStyle().Faint(true)
 	toolOutputStyle     = lipgloss.NewStyle().Faint(true)                     // preview del output de la tool (detalle, no protagonista)
 	diffAddStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("2")) // lineas agregadas del diff (+)
 	diffDelStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("1")) // lineas quitadas del diff (-)
@@ -151,10 +152,7 @@ func (e entry) render(width int) string {
 	case entryTool:
 		return e.renderTool()
 	case entryPermission:
-		// Header de actividad con el marcador de pregunta: el resumen del
-		// Input (summarizeToolInput) dice QUE pide permiso, y el sufijo el
-		// gesto que lo resuelve.
-		return permissionStyle.Render(activityHeader(activityAskMarker, e.tool, summarizeToolInput(e.input)) + " (aprobar/denegar)")
+		return permissionStyle.Render(activityHeader(activityAskMarker, e.tool, summarizeToolInput(e.input)))
 	case entryPlanApproval:
 		// Misma gramatica de actividad que el permiso (marcador de pregunta y
 		// "plan" como nombre), con el gesto que lo resuelve como sufijo.
@@ -325,6 +323,8 @@ func (e entry) renderActivity(name, summary string, showDetail bool) string {
 		// El error va debajo del header como linea de rail, no pegado a el.
 		return toolFailedStyle.Render(activityHeader(activityFailMarker, name, summary)) +
 			"\n" + toolFailedStyle.Render(activityRailPrefix+"error: "+sanitizeTerminalText(e.err))
+	case toolDenied:
+		return toolDeniedStyle.Render(activityHeader("–", name, "Denied by user"))
 	default:
 		// A running entry with a live spinner frame (subagents) animates its
 		// marker; the rest keep the static run marker.
@@ -810,16 +810,22 @@ func (m Model) renderTranscript() string {
 	if m.ready {
 		width = m.viewport.Width
 	}
+	gated := m.permissionGatedTools()
 	var b strings.Builder
+	prev := -1
 	for i, e := range m.entries {
-		if i > 0 {
-			if compactActivityJoin(m.entries[i-1], e) {
+		if toolGatedByPermission(e, gated) {
+			continue
+		}
+		if prev >= 0 {
+			if compactActivityJoin(m.entries[prev], e) {
 				b.WriteString("\n")
 			} else {
 				b.WriteString("\n\n")
 			}
 		}
 		b.WriteString(e.render(width))
+		prev = i
 	}
 	return b.String()
 }
@@ -828,9 +834,18 @@ func (m Model) renderTranscript() string {
 // (alto del textarea + bordes), con menu abierto una linea por item y con
 // corrida en curso la linea de estado del indicador de trabajo.
 func (m Model) reservedLines() int {
-	reserved := m.input.Height() + 2 + composerOuterMargin + len(m.menuItems)
+	reserved := m.composerReservedLines() + len(m.menuItems)
 	if m.working {
 		reserved++
+	}
+	reserved += m.permissionPanelHeight()
+	return reserved
+}
+
+func (m Model) composerReservedLines() int {
+	reserved := m.input.Height() + 2
+	if _, permissionPending := m.pendingPermission(); !permissionPending {
+		reserved += composerOuterMargin
 	}
 	return reserved
 }
@@ -926,9 +941,17 @@ func (m Model) entryLines() []entryLine {
 	if m.ready {
 		width = m.viewport.Width
 	}
+	gated := m.permissionGatedTools()
 	var out []entryLine
+	prev := -1
 	for i, e := range m.entries {
-		if i > 0 && !compactActivityJoin(m.entries[i-1], e) {
+		// Misma condicion de ocultamiento que renderTranscript: una tool con su
+		// permiso pendiente no emite header en ejecucion, y sin esta paridad la
+		// numeracion de lineas divergeria y el mapeo de clics se correria.
+		if toolGatedByPermission(e, gated) {
+			continue
+		}
+		if prev >= 0 && !compactActivityJoin(m.entries[prev], e) {
 			// Separador de parrafo entre bloques (una linea vacia), SOLO
 			// cuando renderTranscript separa con "\n\n": la condicion
 			// compartida compactActivityJoin evita que ambas numeraciones
@@ -943,6 +966,7 @@ func (m Model) entryLines() []entryLine {
 		for _, l := range strings.Split(block, "\n") {
 			out = append(out, entryLine{idx: i, line: l})
 		}
+		prev = i
 	}
 	return out
 }
@@ -1213,7 +1237,7 @@ func (m Model) chatContent() string {
 		}
 		status = strings.Repeat(" ", margin) + m.spinner.View() + statusStyle.Render(" trabajando") + "\n"
 	}
-	return m.transcriptView() + m.menuView() + status + m.composerView()
+	return m.transcriptView() + m.menuView() + status + m.permissionPanelView() + m.composerView()
 }
 
 func (m Model) chatView(content string) string {
@@ -1308,6 +1332,9 @@ func (m Model) composerView() string {
 	margin := min(composerOuterMargin, width/2)
 	box := m.composerBoxWithWidth(max(width-2*margin, 0))
 	box = lipgloss.NewStyle().Margin(0, margin).Render(box)
+	if _, permissionPending := m.pendingPermission(); permissionPending {
+		return box
+	}
 	return strings.Join([]string{
 		box,
 		m.gitSummaryLine(width, margin),

@@ -65,16 +65,20 @@ func (m Model) foldEvent(ev EventMsg) Model {
 	case session.KindToolCalled:
 		m.entries = append(m.entries, entry{
 			kind: entryTool, callID: ev.CallID, tool: ev.ToolName, status: toolRunning,
-			input: string(ev.Input),
+			input: string(ev.Input), sessionID: ev.SessionID,
 		})
 	case session.KindToolSuccess:
 		m = m.settleTool(ev.CallID, toolOK, "", ev.Text, ev.Diff)
 	case session.KindToolFailed:
 		m = m.settleTool(ev.CallID, toolFailed, ev.Error, "", "")
 	case session.KindToolPermissionRequested:
+		input := string(ev.Input)
+		if input == "" {
+			input = m.toolCallInput(ev.CallID, ev.SessionID)
+		}
 		m.entries = append(m.entries, entry{
 			kind: entryPermission, callID: ev.CallID, tool: ev.ToolName,
-			input: string(ev.Input), sessionID: ev.SessionID,
+			input: input, sessionID: ev.SessionID,
 		})
 	case session.KindStepFailed:
 		m.liveUsage = false
@@ -92,6 +96,20 @@ func (m Model) foldEvent(ev EventMsg) Model {
 		}
 	}
 	return m
+}
+
+func (m Model) toolCallInput(callID, sessionID string) string {
+	for index := len(m.entries) - 1; index >= 0; index-- {
+		e := m.entries[index]
+		if e.kind != entryTool || e.callID != callID {
+			continue
+		}
+		if sessionID != "" && e.sessionID != "" && e.sessionID != sessionID {
+			continue
+		}
+		return e.input
+	}
+	return ""
 }
 
 func (m Model) replaceEvents(events []session.SessionEvent) Model {
@@ -177,8 +195,10 @@ func (m Model) settleTool(callID string, status toolStatus, errMsg, output, diff
 			continue
 		}
 		if e.kind == entryTool && e.callID == callID {
-			e.status = status
-			e.err = errMsg
+			if !(e.status == toolDenied && status == toolFailed && errMsg == "tool denied by the user") {
+				e.status = status
+				e.err = errMsg
+			}
 			e.output = output
 			e.diff = diff
 			if e.tool == "present_plan" && status == toolOK {
@@ -192,6 +212,63 @@ func (m Model) settleTool(callID string, status toolStatus, errMsg, output, diff
 		m.entries = append(m.entries, entry{kind: entryPlanApproval})
 	}
 	return m
+}
+
+func (m Model) applyPermissionDecision(permission entry, approved bool) Model {
+	kept := make([]entry, 0, len(m.entries))
+	for _, e := range m.entries {
+		if e.kind == entryPermission && e.callID == permission.callID && e.sessionID == permission.sessionID {
+			continue
+		}
+		if !approved && e.kind == entryTool && e.callID == permission.callID && e.sessionID == permission.sessionID {
+			e.status = toolDenied
+			e.err = "Denied by user"
+		}
+		kept = append(kept, e)
+	}
+	m.entries = kept
+	return m
+}
+
+func (m Model) pendingPermissionCount() int {
+	count := 0
+	for _, e := range m.entries {
+		if e.kind == entryPermission {
+			count++
+		}
+	}
+	return count
+}
+
+// permissionGatedTools returns the callID+sessionID keys of tools whose
+// permission is still pending. The ask-before-run gate emits Tool.Called
+// (running "●") immediately followed by Tool.Permission.Requested ("?") for the
+// same call, so both would render on adjacent rows. While a key is present the
+// transcript hides the running header and shows only the "? <tool>" ask, so the
+// same call is not duplicated while the user decides. Returns nil when nothing
+// is pending, so the hot path allocates nothing.
+func (m Model) permissionGatedTools() map[string]struct{} {
+	var gated map[string]struct{}
+	for _, e := range m.entries {
+		if e.kind != entryPermission {
+			continue
+		}
+		if gated == nil {
+			gated = make(map[string]struct{})
+		}
+		gated[e.callID+"\x00"+e.sessionID] = struct{}{}
+	}
+	return gated
+}
+
+// toolGatedByPermission reports whether a running tool header must be hidden
+// because its permission is still pending (see permissionGatedTools).
+func toolGatedByPermission(e entry, gated map[string]struct{}) bool {
+	if e.kind != entryTool || e.status != toolRunning || gated == nil {
+		return false
+	}
+	_, ok := gated[e.callID+"\x00"+e.sessionID]
+	return ok
 }
 
 // pendingPermission devuelve la entrada completa de la solicitud pendiente
