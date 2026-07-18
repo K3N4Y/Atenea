@@ -28,7 +28,7 @@ var serverName = regexp.MustCompile(`^[A-Za-z0-9_-]{1,48}$`)
 // ServerConfig describes a local MCP server process. Command and Args map
 // directly to the stdio process; Env augments the inherited environment.
 type ServerConfig struct {
-	Name    string            `json:"name"`
+	Name    string            `json:"name,omitempty"`
 	Command string            `json:"command"`
 	Args    []string          `json:"args"`
 	Env     map[string]string `json:"env,omitempty"`

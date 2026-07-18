@@ -1,21 +1,29 @@
 import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
-import { ConnectMCP, DisconnectMCP, ListMCPs } from '../../wailsjs/go/main/App'
+import {
+  ConnectMCP,
+  DisconnectMCP,
+  ListMCPs,
+  SaveMCPConfig,
+} from '../../wailsjs/go/main/App'
 import { useChatStore } from './chat'
 
-// Estado de los servidores MCP: las definiciones durables (no secretas) viven
-// en el store de chat y se persisten; aqui llevamos el estado de conexion
-// efimero (lo devuelve el backend con ListMCPs) y las acciones que hablan con
-// el proceso real (Connect/Disconnect). Una conexion NO se persiste: reabrir
+// El backend es la fuente de verdad de los servidores MCP: las definiciones
+// viven en la config global (~/.config/atenea/mcp.json) mas el .mcp.json del
+// workspace, y ListMCPs las devuelve ya mezcladas con el estado de conexion.
+// Asi la app de escritorio y la TUI comparten la misma lista. Este store lleva
+// esa lista, el override optimista de los switches y las acciones contra el
+// proceso real (Connect/Disconnect). Una conexion NO se persiste: reabrir
 // Atenea no debe ejecutar un comando arbitrario sin accion explicita.
 //
-// `servers` unifica ambos mundos: cada config duradera mas su estado conectado
-// actual. Es lo que consumen tanto el menu de la navbar (switches on/off) como
-// la pestaña MCPs de Settings.
+// `servers` es lo que consumen tanto el menu de la navbar (switches on/off)
+// como la pestaña MCPs de Settings.
 export interface MCPServer {
   name: string
   command: string
   args: string[]
+  env?: Record<string, string>
+  cwd?: string
   connected: boolean
   tools: number
 }
@@ -23,9 +31,8 @@ export interface MCPServer {
 export const useMcpStore = defineStore('mcp', () => {
   const chat = useChatStore()
 
-  // Estado conectado efimero: lo trae el backend (ListMCPs). Fuera de linea o
-  // sin conectar, es la fuente de verdad de `connected`/`tools`.
-  const connected = ref<MCPServer[]>([])
+  // Lista declarada + estado conectado, tal como la devuelve el backend.
+  const list = ref<MCPServer[]>([])
   // Override optimista: nombre -> estado conectado que el usuario acabo de
   // pedir pero el backend todavia no confirmo. toggle() lo aplica al instante
   // para que el switch se voltee sin esperar; si la accion falla se limpia y el
@@ -37,37 +44,28 @@ export const useMcpStore = defineStore('mcp', () => {
   const pending = ref(new Set<string>())
   const error = ref('')
 
-  // servers: configs persistidas unidas al estado conectado del backend, con
-  // el override optimista por encima cuando existe. Primero las configuradas
-  // (orden estable del usuario), luego las conectadas sin config (agregadas
-  // desde otra ventana) para no ocultarlas.
-  const servers = computed<MCPServer[]>(() => {
-    const connectedByName = new Map(
-      connected.value.map((server) => [server.name, server]),
-    )
-    const configuredNames = new Set(
-      chat.mcpServers.map((server) => server.name),
-    )
-    const configuredServers = chat.mcpServers.map((config) => {
-      const status = connectedByName.get(config.name)
-      const optimisticConnected = optimistic.value.get(config.name)
-      return {
-        name: config.name,
-        command: config.command,
-        args: config.args,
-        connected: optimisticConnected ?? status?.connected ?? false,
-        tools: status?.tools ?? 0,
-      }
-    })
-    return [
-      ...configuredServers,
-      ...connected.value.filter((server) => !configuredNames.has(server.name)),
-    ]
-  })
+  const servers = computed<MCPServer[]>(() =>
+    list.value.map((server) => ({
+      ...server,
+      args: server.args ?? [],
+      connected: optimistic.value.get(server.name) ?? server.connected,
+    })),
+  )
+
+  // Migracion one-shot: las configs MCP vivian en localStorage (store de
+  // chat); ahora la fuente de verdad es la config global del backend. Si
+  // quedan configs viejas se suben con SaveMCPConfig y se vacia el legado;
+  // si el backend falla se conservan para reintentar en el proximo refresh.
+  async function migrateLegacyConfigs() {
+    if (chat.mcpServers.length === 0) return
+    for (const config of chat.mcpServers) await SaveMCPConfig(config)
+    chat.mcpServers = []
+  }
 
   async function refresh() {
     try {
-      connected.value = await ListMCPs()
+      await migrateLegacyConfigs()
+      list.value = await ListMCPs()
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)
     }
@@ -84,12 +82,14 @@ export const useMcpStore = defineStore('mcp', () => {
     pending.value.add(name)
     pending.value = new Set(pending.value)
     try {
-      const config = chat.mcpServers.find((server) => server.name === name)
+      const config = list.value.find((server) => server.name === name)
       if (!config) throw new Error(`No MCP server named "${name}"`)
       await ConnectMCP({
         name: config.name,
         command: config.command,
-        args: config.args,
+        args: config.args ?? [],
+        env: config.env,
+        cwd: config.cwd,
       })
       await refresh()
       return true
@@ -132,7 +132,7 @@ export const useMcpStore = defineStore('mcp', () => {
     if (!ok) {
       // Revert: descarta el override. No hace falta refrescar: el backend no
       // cambio el estado real, y refresh ya corrio (y fallo) dentro de
-      // connect/disconnect; `connected` sigue siendo la verdad anterior.
+      // connect/disconnect; `list` sigue siendo la verdad anterior.
       optimistic.value.delete(name)
       optimistic.value = new Map(optimistic.value)
     }
@@ -145,7 +145,7 @@ export const useMcpStore = defineStore('mcp', () => {
   }
 
   return {
-    connected,
+    list,
     servers,
     pending,
     error,

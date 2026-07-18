@@ -85,7 +85,9 @@ func TestManager_RemovesServerAfterUnexpectedSessionTermination(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	deadline := time.Now().Add(time.Second)
+	// Deadline generoso: bajo -race el proceso helper y la deteccion del cierre
+	// van mas lentos; el poll corta apenas el manager remueve el server.
+	deadline := time.Now().Add(10 * time.Second)
 	for len(manager.Status()) != 0 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}

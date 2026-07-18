@@ -20,6 +20,8 @@ vi.mock('../../wailsjs/go/main/App', () => ({
   ListMCPs: vi.fn(() => Promise.resolve([])),
   ConnectMCP: vi.fn(() => Promise.resolve()),
   DisconnectMCP: vi.fn(() => Promise.resolve()),
+  SaveMCPConfig: vi.fn(() => Promise.resolve()),
+  RemoveMCPConfig: vi.fn(() => Promise.resolve()),
   SendPrompt: vi.fn(() => Promise.resolve()),
   SendPlanPrompt: vi.fn(() => Promise.resolve()),
   AcceptPlan: vi.fn(() => Promise.resolve()),
@@ -92,6 +94,13 @@ describe('SettingsPanel', () => {
       command: 'npx',
       args: ['-y', '@modelcontextprotocol/server-github'],
     })
+    // La config confirmada se persiste en el mcp.json global (compartido con
+    // la TUI), no en localStorage.
+    expect(App.SaveMCPConfig).toHaveBeenCalledWith({
+      name: 'github',
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-github'],
+    })
   })
 
   it('keeps an MCP configuration after recreating the settings panel', async () => {
@@ -106,11 +115,34 @@ describe('SettingsPanel', () => {
     await flushPromises()
     wrapper.unmount()
 
+    // El backend es la fuente de verdad: tras guardarse, ListMCPs devuelve el
+    // server declarado (desconectado) y el panel recreado lo muestra.
+    vi.mocked(App.ListMCPs).mockResolvedValue([
+      {
+        name: 'github',
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-github'],
+        connected: false,
+        tools: 0,
+      },
+    ])
     const reopened = mount(SettingsPanel)
     await flushPromises()
     await mcpsTabOf(reopened).trigger('click')
 
     expect(reopened.text()).toContain('github')
+  })
+
+  it('removes an MCP server through the backend config', async () => {
+    vi.mocked(App.ListMCPs).mockResolvedValue([
+      { name: 'github', command: 'npx', args: [], connected: false, tools: 0 },
+    ])
+    const wrapper = mount(SettingsPanel)
+    await flushPromises()
+    await mcpsTabOf(wrapper).trigger('click')
+    await wrapper.find('[data-remove-mcp="github"]').trigger('click')
+    await flushPromises()
+    expect(App.RemoveMCPConfig).toHaveBeenCalledWith('github')
   })
 
   it('disconnects a listed MCP server', async () => {

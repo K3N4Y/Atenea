@@ -242,7 +242,7 @@ func (m Model) modelPickerView() string {
 	if layout.innerHeight > 0 {
 		panelStyle = panelStyle.Height(layout.innerHeight)
 	}
-	panel := modelPickerPanelTitle(panelStyle.Render(strings.Join(lines, "\n")))
+	panel := pickerPanelTitle(panelStyle.Render(strings.Join(lines, "\n")), "Models")
 	panel = lipgloss.NewStyle().MarginLeft(layout.marginLeft).Render(panel)
 	return m.renderFullCanvas("\n" + panel)
 }
@@ -387,13 +387,14 @@ func modelPriceLabel(model string) string {
 	return "—"
 }
 
-func modelPickerPanelTitle(panel string) string {
+// pickerPanelTitle incrusta el titulo en el borde superior del panel; lo
+// comparten el picker de modelos y el de MCPs.
+func pickerPanelTitle(panel, title string) string {
 	lines := strings.Split(panel, "\n")
 	if len(lines) == 0 {
 		return panel
 	}
 	width := ansi.StringWidth(lines[0])
-	const title = "Models"
 	remaining := max(width-ansi.StringWidth(title)-5, 0)
 	border := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	lines[0] = border.Render("┌─ ") + accentStyle.Render(title) + border.Render(" "+strings.Repeat("─", remaining)+"┐")

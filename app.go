@@ -529,8 +529,45 @@ func (a *App) DisconnectMCP(name string) error {
 	return nil
 }
 
-// ListMCPs returns all currently connected local MCP servers.
-func (a *App) ListMCPs() []mcpclient.ServerStatus { return a.mcp.Status() }
+// ListMCPs returns every declared MCP server (the global config merged with
+// the workspace .mcp.json) overlaid with its live connection state.
+func (a *App) ListMCPs() ([]mcpclient.ServerStatus, error) {
+	configs, err := mcpclient.LoadConfig(a.workspaceRoot())
+	if err != nil {
+		return nil, err
+	}
+	return mcpclient.Merge(configs, a.mcp.Status()), nil
+}
+
+// SaveMCPConfig persists a server into the global MCP config
+// (~/.config/atenea/mcp.json), so the desktop app and the TUI share it.
+func (a *App) SaveMCPConfig(config mcpclient.ServerConfig) error {
+	return mcpclient.UpsertGlobalConfig(config)
+}
+
+// RemoveMCPConfig disconnects the server (idempotent) and deletes it from the
+// global MCP config. A server declared in the workspace .mcp.json cannot be
+// removed from here: the error points at the file to edit.
+func (a *App) RemoveMCPConfig(name string) error {
+	if err := a.mcp.Disconnect(name); err != nil {
+		return err
+	}
+	a.wire(a.workspaceRoot())
+	removed, err := mcpclient.RemoveGlobalConfig(name)
+	if err != nil || removed {
+		return err
+	}
+	configs, err := mcpclient.LoadConfig(a.workspaceRoot())
+	if err != nil {
+		return err
+	}
+	for _, config := range configs {
+		if config.Name == name {
+			return fmt.Errorf("MCP %q is declared in the workspace %s; edit that file to remove it", name, mcpclient.ConfigFile)
+		}
+	}
+	return nil
+}
 
 // SelectWorkspace abre el dialogo nativo de carpeta y, si el usuario elige una, la
 // fija con SetWorkspace; devuelve la carpeta vigente resultante. Es la frontera

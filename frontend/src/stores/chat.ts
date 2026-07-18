@@ -229,9 +229,10 @@ export const useChatStore = defineStore(
     // (LM Studio, Ollama) no necesita key.
     const providerKind = ref('')
     const baseURL = ref('')
-    // Configuraciones de servidores MCP locales. Se guardan para que el usuario no
-    // tenga que volver a escribirlas tras reiniciar Atenea; la conexion real sigue
-    // siendo efimera y se inicia explicitamente desde Settings.
+    // LEGADO: las configuraciones MCP vivian aca (localStorage); hoy la fuente
+    // de verdad es la config global del backend (~/.config/atenea/mcp.json).
+    // El ref queda solo para rehidratar lo persistido por versiones viejas: el
+    // store MCP lo migra al backend en su primer refresh y lo vacia.
     const mcpServers = ref<MCPServerConfig[]>([])
     // Catalogo de modelos del endpoint activo, poblado bajo demanda por listModels
     // para el dropdown del selector. Estado vivo de UI: no se persiste.
@@ -612,23 +613,6 @@ export const useChatStore = defineStore(
       model.value = m
     }
 
-    function saveMCPServer(config: MCPServerConfig): void {
-      const index = mcpServers.value.findIndex(
-        (server) => server.name === config.name,
-      )
-      if (index === -1) {
-        mcpServers.value.push(config)
-        return
-      }
-      mcpServers.value[index] = config
-    }
-
-    function removeMCPServer(name: string): void {
-      mcpServers.value = mcpServers.value.filter(
-        (server) => server.name !== name,
-      )
-    }
-
     // listModels trae el catalogo de modelos de un endpoint OpenAI-compatible para el
     // dropdown del selector (LM Studio, Ollama exponen GET baseURL/models). Lo guarda
     // en availableModels y lo devuelve. Si el endpoint no responde, degrada a lista
@@ -836,8 +820,6 @@ export const useChatStore = defineStore(
       loadProvider,
       restoreProvider,
       setProvider,
-      saveMCPServer,
-      removeMCPServer,
       listModels,
       loadProjectFiles,
       loadCommands,

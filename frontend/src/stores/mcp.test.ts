@@ -5,11 +5,13 @@ import { setActivePinia, createPinia } from 'pinia'
 const ListMCPs = vi.fn()
 const ConnectMCP = vi.fn()
 const DisconnectMCP = vi.fn()
+const SaveMCPConfig = vi.fn()
 
 vi.mock('../../wailsjs/go/main/App', () => ({
   ListMCPs: (...a: unknown[]) => ListMCPs(...a),
   ConnectMCP: (...a: unknown[]) => ConnectMCP(...a),
   DisconnectMCP: (...a: unknown[]) => DisconnectMCP(...a),
+  SaveMCPConfig: (...a: unknown[]) => SaveMCPConfig(...a),
 }))
 
 import { useMcpStore } from './mcp'
@@ -21,40 +23,20 @@ beforeEach(() => {
   ListMCPs.mockResolvedValue([])
   ConnectMCP.mockResolvedValue(undefined)
   DisconnectMCP.mockResolvedValue(undefined)
+  SaveMCPConfig.mockResolvedValue(undefined)
 })
 
+// declared arma la respuesta de ListMCPs para un server declarado en la
+// config del backend, conectado o no.
+function declared(name: string, connected = false, tools = 0) {
+  return { name, command: 'npx', args: ['-y'], connected, tools }
+}
+
 describe('mcp store', () => {
-  it('refresh trae el estado conectado del backend', async () => {
-    ListMCPs.mockResolvedValue([
-      {
-        name: 'github',
-        command: 'npx',
-        args: ['-y'],
-        connected: true,
-        tools: 4,
-      },
-    ])
+  it('refresh trae la lista declarada del backend con su estado', async () => {
+    ListMCPs.mockResolvedValue([declared('github', true, 4)])
     const mcp = useMcpStore()
     await mcp.refresh()
-    expect(mcp.connected).toHaveLength(1)
-    expect(mcp.connected[0].name).toBe('github')
-  })
-
-  it('servers une configs persistidas con el estado conectado del backend', async () => {
-    const chat = useChatStore()
-    chat.saveMCPServer({ name: 'github', command: 'npx', args: ['-y'] })
-    ListMCPs.mockResolvedValue([
-      {
-        name: 'github',
-        command: 'npx',
-        args: ['-y'],
-        connected: true,
-        tools: 4,
-      },
-    ])
-    const mcp = useMcpStore()
-    await mcp.refresh()
-
     expect(mcp.servers).toHaveLength(1)
     expect(mcp.servers[0]).toMatchObject({
       name: 'github',
@@ -63,22 +45,53 @@ describe('mcp store', () => {
     })
   })
 
-  it('marca como desconectado un server configurado que el backend no reporta', async () => {
+  it('normaliza args nulos del backend a lista vacia', async () => {
+    ListMCPs.mockResolvedValue([
+      {
+        name: 'github',
+        command: 'npx',
+        args: null,
+        connected: false,
+        tools: 0,
+      },
+    ])
+    const mcp = useMcpStore()
+    await mcp.refresh()
+    expect(mcp.servers[0].args).toEqual([])
+  })
+
+  it('migra las configs legadas de localStorage a la config global', async () => {
     const chat = useChatStore()
-    chat.saveMCPServer({ name: 'github', command: 'npx', args: ['-y'] })
-    ListMCPs.mockResolvedValue([])
+    chat.mcpServers = [
+      { name: 'github', command: 'npx', args: ['-y'] },
+      { name: 'sentry', command: 'uvx', args: [] },
+    ]
     const mcp = useMcpStore()
     await mcp.refresh()
 
-    expect(mcp.servers).toHaveLength(1)
-    expect(mcp.servers[0].connected).toBe(false)
-    expect(mcp.servers[0].tools).toBe(0)
+    expect(SaveMCPConfig).toHaveBeenCalledTimes(2)
+    expect(SaveMCPConfig).toHaveBeenCalledWith({
+      name: 'github',
+      command: 'npx',
+      args: ['-y'],
+    })
+    expect(chat.mcpServers).toEqual([])
+    expect(ListMCPs).toHaveBeenCalled()
+  })
+
+  it('conserva las configs legadas si la migracion falla, para reintentar', async () => {
+    const chat = useChatStore()
+    chat.mcpServers = [{ name: 'github', command: 'npx', args: ['-y'] }]
+    SaveMCPConfig.mockRejectedValue(new Error('backend down'))
+    const mcp = useMcpStore()
+    await mcp.refresh()
+
+    expect(chat.mcpServers).toHaveLength(1)
+    expect(mcp.error).toBe('backend down')
   })
 
   it('toggle conecta un server desconectado', async () => {
-    const chat = useChatStore()
-    chat.saveMCPServer({ name: 'github', command: 'npx', args: ['-y'] })
-    ListMCPs.mockResolvedValue([])
+    ListMCPs.mockResolvedValue([declared('github')])
     const mcp = useMcpStore()
     await mcp.refresh()
 
@@ -93,17 +106,7 @@ describe('mcp store', () => {
   })
 
   it('toggle desconecta un server conectado', async () => {
-    const chat = useChatStore()
-    chat.saveMCPServer({ name: 'github', command: 'npx', args: ['-y'] })
-    ListMCPs.mockResolvedValue([
-      {
-        name: 'github',
-        command: 'npx',
-        args: ['-y'],
-        connected: true,
-        tools: 1,
-      },
-    ])
+    ListMCPs.mockResolvedValue([declared('github', true, 1)])
     const mcp = useMcpStore()
     await mcp.refresh()
 
@@ -114,8 +117,6 @@ describe('mcp store', () => {
   })
 
   it('toggle ignora pedidos cruzados mientras una accion esta en vuelo', async () => {
-    const chat = useChatStore()
-    chat.saveMCPServer({ name: 'github', command: 'npx', args: ['-y'] })
     // Connect cuelga para que pending quede a true durante el segundo toggle.
     let resolveConnect: () => void
     ConnectMCP.mockReturnValue(
@@ -123,7 +124,7 @@ describe('mcp store', () => {
         resolveConnect = resolve
       }),
     )
-    ListMCPs.mockResolvedValue([])
+    ListMCPs.mockResolvedValue([declared('github')])
     const mcp = useMcpStore()
     await mcp.refresh()
 
@@ -138,15 +139,13 @@ describe('mcp store', () => {
   })
 
   it('isPending refleja si una accion esta en vuelo', async () => {
-    const chat = useChatStore()
-    chat.saveMCPServer({ name: 'github', command: 'npx', args: ['-y'] })
     let resolveConnect: () => void
     ConnectMCP.mockReturnValue(
       new Promise<void>((resolve) => {
         resolveConnect = resolve
       }),
     )
-    ListMCPs.mockResolvedValue([])
+    ListMCPs.mockResolvedValue([declared('github')])
     const mcp = useMcpStore()
     await mcp.refresh()
 
@@ -158,35 +157,24 @@ describe('mcp store', () => {
   })
 
   it('connect captura el error del backend en el store', async () => {
-    const chat = useChatStore()
-    chat.saveMCPServer({ name: 'github', command: 'npx', args: ['-y'] })
+    ListMCPs.mockResolvedValue([declared('github')])
     ConnectMCP.mockRejectedValue(new Error('boom'))
     const mcp = useMcpStore()
+    await mcp.refresh()
     const ok = await mcp.connect('github')
     expect(ok).toBe(false)
     expect(mcp.error).toBe('boom')
   })
 
   it('connect devuelve true cuando el backend confirma', async () => {
-    const chat = useChatStore()
-    chat.saveMCPServer({ name: 'github', command: 'npx', args: ['-y'] })
-    ListMCPs.mockResolvedValue([
-      {
-        name: 'github',
-        command: 'npx',
-        args: ['-y'],
-        connected: true,
-        tools: 2,
-      },
-    ])
+    ListMCPs.mockResolvedValue([declared('github', true, 2)])
     const mcp = useMcpStore()
+    await mcp.refresh()
     const ok = await mcp.connect('github')
     expect(ok).toBe(true)
   })
 
   it('toggle voltea el switch al instante (optimista)', async () => {
-    const chat = useChatStore()
-    chat.saveMCPServer({ name: 'github', command: 'npx', args: ['-y'] })
     // Connect cuelga para atrapar el estado DURANTE la accion: el override ya
     // aplica aunque el backend todavia no confirmo.
     let resolveConnect: () => void
@@ -195,7 +183,7 @@ describe('mcp store', () => {
         resolveConnect = resolve
       }),
     )
-    ListMCPs.mockResolvedValue([])
+    ListMCPs.mockResolvedValue([declared('github')])
     const mcp = useMcpStore()
     await mcp.refresh()
 
@@ -208,10 +196,8 @@ describe('mcp store', () => {
   })
 
   it('toggle revierte el switch si la conexion falla', async () => {
-    const chat = useChatStore()
-    chat.saveMCPServer({ name: 'github', command: 'npx', args: ['-y'] })
     ConnectMCP.mockRejectedValue(new Error('boom'))
-    ListMCPs.mockResolvedValue([])
+    ListMCPs.mockResolvedValue([declared('github')])
     const mcp = useMcpStore()
     await mcp.refresh()
     expect(mcp.servers[0].connected).toBe(false)
@@ -224,18 +210,8 @@ describe('mcp store', () => {
   })
 
   it('toggle revierte el switch si la desconexion falla', async () => {
-    const chat = useChatStore()
-    chat.saveMCPServer({ name: 'github', command: 'npx', args: ['-y'] })
     DisconnectMCP.mockRejectedValue(new Error('boom'))
-    ListMCPs.mockResolvedValue([
-      {
-        name: 'github',
-        command: 'npx',
-        args: ['-y'],
-        connected: true,
-        tools: 1,
-      },
-    ])
+    ListMCPs.mockResolvedValue([declared('github', true, 1)])
     const mcp = useMcpStore()
     await mcp.refresh()
     expect(mcp.servers[0].connected).toBe(true)

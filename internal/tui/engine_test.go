@@ -2583,3 +2583,29 @@ func assertUndoMissing(t *testing.T, root, name string) {
 		t.Fatalf("%s still exists or stat failed: %v", name, err)
 	}
 }
+
+func TestEngine_MCPServersReadsWorkspaceConfig(t *testing.T) {
+	// Aisla el config global (~/.config/atenea/mcp.json) del entorno de la maquina.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	root := t.TempDir()
+	config := `{"mcpServers": {"github": {"command": "npx", "args": ["github-mcp"]}}}`
+	if err := os.WriteFile(filepath.Join(root, ".mcp.json"), []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore()})
+
+	servers, err := engine.MCPServers()
+	if err != nil {
+		t.Fatalf("MCPServers: %v", err)
+	}
+	if len(servers) != 1 || servers[0].Name != "github" || servers[0].Connected {
+		t.Fatalf("servers = %+v, want github listed disconnected", servers)
+	}
+	if err := engine.ConnectMCPServer("missing"); err == nil {
+		t.Fatal("connecting an undeclared server must fail")
+	}
+	// Desconectar un server que no esta conectado es idempotente, como el manager.
+	if err := engine.DisconnectMCPServer("github"); err != nil {
+		t.Fatalf("DisconnectMCPServer: %v", err)
+	}
+}

@@ -39,9 +39,13 @@ export function Model():Promise<string>;
 
 export function ProviderConfig():Promise<main.ProviderConfig>;
 
+export function RemoveMCPConfig(arg1:string):Promise<void>;
+
 export function ResizePty(arg1:string,arg2:number,arg3:number):Promise<void>;
 
 export function ResolveToolPermission(arg1:string,arg2:string,arg3:boolean):Promise<void>;
+
+export function SaveMCPConfig(arg1:mcpclient.ServerConfig):Promise<void>;
 
 export function SelectWorkspace():Promise<string>;
 

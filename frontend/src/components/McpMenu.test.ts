@@ -11,6 +11,7 @@ vi.mock('../../wailsjs/go/main/App', () => ({
   ListMCPs: (...a: unknown[]) => ListMCPs(...a),
   ConnectMCP: (...a: unknown[]) => ConnectMCP(...a),
   DisconnectMCP: (...a: unknown[]) => DisconnectMCP(...a),
+  SaveMCPConfig: vi.fn(() => Promise.resolve()),
 }))
 
 vi.mock('../lib/modal', () => ({
@@ -27,7 +28,12 @@ vi.mock('../lib/modal', () => ({
 }))
 
 import McpMenu from './McpMenu.vue'
-import { useChatStore } from '../stores/chat'
+
+// declared arma la respuesta de ListMCPs para un server declarado en la
+// config del backend, conectado o no.
+function declared(connected: boolean, tools = 0) {
+  return { name: 'github', command: 'npx', args: ['-y'], connected, tools }
+}
 
 beforeAll(() => {
   if (typeof HTMLDialogElement !== 'undefined') {
@@ -70,17 +76,7 @@ describe('McpMenu', () => {
   })
 
   it('lista los servers configurados con su comando', async () => {
-    const chat = useChatStore()
-    chat.saveMCPServer({ name: 'github', command: 'npx', args: ['-y'] })
-    ListMCPs.mockResolvedValue([
-      {
-        name: 'github',
-        command: 'npx',
-        args: ['-y'],
-        connected: true,
-        tools: 4,
-      },
-    ])
+    ListMCPs.mockResolvedValue([declared(true, 4)])
     const wrapper = mountMenu()
     await flushPromises()
     expect(wrapper.text()).toContain('github')
@@ -88,9 +84,7 @@ describe('McpMenu', () => {
   })
 
   it('el switch arranca desconectado para un server sin conexion', async () => {
-    const chat = useChatStore()
-    chat.saveMCPServer({ name: 'github', command: 'npx', args: ['-y'] })
-    ListMCPs.mockResolvedValue([])
+    ListMCPs.mockResolvedValue([declared(false)])
     const wrapper = mountMenu()
     await flushPromises()
     expect(
@@ -99,9 +93,7 @@ describe('McpMenu', () => {
   })
 
   it('al pulsar el switch de un server desconectado lo conecta', async () => {
-    const chat = useChatStore()
-    chat.saveMCPServer({ name: 'github', command: 'npx', args: ['-y'] })
-    ListMCPs.mockResolvedValue([])
+    ListMCPs.mockResolvedValue([declared(false)])
     const wrapper = mountMenu()
     await flushPromises()
 
@@ -116,17 +108,7 @@ describe('McpMenu', () => {
   })
 
   it('al pulsar el switch de un server conectado lo desconecta', async () => {
-    const chat = useChatStore()
-    chat.saveMCPServer({ name: 'github', command: 'npx', args: ['-y'] })
-    ListMCPs.mockResolvedValue([
-      {
-        name: 'github',
-        command: 'npx',
-        args: ['-y'],
-        connected: true,
-        tools: 1,
-      },
-    ])
+    ListMCPs.mockResolvedValue([declared(true, 1)])
     const wrapper = mountMenu()
     await flushPromises()
 
@@ -169,10 +151,8 @@ describe('McpMenu', () => {
   })
 
   it('muestra un error chico abajo cuando falla conectar', async () => {
-    const chat = useChatStore()
-    chat.saveMCPServer({ name: 'github', command: 'npx', args: ['-y'] })
     ConnectMCP.mockRejectedValue(new Error('boom'))
-    ListMCPs.mockResolvedValue([])
+    ListMCPs.mockResolvedValue([declared(false)])
     const wrapper = mountMenu()
     await flushPromises()
 

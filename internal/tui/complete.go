@@ -351,6 +351,7 @@ func (m Model) refreshMenu() (Model, tea.Cmd) {
 		includeNew := strings.HasPrefix("new", query)
 		includeCompact := strings.HasPrefix("compact", query)
 		includeModel := strings.HasPrefix("model", query)
+		includeMcp := strings.HasPrefix("mcp", query)
 		if includeNew {
 			m.menuItems = append(m.menuItems, menuItem{label: "/new", builtin: true})
 		}
@@ -359,6 +360,9 @@ func (m Model) refreshMenu() (Model, tea.Cmd) {
 			reserved++
 		}
 		if includeModel {
+			reserved++
+		}
+		if includeMcp {
 			reserved++
 		}
 		for _, cmd := range filterCommands(m.commands, q.query, menuLimit-reserved) {
@@ -389,6 +393,17 @@ func (m Model) refreshMenu() (Model, tea.Cmd) {
 				last := m.menuItems[len(m.menuItems)-1]
 				m.menuItems[len(m.menuItems)-1] = item
 				m.menuItems = append(m.menuItems, last)
+			} else {
+				m.menuItems = append(m.menuItems, item)
+			}
+		}
+		if includeMcp {
+			item := menuItem{label: "/mcp", description: "Toggle MCP servers on or off", builtin: true}
+			if query == "" && len(m.menuItems) > 1 {
+				insertAt := len(m.menuItems) - 1
+				m.menuItems = append(m.menuItems, menuItem{})
+				copy(m.menuItems[insertAt+1:], m.menuItems[insertAt:])
+				m.menuItems[insertAt] = item
 			} else {
 				m.menuItems = append(m.menuItems, item)
 			}

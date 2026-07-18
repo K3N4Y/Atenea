@@ -63,17 +63,21 @@ describe('chat store: persistencia entre reinicios', () => {
     expect(store.workspace).toBe('/home/u/kanban')
   })
 
-  it('persiste workspace, provider y configuraciones MCP en localStorage', async () => {
+  it('persiste workspace, provider y configuraciones MCP legadas en localStorage', async () => {
     installPinia()
     const store = useChatStore()
 
     await store.pickWorkspace('/home/u/kanban')
     await store.setProvider('local', 'http://localhost:1234/v1', 'qwen')
-    store.saveMCPServer({
-      name: 'github',
-      command: 'npx',
-      args: ['-y', '@modelcontextprotocol/server-github'],
-    })
+    // mcpServers es legado (la fuente de verdad es la config global del
+    // backend), pero sigue persistido para que la migracion lo encuentre.
+    store.mcpServers = [
+      {
+        name: 'github',
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-github'],
+      },
+    ]
     await nextTick()
 
     const stored = JSON.parse(localStorage.getItem('chat') as string)
@@ -117,7 +121,7 @@ describe('chat store: persistencia entre reinicios', () => {
     expect(store.model).toBe('qwen')
   })
 
-  it('rehidrata las configuraciones MCP sin conectarlas al iniciar', () => {
+  it('rehidrata las configuraciones MCP legadas sin conectarlas al iniciar', () => {
     localStorage.setItem(
       'chat',
       JSON.stringify({

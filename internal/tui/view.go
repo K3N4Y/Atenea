@@ -957,6 +957,9 @@ func (m Model) View() string {
 	if m.modelPicker.open {
 		return m.modelPickerView()
 	}
+	if m.mcpPicker.open {
+		return m.mcpPickerView()
+	}
 	if m.resumePicker.open {
 		return m.resumePickerView()
 	}

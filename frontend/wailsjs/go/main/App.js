@@ -70,12 +70,20 @@ export function ProviderConfig() {
   return window['go']['main']['App']['ProviderConfig']();
 }
 
+export function RemoveMCPConfig(arg1) {
+  return window['go']['main']['App']['RemoveMCPConfig'](arg1);
+}
+
 export function ResizePty(arg1, arg2, arg3) {
   return window['go']['main']['App']['ResizePty'](arg1, arg2, arg3);
 }
 
 export function ResolveToolPermission(arg1, arg2, arg3) {
   return window['go']['main']['App']['ResolveToolPermission'](arg1, arg2, arg3);
+}
+
+export function SaveMCPConfig(arg1) {
+  return window['go']['main']['App']['SaveMCPConfig'](arg1);
 }
 
 export function SelectWorkspace() {

@@ -308,6 +308,8 @@ type Model struct {
 	resumePicker resumePicker
 	resumeGen    uint64
 	modelPicker  modelPicker
+	mcpPicker    mcpPicker
+	mcpGen       uint64
 
 	leaderPending    bool
 	leaderGeneration uint64
@@ -612,6 +614,18 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.revealing = true
 		return m.syncViewportActivity(), revealTick()
+	case mcpToggleDoneMsg:
+		if ev.generation != m.mcpGen {
+			return m, nil
+		}
+		delete(m.mcpPicker.busy, ev.name)
+		if ev.err != "" {
+			m.mcpPicker.err = ev.err
+		}
+		if m.mcpPicker.open {
+			m.mcpPicker.refreshFromAgent(m.agent)
+		}
+		return m, nil
 	case leaderTimeoutMsg:
 		if ev.generation == 0 || ev.generation == m.leaderGeneration {
 			m.leaderPending = false
@@ -662,6 +676,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.modelPicker.open {
 			return m.handleModelPickerMouse(ev)
+		}
+		if m.mcpPicker.open {
+			return m.handleMCPPickerMouse(ev)
 		}
 		// La top bar ocupa la fila 0 de la pantalla, asi que el contenido del
 		// cuerpo empieza una fila mas abajo: se traslada el clic a coordenadas
@@ -814,6 +831,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.mcpPicker.open {
+		return m.handleMCPPickerKey(msg)
+	}
 	if perm, ok := m.pendingPermission(); ok {
 		if msg.Type == tea.KeyPgUp || msg.Type == tea.KeyPgDown {
 			return m.scrollViewport(msg)
@@ -856,7 +876,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// Tab aplica la seleccion; no alterna el modo build/plan.
 			return m.applySelection()
 		case tea.KeyEnter:
-			if m.menuItems[m.menuSelected].builtin && (m.menuItems[m.menuSelected].label == "/new" || m.menuItems[m.menuSelected].label == "/compact" || m.menuItems[m.menuSelected].label == "/resume" || m.menuItems[m.menuSelected].label == "/model") {
+			if m.menuItems[m.menuSelected].builtin && (m.menuItems[m.menuSelected].label == "/new" || m.menuItems[m.menuSelected].label == "/compact" || m.menuItems[m.menuSelected].label == "/resume" || m.menuItems[m.menuSelected].label == "/model" || m.menuItems[m.menuSelected].label == "/mcp") {
 				m.input.SetValue(m.menuItems[m.menuSelected].label)
 				m.input.SetCursor(len([]rune(m.menuItems[m.menuSelected].label)))
 				return m.closeMenu().submitPrompt()
@@ -1036,7 +1056,7 @@ func (m Model) reloadTree(loadNow bool) (Model, tea.Cmd) {
 }
 
 func (m *Model) syncComposerFocus() tea.Cmd {
-	if m.modelPicker.open {
+	if m.modelPicker.open || m.mcpPicker.open {
 		m.input.Blur()
 		return nil
 	}
@@ -1480,6 +1500,20 @@ func (m Model) submitPrompt() (Model, tea.Cmd) {
 			}
 			return ResumeSessionsDoneMsg{Generation: generation, Sessions: sessions}
 		}
+	}
+	if strings.HasPrefix(trimmed, "/mcp") {
+		if trimmed != "/mcp" {
+			return m.appendError("usage: /mcp"), nil
+		}
+		if _, ok := m.agent.(mcpAgent); !ok {
+			return m.appendError("MCP management is unavailable"), nil
+		}
+		m.input.SetValue("")
+		m.menuItems = nil
+		m.mcpGen++
+		m.mcpPicker = newMCPPicker()
+		m.mcpPicker.refreshFromAgent(m.agent)
+		return m.resizeViewport(), nil
 	}
 	if strings.HasPrefix(strings.TrimSpace(text), "/model") {
 		controller, ok := m.agent.(modelAgent)

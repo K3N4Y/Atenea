@@ -1,7 +1,11 @@
 <script lang="ts" setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 import { PhX, PhGear, PhPlugs, PhSparkle } from '@phosphor-icons/vue'
-import { ConnectMCP, DisconnectMCP } from '../../wailsjs/go/main/App'
+import {
+  ConnectMCP,
+  RemoveMCPConfig,
+  SaveMCPConfig,
+} from '../../wailsjs/go/main/App'
 import ProviderSettings from './ProviderSettings.vue'
 import { useChatStore } from '../stores/chat'
 import { useMcpStore } from '../stores/mcp'
@@ -25,8 +29,9 @@ const mcpError = ref('')
 const connecting = ref(false)
 
 // Agregar un servidor es lo unico que no vive en el store MCP: conecta contra
-// el backend, persiste la config (para no perderla al reiniciar) y refresca el
-// estado. El resto (listar, conectar/desconectar existentes) delega al store.
+// el backend y, si la conexion confirma, persiste la config en el mcp.json
+// global (compartido con la TUI) antes de refrescar. El resto (listar,
+// conectar/desconectar existentes) delega al store.
 async function connectMCP() {
   mcpError.value = ''
   connecting.value = true
@@ -40,7 +45,7 @@ async function connectMCP() {
         .filter(Boolean),
     }
     await ConnectMCP(config)
-    chat.saveMCPServer(config)
+    await SaveMCPConfig(config)
     serverName.value = ''
     command.value = ''
     args.value = ''
@@ -52,11 +57,13 @@ async function connectMCP() {
   }
 }
 
+// Quitar delega en el backend: desconecta (si estaba conectado) y borra la
+// entrada del mcp.json global. Un server declarado en el .mcp.json del
+// workspace no se puede quitar desde aca: el error indica que archivo editar.
 async function removeMCP(server: (typeof mcp.servers)[number]) {
   mcpError.value = ''
   try {
-    if (server.connected) await DisconnectMCP(server.name)
-    chat.removeMCPServer(server.name)
+    await RemoveMCPConfig(server.name)
     await mcp.refresh()
   } catch (error) {
     mcpError.value = error instanceof Error ? error.message : String(error)

@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"os"
 	"slices"
@@ -19,6 +20,7 @@ import (
 	"atenea/internal/command"
 	"atenea/internal/event"
 	"atenea/internal/llm"
+	"atenea/internal/mcpclient"
 	"atenea/internal/providerconfig"
 	"atenea/internal/session"
 	"atenea/internal/session/runner"
@@ -75,16 +77,22 @@ type Engine struct {
 	events chan tea.Msg
 	inbox  session.Inbox
 	gate   *session.MemoryPermissionGate
-	runner *runner.Runner
 	agent  *agent.Service
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	// agent y glob alimentan el autocompletado del composer (espejo de
-	// App.ListCommands/App.ListProjectFiles): los slash-commands derivados de
-	// las skills y el glob del @-menu de archivos. Inmutables tras NewEngine:
-	// se leen sin mu.
-	glob *tool.GlobTool
+	// runner y glob son las piezas mutables del ensamblado: rewire (al conectar
+	// o desconectar un MCP) las reemplaza, asi que se leen bajo mu. glob alimenta
+	// el @-menu de archivos del composer (espejo de App.ListProjectFiles).
+	runner *runner.Runner
+	glob   *tool.GlobTool
+
+	// wiring es la config base del ensamblado; rewire la reusa con las MCPTools
+	// vigentes. mcp es el manager de servidores MCP locales (stdio) del engine;
+	// los servers declarados salen de <root>/.mcp.json y se releen en cada
+	// listado, asi una edicion del archivo se refleja sin reiniciar.
+	wiring wiring.Config
+	mcp    *mcpclient.Manager
 
 	// root y store espejan a.workspaceRoot()/a.store en la app Wails: la raiz
 	// del workspace y el store DECORADO con EmittingStore (el mismo que recibe
@@ -109,8 +117,12 @@ type Engine struct {
 	compactions  sync.WaitGroup
 }
 
-// Fija en compilacion que Engine satisface la interface Agent de la TUI.
-var _ Agent = (*Engine)(nil)
+// Fija en compilacion que Engine satisface la interface Agent de la TUI y la
+// superficie MCP del picker de /mcp.
+var (
+	_ Agent    = (*Engine)(nil)
+	_ mcpAgent = (*Engine)(nil)
+)
 
 // NewEngine arma el engine a partir de la configuracion: una EmitFunc que
 // puentea los SessionEvent durables del Bus al canal de la TUI, el store
@@ -147,7 +159,8 @@ func NewEngine(cfg EngineConfig) *Engine {
 	e.agent = agent.NewService(e.inbox)
 	e.checkpoints = cfg.Checkpoints
 	e.models = cfg.Models
-	built := wiring.Build(wiring.Config{
+	e.mcp = mcpclient.NewManager(cfg.Root)
+	e.wiring = wiring.Config{
 		Root:     cfg.Root,
 		Provider: cfg.Provider,
 		Store:    e.store,
@@ -158,11 +171,67 @@ func NewEngine(cfg EngineConfig) *Engine {
 		Local:    cfg.Local,
 		NextID:   wiring.NewIDGen(),
 		Mode:     e.agent.Mode,
-	})
-	e.runner = built.Runner
-	e.agent.Configure(built.Runner, built.Commands)
-	e.glob = built.Glob
+	}
+	e.rewire()
 	return e
+}
+
+// rewire re-ensambla el agente con las tools MCP vigentes y publica el swap:
+// el mismo movimiento que App.wire (build fuera de los locks, swap de las
+// piezas mutables bajo mu y Configure dentro de lifecycleMu para no competir
+// con la admision de prompts ni el shutdown).
+func (e *Engine) rewire() {
+	cfg := e.wiring
+	cfg.MCPTools = e.mcp.Tools()
+	built := wiring.Build(cfg)
+	e.lifecycleMu.Lock()
+	e.mu.Lock()
+	e.runner = built.Runner
+	e.glob = built.Glob
+	e.mu.Unlock()
+	e.agent.Configure(built.Runner, built.Commands)
+	e.lifecycleMu.Unlock()
+}
+
+// MCPServers lists the servers declared in <root>/.mcp.json merged with the
+// live connection state. The file is re-read on every call so edits show up
+// the next time the picker opens or refreshes.
+func (e *Engine) MCPServers() ([]mcpclient.ServerStatus, error) {
+	configs, err := mcpclient.LoadConfig(e.root)
+	if err != nil {
+		return nil, err
+	}
+	return mcpclient.Merge(configs, e.mcp.Status()), nil
+}
+
+// ConnectMCPServer starts the declared server, discovers its tools, and
+// rebuilds the runner registry so the next turn can call them.
+func (e *Engine) ConnectMCPServer(name string) error {
+	configs, err := mcpclient.LoadConfig(e.root)
+	if err != nil {
+		return err
+	}
+	for _, config := range configs {
+		if config.Name != name {
+			continue
+		}
+		if _, err := e.mcp.Connect(e.ctx, config); err != nil {
+			return err
+		}
+		e.rewire()
+		return nil
+	}
+	return fmt.Errorf("MCP server %q is not declared in %s", name, mcpclient.ConfigFile)
+}
+
+// DisconnectMCPServer stops the server and rebuilds the runner registry
+// without its tools. Idempotent, like the manager.
+func (e *Engine) DisconnectMCPServer(name string) error {
+	if err := e.mcp.Disconnect(name); err != nil {
+		return err
+	}
+	e.rewire()
+	return nil
 }
 
 func (e *Engine) ModelCatalog() []providerconfig.ProviderModels {
@@ -233,11 +302,26 @@ func (e *Engine) Commands() []command.Command {
 // respetando .gitignore y excluyendo .git) para el @-menu de archivos del
 // composer, acotado por el limite del glob (espejo de App.ListProjectFiles).
 func (e *Engine) ProjectFiles() ([]string, error) {
-	files, _, err := e.glob.Files(context.Background(), "", ".", e.glob.MaxLimit)
+	glob := e.currentGlob()
+	files, _, err := glob.Files(context.Background(), "", ".", glob.MaxLimit)
 	if err != nil {
 		return nil, err
 	}
 	return files, nil
+}
+
+// currentGlob y currentRunner leen las piezas mutables bajo mu: rewire las
+// reemplaza al conectar o desconectar un MCP.
+func (e *Engine) currentGlob() *tool.GlobTool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.glob
+}
+
+func (e *Engine) currentRunner() *runner.Runner {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.runner
 }
 
 // PromptHistory reconstruye los ultimos prompts literales enviados por TUI.
@@ -622,6 +706,8 @@ func (e *Engine) Shutdown(ctx context.Context) error {
 		go func() {
 			e.agent.Wait()
 			e.compactions.Wait()
+			// Con las corridas ya detenidas, cerrar los MCP mata sus subprocesos.
+			e.mcp.Close()
 			close(e.shutdownDone)
 		}()
 	})
@@ -686,7 +772,7 @@ func (e *Engine) startCompaction(sessionID string) {
 
 func (e *Engine) compactLocked(sessionID string) {
 	e.sendEvent(CompactionStatusMsg{SessionID: sessionID, State: CompactionRunning})
-	err := e.runner.CompactNow(e.ctx, sessionID)
+	err := e.currentRunner().CompactNow(e.ctx, sessionID)
 	switch {
 	case errors.Is(err, session.ErrNoCompactableHistory):
 		e.sendEvent(CompactionStatusMsg{SessionID: sessionID, State: CompactionNotNeeded})
