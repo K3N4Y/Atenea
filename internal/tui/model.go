@@ -9,7 +9,6 @@ package tui
 
 import (
 	"errors"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -98,7 +97,11 @@ type fileOpenedMsg struct {
 	viewer     fileViewer
 }
 
-type workspaceRefreshedMsg struct{ branch string }
+type workspaceRefreshedMsg struct {
+	generation uint64
+	branch     string
+	summary    gitSummary
+}
 
 // Agent es la superficie del engine que la TUI necesita para operar la sesion.
 type Agent interface {
@@ -267,10 +270,13 @@ type Model struct {
 	// branch es la rama git actual que la top bar muestra a la izquierda;
 	// "" la oculta. workDir es el directorio de trabajo ya listo para mostrar
 	// (home abreviado a ~); "" lo oculta. workspaceRoot conserva la ruta real
-	// para refrescar la rama despues de comandos del agente.
+	// para refrescar la rama y el resumen de cambios despues de comandos del
+	// agente. gitSummary alimenta la fila derecha bajo el composer.
 	branch        string
 	workDir       string
 	workspaceRoot string
+	gitSummary    gitSummary
+	workspaceGen  uint64
 
 	// planMode indica el modo del agente: Tab lo alterna entre build (false)
 	// y plan (true). Es pegajoso entre envios: cada Enter envia por el camino
@@ -363,19 +369,23 @@ func (m Model) WithWorkspaceRoot(branch, dir, root string) Model {
 	return m
 }
 
-func refreshWorkspace(root string) tea.Cmd {
+func refreshWorkspace(root string, generation uint64) tea.Cmd {
 	if root == "" {
 		return nil
 	}
 	return func() tea.Msg {
-		cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
-		cmd.Dir = root
-		output, err := cmd.Output()
-		if err != nil {
-			return workspaceRefreshedMsg{}
-		}
-		return workspaceRefreshedMsg{branch: strings.TrimSpace(string(output))}
+		branch, _ := gitBranch(root)
+		summary, _ := summarizeGitWorkspace(root)
+		return workspaceRefreshedMsg{generation: generation, branch: branch, summary: summary}
 	}
+}
+
+func (m Model) requestWorkspaceRefresh() (Model, tea.Cmd) {
+	if m.workspaceRoot == "" {
+		return m, nil
+	}
+	m.workspaceGen++
+	return m, refreshWorkspace(m.workspaceRoot, m.workspaceGen)
 }
 
 // WithCompletions fija las fuentes del autocompletado del composer: los
@@ -447,7 +457,7 @@ func waitForEvent(ch <-chan tea.Msg) tea.Cmd {
 
 // Init arma la bomba de eventos del canal del engine.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(waitForEvent(m.events), cursor.Blink)
+	return tea.Batch(waitForEvent(m.events), refreshWorkspace(m.workspaceRoot, m.workspaceGen), cursor.Blink)
 }
 
 // Update folda cada EventMsg al estado de la conversacion, maneja el teclado y
@@ -469,8 +479,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if ev.Kind == session.KindToolSuccess && ev.Diff != "" {
 			m, treeCmd = m.reloadTree(m.treeOpen)
 		}
-		if ev.Kind == session.KindToolSuccess && ev.ToolName == "bash" {
-			workspaceCmd = refreshWorkspace(m.workspaceRoot)
+		if ev.Kind == session.KindToolSuccess && toolMayModifyWorkspace(ev.ToolName) {
+			m, workspaceCmd = m.requestWorkspaceRefresh()
 		}
 		pump := waitForEvent(m.events)
 		// Un evento que deja texto sin revelar arranca el loop de ticks del
@@ -482,7 +492,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m.syncViewportActivity(), tea.Batch(pump, treeCmd, workspaceCmd)
 	case workspaceRefreshedMsg:
+		if ev.generation < m.workspaceGen {
+			return m, nil
+		}
+		m.workspaceGen = ev.generation
 		m.branch = ev.branch
+		m.gitSummary = ev.summary
 		return m, nil
 	case CompactionStatusMsg:
 		if ev.SessionID == m.sessionID {
@@ -509,7 +524,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input.CursorEnd()
 		m.menuItems = nil
 		m.working = false
-		return m.resizeViewport(), nil
+		m = m.resizeViewport()
+		return m.requestWorkspaceRefresh()
 	case ResumeDoneMsg:
 		if !m.resumePicker.open || ev.Generation != m.resumeGen || ev.SessionID == "" || ev.SessionID != m.resumePicker.targetID {
 			return m, nil

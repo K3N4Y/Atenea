@@ -950,9 +950,10 @@ func (m Model) entryLines() []entryLine {
 // View renderiza la conversacion con la caja del composer al final. Con menu
 // de autocompletado abierto sus lineas van entre el transcript y la caja
 // (antes de la linea de estado); con corrida en curso una linea de estado con
-// el indicador de trabajo precede a la caja; con status fijado una linea de
-// pie tenue con el agente y el modelo la sigue. El alto sigue acotado porque
-// reservedLines ya las descuenta del viewport.
+// el indicador de trabajo precede a la caja. El modelo vive en el borde
+// inferior y el resumen Git, cuando existe, ocupa la primera fila del margen
+// bajo la caja. El alto sigue acotado porque reservedLines ya descuenta todo
+// ese chrome del viewport.
 func (m Model) View() string {
 	if m.modelPicker.open {
 		return m.modelPickerView()
@@ -1303,8 +1304,53 @@ func (m Model) composerView() string {
 	if !m.ready {
 		return m.composerBox()
 	}
-	box := m.composerBoxWithWidth(max(m.chatContentWidth()-2*composerOuterMargin, 0))
-	return lipgloss.NewStyle().Margin(0, composerOuterMargin, composerOuterMargin).Render(box)
+	width := m.chatContentWidth()
+	margin := min(composerOuterMargin, width/2)
+	box := m.composerBoxWithWidth(max(width-2*margin, 0))
+	box = lipgloss.NewStyle().Margin(0, margin).Render(box)
+	return strings.Join([]string{
+		box,
+		m.gitSummaryLine(width, margin),
+		strings.Repeat(" ", width),
+	}, "\n")
+}
+
+func (m Model) gitSummaryLine(width, margin int) string {
+	innerWidth := max(width-2*margin, 0)
+	label := m.gitSummaryLabel(innerWidth)
+	labelWidth := ansi.StringWidth(label)
+	if label == "" || labelWidth > innerWidth {
+		return strings.Repeat(" ", width)
+	}
+	return strings.Repeat(" ", margin+innerWidth-labelWidth) + label + strings.Repeat(" ", margin)
+}
+
+func (m Model) gitSummaryLabel(width int) string {
+	if m.gitSummary.Files == 0 || width <= 0 {
+		return ""
+	}
+	fileWord := "files"
+	if m.gitSummary.Files == 1 {
+		fileWord = "file"
+	}
+	stats := fmt.Sprintf("+%d  −%d", m.gitSummary.Additions, m.gitSummary.Deletions)
+	variants := []string{
+		fmt.Sprintf("%d %s changed  %s", m.gitSummary.Files, fileWord, stats),
+		fmt.Sprintf("%d %s  %s", m.gitSummary.Files, fileWord, stats),
+		stats,
+	}
+	for index, variant := range variants {
+		if ansi.StringWidth(variant) > width {
+			continue
+		}
+		prefix := strings.TrimSuffix(variant, stats)
+		styledStats := diffAddStyle.Render(fmt.Sprintf("+%d", m.gitSummary.Additions)) + "  " + diffDelStyle.Render(fmt.Sprintf("−%d", m.gitSummary.Deletions))
+		if index == len(variants)-1 {
+			return styledStats
+		}
+		return statusStyle.Render(prefix) + styledStats
+	}
+	return ""
 }
 
 func (m Model) composerBoxWithWidth(width int) string {

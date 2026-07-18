@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-16
+updated_at: 2026-07-18
 summary: Architecture and behavior of the Atenea terminal user interface.
 ---
 
@@ -276,8 +276,19 @@ rows.
  scroll horizontally within the input. Its native textarea cursor blinks while
  chat and the terminal window own keyboard focus, and hides while the window is
  unfocused or explorer, viewer, permission, or plan approval owns input. The
- footer shows `<agente> · <modelo>`: the model enters once via
- `WithStatus` and the agent reflects the active mode (build/plan).
+ lower-right border shows the active model and appends `· plan` in plan mode.
+- The first row below the composer shows the current Git workspace summary,
+ right-aligned to the same two-cell horizontal margin: unique changed files,
+ additions, and deletions (`4 files changed  +128  −36`). It combines staged,
+ unstaged, and non-ignored untracked files; new text files count as additions
+ and binary files only affect the file count. A clean workspace, a non-Git
+ directory, or a Git failure renders no summary. Narrow terminals progressively
+ fall back to `4 files  +128  −36`, then `+128  −36`, then nothing, without
+ wrapping. The final bottom-margin row remains blank.
+- Git state is loaded asynchronously at TUI startup and refreshed after
+ successful `bash`, `edit`, and `write` tools and after `/undo`. The previous
+ summary remains visible until the refresh result arrives, so the composer does
+ not flicker or block on Git work.
 
 ## Global provider configuration
 
