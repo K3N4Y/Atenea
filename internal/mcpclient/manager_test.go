@@ -60,6 +60,34 @@ func TestManager_RejectsInvalidServerConfig(t *testing.T) {
 	}
 }
 
+func TestManager_DoesNotExposeParentSecretsToServer(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "parent-secret")
+	manager := NewManager(t.TempDir())
+	t.Cleanup(manager.Close)
+
+	_, err := manager.Connect(context.Background(), ServerConfig{
+		Name:    "env-probe",
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestMCPHelperProcess"},
+		Env: map[string]string{
+			"ATENEA_MCP_HELPER":           "1",
+			"ATENEA_MCP_HELPER_ENV_PROBE": "1",
+			"EXPLICIT_TOKEN":              "configured-secret",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	result, err := manager.Tools()[0].Execute(context.Background(), json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.Output != "provider= explicit=configured-secret" {
+		t.Fatalf("server environment = %q, want parent secret excluded and configured env preserved", result.Output)
+	}
+}
+
 func TestManager_RemovesServerAfterUnexpectedSessionTermination(t *testing.T) {
 	manager := NewManager(t.TempDir())
 	t.Cleanup(manager.Close)
@@ -106,6 +134,10 @@ func TestMCPHelperProcess(t *testing.T) {
 		Description: "Returns pong.",
 		InputSchema: map[string]any{"type": "object"},
 	}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if os.Getenv("ATENEA_MCP_HELPER_ENV_PROBE") == "1" {
+			output := fmt.Sprintf("provider=%s explicit=%s", os.Getenv("OPENAI_API_KEY"), os.Getenv("EXPLICIT_TOKEN"))
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: output}}}, nil
+		}
 		if os.Getenv("ATENEA_MCP_HELPER_EXIT_AFTER_CALL") == "1" {
 			go func() {
 				time.Sleep(100 * time.Millisecond)

@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-17
+updated_at: 2026-07-18
 summary: Local MCP server integration for the Wails application, the TUI, and the agent tool registry.
 ---
 
@@ -51,6 +51,11 @@ shared by other agent CLIs:
 - **`<workspace>/.mcp.json`** — project servers, edited by hand. On a name
   collision the workspace entry overrides the global one, the same
   project-over-global precedence as skills.
+
+MCP subprocesses inherit only the operational environment needed to launch
+portable local commands (`PATH`, home/temp, locale, timezone, and Windows
+process variables). Provider tokens and other application secrets are passed
+only when explicitly declared in the server's `env` map.
 
 ```json
 {

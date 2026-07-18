@@ -26,7 +26,7 @@ const connectTimeout = 30 * time.Second
 var serverName = regexp.MustCompile(`^[A-Za-z0-9_-]{1,48}$`)
 
 // ServerConfig describes a local MCP server process. Command and Args map
-// directly to the stdio process; Env augments the inherited environment.
+// directly to the stdio process; Env is the only source of server secrets.
 type ServerConfig struct {
 	Name    string            `json:"name,omitempty"`
 	Command string            `json:"command"`
@@ -97,9 +97,7 @@ func (m *Manager) Connect(ctx context.Context, config ServerConfig) (ServerStatu
 	if command.Dir == "" {
 		command.Dir = root
 	}
-	if len(config.Env) > 0 {
-		command.Env = mergeEnv(os.Environ(), config.Env)
-	}
+	command.Env = mergeEnv(baseEnv(), config.Env)
 	connectCtx, cancel := context.WithTimeout(ctx, connectTimeout)
 	defer cancel()
 	session, err := client.Connect(connectCtx, &mcp.CommandTransport{Command: command}, nil)
@@ -210,6 +208,23 @@ func validate(config ServerConfig) error {
 
 func rootURI(root string) string {
 	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(root)}).String()
+}
+
+func baseEnv() []string {
+	keys := []string{"PATH", "HOME", "USERPROFILE", "TMPDIR", "TMP", "TEMP", "LANG", "LANGUAGE", "TZ", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT"}
+	env := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if value, ok := os.LookupEnv(key); ok {
+			env = append(env, key+"="+value)
+		}
+	}
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(key, "LC_") {
+			env = append(env, entry)
+		}
+	}
+	return env
 }
 
 func mergeEnv(base []string, override map[string]string) []string {
