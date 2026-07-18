@@ -3,6 +3,7 @@ package providerconfig
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -11,7 +12,7 @@ import (
 )
 
 func TestCatalog_SnapshotMergesConfiguredCachedAndSelected(t *testing.T) {
-	c := NewCatalog(Config{Providers: []Provider{{ID: "p", Name: "Provider", Type: OpenAICompatible, BaseURL: "http://p", Models: []string{"configured"}}}, Selected: Selection{Provider: "p", Model: "selected"}}, "", nil, nil)
+	c := NewCatalog(Config{Providers: []Provider{{ID: "p", Name: "Provider", Type: OpenAICompatible, BaseURL: "http://p", Models: []string{"configured"}}}, Selected: Selection{Provider: "p", Model: "selected"}}, "", nil, nil, nil)
 	c.cached = map[string][]string{"p": {"cached", "configured"}}
 	got := c.Snapshot()
 	want := []string{"selected", "configured", "cached"}
@@ -21,7 +22,7 @@ func TestCatalog_SnapshotMergesConfiguredCachedAndSelected(t *testing.T) {
 }
 
 func TestCatalog_RefreshRetainsUsableModelsOnFailure(t *testing.T) {
-	c := NewCatalog(Config{Providers: []Provider{{ID: "p", Name: "Provider", Type: OpenAICompatible, BaseURL: "http://p", Models: []string{"configured"}}}}, "", nil, func(context.Context, string, string) ([]string, error) { return nil, errors.New("offline") })
+	c := NewCatalog(Config{Providers: []Provider{{ID: "p", Name: "Provider", Type: OpenAICompatible, BaseURL: "http://p", Models: []string{"configured"}}}}, "", nil, func(context.Context, string, string) ([]string, error) { return nil, errors.New("offline") }, nil)
 	got, err := c.Refresh(context.Background())
 	if err == nil {
 		t.Fatal("expected warning")
@@ -39,7 +40,7 @@ func TestCatalog_RefreshSkipsProvidersWithDiscoveryDisabled(t *testing.T) {
 	}}}, "", nil, func(context.Context, string, string) ([]string, error) {
 		calls.Add(1)
 		return []string{"gpt-image-2"}, nil
-	})
+	}, nil)
 
 	got, err := c.Refresh(context.Background())
 	if err != nil {
@@ -53,6 +54,26 @@ func TestCatalog_RefreshSkipsProvidersWithDiscoveryDisabled(t *testing.T) {
 	}
 }
 
+func TestCatalog_RefreshUsesStoredCredentialWhenEnvIsEmpty(t *testing.T) {
+	credentials := NewFileCredentialStore(filepath.Join(t.TempDir(), "credentials.json"))
+	if err := credentials.Put("p", Credential{Type: CredentialTypeAPIKey, APIKey: "stored-key"}); err != nil {
+		t.Fatal(err)
+	}
+	gotKey := ""
+	c := NewCatalog(Config{Providers: []Provider{{ID: "p", Name: "Provider", Type: OpenAICompatible, BaseURL: "http://p", APIKeyEnv: "P_KEY"}}}, "",
+		func(string) string { return "" },
+		func(_ context.Context, _ string, apiKey string) ([]string, error) {
+			gotKey = apiKey
+			return []string{"remote"}, nil
+		}, credentials)
+	if _, err := c.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if gotKey != "stored-key" {
+		t.Fatalf("lister key = %q, want the stored credential", gotKey)
+	}
+}
+
 func TestCatalog_ConcurrentRefreshesShareInflightResult(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -63,7 +84,7 @@ func TestCatalog_ConcurrentRefreshesShareInflightResult(t *testing.T) {
 		}
 		<-release
 		return []string{"remote"}, nil
-	})
+	}, nil)
 	var wg sync.WaitGroup
 	wg.Add(2)
 	for range 2 {

@@ -4,10 +4,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"atenea/internal/llm"
+	"atenea/internal/providerconfig"
 )
 
 // TestApp_LocalProviderUsesLocalSystemPrompt: al elegir un provider local, el turno
@@ -241,5 +243,32 @@ func TestApp_ListModelsBindingDelegates(t *testing.T) {
 	}
 	if len(models) != 2 || models[0] != "qwen" || models[1] != "llama" {
 		t.Fatalf("ListModels = %#v, want [qwen llama]", models)
+	}
+}
+
+// TestApp_OpenRouterKeyPrefersEnvironmentThenStoredCredential: the Wails app
+// resolves the OpenRouter key like the TUI — the environment override wins,
+// then the credential stored by /connect. With neither there is no key.
+func TestApp_OpenRouterKeyPrefersEnvironmentThenStoredCredential(t *testing.T) {
+	store := providerconfig.NewFileCredentialStore(filepath.Join(t.TempDir(), "credentials.json"))
+	if err := store.Put("openrouter", providerconfig.Credential{Type: providerconfig.CredentialTypeAPIKey, APIKey: "sk-stored"}); err != nil {
+		t.Fatal(err)
+	}
+
+	env := func(name string) string {
+		if name == "OPENROUTER_API_KEY" {
+			return "sk-env"
+		}
+		return ""
+	}
+	if got := openRouterAPIKey(env, store); got != "sk-env" {
+		t.Fatalf("key = %q, want the environment to win", got)
+	}
+	if got := openRouterAPIKey(func(string) string { return "" }, store); got != "sk-stored" {
+		t.Fatalf("key = %q, want the stored credential as fallback", got)
+	}
+	empty := providerconfig.NewFileCredentialStore(filepath.Join(t.TempDir(), "credentials.json"))
+	if got := openRouterAPIKey(func(string) string { return "" }, empty); got != "" {
+		t.Fatalf("key = %q, want empty without env nor credential", got)
 	}
 }

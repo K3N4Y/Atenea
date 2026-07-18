@@ -314,6 +314,13 @@ func (m Model) appendError(text string) Model {
 	return m
 }
 
+// appendNotice adds a dim informational line to the conversation (a provider
+// connection confirmation, the first-run hint).
+func (m Model) appendNotice(text string) Model {
+	m.entries = append(m.entries, entry{kind: entryNotice, text: text})
+	return m
+}
+
 // openAssistantBlock abre un bloque assistant en vivo al final de la
 // conversacion. Antes cierra cualquier pensamiento que siga en vivo: que
 // arranque la respuesta implica que el pensamiento termino, aunque el runner

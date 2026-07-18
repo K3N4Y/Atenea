@@ -69,6 +69,14 @@ type ModelsRefreshedMsg struct {
 	Err       string
 }
 
+// ConnectService is the optional surface a ModelService can implement to
+// support /connect. providerconfig.Service does; fakes that do not care about
+// connection simply omit it.
+type ConnectService interface {
+	Connectable() []providerconfig.ConnectableProvider
+	Connect(ctx context.Context, providerID, apiKey string) (providerconfig.Active, error)
+}
+
 // Engine es el agente headless que arma runner + tools + permisos sin Wails y
 // publica los eventos durables de la sesion por un canal de mensajes Bubble Tea.
 // El ensamblado real vive en wiring.Build (la misma fuente de verdad que la app
@@ -254,6 +262,26 @@ func (e *Engine) SelectModel(providerID, model string) (providerconfig.Active, e
 		return providerconfig.Active{}, errors.New("model selection is unavailable")
 	}
 	return e.models.Select(context.Background(), providerID, model)
+}
+
+// ConnectableProviders lists the providers /connect can manage, or nil when
+// the model service does not support connections.
+func (e *Engine) ConnectableProviders() []providerconfig.ConnectableProvider {
+	service, ok := e.models.(ConnectService)
+	if !ok {
+		return nil
+	}
+	return service.Connectable()
+}
+
+// ConnectProvider validates and stores an API key for the provider, activating
+// it when nothing else is selected. Blocking: the TUI calls it from a tea.Cmd.
+func (e *Engine) ConnectProvider(providerID, apiKey string) (providerconfig.Active, error) {
+	service, ok := e.models.(ConnectService)
+	if !ok {
+		return providerconfig.Active{}, errors.New("provider connection is unavailable")
+	}
+	return service.Connect(e.ctx, providerID, apiKey)
 }
 
 func (e *Engine) RefreshModels() {

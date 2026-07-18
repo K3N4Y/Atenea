@@ -166,6 +166,8 @@ func (e entry) render(width int) string {
 			return errorStyle.Render("[error] " + sanitizeTerminalText(e.err))
 		}
 		return statusStyle.Render("[context] " + sanitizeTerminalText(e.text))
+	case entryNotice:
+		return statusStyle.Render(sanitizeTerminalText(e.text))
 	default: // entryAssistant: texto plano sin marcador
 		// Los bloques asentados se rinden completos; durante el streaming se
 		// rinde solo el prefijo revelado para no filtrar el backlog pendiente.
@@ -994,6 +996,9 @@ func (m Model) View() string {
 	}
 	if m.mcpPicker.open {
 		return m.mcpPickerView()
+	}
+	if m.connectPanel.open {
+		return m.connectPanelView()
 	}
 	if m.resumePicker.open {
 		return m.resumePickerView()

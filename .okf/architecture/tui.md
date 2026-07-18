@@ -52,11 +52,14 @@ atenea-tui: agent.Service -> runner -> EmittingStore -> Bus -> chan tea.Msg     
 ## Pieces
 
 - `cmd/atenea-tui/main.go` — the thin border (equivalent to `main.go` from
- Wails): loads `.env`, opens the global provider service from
- `os.UserConfigDir()/atenea/providers.json`, and preserves the previous
+ Wails): loads `.env` (development builds only — `-tags production` compiles
+ `dotenv.Load` to a no-op), opens the global provider service from
+ `os.UserConfigDir()/atenea/providers.json` with the shared credential store
+ (`credentials.json`), and preserves the previous
  environment fallback (`OPENROUTER_API_KEY` present = OpenRouter with
  `OPENROUTER_MODEL`; absent = demo without network) when no valid global
- selection is available. It diverts
+ selection is available. Starting on the demo provider seeds the transcript
+ with a notice pointing at `/connect`. It diverts
  the standard log to a temporary file (do not paint over the alternative screen),
  opens the SQLite SHARED with the app via `session.OpenDefault` (fallback to
  memory if it fails, with `Close` on exit), resumes the latest TUI session for
@@ -343,6 +346,25 @@ directory. Each provider has a stable `id`, display `name`,
 `type: "openai-compatible"`, normalized `base_url`, optional `api_key_env`,
 optional `openrouter_reasoning`, and configured model identifiers. Only the
 environment-variable name is persisted; secret values never enter the file.
+
+API keys resolve with a fixed precedence: the real environment variable wins
+(the explicit, ephemeral override), then the credential stored by `/connect`
+in `credentials.json` next to `providers.json` (0600, atomic rename, keyed by
+provider id with a `type` discriminator so OAuth grants can join later without
+a migration). Both binaries share the store: connecting from the TUI makes the
+key available to the Wails app. Model discovery in the catalog uses the same
+resolution.
+
+The `/connect` command (v1: OpenRouter only) opens a full-screen panel that
+lists connectable providers with their stored-credential state; selecting one
+opens a masked key input — the key never touches the composer nor its
+persisted history. Submitting validates the key against the provider
+(`GET {base_url}/key` for OpenRouter) before storing; a rejected or failed
+validation persists nothing. On success, with no active selection the provider
+activates on its default model (the first curated entry, `openrouter/free`);
+when it is already the selected provider the live delegate is rebuilt so a
+rotated key applies without restart; a selection on another provider is left
+alone. Re-running `/connect` rotates the key. There is no `/disconnect` in v1.
 
 The selected pair is saved by atomic rename before the running provider
 snapshot is swapped. Missing keys, provider-construction errors, and save

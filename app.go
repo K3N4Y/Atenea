@@ -16,6 +16,7 @@ import (
 	"atenea/internal/event"
 	"atenea/internal/llm"
 	"atenea/internal/mcpclient"
+	"atenea/internal/providerconfig"
 	"atenea/internal/session"
 	"atenea/internal/skill"
 	"atenea/internal/terminal"
@@ -257,28 +258,51 @@ func resolveModel() string {
 	return defaultModel
 }
 
-// initialProviderConfig deriva la config del provider al arrancar desde el entorno:
-// si hay OPENROUTER_API_KEY, OpenRouter con su modelo; si no, el demo (fake sin red)
-// para que `wails dev` muestre streaming sin configurar nada. El frontend puede
-// re-aplicar una config local persistida via SetProvider despues.
+// openRouterAPIKey resolves the OpenRouter key with the same precedence as
+// the TUI: the real environment variable wins, then the credential stored by
+// /connect (shared via ~/.config/atenea/credentials.json). "" = no key.
+func openRouterAPIKey(getenv func(string) string, credentials providerconfig.CredentialStore) string {
+	if key := getenv("OPENROUTER_API_KEY"); key != "" {
+		return key
+	}
+	if credentials != nil {
+		if credential, ok := credentials.Get("openrouter"); ok && credential.Type == providerconfig.CredentialTypeAPIKey {
+			return credential.APIKey
+		}
+	}
+	return ""
+}
+
+// defaultCredentialStore opens the credential store shared with the TUI.
+func defaultCredentialStore() providerconfig.CredentialStore {
+	return providerconfig.NewFileCredentialStore(providerconfig.DefaultCredentialsPath())
+}
+
+// initialProviderConfig derives the provider config at startup: with an
+// OpenRouter key available (environment or /connect credential), OpenRouter
+// with its model; otherwise the demo (network-less fake) so `wails dev` shows
+// streaming without configuring anything. The frontend can re-apply a
+// persisted local config via SetProvider afterwards.
 func initialProviderConfig() ProviderConfig {
-	if os.Getenv("OPENROUTER_API_KEY") == "" {
-		log.Print("atenea: sin OPENROUTER_API_KEY; usando provider de demo (sin red)")
+	if openRouterAPIKey(os.Getenv, defaultCredentialStore()) == "" {
+		log.Print("atenea: no OPENROUTER_API_KEY and no /connect credential; using the demo provider (no network)")
 		return ProviderConfig{Kind: providerKindDemo, Model: defaultModel}
 	}
 	return ProviderConfig{Kind: providerKindOpenRouter, BaseURL: openRouterBaseURL, Model: resolveModel()}
 }
 
-// buildProvider arma el provider real desde una config. local usa el adaptador
-// OpenAI-compatible SIN el campo reasoning de OpenRouter (LM Studio, Ollama no lo
-// entienden) y una key placeholder; openrouter usa la key del entorno; cualquier otro
-// kind (demo o vacio) cae al fake sin red. Es el default de a.newProvider.
+// buildProvider builds the real provider from a config. local uses the
+// OpenAI-compatible adapter WITHOUT OpenRouter's reasoning field (LM Studio
+// and Ollama do not understand it) and a placeholder key; openrouter resolves
+// its key (environment, then /connect credential); any other kind (demo or
+// empty) falls back to the network-less fake. It is the default of
+// a.newProvider.
 func buildProvider(cfg ProviderConfig) llm.Provider {
 	switch cfg.Kind {
 	case providerKindLocal:
 		return llm.NewOpenAIProvider(localPlaceholderKey, cfg.BaseURL, cfg.Model, llm.WithoutOpenRouterReasoning())
 	case providerKindOpenRouter:
-		return llm.NewOpenAIProvider(os.Getenv("OPENROUTER_API_KEY"), cfg.BaseURL, cfg.Model)
+		return llm.NewOpenAIProvider(openRouterAPIKey(os.Getenv, defaultCredentialStore()), cfg.BaseURL, cfg.Model)
 	default:
 		return demoProvider()
 	}
@@ -359,7 +383,14 @@ func (a *App) SetProvider(kind, baseURL, model string) error {
 // baseURL/models) para poblar el dropdown del selector. Sin secreto: los locales no
 // exigen key. Es el binding que el frontend llama al escribir el baseURL.
 func (a *App) ListModels(baseURL string) ([]string, error) {
-	return llm.ListModels(context.Background(), baseURL, "")
+	// OpenRouter's /models endpoint is public, but sending the resolved key
+	// keeps the listing consistent with the chat path (and with any
+	// account-scoped catalog the provider may expose).
+	apiKey := ""
+	if strings.TrimRight(baseURL, "/") == openRouterBaseURL {
+		apiKey = openRouterAPIKey(os.Getenv, defaultCredentialStore())
+	}
+	return llm.ListModels(context.Background(), baseURL, apiKey)
 }
 
 // currentProvider devuelve el provider vigente bajo mu (SetProvider lo cambia en vivo).

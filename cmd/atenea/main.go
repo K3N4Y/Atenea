@@ -105,6 +105,12 @@ func run() error {
 		WithWorkspaceRoot(gitBranch(root), displayDir(root), root).
 		WithCompletions(engine.Commands(), engine.ProjectFiles).
 		WithFileReader(tui.WorkspaceFileReader(root))
+	// Starting on demo means there is no key anywhere (neither environment nor
+	// stored credential): say so, and say how to get out of it, instead of
+	// letting the user chat with the fake and find out the hard way.
+	if active.ProviderID == "demo" {
+		m = m.WithNotice("No provider connected — run /connect to use OpenRouter (or export OPENROUTER_API_KEY). Demo mode: replies are canned.")
+	}
 	// WithMouseCellMotion habilita el mouse tracking: sin el, la terminal nunca
 	// reporta la rueda a la app (en pantalla alternativa la traduce a flechas
 	// via "alternate scroll"); con la opcion llegan eventos de mouse reales.
@@ -179,7 +185,8 @@ func environmentFallbackSnapshot() llm.ProviderSnapshot {
 }
 
 func openProviderService() (*providerconfig.Service, error) {
-	return providerconfig.Open(providerconfig.DefaultPath(), providerconfig.DefaultCachePath(), environmentFallbackSnapshot(), os.Getenv, nil, nil, nil, defaultProviderConfig())
+	credentials := providerconfig.NewFileCredentialStore(providerconfig.DefaultCredentialsPath())
+	return providerconfig.Open(providerconfig.DefaultPath(), providerconfig.DefaultCachePath(), environmentFallbackSnapshot(), os.Getenv, nil, nil, nil, credentials, defaultProviderConfig())
 }
 
 func defaultProviderConfig() providerconfig.Config {
@@ -187,7 +194,10 @@ func defaultProviderConfig() providerconfig.Config {
 		{
 			ID: "openrouter", Name: "OpenRouter", Type: providerconfig.OpenAICompatible,
 			BaseURL: openRouterBaseURL, APIKeyEnv: "OPENROUTER_API_KEY", OpenRouterReasoning: true,
-			Models: []string{"tencent/hy3:free", "poolside/laguna-xs-2.1:free", "cohere/north-mini-code:free"},
+			// The first curated model doubles as the default /connect activates
+			// when nothing is selected yet; openrouter/free routes to a free
+			// model so a fresh connection always works.
+			Models: []string{defaultModel, "tencent/hy3:free", "poolside/laguna-xs-2.1:free", "cohere/north-mini-code:free"},
 		},
 		{
 			ID: "openai", Name: "OpenAI", Type: providerconfig.OpenAICompatible,

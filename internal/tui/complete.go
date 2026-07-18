@@ -21,8 +21,10 @@ import (
 	"atenea/internal/providerconfig"
 )
 
-// menuLimit acota cuantos items muestra el popup de autocompletado.
-const menuLimit = 6
+// menuLimit acota cuantos items muestra el popup de autocompletado. It grows
+// with the builtin set (/new, /compact, /model, /mcp, /connect) so builtins
+// never crowd skill commands out of the popup.
+const menuLimit = 7
 
 // menuItem es una fila del popup, agnostica de la fuente: el menu "/" la
 // puebla con "/<name>" y la descripcion de la skill en estilo tenue; el
@@ -352,6 +354,7 @@ func (m Model) refreshMenu() (Model, tea.Cmd) {
 		includeCompact := strings.HasPrefix("compact", query)
 		includeModel := strings.HasPrefix("model", query)
 		includeMcp := strings.HasPrefix("mcp", query)
+		includeConnect := strings.HasPrefix("connect", query)
 		if includeNew {
 			m.menuItems = append(m.menuItems, menuItem{label: "/new", builtin: true})
 		}
@@ -363,6 +366,9 @@ func (m Model) refreshMenu() (Model, tea.Cmd) {
 			reserved++
 		}
 		if includeMcp {
+			reserved++
+		}
+		if includeConnect {
 			reserved++
 		}
 		for _, cmd := range filterCommands(m.commands, q.query, menuLimit-reserved) {
@@ -399,6 +405,17 @@ func (m Model) refreshMenu() (Model, tea.Cmd) {
 		}
 		if includeMcp {
 			item := menuItem{label: "/mcp", description: "Toggle MCP servers on or off", builtin: true}
+			if query == "" && len(m.menuItems) > 1 {
+				insertAt := len(m.menuItems) - 1
+				m.menuItems = append(m.menuItems, menuItem{})
+				copy(m.menuItems[insertAt+1:], m.menuItems[insertAt:])
+				m.menuItems[insertAt] = item
+			} else {
+				m.menuItems = append(m.menuItems, item)
+			}
+		}
+		if includeConnect {
+			item := menuItem{label: "/connect", description: "Connect a provider with an API key", builtin: true}
 			if query == "" && len(m.menuItems) > 1 {
 				insertAt := len(m.menuItems) - 1
 				m.menuItems = append(m.menuItems, menuItem{})

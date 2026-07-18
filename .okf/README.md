@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-14
+updated_at: 2026-07-18
 summary: Navigation index for Atenea project documentation in the OKF convention.
 ---
 
@@ -62,6 +62,7 @@ uses Markdown and begins with `updated_at` and `summary` YAML metadata.
 - [CI and CodeRabbit](specs/2026-07-10-ci-coderabbit.md)
 - [TUI file viewer](specs/2026-07-09-tui-file-viewer.md)
 - [TUI provider and model selector](specs/2026-07-10-tui-model-selector.md)
+- [/connect command and credential store](specs/2026-07-18-connect-command.md)
 - [TUI dark canvas](specs/2026-07-10-tui-dark-canvas.md)
 - [TUI inline model completion](specs/2026-07-10-tui-inline-model-completion.md)
 - [TUI manual context compaction](specs/2026-07-11-tui-manual-context-compaction.md)

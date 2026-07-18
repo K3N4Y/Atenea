@@ -19,6 +19,7 @@ import (
 	"atenea/internal/agent"
 	"atenea/internal/checkpoint"
 	"atenea/internal/llm"
+	"atenea/internal/providerconfig"
 	"atenea/internal/session"
 	"atenea/internal/tool/hashline"
 )
@@ -2607,5 +2608,61 @@ func TestEngine_MCPServersReadsWorkspaceConfig(t *testing.T) {
 	// Desconectar un server que no esta conectado es idempotente, como el manager.
 	if err := engine.DisconnectMCPServer("github"); err != nil {
 		t.Fatalf("DisconnectMCPServer: %v", err)
+	}
+}
+
+// connectModelService is a minimal ModelService that also implements
+// ConnectService, to verify the engine delegates /connect to it.
+type connectModelService struct {
+	connectable []providerconfig.ConnectableProvider
+	connects    []struct{ providerID, key string }
+	active      providerconfig.Active
+}
+
+func (s *connectModelService) Active() providerconfig.Active            { return s.active }
+func (s *connectModelService) Catalog() []providerconfig.ProviderModels { return nil }
+func (s *connectModelService) Refresh(context.Context) ([]providerconfig.ProviderModels, error) {
+	return nil, nil
+}
+func (s *connectModelService) Select(_ context.Context, providerID, model string) (providerconfig.Active, error) {
+	return s.active, nil
+}
+func (s *connectModelService) Connectable() []providerconfig.ConnectableProvider {
+	return s.connectable
+}
+func (s *connectModelService) Connect(_ context.Context, providerID, apiKey string) (providerconfig.Active, error) {
+	s.connects = append(s.connects, struct{ providerID, key string }{providerID, apiKey})
+	return s.active, nil
+}
+
+func TestEngine_ConnectProviderDelegatesToConnectService(t *testing.T) {
+	service := &connectModelService{
+		connectable: []providerconfig.ConnectableProvider{{ID: "openrouter", Name: "OpenRouter"}},
+		active:      providerconfig.Active{ProviderID: "openrouter", Model: "openrouter/free"},
+	}
+	engine := NewEngine(EngineConfig{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore(), Models: service})
+	defer engine.Shutdown(context.Background())
+
+	if got := engine.ConnectableProviders(); len(got) != 1 || got[0].ID != "openrouter" {
+		t.Fatalf("ConnectableProviders = %#v", got)
+	}
+	active, err := engine.ConnectProvider("openrouter", "sk-or-key")
+	if err != nil || active.Model != "openrouter/free" {
+		t.Fatalf("ConnectProvider = %#v err=%v", active, err)
+	}
+	if len(service.connects) != 1 || service.connects[0].key != "sk-or-key" {
+		t.Fatalf("connects = %#v", service.connects)
+	}
+}
+
+func TestEngine_ConnectUnavailableWithoutConnectService(t *testing.T) {
+	engine := NewEngine(EngineConfig{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore()})
+	defer engine.Shutdown(context.Background())
+
+	if got := engine.ConnectableProviders(); got != nil {
+		t.Fatalf("ConnectableProviders = %#v, want nil", got)
+	}
+	if _, err := engine.ConnectProvider("openrouter", "sk"); err == nil {
+		t.Fatal("expected an error without a connect-capable model service")
 	}
 }

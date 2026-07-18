@@ -1,12 +1,16 @@
 // Package dotenv carga un archivo .env al entorno del proceso. Es la
 // conveniencia de desarrollo compartida por los binarios (app Wails y TUI):
 // deja OPENROUTER_API_KEY y demas a mano en dev sin exportarlas.
+//
+// Load is a development-only affordance: production builds (-tags production,
+// the same tag `wails build` sets) compile it to a no-op, so a release binary
+// never picks up secrets from a .env lying in the working directory. Keys in
+// production come from real environment variables or from /connect.
 package dotenv
 
 import (
 	"bufio"
 	"io"
-	"os"
 	"strings"
 )
 
@@ -45,21 +49,4 @@ func unquote(s string) string {
 		}
 	}
 	return s
-}
-
-// Load carga el .env de path al entorno SIN pisar variables ya seteadas: las
-// env vars reales tienen prioridad sobre el archivo. La ausencia del archivo no
-// es error (corre en silencio). Es una conveniencia de desarrollo; en produccion
-// las claves siguen viniendo del entorno.
-func Load(path string) {
-	f, err := os.Open(path)
-	if err != nil {
-		return // no hay .env: no es error
-	}
-	defer f.Close()
-	for k, v := range parse(f) {
-		if _, ok := os.LookupEnv(k); !ok {
-			os.Setenv(k, v)
-		}
-	}
 }

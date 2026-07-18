@@ -9,6 +9,7 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -138,6 +139,7 @@ const (
 	entryPlanApproval                  // oferta de aprobacion del plan presentado (present_plan)
 	entryError                         // fallo duro del step (Step.Failed)
 	entryCompaction                    // estado transitorio o resultado de compactacion manual
+	entryNotice                        // informational line (connected provider, first-run hint)
 )
 
 const historyLimit = 100
@@ -324,6 +326,8 @@ type Model struct {
 	modelPicker  modelPicker
 	mcpPicker    mcpPicker
 	mcpGen       uint64
+	connectPanel connectPanel
+	connectGen   uint64
 
 	leaderPending    bool
 	leaderGeneration uint64
@@ -363,6 +367,13 @@ func NewModel(agent Agent, sessionID string, events <-chan tea.Msg) Model {
 func (m Model) WithStatus(_ string, model string) Model {
 	m.model = model
 	return m
+}
+
+// WithNotice seeds the transcript with a dim informational line shown before
+// any conversation. The launcher uses it to point at /connect when the TUI
+// starts on the demo provider (no key anywhere).
+func (m Model) WithNotice(text string) Model {
+	return m.appendNotice(text)
 }
 
 // WithWorkspace fija la rama de git y el directorio (ya listo para mostrar,
@@ -646,6 +657,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.revealing = true
 		return m.syncViewportActivity(), revealTick()
+	case connectDoneMsg:
+		if ev.generation != m.connectGen {
+			// A stale failure only mattered to the panel that launched it; a
+			// stale success still stored the credential and must land.
+			if ev.err == "" {
+				return m.applyStaleConnectSuccess(ev)
+			}
+			return m, nil
+		}
+		return m.finishConnect(ev)
 	case mcpToggleDoneMsg:
 		if ev.generation != m.mcpGen {
 			return m, nil
@@ -711,6 +732,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.mcpPicker.open {
 			return m.handleMCPPickerMouse(ev)
+		}
+		if m.connectPanel.open {
+			return m.handleConnectPanelMouse(ev)
 		}
 		// La top bar ocupa la fila 0 de la pantalla, asi que el contenido del
 		// cuerpo empieza una fila mas abajo: se traslada el clic a coordenadas
@@ -871,6 +895,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mcpPicker.open {
 		return m.handleMCPPickerKey(msg)
 	}
+	if m.connectPanel.open {
+		return m.handleConnectPanelKey(msg)
+	}
 	if perm, ok := m.pendingPermission(); ok {
 		if msg.Type == tea.KeyPgUp || msg.Type == tea.KeyPgDown {
 			return m.scrollViewport(msg)
@@ -912,7 +939,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// Tab aplica la seleccion; no alterna el modo build/plan.
 			return m.applySelection()
 		case tea.KeyEnter:
-			if m.menuItems[m.menuSelected].builtin && (m.menuItems[m.menuSelected].label == "/new" || m.menuItems[m.menuSelected].label == "/compact" || m.menuItems[m.menuSelected].label == "/resume" || m.menuItems[m.menuSelected].label == "/model" || m.menuItems[m.menuSelected].label == "/mcp") {
+			if m.menuItems[m.menuSelected].builtin && (m.menuItems[m.menuSelected].label == "/new" || m.menuItems[m.menuSelected].label == "/compact" || m.menuItems[m.menuSelected].label == "/resume" || m.menuItems[m.menuSelected].label == "/model" || m.menuItems[m.menuSelected].label == "/mcp" || m.menuItems[m.menuSelected].label == "/connect") {
 				m.input.SetValue(m.menuItems[m.menuSelected].label)
 				m.input.SetCursor(len([]rune(m.menuItems[m.menuSelected].label)))
 				return m.closeMenu().submitPrompt()
@@ -1580,6 +1607,40 @@ func (m Model) submitPrompt() (Model, tea.Cmd) {
 		m.mcpGen++
 		m.mcpPicker = newMCPPicker()
 		m.mcpPicker.refreshFromAgent(m.agent)
+		return m.resizeViewport(), nil
+	}
+	if strings.HasPrefix(trimmed, "/connect") {
+		parts := strings.Fields(trimmed)
+		if parts[0] != "/connect" || len(parts) > 2 {
+			return m.appendError("usage: /connect [provider-id]").syncViewport(), nil
+		}
+		controller, ok := m.agent.(connectAgent)
+		if !ok {
+			return m.appendError("provider connection is unavailable").syncViewport(), nil
+		}
+		providers := controller.ConnectableProviders()
+		if len(providers) == 0 {
+			return m.appendError("no connectable providers configured").syncViewport(), nil
+		}
+		panel := newConnectPanel(providers)
+		if len(parts) == 2 {
+			found := false
+			for index, provider := range providers {
+				if provider.ID == parts[1] {
+					panel.selected = index
+					panel.entering = true
+					found = true
+					break
+				}
+			}
+			if !found {
+				return m.appendError(fmt.Sprintf("usage: /connect [provider-id]; %q is not connectable", parts[1])).syncViewport(), nil
+			}
+		}
+		m.input.SetValue("")
+		m.menuItems = nil
+		m.connectGen++
+		m.connectPanel = panel
 		return m.resizeViewport(), nil
 	}
 	if strings.HasPrefix(strings.TrimSpace(text), "/model") {

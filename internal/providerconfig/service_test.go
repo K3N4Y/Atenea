@@ -27,7 +27,7 @@ func TestService_OpenUsesPersistedSelection(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"providers":[{"id":"p","name":"Provider","type":"openai-compatible","base_url":"http://p","models":["m"]}],"selected":{"provider":"p","model":"m"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil }, nil, nil)
+	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil }, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestService_OpenUsesPersistedSelection(t *testing.T) {
 func TestService_OpenUsesDefaultCatalogWhenConfigIsAbsent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "providers.json")
 	defaults := Config{Providers: []Provider{{ID: "openrouter", Name: "OpenRouter", Type: OpenAICompatible, BaseURL: "https://openrouter.ai/api/v1", APIKeyEnv: "OPENROUTER_API_KEY", Models: []string{"tencent/hy3:free", "poolside/laguna-xs-2.1:free", "cohere/north-mini-code:free"}}}}
-	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil }, nil, nil, defaults)
+	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil }, nil, nil, nil, defaults)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestService_OpenMergesMissingDefaultProvidersIntoPersistedConfig(t *testing
 		{ID: "openrouter", Name: "OpenRouter", Type: OpenAICompatible, BaseURL: "https://openrouter.ai/api/v1", Models: []string{"default-model"}},
 		{ID: "openai", Name: "OpenAI", Type: OpenAICompatible, BaseURL: "https://api.openai.com/v1", Models: []string{"gpt-5.6-terra"}},
 	}}
-	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil }, nil, nil, defaults)
+	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil }, nil, nil, nil, defaults)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,12 +78,227 @@ func TestService_OpenMergesMissingDefaultProvidersIntoPersistedConfig(t *testing
 	}
 }
 
+func TestService_OpenResolvesKeyFromCredentialStoreWhenEnvIsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "providers.json")
+	config := `{"providers":[{"id":"p","name":"Provider","type":"openai-compatible","base_url":"http://p","api_key_env":"P_KEY","models":["m"]}],"selected":{"provider":"p","model":"m"}}`
+	if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	credentials := NewFileCredentialStore(filepath.Join(dir, "credentials.json"))
+	if err := credentials.Put("p", Credential{Type: CredentialTypeAPIKey, APIKey: "stored-key"}); err != nil {
+		t.Fatal(err)
+	}
+	gotKey := ""
+	factory := func(_ Provider, _ string, apiKey string) (llm.Provider, error) {
+		gotKey = apiKey
+		return inertProvider{}, nil
+	}
+	s, err := Open(path, "", fallbackSnapshot(), func(string) string { return "" }, factory, nil, nil, credentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotKey != "stored-key" {
+		t.Fatalf("factory key = %q, want the stored credential", gotKey)
+	}
+	if got := s.Active(); got.ProviderID != "p" {
+		t.Fatalf("active = %#v", got)
+	}
+}
+
+func TestService_EnvironmentKeyWinsOverStoredCredential(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "providers.json")
+	config := `{"providers":[{"id":"p","name":"Provider","type":"openai-compatible","base_url":"http://p","api_key_env":"P_KEY","models":["m"]}],"selected":{"provider":"p","model":"m"}}`
+	if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	credentials := NewFileCredentialStore(filepath.Join(dir, "credentials.json"))
+	if err := credentials.Put("p", Credential{Type: CredentialTypeAPIKey, APIKey: "stored-key"}); err != nil {
+		t.Fatal(err)
+	}
+	gotKey := ""
+	factory := func(_ Provider, _ string, apiKey string) (llm.Provider, error) {
+		gotKey = apiKey
+		return inertProvider{}, nil
+	}
+	getenv := func(name string) string {
+		if name == "P_KEY" {
+			return "env-key"
+		}
+		return ""
+	}
+	if _, err := Open(path, "", fallbackSnapshot(), getenv, factory, nil, nil, credentials); err != nil {
+		t.Fatal(err)
+	}
+	if gotKey != "env-key" {
+		t.Fatalf("factory key = %q, want the environment override to win", gotKey)
+	}
+}
+
+func openRouterDefaults() Config {
+	return Config{Providers: []Provider{
+		{ID: "openrouter", Name: "OpenRouter", Type: OpenAICompatible, BaseURL: "https://openrouter.ai/api/v1", APIKeyEnv: "OPENROUTER_API_KEY", Models: []string{"openrouter/free", "tencent/hy3:free"}},
+		{ID: "openai", Name: "OpenAI", Type: OpenAICompatible, BaseURL: "https://api.openai.com/v1", APIKeyEnv: "OPENAI_API_KEY", Models: []string{"gpt-5.6"}},
+	}}
+}
+
+func TestService_ConnectStoresKeyAndActivatesDefaultModelWhenNothingSelected(t *testing.T) {
+	dir := t.TempDir()
+	credentials := NewFileCredentialStore(filepath.Join(dir, "credentials.json"))
+	factory := func(_ Provider, _ string, apiKey string) (llm.Provider, error) { return inertProvider{}, nil }
+	s, err := Open(filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, factory, nil, nil, credentials, openRouterDefaults())
+	if err != nil {
+		t.Fatal(err)
+	}
+	validated := ""
+	s.validateKey = func(_ context.Context, provider Provider, apiKey string) error {
+		validated = provider.ID + ":" + apiKey
+		return nil
+	}
+
+	active, err := s.Connect(context.Background(), "openrouter", "sk-or-new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validated != "openrouter:sk-or-new" {
+		t.Fatalf("validated = %q, want the key checked before storing", validated)
+	}
+	credential, ok := credentials.Get("openrouter")
+	if !ok || credential.APIKey != "sk-or-new" || credential.Type != CredentialTypeAPIKey {
+		t.Fatalf("stored credential = %#v, ok = %v", credential, ok)
+	}
+	if active.ProviderID != "openrouter" || active.Model != "openrouter/free" {
+		t.Fatalf("active = %#v, want OpenRouter on its default model", active)
+	}
+	reopened, err := Load(filepath.Join(dir, "providers.json"))
+	if err != nil || reopened.Selected.Provider != "openrouter" || reopened.Selected.Model != "openrouter/free" {
+		t.Fatalf("persisted selection = %#v err=%v", reopened.Selected, err)
+	}
+}
+
+func TestService_ConnectRejectsInvalidKeyWithoutPersisting(t *testing.T) {
+	dir := t.TempDir()
+	credentials := NewFileCredentialStore(filepath.Join(dir, "credentials.json"))
+	s, err := Open(filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil }, nil, nil, credentials, openRouterDefaults())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.validateKey = func(context.Context, Provider, string) error { return errors.New("invalid API key") }
+
+	if _, err := s.Connect(context.Background(), "openrouter", "sk-or-bad"); err == nil {
+		t.Fatal("expected the validation error")
+	}
+	if _, ok := credentials.Get("openrouter"); ok {
+		t.Fatal("a rejected key must not be stored")
+	}
+	if got := s.Active().ProviderID; got != "demo" {
+		t.Fatalf("active provider = %q, want the fallback untouched", got)
+	}
+}
+
+func TestService_ConnectRotatesKeyOfSelectedProviderLive(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "providers.json")
+	config := `{"providers":[{"id":"openrouter","name":"OpenRouter","type":"openai-compatible","base_url":"https://openrouter.ai/api/v1","api_key_env":"OPENROUTER_API_KEY","models":["m"]}],"selected":{"provider":"openrouter","model":"m"}}`
+	if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	credentials := NewFileCredentialStore(filepath.Join(dir, "credentials.json"))
+	if err := credentials.Put("openrouter", Credential{Type: CredentialTypeAPIKey, APIKey: "sk-or-old"}); err != nil {
+		t.Fatal(err)
+	}
+	keys := []string{}
+	factory := func(_ Provider, _ string, apiKey string) (llm.Provider, error) {
+		keys = append(keys, apiKey)
+		return inertProvider{}, nil
+	}
+	s, err := Open(path, "", fallbackSnapshot(), func(string) string { return "" }, factory, nil, nil, credentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.validateKey = func(context.Context, Provider, string) error { return nil }
+
+	active, err := s.Connect(context.Background(), "openrouter", "sk-or-rotated")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.Model != "m" {
+		t.Fatalf("active model = %q, want the existing selection kept", active.Model)
+	}
+	if len(keys) != 2 || keys[1] != "sk-or-rotated" {
+		t.Fatalf("factory keys = %#v, want the live provider rebuilt with the rotated key", keys)
+	}
+}
+
+func TestService_ConnectLeavesOtherSelectedProviderAlone(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "providers.json")
+	config := `{"providers":[{"id":"openrouter","name":"OpenRouter","type":"openai-compatible","base_url":"https://openrouter.ai/api/v1","api_key_env":"OPENROUTER_API_KEY","models":["m"]},{"id":"local","name":"Local","type":"openai-compatible","base_url":"http://localhost:1234/v1","models":["llama"]}],"selected":{"provider":"local","model":"llama"}}`
+	if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	credentials := NewFileCredentialStore(filepath.Join(dir, "credentials.json"))
+	s, err := Open(path, "", fallbackSnapshot(), func(string) string { return "" }, func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil }, nil, nil, credentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.validateKey = func(context.Context, Provider, string) error { return nil }
+
+	active, err := s.Connect(context.Background(), "openrouter", "sk-or-new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.ProviderID != "local" || active.Model != "llama" {
+		t.Fatalf("active = %#v, want the local selection untouched", active)
+	}
+	if credential, ok := credentials.Get("openrouter"); !ok || credential.APIKey != "sk-or-new" {
+		t.Fatalf("credential = %#v, ok = %v", credential, ok)
+	}
+}
+
+func TestService_ConnectableListsOnlyOpenRouterWithConnectionState(t *testing.T) {
+	dir := t.TempDir()
+	credentials := NewFileCredentialStore(filepath.Join(dir, "credentials.json"))
+	s, err := Open(filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil }, nil, nil, credentials, openRouterDefaults())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := s.Connectable()
+	if len(got) != 1 || got[0].ID != "openrouter" || got[0].Connected {
+		t.Fatalf("connectable = %#v, want only OpenRouter, not connected", got)
+	}
+	if err := credentials.Put("openrouter", Credential{Type: CredentialTypeAPIKey, APIKey: "sk"}); err != nil {
+		t.Fatal(err)
+	}
+	got = s.Connectable()
+	if len(got) != 1 || !got[0].Connected {
+		t.Fatalf("connectable = %#v, want OpenRouter connected after storing a key", got)
+	}
+}
+
+func TestService_ConnectRejectsUnsupportedProviderAndEmptyKey(t *testing.T) {
+	dir := t.TempDir()
+	credentials := NewFileCredentialStore(filepath.Join(dir, "credentials.json"))
+	s, err := Open(filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil }, nil, nil, credentials, openRouterDefaults())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.validateKey = func(context.Context, Provider, string) error { return nil }
+	if _, err := s.Connect(context.Background(), "openai", "sk-oai"); err == nil {
+		t.Fatal("expected /connect to reject a provider outside the supported set")
+	}
+	if _, err := s.Connect(context.Background(), "openrouter", "   "); err == nil {
+		t.Fatal("expected /connect to reject an empty key")
+	}
+}
+
 func TestService_SelectSaveFailureKeepsPreviousSelection(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "providers.json")
 	if err := os.WriteFile(path, []byte(`{"providers":[{"id":"p","name":"Provider","type":"openai-compatible","base_url":"http://p","models":["one","two"]}],"selected":{"provider":"p","model":"one"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil }, func(string, Config) error { return errors.New("disk full") }, nil)
+	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil }, func(string, Config) error { return errors.New("disk full") }, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

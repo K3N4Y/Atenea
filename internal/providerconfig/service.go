@@ -21,17 +21,21 @@ type ProviderFactory func(def Provider, model, apiKey string) (llm.Provider, err
 type SaveConfig func(path string, cfg Config) error
 
 type Service struct {
-	mu       sync.RWMutex
-	path     string
-	config   Config
-	catalog  *Catalog
-	switcher *llm.SwitchableProvider
-	getenv   func(string) string
-	factory  ProviderFactory
-	save     SaveConfig
+	mu          sync.RWMutex
+	path        string
+	config      Config
+	catalog     *Catalog
+	switcher    *llm.SwitchableProvider
+	getenv      func(string) string
+	factory     ProviderFactory
+	save        SaveConfig
+	credentials CredentialStore
+	// validateKey guards Connect: nil means defaultKeyValidator (real network
+	// check); tests inject their own.
+	validateKey KeyValidator
 }
 
-func Open(path, cachePath string, fallback llm.ProviderSnapshot, getenv func(string) string, factory ProviderFactory, save SaveConfig, list ModelLister, defaults ...Config) (*Service, error) {
+func Open(path, cachePath string, fallback llm.ProviderSnapshot, getenv func(string) string, factory ProviderFactory, save SaveConfig, list ModelLister, credentials CredentialStore, defaults ...Config) (*Service, error) {
 	if getenv == nil {
 		getenv = os.Getenv
 	}
@@ -45,7 +49,7 @@ func Open(path, cachePath string, fallback llm.ProviderSnapshot, getenv func(str
 	if err != nil {
 		return nil, err
 	}
-	s := &Service{path: path, switcher: switcher, getenv: getenv, factory: factory, save: save}
+	s := &Service{path: path, switcher: switcher, getenv: getenv, factory: factory, save: save, credentials: credentials}
 	cfg, loadErr := Load(path)
 	if loadErr != nil {
 		if errors.Is(loadErr, os.ErrNotExist) {
@@ -55,7 +59,7 @@ func Open(path, cachePath string, fallback llm.ProviderSnapshot, getenv func(str
 					return s, fmt.Errorf("validate default provider config: %w", err)
 				}
 				s.config = cfg
-				s.catalog = NewCatalog(cfg, cachePath, getenv, list)
+				s.catalog = NewCatalog(cfg, cachePath, getenv, list, credentials)
 			}
 			return s, nil
 		}
@@ -69,12 +73,12 @@ func Open(path, cachePath string, fallback llm.ProviderSnapshot, getenv func(str
 		cfg = mergeMissingProviders(cfg, defaultConfig)
 	}
 	s.config = cfg
-	s.catalog = NewCatalog(cfg, cachePath, getenv, list)
+	s.catalog = NewCatalog(cfg, cachePath, getenv, list, credentials)
 	provider, ok := findProvider(cfg, cfg.Selected.Provider)
 	if !ok || cfg.Selected.Model == "" {
 		return s, errors.New("provider config has no active selection")
 	}
-	apiKey, err := requiredAPIKey(provider, getenv)
+	apiKey, err := resolveAPIKey(provider, getenv, credentials)
 	if err != nil {
 		return s, err
 	}
@@ -129,11 +133,16 @@ func (s *Service) Select(_ context.Context, providerID, model string) (Active, e
 	if model == "" {
 		return s.Active(), errors.New("model is required")
 	}
+	return s.selectLocked(providerID, model)
+}
+
+// selectLocked applies a provider/model selection; the caller holds s.mu.
+func (s *Service) selectLocked(providerID, model string) (Active, error) {
 	provider, ok := findProvider(s.config, providerID)
 	if !ok {
 		return s.Active(), fmt.Errorf("provider %q is not configured", providerID)
 	}
-	apiKey, err := requiredAPIKey(provider, s.getenv)
+	apiKey, err := resolveAPIKey(provider, s.getenv, s.credentials)
 	if err != nil {
 		return s.Active(), err
 	}
@@ -149,7 +158,7 @@ func (s *Service) Select(_ context.Context, providerID, model string) (Active, e
 	}
 	s.switcher.Swap(snapshot(provider, model, delegate))
 	s.config = next
-	s.catalog = NewCatalog(next, s.catalogPath(), s.getenv, s.catalogLister())
+	s.catalog = NewCatalog(next, s.catalogPath(), s.getenv, s.catalogLister(), s.credentials)
 	return s.Active(), nil
 }
 func (s *Service) catalogLister() ModelLister {
@@ -176,15 +185,36 @@ func findProvider(cfg Config, id string) (Provider, bool) {
 func snapshot(provider Provider, model string, delegate llm.Provider) llm.ProviderSnapshot {
 	return llm.ProviderSnapshot{ProviderID: provider.ID, ProviderName: provider.Name, BaseURL: provider.BaseURL, Model: model, Provider: delegate}
 }
-func requiredAPIKey(provider Provider, getenv func(string) string) (string, error) {
+
+// apiKeyFor resolves a provider's API key without judging absence: the
+// environment override wins, then the stored credential from /connect. Empty
+// means "no key" — fine for keyless local endpoints and for catalog listing.
+func apiKeyFor(provider Provider, getenv func(string) string, credentials CredentialStore) string {
+	if provider.APIKeyEnv == "" {
+		return ""
+	}
+	if value := getenv(provider.APIKeyEnv); value != "" {
+		return value
+	}
+	if credentials != nil {
+		if credential, ok := credentials.Get(provider.ID); ok && credential.Type == CredentialTypeAPIKey {
+			return credential.APIKey
+		}
+	}
+	return ""
+}
+
+// resolveAPIKey is apiKeyFor for providers that require a key: a provider
+// without APIKeyEnv gets a placeholder (local endpoints ignore it), and a
+// missing key is an error that names both ways to supply one.
+func resolveAPIKey(provider Provider, getenv func(string) string, credentials CredentialStore) (string, error) {
 	if provider.APIKeyEnv == "" {
 		return "atenea-keyless-provider", nil
 	}
-	value := getenv(provider.APIKeyEnv)
-	if value == "" {
-		return "", fmt.Errorf("required API key environment variable %s is not set", provider.APIKeyEnv)
+	if value := apiKeyFor(provider, getenv, credentials); value != "" {
+		return value, nil
 	}
-	return value, nil
+	return "", fmt.Errorf("no API key for provider %q: set %s or run /connect", provider.ID, provider.APIKeyEnv)
 }
 func defaultProviderFactory(def Provider, model, apiKey string) (llm.Provider, error) {
 	opts := []llm.Option{llm.WithoutOpenRouterReasoning()}

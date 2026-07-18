@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-14
+updated_at: 2026-07-18
 summary: Design specification for selecting and persisting OpenAI-compatible providers, endpoints, and models from the TUI.
 ---
 
@@ -141,8 +141,11 @@ must never rewrite provider definitions supplied by the user.
   that provider invalid; they do not silently change semantics.
 - `base_url`: required absolute HTTP or HTTPS URL. Atenea normalizes trailing
   slashes before constructing `/models` and provider requests.
-- `api_key_env`: optional environment-variable name. The secret value is read
-  from the process environment only when needed and is never persisted.
+- `api_key_env`: optional environment-variable name. The secret value is
+  resolved only when needed and never enters `providers.json`. Resolution
+  precedence: the process environment wins, then the credential stored by
+  `/connect` in `credentials.json` (see the connect-command spec,
+  `2026-07-18-connect-command.md`).
 - `openrouter_reasoning`: optional boolean, false by default. When true, Atenea
   enables the OpenRouter-specific top-level `reasoning` request extension. It
   is explicit rather than inferred from the provider ID or endpoint.

@@ -73,37 +73,13 @@ func Save(path string, cfg Config) error {
 	if err := normalizeAndValidate(&cfg); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("create config directory: %w", err)
-	}
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode provider config: %w", err)
 	}
 	b = append(b, '\n')
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".providers-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create temporary config: %w", err)
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(b); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("replace provider config: %w", err)
+	if err := writeFileAtomic(path, b); err != nil {
+		return fmt.Errorf("save provider config: %w", err)
 	}
 	return nil
 }

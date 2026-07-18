@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -33,16 +32,17 @@ type Cache struct {
 type ModelLister func(context.Context, string, string) ([]string, error)
 
 type Catalog struct {
-	mu        sync.RWMutex
-	config    Config
-	cachePath string
-	cache     Cache
-	cached    map[string][]string
-	remote    map[string][]string
-	getenv    func(string) string
-	list      ModelLister
-	refreshMu sync.Mutex
-	inflight  *catalogRefresh
+	mu          sync.RWMutex
+	config      Config
+	cachePath   string
+	cache       Cache
+	cached      map[string][]string
+	remote      map[string][]string
+	getenv      func(string) string
+	credentials CredentialStore
+	list        ModelLister
+	refreshMu   sync.Mutex
+	inflight    *catalogRefresh
 }
 
 type catalogRefresh struct {
@@ -51,14 +51,14 @@ type catalogRefresh struct {
 	err       error
 }
 
-func NewCatalog(cfg Config, cachePath string, getenv func(string) string, list ModelLister) *Catalog {
+func NewCatalog(cfg Config, cachePath string, getenv func(string) string, list ModelLister, credentials CredentialStore) *Catalog {
 	if getenv == nil {
 		getenv = os.Getenv
 	}
 	if list == nil {
 		list = llm.ListModels
 	}
-	c := &Catalog{config: cfg, cachePath: cachePath, cached: map[string][]string{}, remote: map[string][]string{}, getenv: getenv, list: list}
+	c := &Catalog{config: cfg, cachePath: cachePath, cached: map[string][]string{}, remote: map[string][]string{}, getenv: getenv, credentials: credentials, list: list}
 	if cachePath != "" {
 		if data, err := os.ReadFile(cachePath); err == nil && json.Unmarshal(data, &c.cache) == nil {
 			for _, entry := range c.cache.Providers {
@@ -139,7 +139,7 @@ func (c *Catalog) refresh(ctx context.Context) ([]ProviderModels, error) {
 		if provider.DisableModelDiscovery {
 			continue
 		}
-		models, err := c.list(ctx, provider.BaseURL, c.getenv(provider.APIKeyEnv))
+		models, err := c.list(ctx, provider.BaseURL, apiKeyFor(provider, c.getenv, c.credentials))
 		if err != nil {
 			warnings = append(warnings, fmt.Errorf("refresh %s: %w", provider.ID, err))
 			c.mu.RLock()
@@ -190,25 +190,5 @@ func saveCache(path string, cache Cache) error {
 		return err
 	}
 	data = append(data, '\n')
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".models-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, path)
+	return writeFileAtomic(path, data)
 }
