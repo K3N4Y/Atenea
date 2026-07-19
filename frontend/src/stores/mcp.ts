@@ -65,7 +65,9 @@ export const useMcpStore = defineStore('mcp', () => {
   async function refresh() {
     try {
       await migrateLegacyConfigs()
-      list.value = await ListMCPs()
+      // ListMCPs always names its servers; the generated type marks `name`
+      // optional only because of Go's `omitempty` tag. Assert the invariant.
+      list.value = (await ListMCPs()) as MCPServer[]
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)
     }

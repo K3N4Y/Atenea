@@ -93,7 +93,7 @@ export namespace main {
 export namespace mcpclient {
 	
 	export class ServerConfig {
-	    name: string;
+	    name?: string;
 	    command: string;
 	    args: string[];
 	    env?: Record<string, string>;
@@ -113,7 +113,7 @@ export namespace mcpclient {
 	    }
 	}
 	export class ServerStatus {
-	    name: string;
+	    name?: string;
 	    command: string;
 	    args: string[];
 	    env?: Record<string, string>;
