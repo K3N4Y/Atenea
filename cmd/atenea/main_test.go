@@ -355,20 +355,20 @@ func TestTUI_CtrlJCreatesMultilineComposerUnderPTY(t *testing.T) {
 	defer stopPTYProcess(cmd, terminal)
 	waitForPTYText(t, output, " demo ─╯")
 
-	if _, err := terminal.Write([]byte("primera linea")); err != nil {
-		t.Fatal(err)
-	}
-	waitForPTYText(t, output, "❯ primera linea")
 	before := output.String()
-	if _, err := terminal.Write([]byte("\x0asegunda linea")); err != nil {
+	if _, err := terminal.Write([]byte("primera linea\x0asegunda linea\x0atercera linea\x0acuarta linea")); err != nil {
 		t.Fatal(err)
 	}
 	latest := ansi.Strip(waitForStablePTYOutputAfter(t, output, before))
-	if !strings.Contains(latest, "segunda linea") {
-		t.Fatalf("Ctrl+J debe crear una segunda fila visible del composer; salida PTY:\n%s", latest)
+	for _, line := range []string{"primera linea", "segunda linea", "tercera linea", "cuarta linea"} {
+		if !strings.Contains(latest, line) {
+			t.Fatalf("Ctrl+J debe mantener visible %q al crecer a cuatro filas; salida PTY:\n%s", line, latest)
+		}
 	}
-	if strings.Contains(latest, "❯ segunda linea") {
-		t.Fatalf("la segunda fila del composer no debe repetir el prompt; salida PTY:\n%s", latest)
+	for _, line := range []string{"segunda linea", "tercera linea", "cuarta linea"} {
+		if strings.Contains(latest, "❯ "+line) {
+			t.Fatalf("las filas posteriores del composer no deben repetir el prompt antes de %q; salida PTY:\n%s", line, latest)
+		}
 	}
 }
 

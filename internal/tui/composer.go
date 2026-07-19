@@ -95,7 +95,14 @@ func (input *composerInput) resize() {
 			probe.CursorDown()
 		}
 	}
-	input.SetHeight(min(max(lines, 1), composerMaxLines))
+	height := min(max(lines, 1), composerMaxLines)
+	if height == input.Height() {
+		return
+	}
+	value, position := input.Value(), input.Position()
+	input.SetHeight(height)
+	input.Model.SetValue(value)
+	input.SetCursor(position)
 }
 
 func (input *composerInput) SetWidth(width int) {
