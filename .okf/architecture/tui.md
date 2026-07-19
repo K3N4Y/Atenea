@@ -136,7 +136,13 @@ atenea-tui: agent.Service -> runner -> EmittingStore -> Bus -> chan tea.Msg     
 User prompts render as full-width `#242424` transcript blocks inset two cells
 from the chat edges. Each block has one blank row of vertical padding and three
 cells of inner horizontal padding; its content starts with a faint `❯` marker
-and normal-weight text. The TUI does not render message timestamps.
+and normal-weight text. Wrapped and explicit multiline messages keep the marker
+only on the first visual row and align continuation rows under the text. The TUI
+does not render message timestamps.
+
+The composer follows the same marker alignment and grows from the textarea's
+visual wrapped row count, up to five rows, so narrow or `Ctrl+J` input remains
+visible until scrolling begins.
 
 ### Activity rail
 

@@ -146,7 +146,20 @@ func (e entry) render(width int) string {
 		if width > 2*composerOuterMargin {
 			style = style.Width(width - 2*composerOuterMargin)
 		}
-		return lipgloss.NewStyle().Margin(0, composerOuterMargin).Render(style.Render(userMarkerStyle.Render("❯ ") + userTextStyle.Render(sanitizeTerminalText(e.text))))
+		text := sanitizeTerminalText(e.text)
+		if width > 2*composerOuterMargin {
+			contentWidth := max(width-2*composerOuterMargin-userMessageStyle.GetHorizontalFrameSize(), 1)
+			text = ansi.Wrap(text, max(contentWidth-ansi.StringWidth(inputPrompt), 1), "")
+		}
+		lines := strings.Split(text, "\n")
+		for index, line := range lines {
+			prompt := strings.Repeat(" ", ansi.StringWidth(inputPrompt))
+			if index == 0 {
+				prompt = userMarkerStyle.Render(inputPrompt)
+			}
+			lines[index] = prompt + userTextStyle.Render(line)
+		}
+		return lipgloss.NewStyle().Margin(0, composerOuterMargin).Render(style.Render(strings.Join(lines, "\n")))
 	case entryReasoning:
 		return e.renderThinking(width)
 	case entryTool:
@@ -887,6 +900,8 @@ func (m Model) resizeViewport() Model {
 	if m.chatPanelVisible() {
 		contentHeight -= 4
 	}
+	inputHeight := max(contentHeight-(m.reservedLines()-m.input.Height()), 1)
+	m.input.SetHeight(min(m.input.Height(), inputHeight))
 	m.viewport.Height = max(contentHeight-m.reservedLines(), 0)
 	return m.syncViewport()
 }

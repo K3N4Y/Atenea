@@ -363,8 +363,12 @@ func TestTUI_CtrlJCreatesMultilineComposerUnderPTY(t *testing.T) {
 	if _, err := terminal.Write([]byte("\x0asegunda linea")); err != nil {
 		t.Fatal(err)
 	}
-	if latest := waitForStablePTYOutputAfter(t, output, before); !strings.Contains(ansi.Strip(latest), "❯ segunda linea") {
-		t.Fatalf("Ctrl+J debe crear una segunda fila visible del composer; salida PTY:\n%s", ansi.Strip(latest))
+	latest := ansi.Strip(waitForStablePTYOutputAfter(t, output, before))
+	if !strings.Contains(latest, "segunda linea") {
+		t.Fatalf("Ctrl+J debe crear una segunda fila visible del composer; salida PTY:\n%s", latest)
+	}
+	if strings.Contains(latest, "❯ segunda linea") {
+		t.Fatalf("la segunda fila del composer no debe repetir el prompt; salida PTY:\n%s", latest)
 	}
 }
 

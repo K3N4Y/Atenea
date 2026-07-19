@@ -1396,6 +1396,33 @@ func TestModel_UserMessageWrapsInsideReferenceBlock(t *testing.T) {
 	}
 }
 
+func TestModel_UserMessageWrapKeepsMarkerBesideFirstLine(t *testing.T) {
+	for width := 16; width <= 80; width++ {
+		m := NewModel(nil, "s1", nil)
+		m = apply(t, m, tea.WindowSizeMsg{Width: width, Height: 100})
+		m = apply(t, m, EventMsg{Message: &session.Message{
+			ID:   "u1",
+			Role: session.RoleUser,
+			Text: "quiero que hagas commit de los cambios en ingles con\nconventional commit",
+		}})
+
+		plain := ansi.Strip(m.View())
+		markerHasText := false
+		for _, line := range strings.Split(plain, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "❯ ") && trimmed != "❯" {
+				markerHasText = true
+			}
+			if trimmed == "❯" {
+				t.Fatalf("width %d user marker rendered alone on its own row:\n%s", width, plain)
+			}
+		}
+		if !markerHasText {
+			t.Fatalf("width %d user marker must stay beside the first text row:\n%s", width, plain)
+		}
+	}
+}
+
 func TestModel_UserMessageKeepsGrayBackgroundAfterFaintMarker(t *testing.T) {
 	previousProfile := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
@@ -4199,6 +4226,22 @@ func TestModel_ComposerCtrlJInsertsNewlineAndEnterSubmitsMultilinePrompt(t *test
 	}
 }
 
+func TestModel_ComposerMultilineRendersPromptOnlyOnFirstRow(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 32, Height: 12})
+	m = typeRunes(t, m, "primera linea que se envuelve")
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyCtrlJ})
+	m = typeRunes(t, m, "segunda linea")
+
+	plain := ansi.Strip(m.composerBox())
+	if got := strings.Count(plain, "❯"); got != 1 {
+		t.Fatalf("composer prompt count = %d, want 1 across wrapped and explicit multiline rows:\n%s", got, plain)
+	}
+	if line := lineWith(t, plain, "primera linea"); !strings.Contains(line, "❯ primera linea") {
+		t.Fatalf("first composer row = %q, the prompt must stay beside the first text row", line)
+	}
+}
+
 func TestModel_ComposerGrowthStopsAtFiveLines(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 20})
@@ -4503,10 +4546,7 @@ func TestModel_ViewFitsHeightWithBoxModelAndIndicator(t *testing.T) {
 	assertBoxLinesExactWidth(t, view, 40)
 }
 
-func TestModel_LongTypedPromptKeepsBoxSingleLine(t *testing.T) {
-	// TRIANGULATE: un prompt tecleado mas largo que el ancho de la terminal NO
-	// debe envolver la caja a mas lineas: el textinput scrollea horizontal y la
-	// caja se mantiene en 3 lineas (borde, UNA linea de input, borde).
+func TestModel_LongTypedPromptGrowsWithoutOverflowingTerminal(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 24, Height: 10})
 
@@ -4517,7 +4557,7 @@ func TestModel_LongTypedPromptKeepsBoxSingleLine(t *testing.T) {
 		t.Fatalf("View() tiene %d lineas, un prompt largo no debe romper el alto acotado (<= 10)", lines)
 	}
 	if got := strings.Count(view, "❯"); got != 1 {
-		t.Fatalf("View() = %q, el prompt %q debe aparecer exactamente una vez (count=%d): el prompt largo no debe envolver la caja", view, "❯", got)
+		t.Fatalf("View() = %q, el prompt %q debe aparecer exactamente una vez aunque el texto se envuelva (count=%d)", view, "❯", got)
 	}
 	interior := 0
 	for _, line := range strings.Split(view, "\n") {
@@ -4525,8 +4565,8 @@ func TestModel_LongTypedPromptKeepsBoxSingleLine(t *testing.T) {
 			interior++
 		}
 	}
-	if interior != 1 {
-		t.Fatalf("View() = %q, la caja debe seguir siendo de 3 lineas con UNA sola linea interior (lineas │ = %d)", view, interior)
+	if interior != 3 {
+		t.Fatalf("View() = %q, la caja debe crecer a las 3 filas visuales que caben en esta terminal (lineas │ = %d)", view, interior)
 	}
 	assertNoLineWiderThan(t, view, 24)
 	assertBoxLinesExactWidth(t, view, 24)

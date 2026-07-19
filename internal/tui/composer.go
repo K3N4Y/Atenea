@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 const composerMaxLines = 5
@@ -17,7 +18,12 @@ type composerInput struct {
 
 func newComposerInput() composerInput {
 	input := textarea.New()
-	input.Prompt = inputPrompt
+	input.SetPromptFunc(ansi.StringWidth(inputPrompt), func(line int) string {
+		if line == 0 {
+			return inputPrompt
+		}
+		return ""
+	})
 	input.ShowLineNumbers = false
 	input.EndOfBufferCharacter = ' '
 	input.MaxHeight = composerMaxLines
@@ -81,5 +87,18 @@ func (input composerInput) Update(msg tea.Msg) (composerInput, tea.Cmd) {
 }
 
 func (input *composerInput) resize() {
-	input.SetHeight(min(max(input.LineCount(), 1), composerMaxLines))
+	probe := input.Model
+	lines := 0
+	for row := 0; row < probe.LineCount(); row++ {
+		lines += probe.LineInfo().Height
+		for probe.Line() == row && row < probe.LineCount()-1 {
+			probe.CursorDown()
+		}
+	}
+	input.SetHeight(min(max(lines, 1), composerMaxLines))
+}
+
+func (input *composerInput) SetWidth(width int) {
+	input.Model.SetWidth(width)
+	input.resize()
 }
