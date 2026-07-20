@@ -171,20 +171,31 @@ the running header again (the tool proceeds); denial settles it to the neutral
 `– <tool> Denied by user` state. `renderTranscript` and `entryLines` share the
 gating predicate so line numbering — and therefore click targeting — stays in
 lockstep. The panel uses the existing two-cell composer inset and width, a
-`#303030` surface, and a `#3A3A3A` command surface. Its title reuses ANSI green
-`2`; the selected action stays in the terminal foreground and uses bold plus
-the `›` marker, so selection remains legible without implying approval through
-color. Visible copy is English: `Permission required`, the specialized
-`Bash command` label (or a generic `<tool> request`), request origin, working
-directory, `Deny`, and `Allow once`.
+`#303030` surface, and a `#3A3A3A` command surface.
 
-Permissions are processed FIFO. With multiple pending requests the active
-panel shows `1 of N`; a single request omits the redundant `1 of 1`. The panel
-identifies a request surfaced from a child session as `Requested by subagent`, and resolves
-through the event's `SessionID` so a child gate is never answered on the parent
-session. Bash input renders the exact command; other tools fall back to pretty
-JSON. The command wraps to the available width and exposes up to four lines;
-`Up`/`Down` or the mouse wheel over the command scrolls longer input and
+Bash permissions use a dedicated compact presentation modeled after the
+terminal-native permission prompt: a full-width olive-green `Permission
+required` title bar, a command surface containing only `Bash <command>`, and
+the `Deny` / `Allow` buttons. The selected button uses the same green surface
+with dark text; the gap between actions explicitly retains the `#303030` panel
+surface. The `Bash` label uses muted `#999999` text so the command remains the
+primary focus, and `Deny` remains selected by default. Request origin, working
+directory, keyboard help, the queue counter, and the `once` qualifier are not
+rendered for Bash. This is presentation-only: approval still applies to the
+single pending execution.
+
+Other tools retain the detailed generic panel: ANSI-green title text, the
+`<tool> request` label, request origin, working directory, queue count, help,
+and `Deny` / `Allow once` actions with the `›` selection marker.
+
+Permissions are processed FIFO. The detailed generic panel shows `1 of N` for
+multiple pending requests and omits the redundant `1 of 1`; the compact Bash
+panel intentionally omits the counter. The generic panel identifies a request
+surfaced from a child session as `Requested by subagent`, and every panel
+resolves through the event's `SessionID` so a child gate is never answered on
+the parent session. Bash input renders the exact command; other tools fall back
+to pretty JSON. The command wraps to the available width and exposes up to four
+lines; `Up`/`Down` or the mouse wheel over the command scrolls longer input and
 `↓ more` marks hidden rows.
 
 `Deny` is selected by default. `Left`/`Right` or `Tab` selects an action,

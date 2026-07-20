@@ -13,6 +13,7 @@ import (
 const (
 	permissionPanelBackground    = "#303030"
 	permissionCommandBackground  = "#3A3A3A"
+	permissionActiveBackground   = "#B1B86B"
 	permissionPanelMaxHeight     = 9
 	permissionPanelFallbackWidth = 48
 )
@@ -22,6 +23,10 @@ var (
 	permissionCommandStyle   = lipgloss.NewStyle().Background(lipgloss.Color(permissionCommandBackground))
 	permissionAccentStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
 	permissionSelectionStyle = lipgloss.NewStyle().Bold(true)
+	permissionTitleStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(canvasBackground)).Background(lipgloss.Color(permissionActiveBackground))
+	permissionButtonStyle    = lipgloss.NewStyle().Background(lipgloss.Color(permissionCommandBackground)).Padding(0, 1)
+	permissionActiveStyle    = permissionButtonStyle.Bold(true).Foreground(lipgloss.Color(canvasBackground)).Background(lipgloss.Color(permissionActiveBackground))
+	permissionBashLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#999999")).Background(lipgloss.Color(permissionCommandBackground))
 )
 
 type permissionPanelLayout struct {
@@ -130,6 +135,9 @@ type permissionPanelMetadata struct {
 func (m Model) permissionPanelLines(permission entry, width, height int) ([]string, permissionPanelMetadata) {
 	if width <= 0 || height <= 0 {
 		return nil, permissionPanelMetadata{}
+	}
+	if strings.EqualFold(permission.tool, "bash") {
+		return m.bashPermissionPanelLines(permission, width, height)
 	}
 	if height == 1 {
 		line := "› Deny    Allow once"
@@ -240,6 +248,122 @@ func (m Model) permissionPanelLines(permission entry, width, height int) ([]stri
 		}
 	}
 	return lines, metadata
+}
+
+func (m Model) bashPermissionPanelLines(permission entry, width, height int) ([]string, permissionPanelMetadata) {
+	metadata := permissionPanelMetadata{commandStart: -1, commandEnd: -1}
+	if height == 1 {
+		denyStyle, allowStyle := permissionButtonStyle, permissionButtonStyle
+		if m.permissionChoice == permissionDeny {
+			denyStyle = permissionActiveStyle
+		} else {
+			allowStyle = permissionActiveStyle
+		}
+		line := denyStyle.Render("Deny") + permissionPanelStyle.Render("    ") + allowStyle.Render("Allow")
+		metadata.actionY = 0
+		metadata.denyEnd = min(len(" Deny "), width)
+		metadata.allowStart = min(len(" Deny     "), width)
+		metadata.allowEnd = min(len(" Deny     Allow "), width)
+		return []string{permissionPanelStyle.Width(width).Render(line)}, metadata
+	}
+
+	plainLines := []string{"Permission required"}
+	lineKinds := []int{0}
+	showSpacing := height >= 5
+	if showSpacing {
+		plainLines = append(plainLines, "")
+		lineKinds = append(lineKinds, 3)
+	}
+	fixedAfterCommand := 1
+	if showSpacing {
+		fixedAfterCommand++
+	}
+	commandSlots := height - len(plainLines) - fixedAfterCommand
+	if commandSlots > 0 {
+		commandLines := bashPermissionInputLines(permission, width)
+		visible := min(commandSlots, 4, len(commandLines))
+		maxScroll := max(len(commandLines)-visible, 0)
+		scroll := min(max(m.permissionScroll, 0), maxScroll)
+		metadata.commandStart = len(plainLines)
+		for _, line := range commandLines[scroll : scroll+visible] {
+			plainLines = append(plainLines, line)
+			lineKinds = append(lineKinds, 1)
+		}
+		metadata.commandEnd = len(plainLines)
+		if scroll+visible < len(commandLines) && visible > 0 {
+			last := len(plainLines) - 1
+			plainLines[last] = ansi.Truncate(plainLines[last], max(width-len(" ↓ more"), 0), "") + " ↓ more"
+		}
+	}
+	if showSpacing {
+		plainLines = append(plainLines, "")
+		lineKinds = append(lineKinds, 3)
+	}
+
+	deny := "Deny"
+	allow := "Allow"
+	metadata.actionY = len(plainLines)
+	metadata.denyEnd = len(" Deny ")
+	metadata.allowStart = len(" Deny ") + 4
+	metadata.allowEnd = metadata.allowStart + len(" Allow ")
+	plainLines = append(plainLines, deny+"    "+allow)
+	lineKinds = append(lineKinds, 2)
+
+	lines := make([]string, len(plainLines))
+	for index, line := range plainLines {
+		line = ansi.Truncate(sanitizeTerminalText(line), width, "")
+		switch lineKinds[index] {
+		case 1:
+			lines[index] = renderBashPermissionCommandLine(line, width)
+		case 2:
+			denyStyle, allowStyle := permissionButtonStyle, permissionButtonStyle
+			if m.permissionChoice == permissionDeny {
+				denyStyle = permissionActiveStyle
+			} else {
+				allowStyle = permissionActiveStyle
+			}
+			styled := denyStyle.Render(deny) + permissionPanelStyle.Render("    ") + allowStyle.Render(allow)
+			lines[index] = permissionPanelStyle.Width(width).Render(styled)
+		case 3:
+			lines[index] = permissionPanelStyle.Width(width).Render("")
+		default:
+			lines[index] = permissionTitleStyle.Width(width).Render(line)
+		}
+	}
+	return lines, metadata
+}
+
+func renderBashPermissionCommandLine(line string, width int) string {
+	const prefix = " Bash "
+	if !strings.HasPrefix(line, prefix) {
+		return permissionCommandStyle.Width(width).Render(line)
+	}
+	rest := strings.TrimPrefix(line, prefix)
+	styled := permissionCommandStyle.Render(" ") +
+		permissionBashLabelStyle.Render("Bash") +
+		permissionCommandStyle.Render(" "+rest)
+	remaining := max(width-ansi.StringWidth(styled), 0)
+	return styled + permissionCommandStyle.Render(strings.Repeat(" ", remaining))
+}
+
+func bashPermissionInputLines(permission entry, width int) []string {
+	const prefix = " Bash "
+	text := sanitizeTerminalText(permissionInputText(permission))
+	if text == "" {
+		text = "No input provided"
+	}
+	if width > 0 {
+		text = ansi.Wrap(text, max(width-len(prefix), 1), "")
+	}
+	lines := strings.Split(text, "\n")
+	for index := range lines {
+		if index == 0 {
+			lines[index] = prefix + lines[index]
+		} else {
+			lines[index] = strings.Repeat(" ", len(prefix)) + lines[index]
+		}
+	}
+	return lines
 }
 
 func permissionToolLabel(tool string) string {

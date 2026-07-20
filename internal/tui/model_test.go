@@ -2203,7 +2203,7 @@ func TestModel_ShowsPendingPermissionAndClearsOnOutcome(t *testing.T) {
 			t.Fatalf("solicitud pendiente = %q, debe contener %q (marcador ?, ToolName y resumen del Input)", permLine, want)
 		}
 	}
-	if view := ansi.Strip(view); !strings.Contains(view, "Permission required") || !strings.Contains(view, "› Deny") {
+	if view := ansi.Strip(view); !strings.Contains(view, "Permission required") || !strings.Contains(view, "Deny") || !strings.Contains(view, "Allow") {
 		t.Fatalf("View() = %q, el panel inline debe contener titulo y acciones", view)
 	}
 	if callID, ok := m.PendingPermission(); !ok || callID != "c1" {
@@ -2991,12 +2991,19 @@ func TestModel_PermissionPanelRendersInlineAboveComposer(t *testing.T) {
 
 	view := ansi.Strip(m.View())
 	for _, want := range []string{
-		"Permission required", "Bash command", "Requested by main agent",
-		"Working directory  ~/dev/atenea", "› Deny", "Allow once",
-		"←/→ select · ↑/↓ scroll · enter confirm · esc deny", "draft stays here",
+		"Permission required", "Bash printf 'one\\ntwo\\nthree\\nfour\\nfive'",
+		"Deny", "Allow", "draft stays here",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("View() = %q, want %q", view, want)
+		}
+	}
+	for _, unwanted := range []string{
+		"Bash command", "Requested by", "Working directory", "Allow once",
+		"←/→ select", "›",
+	} {
+		if strings.Contains(view, unwanted) {
+			t.Fatalf("View() = %q, Bash permission panel must hide %q", view, unwanted)
 		}
 	}
 	if strings.Contains(view, "1 of 1") {
@@ -3004,6 +3011,15 @@ func TestModel_PermissionPanelRendersInlineAboveComposer(t *testing.T) {
 	}
 	if strings.Index(view, "Permission required") > strings.Index(view, "draft stays here") {
 		t.Fatalf("View() = %q, permission panel must render above composer", view)
+	}
+	lines := strings.Split(view, "\n")
+	titleIndex := slices.IndexFunc(lines, func(line string) bool { return strings.Contains(line, "Permission required") })
+	if titleIndex < 0 || titleIndex+4 >= len(lines) ||
+		strings.TrimSpace(lines[titleIndex+1]) != "" ||
+		!strings.Contains(lines[titleIndex+2], "Bash printf") ||
+		strings.TrimSpace(lines[titleIndex+3]) != "" ||
+		!strings.Contains(lines[titleIndex+4], "Deny") {
+		t.Fatalf("View() = %q, Bash panel must space title, command, and actions like the reference", view)
 	}
 	if m.input.Focused() {
 		t.Fatal("composer must be blurred while permission is pending")
@@ -3024,31 +3040,36 @@ func TestModel_PermissionPanelReusesToolCallInputWhenRequestOmitsIt(t *testing.T
 	}
 }
 
-func TestPermissionPanelSelectionIsNotGreenAndSurfacesHaveVisibleBackgrounds(t *testing.T) {
+func TestModel_BashPermissionPanelUsesGreenBackgroundForActiveAction(t *testing.T) {
 	previousProfile := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	t.Cleanup(func() { lipgloss.SetColorProfile(previousProfile) })
 	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"ls"}`)})
-	panel := m.permissionPanelView()
-	actionLine := lineWith(t, panel, "Deny")
-	if strings.Contains(actionLine, permissionAccentStyle.Render("› Deny")) {
-		t.Fatalf("selected action must not reuse the green title style: %q", actionLine)
+	activeBackground := "48;2;177;184;107m"
+	titleLine := lineWith(t, m.permissionPanelView(), "Permission required")
+	if !strings.Contains(titleLine, activeBackground) {
+		t.Fatalf("title line = %q, Bash permission title must use the green bar", titleLine)
 	}
-	for _, background := range []string{"\x1b[48;2;48;48;48m", "\x1b[48;2;58;58;58m"} {
-		if !strings.Contains(panel, background) {
-			t.Fatalf("permission panel must render visible background %q: %q", background, panel)
-		}
+	actionLine := lineWith(t, m.permissionPanelView(), "Deny")
+	if backgroundIndex, denyIndex := strings.Index(actionLine, activeBackground), strings.Index(actionLine, "Deny"); backgroundIndex < 0 || backgroundIndex > denyIndex {
+		t.Fatalf("action line = %q, Deny must start active with the green background", actionLine)
 	}
-	if got := fmt.Sprint(permissionPanelStyle.GetBackground()); got != permissionPanelBackground {
-		t.Fatalf("permission panel background = %q, want %q", got, permissionPanelBackground)
+	denyIndex := strings.Index(actionLine, "Deny")
+	allowIndex := strings.Index(actionLine, "Allow")
+	if denyIndex < 0 || allowIndex < 0 || !strings.Contains(actionLine[denyIndex+len("Deny"):allowIndex], "48;2;48;48;48m") {
+		t.Fatalf("action line = %q, the gap between actions must keep the panel background", actionLine)
 	}
-	if got := fmt.Sprint(permissionCommandStyle.GetBackground()); got != permissionCommandBackground {
-		t.Fatalf("permission command background = %q, want %q", got, permissionCommandBackground)
+	commandLine := lineWith(t, m.permissionPanelView(), "Bash")
+	if labelColorIndex, bashIndex := strings.Index(commandLine, "38;2;153;153;153;"), strings.Index(commandLine, "Bash"); labelColorIndex < 0 || labelColorIndex > bashIndex {
+		t.Fatalf("command line = %q, Bash label must use #999999", commandLine)
 	}
-	if permissionPanelBackground == canvasBackground || permissionPanelBackground == userMessageBackground {
-		t.Fatalf("permission panel background %q must be visibly distinct from canvas %q and transcript surface %q", permissionPanelBackground, canvasBackground, userMessageBackground)
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRight})
+	actionLine = lineWith(t, m.permissionPanelView(), "Allow")
+	if backgroundIndex, denyIndex := strings.Index(actionLine, activeBackground), strings.Index(actionLine, "Deny"); backgroundIndex < 0 || backgroundIndex < denyIndex {
+		t.Fatalf("action line = %q, Right must move the green active background to Allow", actionLine)
 	}
 }
 
@@ -3060,7 +3081,7 @@ func TestModel_PermissionPanelQueuesFIFOAndShowsOrigin(t *testing.T) {
 	m = apply(t, m, EventMsg{SessionID: "child-1", Kind: session.KindToolPermissionRequested, CallID: "second", ToolName: "write", Input: json.RawMessage(`{"path":"a.go"}`)})
 
 	view := ansi.Strip(m.View())
-	if !strings.Contains(view, "1 of 2") || !strings.Contains(view, "echo first") || strings.Contains(view, "Requested by subagent") {
+	if !strings.Contains(view, "Bash echo first") || strings.Contains(view, "1 of 2") || strings.Contains(view, "Requested by") {
 		t.Fatalf("View() = %q, first queued permission must be shown first", view)
 	}
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
@@ -3080,24 +3101,24 @@ func TestModel_PermissionPanelKeyboardNavigationAndEscape(t *testing.T) {
 	m = apply(t, m, tea.WindowSizeMsg{Width: 64, Height: 18})
 	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"echo ok"}`)})
 
-	if got := ansi.Strip(m.View()); !strings.Contains(got, "› Deny") {
-		t.Fatalf("View() = %q, Deny must be selected by default", got)
-	}
-	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRight})
-	if got := ansi.Strip(m.View()); !strings.Contains(got, "› Allow once") {
-		t.Fatalf("View() = %q, Right must select Allow once", got)
-	}
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if len(fake.resolved) != 1 || !fake.resolved[0].approved {
-		t.Fatalf("resolved = %+v, Enter on Allow once must approve", fake.resolved)
+	if len(fake.resolved) != 1 || fake.resolved[0].approved {
+		t.Fatalf("resolved = %+v, Enter must deny the default action", fake.resolved)
+	}
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c2", ToolName: "bash", Input: json.RawMessage(`{"command":"echo ok"}`)})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRight})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(fake.resolved) != 2 || !fake.resolved[1].approved {
+		t.Fatalf("resolved = %+v, Right then Enter must approve", fake.resolved)
 	}
 	if got := m.input.Value(); got != "preserved draft" {
 		t.Fatalf("input.Value() = %q, want preserved draft", got)
 	}
 
-	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c2", ToolName: "bash", Input: json.RawMessage(`{"command":"echo no"}`)})
+	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c3", ToolName: "bash", Input: json.RawMessage(`{"command":"echo no"}`)})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
-	if len(fake.resolved) != 2 || fake.resolved[1].approved {
+	if len(fake.resolved) != 3 || fake.resolved[2].approved {
 		t.Fatalf("resolved = %+v, Esc must deny immediately", fake.resolved)
 	}
 }
@@ -3178,7 +3199,7 @@ func TestModel_PermissionPanelFitsTinyTerminal(t *testing.T) {
 		}
 	}
 	plain := ansi.Strip(view)
-	if !strings.Contains(plain, "Permission required") || !strings.Contains(plain, "› Deny") {
+	if !strings.Contains(plain, "Permission required") || !strings.Contains(plain, "Deny") || !strings.Contains(plain, "Allow") {
 		t.Fatalf("View() = %q, tiny terminal must preserve title and actions", plain)
 	}
 }
