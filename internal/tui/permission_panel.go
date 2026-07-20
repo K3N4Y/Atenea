@@ -8,25 +8,24 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+
+	"atenea/internal/tui/theme"
 )
 
 const (
-	permissionPanelBackground    = "#303030"
-	permissionCommandBackground  = "#3A3A3A"
-	permissionActiveBackground   = "#B1B86B"
 	permissionPanelMaxHeight     = 9
 	permissionPanelFallbackWidth = 48
 )
 
 var (
-	permissionPanelStyle     = lipgloss.NewStyle().Background(lipgloss.Color(permissionPanelBackground))
-	permissionCommandStyle   = lipgloss.NewStyle().Background(lipgloss.Color(permissionCommandBackground))
-	permissionAccentStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
+	permissionPanelStyle     = lipgloss.NewStyle().Background(lipgloss.Color(theme.PermissionPanel))
+	permissionCommandStyle   = lipgloss.NewStyle().Background(lipgloss.Color(theme.PermissionCommand))
+	permissionAccentStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(theme.Success))
 	permissionSelectionStyle = lipgloss.NewStyle().Bold(true)
-	permissionTitleStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(canvasBackground)).Background(lipgloss.Color(permissionActiveBackground))
-	permissionButtonStyle    = lipgloss.NewStyle().Background(lipgloss.Color(permissionCommandBackground)).Padding(0, 1)
-	permissionActiveStyle    = permissionButtonStyle.Bold(true).Foreground(lipgloss.Color(canvasBackground)).Background(lipgloss.Color(permissionActiveBackground))
-	permissionBashLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#999999")).Background(lipgloss.Color(permissionCommandBackground))
+	permissionTitleStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Canvas)).Background(lipgloss.Color(theme.PermissionActive))
+	permissionButtonStyle    = lipgloss.NewStyle().Background(lipgloss.Color(theme.PermissionCommand)).Padding(0, 1)
+	permissionActiveStyle    = permissionButtonStyle.Bold(true).Foreground(lipgloss.Color(theme.Canvas)).Background(lipgloss.Color(theme.PermissionActive))
+	permissionBashLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted)).Background(lipgloss.Color(theme.PermissionCommand))
 )
 
 type permissionPanelLayout struct {

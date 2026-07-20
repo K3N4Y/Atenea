@@ -1,7 +1,7 @@
 // atenea es la interfaz de terminal (estilo Claude Code) del agente atenea.
 // Es la frontera delgada equivalente al main.go de Wails: arma el provider desde
-// el entorno, ensambla el Engine headless (internal/tui) anclado al cwd y corre
-// el programa Bubble Tea. La logica testeable vive en internal/tui.
+// el entorno, ensambla el Engine headless (internal/tui/engine) anclado al cwd y
+// corre el programa Bubble Tea. La logica testeable vive en internal/tui.
 package main
 
 import (
@@ -23,6 +23,7 @@ import (
 	"atenea/internal/providerconfig"
 	"atenea/internal/session"
 	"atenea/internal/tui"
+	"atenea/internal/tui/engine"
 )
 
 const (
@@ -81,29 +82,29 @@ func run() error {
 	}
 	active := providerService.Active()
 
-	engine := tui.NewEngine(tui.EngineConfig{
+	eng := engine.New(engine.Config{
 		Root:        root,
 		Provider:    providerService.Provider(),
 		Store:       store,
 		Models:      providerService,
 		Checkpoints: checkpoint.NewGitStore(session.DefaultCheckpointPath()),
 	})
-	history, err := engine.PromptHistory()
+	history, err := eng.PromptHistory()
 	if err != nil {
 		log.Printf("atenea: no se pudo cargar el historial del composer: %v", err)
 	}
 
 	// Every launch starts a fresh conversation: no transcript from previous
 	// runs on screen. Older sessions of this workspace stay one /resume away.
-	sessionID := engine.NewSessionID()
+	sessionID := eng.NewSessionID()
 
 	// El autocompletado del composer sale del engine: los slash-commands de las
 	// skills para el menu "/" y el listado del workspace para el @-menu.
-	m := tui.NewModel(engine, sessionID, engine.Events()).
+	m := tui.NewModel(eng, sessionID, eng.Events()).
 		WithHistory(history).
 		WithStatus("build", active.Model).
 		WithWorkspaceRoot(gitBranch(root), displayDir(root), root).
-		WithCompletions(engine.Commands(), engine.ProjectFiles).
+		WithCompletions(eng.Commands(), eng.ProjectFiles).
 		WithFileReader(tui.WorkspaceFileReader(root))
 	// Starting on demo means there is no key anywhere (neither environment nor
 	// stored credential): say so, and say how to get out of it, instead of
@@ -115,7 +116,7 @@ func run() error {
 	// reporta la rueda a la app (en pantalla alternativa la traduce a flechas
 	// via "alternate scroll"); con la opcion llegan eventos de mouse reales.
 	_, runErr := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithReportFocus()).Run()
-	shutdownErr := engine.Shutdown(context.Background())
+	shutdownErr := eng.Shutdown(context.Background())
 	var closeErr error
 	if closer != nil {
 		closeErr = closer.Close()

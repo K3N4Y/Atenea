@@ -10,6 +10,7 @@ import (
 
 	"atenea/internal/llm"
 	"atenea/internal/providerconfig"
+	"atenea/internal/tui/theme"
 )
 
 var modelPrices = map[string]string{
@@ -35,6 +36,17 @@ type modelPicker struct {
 	modelsFocused    bool
 	active           providerconfig.Active
 	err              string
+}
+
+// cloneProviderModels deep-copies the catalog before the picker keeps it, so
+// selection bookkeeping never mutates the slice the model service still owns.
+func cloneProviderModels(in []providerconfig.ProviderModels) []providerconfig.ProviderModels {
+	out := make([]providerconfig.ProviderModels, len(in))
+	for i, provider := range in {
+		out[i] = provider
+		out[i].Models = append([]string(nil), provider.Models...)
+	}
+	return out
 }
 
 func newModelPicker(providers []providerconfig.ProviderModels, active providerconfig.Active) modelPicker {
@@ -237,7 +249,7 @@ func (m Model) modelPickerView() string {
 
 	panelStyle := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("8")).
+		BorderForeground(lipgloss.Color(theme.Border)).
 		Width(innerWidth)
 	if layout.innerHeight > 0 {
 		panelStyle = panelStyle.Height(layout.innerHeight)
@@ -396,7 +408,7 @@ func pickerPanelTitle(panel, title string) string {
 	}
 	width := ansi.StringWidth(lines[0])
 	remaining := max(width-ansi.StringWidth(title)-5, 0)
-	border := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	border := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Border))
 	lines[0] = border.Render("┌─ ") + accentStyle.Render(title) + border.Render(" "+strings.Repeat("─", remaining)+"┐")
 	return strings.Join(lines, "\n")
 }

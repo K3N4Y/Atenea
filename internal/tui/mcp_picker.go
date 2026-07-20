@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"atenea/internal/mcpclient"
+	"atenea/internal/tui/theme"
 )
 
 // mcpAgent is the engine surface the picker needs. Connect/Disconnect block
@@ -228,7 +229,7 @@ func (m Model) mcpPickerView() string {
 
 	panelStyle := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("8")).
+		BorderForeground(lipgloss.Color(theme.Border)).
 		Width(innerWidth)
 	if layout.innerHeight > 0 {
 		panelStyle = panelStyle.Height(layout.innerHeight)

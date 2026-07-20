@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"atenea/internal/llm"
+	"atenea/internal/tui/theme"
 )
 
 // topBarMargin es el margen vertical (en filas) sobre y bajo la barra. Es 1, no
@@ -29,7 +30,7 @@ const branchGlyph = ""
 
 // branchStyle pinta la rama git en verde; el directorio y la etiqueta de
 // contexto reutilizan statusStyle (tenue, definido en view.go).
-var branchStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+var branchStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Success))
 
 // bodyHeight es el espacio vertical del cuerpo (chat/arbol/visor): el alto de
 // la terminal menos el chrome de la barra superior. La barra es chrome fijo por

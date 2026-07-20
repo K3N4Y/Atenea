@@ -19,6 +19,7 @@ import (
 
 	"atenea/internal/llm"
 	"atenea/internal/session"
+	"atenea/internal/tui/theme"
 )
 
 // composerBoxBorderWidth es el ancho que los dos bordes laterales de la caja
@@ -38,10 +39,6 @@ const composerOuterMargin = 2
 // inputCursorWidth es la celda extra que bubbles/textarea reserva para el
 // cursor cuando tiene Width fijado.
 const inputCursorWidth = 1
-
-const canvasBackground = "#141414"
-
-const userMessageBackground = "#242424"
 
 // inputPrompt es el caracter de prompt de la linea de input; el historial usa
 // el mismo glifo dentro de un bloque gris para distinguir ambos contextos.
@@ -102,23 +99,23 @@ const toolDiffPreviewLines = 16
 // ningun assert busca substrings contiguos), asi el contenido plano que fijan
 // los tests nunca se parte con codigos ANSI.
 var (
-	canvasStyle         = lipgloss.NewStyle().Background(lipgloss.Color(canvasBackground))
-	accentStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("6")) // marcador de usuario y prompt del input
-	userMessageStyle    = lipgloss.NewStyle().Background(lipgloss.Color(userMessageBackground)).Padding(1, 3)
+	canvasStyle         = lipgloss.NewStyle().Background(lipgloss.Color(theme.Canvas))
+	accentStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Accent)) // marcador de usuario y prompt del input
+	userMessageStyle    = lipgloss.NewStyle().Background(lipgloss.Color(theme.UserMessage)).Padding(1, 3)
 	userMarkerStyle     = lipgloss.NewStyle().Faint(true)
-	userTextStyle       = lipgloss.NewStyle().Background(lipgloss.Color(userMessageBackground))
+	userTextStyle       = lipgloss.NewStyle().Background(lipgloss.Color(theme.UserMessage))
 	toolRunningStyle    = lipgloss.NewStyle().Faint(true)
-	toolOKStyle         = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("2"))
-	toolFailedStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	toolOKStyle         = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color(theme.Success))
+	toolFailedStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Error))
 	toolDeniedStyle     = lipgloss.NewStyle().Faint(true)
-	toolOutputStyle     = lipgloss.NewStyle().Faint(true)                     // preview del output de la tool (detalle, no protagonista)
-	diffAddStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("2")) // lineas agregadas del diff (+)
-	diffDelStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("1")) // lineas quitadas del diff (-)
-	permissionStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
-	errorStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	toolOutputStyle     = lipgloss.NewStyle().Faint(true)                               // preview del output de la tool (detalle, no protagonista)
+	diffAddStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Success)) // lineas agregadas del diff (+)
+	diffDelStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Error))   // lineas quitadas del diff (-)
+	permissionStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(theme.Warning))
+	errorStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Error))
 	statusStyle         = lipgloss.NewStyle().Faint(true)
 	thinkingLabelStyle  = lipgloss.NewStyle().Bold(true) // "◆ Thought"/"◆ Thinking…" label of the thinking block header
-	composerBorderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	composerBorderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Border))
 	treeCursorStyle     = lipgloss.NewStyle().Reverse(true)
 	treeBorderStyle     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder())
 
@@ -130,7 +127,7 @@ var (
 	// contenido plano asertable por los tests.
 	composerBoxStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("8")).
+				BorderForeground(lipgloss.Color(theme.Border)).
 				Padding(0, composerBoxPadding)
 )
 
@@ -490,15 +487,6 @@ func renderDiffPreview(diff string) string {
 // widths without overflowing narrow terminals.
 const markdownRuleWidth = 40
 
-// markdownCodeBackground is the subtle background that separates code from
-// the conversational flow (visual identity §8), shared by inline code and
-// code blocks. ANSI 236 for termenv-styled parts; chroma styles only take
-// hex, so markdownCodeBackgroundHex is its truecolor twin.
-const (
-	markdownCodeBackground    = "236"
-	markdownCodeBackgroundHex = "#303030"
-)
-
 // markdownCodeBlockMarker brackets each rendered code block so
 // paintCodeBlockBackgrounds can find it in glamour's output. NUL bytes never
 // survive sanitizeTerminalText, so assistant content cannot forge a marker;
@@ -531,7 +519,7 @@ var markdownStyle = func() glamouransi.StyleConfig {
 	entries := reflect.ValueOf(&chromaTheme).Elem()
 	for i := 0; i < entries.NumField(); i++ {
 		entry := entries.Field(i).Addr().Interface().(*glamouransi.StylePrimitive)
-		entry.BackgroundColor = str(markdownCodeBackgroundHex)
+		entry.BackgroundColor = str(theme.CodeBlockHex)
 	}
 
 	return glamouransi.StyleConfig{
@@ -547,16 +535,16 @@ var markdownStyle = func() glamouransi.StyleConfig {
 		Heading: glamouransi.StyleBlock{
 			StylePrimitive: glamouransi.StylePrimitive{BlockSuffix: "\n\n", Bold: yes()},
 		},
-		H1:            glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{Color: str("6")}},
-		H3:            glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{Color: str("8")}},
-		H4:            glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{Color: str("8")}},
-		H5:            glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{Color: str("8")}},
-		H6:            glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{Color: str("8")}},
+		H1:            glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{Color: str(theme.Accent)}},
+		H3:            glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{Color: str(theme.Border)}},
+		H4:            glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{Color: str(theme.Border)}},
+		H5:            glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{Color: str(theme.Border)}},
+		H6:            glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{Color: str(theme.Border)}},
 		Strikethrough: glamouransi.StylePrimitive{CrossedOut: yes()},
 		Emph:          glamouransi.StylePrimitive{Italic: yes()},
 		Strong:        glamouransi.StylePrimitive{Bold: yes()},
 		HorizontalRule: glamouransi.StylePrimitive{
-			Color:  str("8"),
+			Color:  str(theme.Border),
 			Format: "\n" + strings.Repeat("─", markdownRuleWidth) + "\n",
 		},
 		Item:        glamouransi.StylePrimitive{BlockPrefix: "• "},
@@ -564,13 +552,13 @@ var markdownStyle = func() glamouransi.StyleConfig {
 		Task:        glamouransi.StyleTask{Ticked: "[✓] ", Unticked: "[ ] "},
 		// One single quiet link style: text and URL both underlined accent,
 		// instead of the stock green-bold text next to a cyan URL.
-		Link:      glamouransi.StylePrimitive{Color: str("6"), Underline: yes()},
-		LinkText:  glamouransi.StylePrimitive{Color: str("6"), Underline: yes()},
-		Image:     glamouransi.StylePrimitive{Color: str("6"), Underline: yes()},
-		ImageText: glamouransi.StylePrimitive{Color: str("8"), Format: "Image: {{.text}} →"},
+		Link:      glamouransi.StylePrimitive{Color: str(theme.Accent), Underline: yes()},
+		LinkText:  glamouransi.StylePrimitive{Color: str(theme.Accent), Underline: yes()},
+		Image:     glamouransi.StylePrimitive{Color: str(theme.Accent), Underline: yes()},
+		ImageText: glamouransi.StylePrimitive{Color: str(theme.Border), Format: "Image: {{.text}} →"},
 		Code: glamouransi.StyleBlock{
 			StylePrimitive: glamouransi.StylePrimitive{
-				Color: str("8"),
+				Color: str(theme.Border),
 			},
 		},
 		// No CodeBlock margin: the block aligns with the body at the document
@@ -603,7 +591,7 @@ var markdownDocMargin = func() int {
 // markdownCodeBlockPadStyle paints the spaces that square a code block line
 // up to the width of the block's widest line, in the same background the
 // chroma tokens carry.
-var markdownCodeBlockPadStyle = lipgloss.NewStyle().Background(lipgloss.Color(markdownCodeBackground))
+var markdownCodeBlockPadStyle = lipgloss.NewStyle().Background(lipgloss.Color(theme.CodeBlock))
 
 // paintCodeBlockBackgrounds squares up the background of every code block in
 // glamour's rendered output. Chroma's TTY formatters only paint background
@@ -1096,7 +1084,7 @@ func (m Model) resumePickerSearch(width int) string {
 	query.Width = max(boxWidth-4, 0)
 	search := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("8")).
+		BorderForeground(lipgloss.Color(theme.Border)).
 		Padding(0, 1).
 		Width(boxWidth - composerBoxBorderWidth).
 		Render(query.View())

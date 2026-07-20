@@ -65,7 +65,7 @@ atenea-tui: agent.Service -> runner -> EmittingStore -> Bus -> chan tea.Msg     
  memory if it fails, with `Close` on exit), resumes the latest TUI session for
  the current workspace, and runs `tea.NewProgram` with alt-screen. Without its
  own testable logic.
-- `internal/tui/engine.go` — coordinates `/compact` per session. An idle session
+- `internal/tui/engine/engine.go` — coordinates `/compact` per session. An idle session
   starts immediately; an active run records one deduplicated pending request and
   drains it after normal completion or cancellation. Prompt execution and
   compaction share a per-session mutex so a later prompt observes the committed
@@ -79,7 +79,8 @@ atenea-tui: agent.Service -> runner -> EmittingStore -> Bus -> chan tea.Msg     
   Wails. It owns modes, slash-command expansion, prompt admission, stable run
   IDs, replacement/cancellation ordering, completion hooks, and stale-run
   cleanup. Its `Mode` method is the mode hook passed to `wiring.Build`.
-- `internal/tui/engine.go` — the terminal adapter and headless assembly. It creates
+- `internal/tui/engine/` (package `engine`) — the terminal adapter and headless
+ assembly, built with `engine.New(engine.Config{...})`. It creates
  inbox/gate/snapshots in memory, decorates the store with `EmittingStore` on a
  `event.Bus` whose `EmitFunc` bridges each `session.SessionEvent` to the
  TUI channel, and delegates runner wiring to `wiring.Build`. `SendPrompt`,
@@ -88,7 +89,11 @@ atenea-tui: agent.Service -> runner -> EmittingStore -> Bus -> chan tea.Msg     
  prompt history, durable session mode, `RunDoneMsg`, and pending compaction. It
  satisfies the `Agent` interface of Model and
  exposes catalog, refresh, current-selection, and transactional selection
- operations to the optional model-selector boundary.
+ operations to the optional model-selector boundary. The event and lifecycle
+ types it produces (`EventMsg`, `RunHandle`, `RunDoneMsg`, `CompactionStatusMsg`,
+ `HistoryLimit`) are the engine↔Model contract and live in
+ `internal/tui/engine/protocol.go`; the `tui` package re-exports them as type
+ aliases so the dependency only ever points `tui -> engine`.
 - `internal/checkpoint/git.go` — prompt-level workspace snapshots for the TUI.
   It stores Git trees in a private bare repository below
   `session.DefaultCheckpointPath()` (`ATENEA_CHECKPOINTS` overrides it), using
@@ -126,10 +131,15 @@ atenea-tui: agent.Service -> runner -> EmittingStore -> Bus -> chan tea.Msg     
   assistant renders that revealed prefix as Markdown while live, then renders
   its complete Markdown once the reveal drains.
 
+- `internal/tui/theme/theme.go` (package `theme`) — the color palette: the
+  single source of truth for every color the presentation layer paints with.
+  `view.go` and the widgets compose their lipgloss styles (and the markdown
+  glamour theme) from it, so changing the visual identity is a one-line edit.
+
 - `internal/wiring` — the shared assembly extracted from `app.go`: registry de
  tools, skills and slash-commands, catalog of subagents with the propagated gate,
  system prompts (normal/plan/local) and the configured runner. `App.wire` and
- `NewEngine` consume it; a tools/skills change reaches both frontends.
+ `engine.New` consume it; a tools/skills change reaches both frontends.
 
 ### User messages
 

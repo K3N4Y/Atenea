@@ -1,4 +1,4 @@
-package tui
+package engine
 
 import (
 	"context"
@@ -28,9 +28,9 @@ import (
 	"atenea/internal/wiring"
 )
 
-// EngineConfig describe el ensamblado del agente headless: la raiz del
+// Config describe el ensamblado del agente headless: la raiz del
 // workspace, el proveedor LLM, el store durable y el modo local.
-type EngineConfig struct {
+type Config struct {
 	Root        string
 	Provider    llm.Provider
 	Store       session.Store
@@ -105,7 +105,7 @@ type Engine struct {
 	// root y store espejan a.workspaceRoot()/a.store en la app Wails: la raiz
 	// del workspace y el store DECORADO con EmittingStore (el mismo que recibe
 	// wiring.Build). send los usa para grabar Session.Cwd en el primer prompt
-	// de cada sesion. Inmutables tras NewEngine: se leen sin mu.
+	// de cada sesion. Inmutables tras New: se leen sin mu.
 	root             string
 	store            session.Store
 	undoStore        session.UndoStore
@@ -125,18 +125,11 @@ type Engine struct {
 	compactions  sync.WaitGroup
 }
 
-// Fija en compilacion que Engine satisface la interface Agent de la TUI y la
-// superficie MCP del picker de /mcp.
-var (
-	_ Agent    = (*Engine)(nil)
-	_ mcpAgent = (*Engine)(nil)
-)
-
-// NewEngine arma el engine a partir de la configuracion: una EmitFunc que
+// New arma el engine a partir de la configuracion: una EmitFunc que
 // puentea los SessionEvent durables del Bus al canal de la TUI, el store
 // decorado con EmittingStore sobre ese bus, y el agente completo via
 // wiring.Build (tools, skills, subagentes, runner con ask-before-run).
-func NewEngine(cfg EngineConfig) *Engine {
+func New(cfg Config) *Engine {
 	ctx, cancel := context.WithCancel(context.Background())
 	e := &Engine{
 		// Buffer generoso: amortigua rafagas de deltas mientras la TUI drena.
@@ -359,9 +352,9 @@ func (e *Engine) PromptHistory() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	history := make([]string, 0, historyLimit)
+	history := make([]string, 0, HistoryLimit)
 	for _, summary := range sessions {
-		if len(history) >= historyLimit {
+		if len(history) >= HistoryLimit {
 			break
 		}
 		if !strings.HasPrefix(summary.ID, "tui-") {
@@ -392,8 +385,8 @@ func (e *Engine) PromptHistory() ([]string, error) {
 		}
 		history = append(prompts, history...)
 	}
-	if len(history) > historyLimit {
-		history = history[len(history)-historyLimit:]
+	if len(history) > HistoryLimit {
+		history = history[len(history)-HistoryLimit:]
 	}
 	return history, nil
 }
@@ -495,7 +488,7 @@ func (e *Engine) resumeSessionByIDUnlocked(currentSessionID, targetSessionID str
 }
 
 func resumeHistory(events []session.SessionEvent) []string {
-	history := make([]string, 0, historyLimit)
+	history := make([]string, 0, HistoryLimit)
 	pendingMarkers := make([]string, 0)
 	for _, event := range events {
 		if event.Kind == session.KindComposerPrompt {
@@ -514,8 +507,8 @@ func resumeHistory(events []session.SessionEvent) []string {
 		history = append(history, text)
 	}
 	history = append(history, pendingMarkers...)
-	if len(history) > historyLimit {
-		history = history[len(history)-historyLimit:]
+	if len(history) > HistoryLimit {
+		history = history[len(history)-HistoryLimit:]
 	}
 	return history
 }

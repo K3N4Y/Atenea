@@ -1,4 +1,4 @@
-package tui
+package engine
 
 import (
 	"context"
@@ -465,7 +465,7 @@ func TestEngine_NewSessionIDReservesFreshTUISessions(t *testing.T) {
 	store := session.NewMemoryStore()
 	appendSessionEvent(t, store, "tui-older", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
 
-	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store})
+	engine := New(Config{Root: root, Provider: llm.NewFakeProvider(), Store: store})
 	sessionID := engine.NewSessionID()
 	if !strings.HasPrefix(sessionID, "tui-") || sessionID == "tui-older" {
 		t.Fatalf("NewSessionID = %q, want a fresh tui- session", sessionID)
@@ -488,7 +488,7 @@ func TestEngine_ListResumeSessionsFiltersWorkspaceAndPreservesStoreOrder(t *test
 		t.Fatal(err)
 	}
 	want := []session.SessionSummary{all[0], all[3]}
-	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store})
+	engine := New(Config{Root: root, Provider: llm.NewFakeProvider(), Store: store})
 	got, err := engine.ListResumeSessions("tui-current")
 	if err != nil {
 		t.Fatal(err)
@@ -508,7 +508,7 @@ func TestEngine_ListResumeSessionsAcceptsSymlinkToWorkspaceRoot(t *testing.T) {
 	store := session.NewMemoryStore()
 	appendSessionEvent(t, store, "tui-linked", session.SessionEvent{Kind: session.KindSessionCwd, Text: alias})
 
-	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store})
+	engine := New(Config{Root: root, Provider: llm.NewFakeProvider(), Store: store})
 	got, err := engine.ListResumeSessions("tui-current")
 	if err != nil {
 		t.Fatal(err)
@@ -534,7 +534,7 @@ func TestEngine_ListResumeSessionsUsesKernelSemanticsForSymlinkFollowedByDotDot(
 		Text: childLink + string(os.PathSeparator) + "..",
 	})
 
-	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store})
+	engine := New(Config{Root: root, Provider: llm.NewFakeProvider(), Store: store})
 	got, err := engine.ListResumeSessions("tui-current")
 	if err != nil {
 		t.Fatal(err)
@@ -552,7 +552,7 @@ func TestEngine_ListResumeSessionsRejectsNonDirectoryRoot(t *testing.T) {
 	store := session.NewMemoryStore()
 	appendSessionEvent(t, store, "tui-file-root", session.SessionEvent{Kind: session.KindSessionCwd, Text: rootFile})
 
-	engine := NewEngine(EngineConfig{Root: rootFile, Provider: llm.NewFakeProvider(), Store: store})
+	engine := New(Config{Root: rootFile, Provider: llm.NewFakeProvider(), Store: store})
 	if got, err := engine.ListResumeSessions("tui-current"); err == nil {
 		t.Fatalf("ListResumeSessions = %+v, want non-directory root error", got)
 	}
@@ -568,7 +568,7 @@ func TestEngine_ListResumeSessionsRejectsSymlinkToOtherWorkspace(t *testing.T) {
 	store := session.NewMemoryStore()
 	appendSessionEvent(t, store, "tui-other", session.SessionEvent{Kind: session.KindSessionCwd, Text: alias})
 
-	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store})
+	engine := New(Config{Root: root, Provider: llm.NewFakeProvider(), Store: store})
 	got, err := engine.ListResumeSessions("tui-current")
 	if err != nil {
 		t.Fatal(err)
@@ -593,7 +593,7 @@ func TestEngine_ListResumeSessionsRejectsEmptyUnresolvableAndNonDirectoryCwd(t *
 	appendSessionEvent(t, store, "tui-broken", session.SessionEvent{Kind: session.KindSessionCwd, Text: brokenLink})
 	appendSessionEvent(t, store, "tui-file", session.SessionEvent{Kind: session.KindSessionCwd, Text: fileCwd})
 
-	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store})
+	engine := New(Config{Root: root, Provider: llm.NewFakeProvider(), Store: store})
 	got, err := engine.ListResumeSessions("tui-current")
 	if err != nil {
 		t.Fatal(err)
@@ -613,7 +613,7 @@ func TestEngine_ResumeSessionByIDLoadsExactTargetAndRestoresPlanMode(t *testing.
 	appendSessionEvent(t, store, "tui-other", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
 	appendSessionEvent(t, store, "tui-other", session.SessionEvent{Kind: session.KindTextDelta, Text: "other marker"})
 
-	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store})
+	engine := New(Config{Root: root, Provider: llm.NewFakeProvider(), Store: store})
 	result, err := engine.ResumeSessionByID("tui-current", "tui-target")
 	if err != nil {
 		t.Fatal(err)
@@ -645,7 +645,7 @@ func TestEngine_ResumeSessionByIDRestoresOnlyTargetComposerHistory(t *testing.T)
 	appendSessionEvent(t, store, "tui-other", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
 	appendSessionEvent(t, store, "tui-other", session.SessionEvent{Kind: session.KindComposerPrompt, Text: "other prompt"})
 
-	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store})
+	engine := New(Config{Root: root, Provider: llm.NewFakeProvider(), Store: store})
 	result, err := engine.ResumeSessionByID("tui-current", "tui-target")
 	if err != nil {
 		t.Fatal(err)
@@ -662,18 +662,18 @@ func TestEngine_ResumeSessionByIDFallsBackToCappedTargetUserHistory(t *testing.T
 	appendSessionEvent(t, store, "tui-current", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
 	appendSessionEvent(t, store, "tui-target", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
 	appendSessionEvent(t, store, "tui-target", session.SessionEvent{Message: &session.Message{ID: "internal", Role: session.RoleUser, Text: agent.AcceptPlanPrompt}})
-	for i := 1; i <= historyLimit+2; i++ {
+	for i := 1; i <= HistoryLimit+2; i++ {
 		appendSessionEvent(t, store, "tui-target", session.SessionEvent{Message: &session.Message{
 			ID: "u-" + strconv.Itoa(i), Role: session.RoleUser, Text: "legacy-" + strconv.Itoa(i),
 		}})
 	}
 
-	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store})
+	engine := New(Config{Root: root, Provider: llm.NewFakeProvider(), Store: store})
 	result, err := engine.ResumeSessionByID("tui-current", "tui-target")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.History) != historyLimit || result.History[0] != "legacy-3" || result.History[len(result.History)-1] != "legacy-102" {
+	if len(result.History) != HistoryLimit || result.History[0] != "legacy-3" || result.History[len(result.History)-1] != "legacy-102" {
 		t.Fatalf("ResumeSessionByID fallback history = [%q ... %q] (%d), want capped target legacy prompts", result.History[0], result.History[len(result.History)-1], len(result.History))
 	}
 }
@@ -691,7 +691,7 @@ func TestEngine_ResumeSessionByIDRestoresMixedLegacyAndComposerHistoryWithoutDup
 	appendSessionEvent(t, store, "tui-target", session.SessionEvent{Kind: session.KindComposerPrompt, Text: "modern second"})
 	appendSessionEvent(t, store, "tui-target", session.SessionEvent{Message: &session.Message{ID: "modern-user-2", Role: session.RoleUser, Text: "modern second"}})
 
-	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store})
+	engine := New(Config{Root: root, Provider: llm.NewFakeProvider(), Store: store})
 	result, err := engine.ResumeSessionByID("tui-current", "tui-target")
 	if err != nil {
 		t.Fatal(err)
@@ -751,7 +751,7 @@ func TestEngine_ResumeOperationsRejectActiveRun(t *testing.T) {
 	appendSessionEvent(t, store, "tui-current", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
 	appendSessionEvent(t, store, "tui-target", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
 	provider := &resumeBlockingProvider{started: make(chan struct{})}
-	engine := NewEngine(EngineConfig{Root: root, Provider: provider, Store: store})
+	engine := New(Config{Root: root, Provider: provider, Store: store})
 	if _, err := engine.SendPrompt("tui-current", "keep running"); err != nil {
 		t.Fatal(err)
 	}
@@ -780,7 +780,7 @@ func TestEngine_ResumeSessionByIDRejectsActiveTargetRun(t *testing.T) {
 	appendSessionEvent(t, store, "tui-current", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
 	appendSessionEvent(t, store, "tui-target", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
 	provider := &resumeBlockingProvider{started: make(chan struct{})}
-	engine := NewEngine(EngineConfig{Root: root, Provider: provider, Store: store})
+	engine := New(Config{Root: root, Provider: provider, Store: store})
 	if _, err := engine.SendPrompt("tui-target", "keep target running"); err != nil {
 		t.Fatal(err)
 	}
@@ -806,7 +806,7 @@ func TestEngine_ResumeSessionByIDRejectsUnavailableTargets(t *testing.T) {
 	appendSessionEvent(t, store, "tui-current", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
 	appendSessionEvent(t, store, "app-session", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
 	appendSessionEvent(t, store, "tui-other-root", session.SessionEvent{Kind: session.KindSessionCwd, Text: t.TempDir()})
-	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store})
+	engine := New(Config{Root: root, Provider: llm.NewFakeProvider(), Store: store})
 
 	for _, target := range []string{"tui-missing", "app-session", "tui-other-root"} {
 		t.Run(target, func(t *testing.T) {
@@ -828,7 +828,7 @@ func TestEngine_ResumeSessionByIDSerializesTargetAdmission(t *testing.T) {
 		entered: make(chan struct{}),
 		release: make(chan struct{}),
 	}
-	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store})
+	engine := New(Config{Root: root, Provider: llm.NewFakeProvider(), Store: store})
 	t.Cleanup(func() { _ = engine.Shutdown(context.Background()) })
 
 	resumeDone := make(chan error, 1)
@@ -889,7 +889,7 @@ func TestEngine_SlashNewStopsOldRunSoNewSessionStaysMostRecent(t *testing.T) {
 	}
 
 	provider := &releasableProvider{started: make(chan struct{}), release: make(chan struct{})}
-	engine := NewEngine(EngineConfig{Root: root, Provider: provider, Store: store})
+	engine := New(Config{Root: root, Provider: provider, Store: store})
 	oldRun, err := engine.SendPrompt("tui-old", "old conversation prompt")
 	if err != nil {
 		t.Fatal(err)
@@ -919,7 +919,7 @@ func TestEngine_SlashNewStopsOldRunSoNewSessionStaysMostRecent(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { restartedStore.Close() })
-	restarted := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: restartedStore})
+	restarted := New(Config{Root: root, Provider: llm.NewFakeProvider(), Store: restartedStore})
 	summaries, err := restarted.ListResumeSessions(restarted.NewSessionID())
 	if err != nil {
 		t.Fatal(err)
@@ -971,7 +971,7 @@ func TestEngine_SendPromptDoesNotStartCheckpointWhenModePersistenceFails(t *test
 	backend := session.NewMemoryStore()
 	modeErr := errors.New("mode persistence failed")
 	store := &sessionModeFailingStore{Store: backend, err: modeErr}
-	engine := NewEngine(EngineConfig{
+	engine := New(Config{
 		Root:        t.TempDir(),
 		Provider:    llm.NewFakeProvider(),
 		Store:       store,
@@ -1014,13 +1014,13 @@ func TestEngine_PromptHistoryLoadsLatestTUIComposerPrompts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	engine := NewEngine(EngineConfig{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: store})
+	engine := New(Config{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: store})
 	got, err := engine.PromptHistory()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != historyLimit {
-		t.Fatalf("len(PromptHistory()) = %d, quiero %d", len(got), historyLimit)
+	if len(got) != HistoryLimit {
+		t.Fatalf("len(PromptHistory()) = %d, quiero %d", len(got), HistoryLimit)
 	}
 	if got[0] != "literal-3" || got[len(got)-1] != "literal-102" {
 		t.Fatalf("PromptHistory() = [%q ... %q], quiero los 100 prompts TUI mas recientes en orden", got[0], got[len(got)-1])
@@ -1040,7 +1040,7 @@ func TestEngine_PromptHistoryFallsBackToLegacyUserMessages(t *testing.T) {
 		}
 	}
 
-	engine := NewEngine(EngineConfig{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: store})
+	engine := New(Config{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: store})
 	got, err := engine.PromptHistory()
 	if err != nil {
 		t.Fatal(err)
@@ -1057,7 +1057,7 @@ func TestEngine_PromptHistoryStopsAfterLatestHundredPrompts(t *testing.T) {
 	if _, err := store.AppendEvent(ctx, "tui-old", session.SessionEvent{Kind: session.KindComposerPrompt, Text: "too old"}); err != nil {
 		t.Fatal(err)
 	}
-	for i := 1; i <= historyLimit; i++ {
+	for i := 1; i <= HistoryLimit; i++ {
 		if _, err := store.AppendEvent(ctx, "tui-new", session.SessionEvent{
 			Kind: session.KindComposerPrompt,
 			Text: "latest-" + strconv.Itoa(i),
@@ -1067,19 +1067,19 @@ func TestEngine_PromptHistoryStopsAfterLatestHundredPrompts(t *testing.T) {
 	}
 
 	guarded := &promptHistoryStore{Store: store, blockedSession: "tui-old"}
-	engine := NewEngine(EngineConfig{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: guarded})
+	engine := New(Config{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: guarded})
 	got, err := engine.PromptHistory()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != historyLimit || got[0] != "latest-1" || got[len(got)-1] != "latest-100" {
-		t.Fatalf("PromptHistory() = [%q ... %q] (%d), quiero solo los %d prompts mas recientes", got[0], got[len(got)-1], len(got), historyLimit)
+	if len(got) != HistoryLimit || got[0] != "latest-1" || got[len(got)-1] != "latest-100" {
+		t.Fatalf("PromptHistory() = [%q ... %q] (%d), quiero solo los %d prompts mas recientes", got[0], got[len(got)-1], len(got), HistoryLimit)
 	}
 }
 
 func TestEngine_SendPromptContinuesWhenHistoryPersistenceFails(t *testing.T) {
 	store := &promptHistoryStore{Store: session.NewMemoryStore(), failComposerPrompt: true}
-	engine := NewEngine(EngineConfig{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: store})
+	engine := New(Config{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: store})
 
 	if _, err := engine.SendPrompt("tui-session", "hola"); err != nil {
 		t.Fatalf("SendPrompt() error = %v, el prompt ya admitido debe ejecutarse aunque falle su historial", err)
@@ -1157,7 +1157,7 @@ func TestEngine_CompactIdleSessionStartsImmediately(t *testing.T) {
 	seedCompactableEngineSession(t, store, "s1")
 	provider := newCompactQueueProvider()
 	close(provider.release)
-	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: store})
+	e := New(Config{Root: t.TempDir(), Provider: provider, Store: store})
 
 	if _, err := e.SendPrompt("s1", "/compact"); err != nil {
 		t.Fatalf("SendPrompt(/compact) error = %v", err)
@@ -1171,7 +1171,7 @@ func TestEngine_CompactIdleSessionStartsImmediately(t *testing.T) {
 
 func TestEngine_ShutdownCancelsAndWaitsForActiveRun(t *testing.T) {
 	provider := newDelayedCancellationProvider()
-	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
+	e := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 	if _, err := e.SendPrompt("s1", "wait"); err != nil {
 		t.Fatal(err)
 	}
@@ -1215,7 +1215,7 @@ func TestEngine_ShutdownFinishesCheckpointBeforeSQLiteClose(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := &blockingAfterToolProvider{started: make(chan struct{}), canceled: make(chan struct{})}
-	e := NewEngine(EngineConfig{Root: root, Provider: provider, Store: store, Checkpoints: checkpoint.NewGitStore(t.TempDir())})
+	e := New(Config{Root: root, Provider: provider, Store: store, Checkpoints: checkpoint.NewGitStore(t.TempDir())})
 	if _, err := e.SendPrompt("s1", "create file"); err != nil {
 		t.Fatal(err)
 	}
@@ -1249,7 +1249,7 @@ func TestEngine_ShutdownCancelsAndWaitsForCompaction(t *testing.T) {
 	store := session.NewMemoryStore()
 	seedCompactableEngineSession(t, store, "s1")
 	provider := newBlockingSummaryProvider()
-	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: store})
+	e := New(Config{Root: t.TempDir(), Provider: provider, Store: store})
 	if _, err := e.SendPrompt("s1", "/compact"); err != nil {
 		t.Fatal(err)
 	}
@@ -1270,7 +1270,7 @@ func TestEngine_CompactDuringRunQueuesOnceAndDrainsAfterCompletion(t *testing.T)
 	store := session.NewMemoryStore()
 	seedCompactableEngineSession(t, store, "s1")
 	provider := newCompactQueueProvider()
-	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: store})
+	e := New(Config{Root: t.TempDir(), Provider: provider, Store: store})
 
 	if _, err := e.SendPrompt("s1", "continue turn"); err != nil {
 		t.Fatal(err)
@@ -1323,7 +1323,7 @@ func TestEngine_CompactDuringRunQueuesOnceAndDrainsAfterCompletion(t *testing.T)
 func TestEngine_CompactWithArgumentsRemainsNormalPrompt(t *testing.T) {
 	store := session.NewMemoryStore()
 	provider := newTurnProvider([]llm.Event{{Kind: llm.StepEnded}})
-	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: store})
+	e := New(Config{Root: t.TempDir(), Provider: provider, Store: store})
 	if _, err := e.SendPrompt("s1", "/compact later"); err != nil {
 		t.Fatal(err)
 	}
@@ -1344,7 +1344,7 @@ func TestEngine_QueuedCompactRunsAfterCancellation(t *testing.T) {
 	store := session.NewMemoryStore()
 	seedCompactableEngineSession(t, store, "s1")
 	provider := newCompactQueueProvider()
-	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: store})
+	e := New(Config{Root: t.TempDir(), Provider: provider, Store: store})
 	if _, err := e.SendPrompt("s1", "continue turn"); err != nil {
 		t.Fatal(err)
 	}
@@ -1370,7 +1370,7 @@ func TestEngine_QueuedCompactWaitsForReplacementRun(t *testing.T) {
 	store := session.NewMemoryStore()
 	seedCompactableEngineSession(t, store, "s1")
 	provider := newReplacementRunCompactionProvider()
-	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: store})
+	e := New(Config{Root: t.TempDir(), Provider: provider, Store: store})
 
 	if _, err := e.SendPrompt("s1", "first"); err != nil {
 		t.Fatal(err)
@@ -1401,7 +1401,7 @@ func TestEngine_PromptAfterIdleCompactWaitsForCommittedContext(t *testing.T) {
 	store := session.NewMemoryStore()
 	seedCompactableEngineSession(t, store, "s1")
 	provider := newBlockingSummaryProvider()
-	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: store})
+	e := New(Config{Root: t.TempDir(), Provider: provider, Store: store})
 	if _, err := e.SendPrompt("s1", "/compact"); err != nil {
 		t.Fatal(err)
 	}
@@ -1468,7 +1468,7 @@ func TestEngine_ExposesCommandsFromSkills(t *testing.T) {
 	root := t.TempDir()
 	writeSkill(t, root, "saluda", "saluda con estilo")
 
-	e := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore()})
+	e := New(Config{Root: root, Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore()})
 
 	cmds := e.Commands()
 	for _, c := range cmds {
@@ -1500,7 +1500,7 @@ func TestEngine_ProjectFilesListsWorkspace(t *testing.T) {
 		}
 	}
 
-	e := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore()})
+	e := New(Config{Root: root, Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore()})
 
 	files, err := e.ProjectFiles()
 	if err != nil {
@@ -1528,7 +1528,7 @@ func TestEngine_SendPromptExpandsSlashCommand(t *testing.T) {
 		llm.Event{Kind: llm.TextEnded},
 		llm.Event{Kind: llm.StepEnded},
 	)
-	e := NewEngine(EngineConfig{Root: root, Provider: fake, Store: session.NewMemoryStore()})
+	e := New(Config{Root: root, Provider: fake, Store: session.NewMemoryStore()})
 
 	// lastUserPrompt corre una corrida completa y devuelve el ultimo Message
 	// user promovido entre sus eventos.
@@ -1572,7 +1572,7 @@ func TestEngine_StreamsSessionEventsAndSignalsRunDone(t *testing.T) {
 		llm.Event{Kind: llm.StepEnded},
 	)
 
-	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: fake, Store: session.NewMemoryStore()})
+	e := New(Config{Root: t.TempDir(), Provider: fake, Store: session.NewMemoryStore()})
 
 	if _, err := e.SendPrompt("s1", "hola"); err != nil {
 		t.Fatalf("SendPrompt(s1, hola) = %v, se esperaba nil", err)
@@ -1615,7 +1615,7 @@ func TestEngine_StreamsSessionEventsAndSignalsRunDone(t *testing.T) {
 
 func TestEngine_ReplacementRunWaitsForCanceledRunAndKeepsDistinctIdentity(t *testing.T) {
 	provider := newDelayedCancellationProvider()
-	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
+	e := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 
 	first, err := e.SendPrompt("s1", "primera")
 	if err != nil {
@@ -1711,7 +1711,7 @@ func TestEngine_UndoRestoresDeletedAndRecreatedTrackedFile(t *testing.T) {
 		},
 	)
 	store := session.NewMemoryStore()
-	engine := NewEngine(EngineConfig{
+	engine := New(Config{
 		Root:        root,
 		Provider:    provider,
 		Store:       store,
@@ -1759,7 +1759,7 @@ func TestEngine_UndoRestoresDeletedAndRecreatedTrackedFile(t *testing.T) {
 
 func TestEngine_GatedBashApprovedRunsAndSettles(t *testing.T) {
 	provider := newTurnProvider(gatedBashTurns("echo hola-gate")...)
-	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
+	e := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 
 	if _, err := e.SendPrompt("s1", "corre el comando"); err != nil {
 		t.Fatalf("SendPrompt(s1, corre el comando) = %v, se esperaba nil", err)
@@ -1788,7 +1788,7 @@ func TestEngine_GatedBashDeniedFailsWithoutRunning(t *testing.T) {
 	root := t.TempDir()
 	forbidden := filepath.Join(root, "no-debe-existir")
 	provider := newTurnProvider(gatedBashTurns("touch " + forbidden)...)
-	e := NewEngine(EngineConfig{Root: root, Provider: provider, Store: session.NewMemoryStore()})
+	e := New(Config{Root: root, Provider: provider, Store: session.NewMemoryStore()})
 
 	if _, err := e.SendPrompt("s1", "corre el comando"); err != nil {
 		t.Fatalf("SendPrompt(s1, corre el comando) = %v, se esperaba nil", err)
@@ -1829,7 +1829,7 @@ func TestEngine_StopUnblocksPendingPermission(t *testing.T) {
 		{Kind: llm.ToolCall, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"echo bloqueado"}`)},
 		{Kind: llm.StepEnded},
 	})
-	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
+	e := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 
 	if _, err := e.SendPrompt("s1", "corre el comando"); err != nil {
 		t.Fatalf("SendPrompt(s1, corre el comando) = %v, se esperaba nil", err)
@@ -1866,7 +1866,7 @@ func TestEngine_AcceptPlanRunsImplementationInNormalMode(t *testing.T) {
 		}
 	}
 	provider := newTurnProvider(textTurn("plan listo"), textTurn("implementado"))
-	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
+	e := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 
 	// Corrida de plan previa: deja la sesion en plan-mode con el plan presentado.
 	if _, err := e.SendPlanPrompt("s1", "planea"); err != nil {
@@ -1926,7 +1926,7 @@ func TestEngine_SendPlanPromptRunsInPlanMode(t *testing.T) {
 		}
 	}
 	provider := newTurnProvider(textTurn("plan listo"), textTurn("hecho"))
-	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
+	e := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 
 	// Envio en plan-mode: el turno debe anunciar las tools de planificacion.
 	if _, err := e.SendPlanPrompt("s1", "planea x"); err != nil {
@@ -1993,7 +1993,7 @@ func TestEngine_ToolResultNeverPrecedesAssistantMessageInHistory(t *testing.T) {
 		},
 	)
 	provider.delayStepEnded = 100 * time.Millisecond
-	e := NewEngine(EngineConfig{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
+	e := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 
 	if _, err := e.SendPrompt("s1", "lee eso"); err != nil {
 		t.Fatalf("SendPrompt(s1, lee eso) = %v, se esperaba nil", err)
@@ -2059,7 +2059,7 @@ func TestEngine_CapturesSessionCwdOnFirstPrompt(t *testing.T) {
 		llm.Event{Kind: llm.TextEnded},
 		llm.Event{Kind: llm.StepEnded},
 	)
-	e := NewEngine(EngineConfig{Root: root, Provider: fake, Store: store})
+	e := New(Config{Root: root, Provider: fake, Store: store})
 
 	if _, err := e.SendPrompt("s1", "hola"); err != nil {
 		t.Fatalf("SendPrompt(s1, hola) = %v, se esperaba nil", err)
@@ -2115,7 +2115,7 @@ func TestEngine_CapturesSessionCwdOnce(t *testing.T) {
 		llm.Event{Kind: llm.TextEnded},
 		llm.Event{Kind: llm.StepEnded},
 	)
-	e := NewEngine(EngineConfig{Root: root, Provider: fake, Store: store})
+	e := New(Config{Root: root, Provider: fake, Store: store})
 
 	for i, prompt := range []string{"primer prompt", "segundo prompt"} {
 		if _, err := e.SendPrompt("s1", prompt); err != nil {
@@ -2159,7 +2159,7 @@ func TestEngine_SendPromptNewCreatesFreshDurableSession(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("store.AppendEvent(s1, Session.Cwd) = %v, se esperaba nil", err)
 	}
-	e := NewEngine(EngineConfig{
+	e := New(Config{
 		Root:     root,
 		Provider: llm.NewFakeProvider(llm.Event{Kind: llm.StepEnded}),
 		Store:    store,
@@ -2178,66 +2178,13 @@ func TestEngine_SendPromptNewCreatesFreshDurableSession(t *testing.T) {
 	}
 }
 
-func TestModel_SubmittingNewActivatesFreshSessionForFuturePrompts(t *testing.T) {
-	// TRIANGULATE: crear la fila durable no basta. El composer debe cambiar al
-	// ID nuevo para que el siguiente prompt no vuelva a la sesion anterior.
-	root := t.TempDir()
-	store := session.NewMemoryStore()
-	if _, err := store.AppendEvent(context.Background(), "s1", session.SessionEvent{
-		Kind: session.KindSessionCwd,
-		Text: root,
-	}); err != nil {
-		t.Fatalf("store.AppendEvent(s1, Session.Cwd) = %v, se esperaba nil", err)
-	}
-	e := NewEngine(EngineConfig{
-		Root:     root,
-		Provider: llm.NewFakeProvider(llm.Event{Kind: llm.StepEnded}),
-		Store:    store,
-	})
-	m := NewModel(e, "s1", e.Events())
-
-	m = typeRunes(t, m, "/new")
-	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-
-	sessions, err := store.Sessions(context.Background())
-	if err != nil {
-		t.Fatalf("store.Sessions() = %v, se esperaba nil", err)
-	}
-	if len(sessions) != 2 {
-		t.Fatalf("store.Sessions() contiene %d sesiones, se esperaban 2", len(sessions))
-	}
-	newSessionID := ""
-	for _, s := range sessions {
-		if s.ID != "s1" {
-			newSessionID = s.ID
-			break
-		}
-	}
-	if newSessionID == "" {
-		t.Fatal("no se encontro la sesion creada por /new")
-	}
-	m = typeRunes(t, m, "continua aqui")
-	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	_, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil)
-	if done.Err != "" {
-		t.Fatalf("RunDoneMsg.Err = %q, se esperaba corrida limpia", done.Err)
-	}
-	messages, err := store.Messages(context.Background(), newSessionID, 0)
-	if err != nil {
-		t.Fatalf("store.Messages(%s, 0) = %v, se esperaba nil", newSessionID, err)
-	}
-	if len(messages) != 1 || messages[0].Text != "continua aqui" {
-		t.Fatalf("mensajes de %s = %+v, se esperaba que el siguiente prompt se enviara a la sesion nueva", newSessionID, messages)
-	}
-}
-
 func TestEngine_SendPromptNewWithArgumentsRemainsRegularPrompt(t *testing.T) {
 	// TRIANGULATE: solo el literal exacto /new esta reservado. Con argumentos,
 	// el texto conserva el camino normal de slash-command/prompt y no abre otra
 	// sesion durable.
 	root := t.TempDir()
 	store := session.NewMemoryStore()
-	e := NewEngine(EngineConfig{
+	e := New(Config{
 		Root:     root,
 		Provider: llm.NewFakeProvider(llm.Event{Kind: llm.StepEnded}),
 		Store:    store,
@@ -2289,7 +2236,7 @@ func TestEngine_UndoRestoresPrePromptWorkspaceAndEffectiveConversation(t *testin
 		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.StepEnded}},
 	)
 	store := session.NewMemoryStore()
-	engine := NewEngine(EngineConfig{
+	engine := New(Config{
 		Root:        root,
 		Provider:    provider,
 		Store:       store,
@@ -2350,7 +2297,7 @@ func TestEngine_UndoFirstPromptPreservesSessionWorkspace(t *testing.T) {
 func TestEngine_SendPromptSnapshotFailureDoesNotCreateSession(t *testing.T) {
 	store := session.NewMemoryStore()
 	wantErr := errors.New("snapshot unavailable")
-	engine := NewEngine(EngineConfig{
+	engine := New(Config{
 		Root:        newUndoWorkspace(t),
 		Store:       store,
 		Checkpoints: failingCheckpointStore{err: wantErr},
@@ -2378,7 +2325,7 @@ func TestEngine_UndoRejectsCheckpointFromAnotherWorkspace(t *testing.T) {
 		t.Fatalf("RunDoneMsg.Err = %q", done.Err)
 	}
 
-	secondEngine := NewEngine(EngineConfig{
+	secondEngine := New(Config{
 		Root:        secondRoot,
 		Store:       store,
 		Checkpoints: checkpoint.NewGitStore(checkpointRoot),
@@ -2403,7 +2350,7 @@ func TestEngine_UndoTwiceRestoresEachPromptBoundary(t *testing.T) {
 		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.StepEnded}},
 	)
 	store := session.NewMemoryStore()
-	engine := NewEngine(EngineConfig{Root: root, Provider: provider, Store: store, Checkpoints: checkpoint.NewGitStore(t.TempDir())})
+	engine := New(Config{Root: root, Provider: provider, Store: store, Checkpoints: checkpoint.NewGitStore(t.TempDir())})
 	for _, prompt := range []string{"first prompt", "second prompt"} {
 		if _, err := engine.SendPrompt("s1", prompt); err != nil {
 			t.Fatal(err)
@@ -2471,7 +2418,7 @@ func TestEngine_UndoIgnoresIgnoredFileDivergence(t *testing.T) {
 func TestEngine_UndoCancelsActiveRunBeforeRestore(t *testing.T) {
 	root := newUndoWorkspace(t)
 	provider := &blockingAfterToolProvider{started: make(chan struct{}), canceled: make(chan struct{})}
-	engine := NewEngine(EngineConfig{Root: root, Provider: provider, Store: session.NewMemoryStore(), Checkpoints: checkpoint.NewGitStore(t.TempDir())})
+	engine := New(Config{Root: root, Provider: provider, Store: session.NewMemoryStore(), Checkpoints: checkpoint.NewGitStore(t.TempDir())})
 	if _, err := engine.SendPrompt("s1", "create file"); err != nil {
 		t.Fatal(err)
 	}
@@ -2512,7 +2459,7 @@ func TestEngine_UndoPersistsAcrossSQLiteReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine = NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: store, Checkpoints: checkpoint.NewGitStore(checkpointRoot)})
+	engine = New(Config{Root: root, Provider: llm.NewFakeProvider(), Store: store, Checkpoints: checkpoint.NewGitStore(checkpointRoot)})
 	if _, err := engine.Undo("s1"); err != nil {
 		t.Fatal(err)
 	}
@@ -2564,7 +2511,7 @@ func newWritingUndoEngine(t *testing.T, root string, store session.Store, checkp
 		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.ToolCall, CallID: "write-1", ToolName: "write", Input: json.RawMessage(`{"path":"created.txt","content":"created\n"}`)}, {Kind: llm.StepEnded}},
 		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.StepEnded}},
 	)
-	return NewEngine(EngineConfig{Root: root, Provider: provider, Store: store, Checkpoints: checkpoint.NewGitStore(checkpointRoot)})
+	return New(Config{Root: root, Provider: provider, Store: store, Checkpoints: checkpoint.NewGitStore(checkpointRoot)})
 }
 
 func assertUndoFile(t *testing.T, root, name, want string) {
@@ -2593,7 +2540,7 @@ func TestEngine_MCPServersReadsWorkspaceConfig(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".mcp.json"), []byte(config), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	engine := NewEngine(EngineConfig{Root: root, Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore()})
+	engine := New(Config{Root: root, Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore()})
 
 	servers, err := engine.MCPServers()
 	if err != nil {
@@ -2640,7 +2587,7 @@ func TestEngine_ConnectProviderDelegatesToConnectService(t *testing.T) {
 		connectable: []providerconfig.ConnectableProvider{{ID: "openrouter", Name: "OpenRouter"}},
 		active:      providerconfig.Active{ProviderID: "openrouter", Model: "openrouter/free"},
 	}
-	engine := NewEngine(EngineConfig{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore(), Models: service})
+	engine := New(Config{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore(), Models: service})
 	defer engine.Shutdown(context.Background())
 
 	if got := engine.ConnectableProviders(); len(got) != 1 || got[0].ID != "openrouter" {
@@ -2656,7 +2603,7 @@ func TestEngine_ConnectProviderDelegatesToConnectService(t *testing.T) {
 }
 
 func TestEngine_ConnectUnavailableWithoutConnectService(t *testing.T) {
-	engine := NewEngine(EngineConfig{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore()})
+	engine := New(Config{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore()})
 	defer engine.Shutdown(context.Background())
 
 	if got := engine.ConnectableProviders(); got != nil {

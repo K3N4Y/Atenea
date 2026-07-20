@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +22,7 @@ import (
 	"atenea/internal/llm"
 	"atenea/internal/providerconfig"
 	"atenea/internal/session"
+	"atenea/internal/tui/engine"
 )
 
 // fakeAgent implementa Agent y registra las llamadas para asertar sobre ellas.
@@ -306,7 +308,7 @@ func TestModel_ResumeCommandRejectsArgumentsAndActiveRunsLocally(t *testing.T) {
 		m.activeRun = 42
 		m = typeRunes(t, m, "/resume")
 		m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-		if len(fake.resumeLists) != 0 || m.resumePicker.open || len(m.entries) != 1 || m.entries[0].text != ErrResumeActiveRun.Error() {
+		if len(fake.resumeLists) != 0 || m.resumePicker.open || len(m.entries) != 1 || m.entries[0].text != engine.ErrResumeActiveRun.Error() {
 			t.Fatalf("active rejection = lists:%q picker:%+v entries:%+v", fake.resumeLists, m.resumePicker, m.entries)
 		}
 	})
@@ -752,8 +754,8 @@ func TestModel_UndoFailureKeepsTranscriptAndComposer(t *testing.T) {
 }
 
 func TestModel_UndoAppearsInSlashCompletion(t *testing.T) {
-	engine := NewEngine(EngineConfig{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore()})
-	commands := engine.Commands()
+	eng := engine.New(engine.Config{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore()})
+	commands := eng.Commands()
 	found := false
 	for _, item := range commands {
 		if item.Name == "undo" {
@@ -8162,5 +8164,97 @@ func TestModel_ClosingFocusedViewerReturnsChatFocus(t *testing.T) {
 	}
 	if got, want := m.input.Value(), "chat"; got != want {
 		t.Fatalf("input.Value() = %q, want %q: Esc from the focused viewer must return keyboard focus to chat", got, want)
+	}
+}
+
+// TestModel_SubmittingNewActivatesFreshSessionForFuturePrompts drives /new
+// through the Model against a real Engine: it is an integration test of the
+// presentation layer, so it lives here rather than in the engine package.
+func TestModel_SubmittingNewActivatesFreshSessionForFuturePrompts(t *testing.T) {
+	// TRIANGULATE: crear la fila durable no basta. El composer debe cambiar al
+	// ID nuevo para que el siguiente prompt no vuelva a la sesion anterior.
+	root := t.TempDir()
+	store := session.NewMemoryStore()
+	if _, err := store.AppendEvent(context.Background(), "s1", session.SessionEvent{
+		Kind: session.KindSessionCwd,
+		Text: root,
+	}); err != nil {
+		t.Fatalf("store.AppendEvent(s1, Session.Cwd) = %v, se esperaba nil", err)
+	}
+	eng := engine.New(engine.Config{
+		Root:     root,
+		Provider: llm.NewFakeProvider(llm.Event{Kind: llm.StepEnded}),
+		Store:    store,
+	})
+	m := NewModel(eng, "s1", eng.Events())
+
+	m = typeRunes(t, m, "/new")
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	sessions, err := store.Sessions(context.Background())
+	if err != nil {
+		t.Fatalf("store.Sessions() = %v, se esperaba nil", err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("store.Sessions() contiene %d sesiones, se esperaban 2", len(sessions))
+	}
+	newSessionID := ""
+	for _, s := range sessions {
+		if s.ID != "s1" {
+			newSessionID = s.ID
+			break
+		}
+	}
+	if newSessionID == "" {
+		t.Fatal("no se encontro la sesion creada por /new")
+	}
+	m = typeRunes(t, m, "continua aqui")
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	_, done := collectUntilRunDone(t, eng.Events(), 10*time.Second, nil)
+	if done.Err != "" {
+		t.Fatalf("RunDoneMsg.Err = %q, se esperaba corrida limpia", done.Err)
+	}
+	messages, err := store.Messages(context.Background(), newSessionID, 0)
+	if err != nil {
+		t.Fatalf("store.Messages(%s, 0) = %v, se esperaba nil", newSessionID, err)
+	}
+	if len(messages) != 1 || messages[0].Text != "continua aqui" {
+		t.Fatalf("mensajes de %s = %+v, se esperaba que el siguiente prompt se enviara a la sesion nueva", newSessionID, messages)
+	}
+}
+
+// nextMsg y collectUntilRunDone drenan el canal del engine para los tests de
+// integracion Model+Engine (el engine tiene sus propias copias para sus tests).
+func nextMsg(t *testing.T, ch <-chan tea.Msg, timeout time.Duration) tea.Msg {
+	t.Helper()
+	select {
+	case <-time.After(timeout):
+		t.Fatalf("timeout de %v esperando el siguiente mensaje del engine", timeout)
+		return nil
+	case msg, ok := <-ch:
+		if !ok {
+			t.Fatal("canal del engine cerrado antes de tiempo")
+		}
+		return msg
+	}
+}
+
+func collectUntilRunDone(t *testing.T, ch <-chan tea.Msg, timeout time.Duration, onEvent func(session.SessionEvent)) ([]session.SessionEvent, RunDoneMsg) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var events []session.SessionEvent
+	for {
+		switch m := nextMsg(t, ch, time.Until(deadline)).(type) {
+		case EventMsg:
+			ev := session.SessionEvent(m)
+			events = append(events, ev)
+			if onEvent != nil {
+				onEvent(ev)
+			}
+		case RunDoneMsg:
+			return events, m
+		default:
+			t.Fatalf("mensaje inesperado en el canal del engine: %T", m)
+		}
 	}
 }

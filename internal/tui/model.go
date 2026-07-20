@@ -4,7 +4,9 @@
 // El paquete se organiza por responsabilidad: model.go (tipos, estado y
 // teclado), fold.go (fold de eventos a entradas), view.go (render, estilos
 // y viewport) y reveal.go (smooth streaming del texto del assistant y del
-// bloque de pensamiento).
+// bloque de pensamiento). El agente headless vive en el subpaquete engine/
+// (su contrato en engine/protocol.go, re-exportado aca con alias en
+// engine_protocol.go) y la paleta de colores en el subpaquete theme/.
 package tui
 
 import (
@@ -22,24 +24,8 @@ import (
 	"atenea/internal/command"
 	"atenea/internal/providerconfig"
 	"atenea/internal/session"
+	"atenea/internal/tui/engine"
 )
-
-// EventMsg es el evento durable de sesion que llega del engine al Model.
-type EventMsg session.SessionEvent
-
-// RunHandle identifica una corrida concreta dentro de una sesion. RunID == 0
-// significa que la operacion no arranco una corrida (/new, /compact).
-type RunHandle struct {
-	SessionID string
-	RunID     uint64
-}
-
-// RunDoneMsg marca el fin de una corrida; Err == "" significa terminada limpia.
-type RunDoneMsg struct {
-	SessionID string
-	RunID     uint64
-	Err       string
-}
 
 type UndoDoneMsg struct {
 	Result UndoResult
@@ -60,21 +46,6 @@ type ResumeSessionsDoneMsg struct {
 }
 
 const resumeResultSessionMismatch = "resume result session mismatch"
-
-type CompactionState int
-
-const (
-	CompactionQueued CompactionState = iota
-	CompactionRunning
-	CompactionNotNeeded
-	CompactionFailed
-)
-
-type CompactionStatusMsg struct {
-	SessionID string
-	State     CompactionState
-	Err       string
-}
 
 type leaderTimeoutMsg struct{ generation uint64 }
 type cancelConfirmationExpiredMsg struct{ generation uint64 }
@@ -143,7 +114,7 @@ const (
 	entryNotice                        // informational line (connected provider, first-run hint)
 )
 
-const historyLimit = 100
+const historyLimit = engine.HistoryLimit
 
 const cancelConfirmationWindow = 2 * time.Second
 
@@ -1606,7 +1577,7 @@ func (m Model) submitPrompt() (Model, tea.Cmd) {
 			return m.appendError("usage: /resume"), nil
 		}
 		if m.working {
-			return m.appendError(ErrResumeActiveRun.Error()), nil
+			return m.appendError(engine.ErrResumeActiveRun.Error()), nil
 		}
 		sessionID := m.sessionID
 		agent := m.agent

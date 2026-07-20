@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"atenea/internal/providerconfig"
+	"atenea/internal/tui/theme"
 )
 
 // connectAgent is the engine surface the panel needs. ConnectProvider blocks
@@ -290,7 +291,7 @@ func (m Model) connectPanelView() string {
 
 	panelStyle := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("8")).
+		BorderForeground(lipgloss.Color(theme.Border)).
 		Width(innerWidth)
 	if layout.innerHeight > 0 {
 		panelStyle = panelStyle.Height(layout.innerHeight)
