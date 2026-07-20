@@ -24,10 +24,31 @@ func TestRenderMarkdown_HeadingsHaveNoLiteralHashPrefix(t *testing.T) {
 	}
 }
 
-func TestRenderMarkdown_InlineCodeKeepsPadding(t *testing.T) {
+func TestRenderMarkdown_InlineCodeDoesNotFragmentProse(t *testing.T) {
 	out := ansi.Strip(renderMarkdown("run `go vet` now", 80))
-	if !strings.Contains(out, " go vet ") {
-		t.Fatalf("renderMarkdown() = %q, inline code must keep one space of padding on each side", out)
+	if !strings.Contains(out, "run go vet now") {
+		t.Fatalf("renderMarkdown() = %q, inline code must stay part of the sentence without visual padding", out)
+	}
+	if strings.Contains(out, "run  go vet  now") {
+		t.Fatalf("renderMarkdown() = %q, inline code must not add a chip-like gap around the text", out)
+	}
+}
+
+func TestRenderMarkdown_HeadingsSeparateSections(t *testing.T) {
+	out := ansi.Strip(renderMarkdown("intro\n\n## Seccion\n\ncuerpo", 80))
+	lines := strings.Split(out, "\n")
+	sectionLine := -1
+	for i, line := range lines {
+		if strings.Contains(line, "Seccion") {
+			sectionLine = i
+			break
+		}
+	}
+	if sectionLine < 1 || strings.TrimSpace(lines[sectionLine-1]) != "" {
+		t.Fatalf("renderMarkdown() = %q, a heading must be separated from the preceding section", out)
+	}
+	if sectionLine+1 >= len(lines) || strings.TrimSpace(lines[sectionLine+1]) != "" {
+		t.Fatalf("renderMarkdown() = %q, a heading must leave one blank line before its section body", out)
 	}
 }
 

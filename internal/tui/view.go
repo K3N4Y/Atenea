@@ -545,7 +545,7 @@ var markdownStyle = func() glamouransi.StyleConfig {
 		},
 		List: glamouransi.StyleList{LevelIndent: 2},
 		Heading: glamouransi.StyleBlock{
-			StylePrimitive: glamouransi.StylePrimitive{BlockSuffix: "\n", Bold: yes()},
+			StylePrimitive: glamouransi.StylePrimitive{BlockSuffix: "\n\n", Bold: yes()},
 		},
 		H1:            glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{Color: str("6")}},
 		H3:            glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{Color: str("8")}},
@@ -570,7 +570,7 @@ var markdownStyle = func() glamouransi.StyleConfig {
 		ImageText: glamouransi.StylePrimitive{Color: str("8"), Format: "Image: {{.text}} →"},
 		Code: glamouransi.StyleBlock{
 			StylePrimitive: glamouransi.StylePrimitive{
-				Prefix: " ", Suffix: " ", BackgroundColor: str(markdownCodeBackground),
+				Color: str("8"),
 			},
 		},
 		// No CodeBlock margin: the block aligns with the body at the document
