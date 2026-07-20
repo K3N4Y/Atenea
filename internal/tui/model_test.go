@@ -3256,21 +3256,73 @@ func TestModel_CtrlCStopsAndQuits(t *testing.T) {
 	}
 }
 
-func TestModel_EscStopsWithoutQuitting(t *testing.T) {
+func TestModel_EscRequiresConfirmationBeforeStopping(t *testing.T) {
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
+	m.working = true
+	m.activeRun = 1
+	m.gitSummary = gitSummary{Files: 1, Additions: 2, Deletions: 1}
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	if _, ok := updated.(Model); !ok {
-		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+	m = updated.(Model)
+	if len(fake.stopped) != 0 {
+		t.Fatalf("Stop = %v, el primer Esc solo debe pedir confirmacion", fake.stopped)
 	}
+	if cmd == nil {
+		t.Fatal("cmd = nil, el primer Esc debe programar la expiracion de la confirmacion")
+	}
+	if plain := ansi.Strip(m.View()); !strings.Contains(plain, "Esc again to cancel") {
+		t.Fatalf("View() = %q, falta la confirmacion bajo el composer", plain)
+	}
+	line := ansi.Strip(lineWith(t, m.View(), "Esc again to cancel"))
+	if !strings.HasPrefix(line, "  Esc again to cancel") || !strings.Contains(line, "1 file changed  +2  −1") {
+		t.Fatalf("linea bajo composer = %q, el aviso debe quedar a la izquierda y Git a la derecha", line)
+	}
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
 	if len(fake.stopped) != 1 || fake.stopped[0] != "s1" {
-		t.Fatalf("Stop = %v, Esc debe llamar Stop(%q) exactamente una vez", fake.stopped, "s1")
+		t.Fatalf("Stop = %v, el segundo Esc debe llamar Stop(%q) exactamente una vez", fake.stopped, "s1")
 	}
 	if cmd != nil {
 		if _, quits := cmd().(tea.QuitMsg); quits {
-			t.Fatalf("cmd() produjo tea.QuitMsg, Esc debe detener la corrida SIN salir de la TUI")
+			t.Fatal("el segundo Esc debe cancelar la corrida sin salir de la TUI")
 		}
+	}
+	if plain := ansi.Strip(m.View()); strings.Contains(plain, "Esc again to cancel") {
+		t.Fatalf("View() = %q, la confirmacion debe desaparecer al cancelar", plain)
+	}
+}
+
+func TestModel_EscConfirmationDisarms(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m.working = true
+	m.activeRun = 1
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	if m.cancelPending || strings.Contains(ansi.Strip(m.View()), "Esc again to cancel") {
+		t.Fatal("una tecla distinta de Esc debe desarmar la confirmacion")
+	}
+	if got := m.input.Value(); got != "x" {
+		t.Fatalf("input = %q, la tecla que desarma debe procesarse normalmente", got)
+	}
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	generation := m.cancelGeneration
+	m = apply(t, m, cancelConfirmationExpiredMsg{generation: generation})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if len(fake.stopped) != 0 || !m.cancelPending {
+		t.Fatalf("Stop = %v pending = %v, tras expirar Esc debe iniciar una confirmacion nueva", fake.stopped, m.cancelPending)
+	}
+
+	idle := NewModel(fake, "s1", nil)
+	idle = apply(t, idle, tea.KeyMsg{Type: tea.KeyEsc})
+	if idle.cancelPending {
+		t.Fatal("Esc sin corrida activa no debe mostrar confirmacion")
 	}
 }
 
@@ -5174,9 +5226,11 @@ func TestModel_EnterAppliesSelectionInsteadOfSending(t *testing.T) {
 func TestModel_EscClosesMenuWithoutStopping(t *testing.T) {
 	// Con el menu abierto, Esc cierra el popup SIN detener la corrida y sin
 	// tocar el texto del input; teclear otra runa recomputa y reabre el menu.
-	// Con menu cerrado, Esc conserva su comportamiento actual (detiene).
+	// Con menu cerrado, dos Esc confirman la cancelacion.
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil).WithCompletions(menuCommands, nil)
+	m.working = true
+	m.activeRun = 1
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	m = typeRunes(t, m, "/c")
@@ -5201,11 +5255,12 @@ func TestModel_EscClosesMenuWithoutStopping(t *testing.T) {
 		t.Fatalf("linea seleccionada del menu = %q, teclear otra runa debe reabrir el menu sobre /commit", got)
 	}
 
-	// Con menu cerrado Esc sigue deteniendo la corrida.
+	// Con menu cerrado el primer Esc arma y el segundo detiene la corrida.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc}) // cierra el popup reabierto
-	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc}) // menu cerrado: detiene
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc}) // menu cerrado: arma
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc}) // confirma
 	if len(fake.stopped) != 1 || fake.stopped[0] != "s1" {
-		t.Fatalf("Stop = %v, con menu cerrado Esc debe detener la corrida (Stop(%q) una vez)", fake.stopped, "s1")
+		t.Fatalf("Stop = %v, con menu cerrado dos Esc deben detener la corrida (Stop(%q) una vez)", fake.stopped, "s1")
 	}
 }
 

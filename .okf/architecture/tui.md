@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-18
+updated_at: 2026-07-20
 summary: Architecture and behavior of the Atenea terminal user interface.
 ---
 
@@ -271,8 +271,13 @@ rows.
  resolves via the gate with the `SessionID` of the EVENT (a surface
  request from a subagent is resolved with the child id).
 - Enter sends via the active mode path (`Agent.SendPrompt` in build,
- `Agent.SendPlanPrompt` in plan); Ctrl+C cuts and exits; Esc only shorts;
- only a `RunDoneMsg` matching the active `sessionID + runID` turns off the work
+ `Agent.SendPlanPrompt` in plan); Ctrl+C cuts and exits. During an active run,
+ the first Esc shows `Esc again to cancel` for two seconds and a second Esc
+ inside that window stops the run without exiting. Any other key or expiration
+ disarms the confirmation and is processed normally; without an active run Esc
+ does not arm it. Contextual Esc handling for menus, panels, permissions,
+ explorer, and file viewer retains precedence.
+ Only a `RunDoneMsg` matching the active `sessionID + runID` turns off the work
  flag, so a late close from a canceled run is ignored. `Ctrl+J` inserts a
  newline without
  submitting; the composer grows to five visible lines and then scrolls while
@@ -332,8 +337,9 @@ rows.
  chat and the terminal window own keyboard focus, and hides while the window is
  unfocused or explorer, viewer, permission, or plan approval owns input. The
  lower-right border shows the active model and appends `· plan` in plan mode.
-- The first row below the composer shows the current Git workspace summary,
- right-aligned to the same two-cell horizontal margin: unique changed files,
+- The first row below the composer shows the temporary Esc cancellation prompt
+ left-aligned when armed and the current Git workspace summary right-aligned to
+ the same two-cell horizontal margin: unique changed files,
  additions, and deletions (`4 files changed  +128  −36`). It combines staged,
  unstaged, and non-ignored untracked files; new text files count as additions
  and binary files only affect the file count. A clean workspace, a non-Git

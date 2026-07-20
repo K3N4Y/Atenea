@@ -1374,12 +1374,19 @@ func (m Model) composerView() string {
 
 func (m Model) gitSummaryLine(width, margin int) string {
 	innerWidth := max(width-2*margin, 0)
-	label := m.gitSummaryLabel(innerWidth)
-	labelWidth := ansi.StringWidth(label)
-	if label == "" || labelWidth > innerWidth {
-		return strings.Repeat(" ", width)
+	left := ""
+	if m.cancelPending {
+		left = ansi.Truncate(statusStyle.Render("Esc again to cancel"), innerWidth, "…")
 	}
-	return strings.Repeat(" ", margin+innerWidth-labelWidth) + label + strings.Repeat(" ", margin)
+	leftWidth := ansi.StringWidth(left)
+	separatorWidth := 0
+	if left != "" {
+		separatorWidth = 1
+	}
+	rightWidth := max(innerWidth-leftWidth-separatorWidth, 0)
+	right := m.gitSummaryLabel(rightWidth)
+	gap := max(innerWidth-leftWidth-ansi.StringWidth(right), 0)
+	return strings.Repeat(" ", margin) + left + strings.Repeat(" ", gap) + right + strings.Repeat(" ", margin)
 }
 
 func (m Model) gitSummaryLabel(width int) string {

@@ -77,6 +77,7 @@ type CompactionStatusMsg struct {
 }
 
 type leaderTimeoutMsg struct{ generation uint64 }
+type cancelConfirmationExpiredMsg struct{ generation uint64 }
 
 type fileListTarget uint8
 
@@ -143,6 +144,8 @@ const (
 )
 
 const historyLimit = 100
+
+const cancelConfirmationWindow = 2 * time.Second
 
 type panelFocus int
 
@@ -233,6 +236,10 @@ type Model struct {
 	entries   []entry
 	input     composerInput
 	working   bool // true desde que arranca una corrida (Enter o aceptar el plan) hasta RunDoneMsg
+
+	cancelPending    bool
+	cancelDeadline   time.Time
+	cancelGeneration uint64
 
 	// followAgent mantiene el viewport pegado a la cola solo mientras el
 	// usuario siga al fondo. Al desplazarse hacia arriba se apaga hasta que el
@@ -537,6 +544,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.working = false
 		m.activeRun = 0
+		m.cancelPending = false
 		if ev.Err != "" {
 			m = m.appendError(ev.Err)
 		}
@@ -682,6 +690,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case leaderTimeoutMsg:
 		if ev.generation == 0 || ev.generation == m.leaderGeneration {
 			m.leaderPending = false
+		}
+		return m, nil
+	case cancelConfirmationExpiredMsg:
+		if ev.generation == m.cancelGeneration {
+			m.cancelPending = false
 		}
 		return m, nil
 	case spinner.TickMsg:
@@ -858,14 +871,18 @@ func (m *Model) scrollFileViewerMouse(msg tea.MouseMsg) {
 // viewport ni el input), Tab/Enter (aplican la seleccion) y Esc (cierra el
 // popup); con menu cerrado y composer vacio Space arma el leader de un segundo
 // (e abre el explorer, otra tecla o timeout lo cancelan sin insertar); despues
-// Esc detiene la corrida, Enter envia el prompt tecleado, Tab alterna el modo
-// build/plan, Up/Down navegan el historial de prompts enviados (ver
-// recallHistory) y el resto de teclas alimenta el input (y recomputa el popup).
+// Esc pide confirmacion y luego detiene la corrida, Enter envia el prompt
+// tecleado, Tab alterna el modo build/plan, Up/Down navegan el historial de
+// prompts enviados (ver recallHistory) y el resto de teclas alimenta el input
+// (y recomputa el popup).
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
+		m.cancelPending = false
 		m.stopRun()
 		return m, tea.Quit
 	}
+	confirmCancel := m.cancelPending && time.Now().Before(m.cancelDeadline)
+	m.cancelPending = false
 	if m.resumePicker.open {
 		return m.handleResumePickerKey(msg)
 	}
@@ -964,9 +981,20 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.Type {
 	case tea.KeyEsc:
-		// Esc detiene la corrida en curso pero deja la TUI abierta.
-		m.stopRun()
-		return m, nil
+		if !m.working {
+			return m, nil
+		}
+		if confirmCancel {
+			m.stopRun()
+			return m, nil
+		}
+		m.cancelPending = true
+		m.cancelDeadline = time.Now().Add(cancelConfirmationWindow)
+		m.cancelGeneration++
+		generation := m.cancelGeneration
+		return m, tea.Tick(cancelConfirmationWindow, func(time.Time) tea.Msg {
+			return cancelConfirmationExpiredMsg{generation: generation}
+		})
 	case tea.KeyEnter:
 		return m.submitPrompt()
 	case tea.KeyTab:
