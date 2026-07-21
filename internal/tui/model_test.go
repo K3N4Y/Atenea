@@ -6492,16 +6492,20 @@ func TestModel_LiveThinkingHeaderKeepsChatIndentWhenSettledWithExplorer(t *testi
 	liveView := ansi.Strip(m.View())
 	assistantLine := lineWith(t, liveView, "respuesta-visible")
 	liveHeaderLine := lineWith(t, liveView, "◆ Thinking…")
-	chatContentColumn := strings.Index(assistantLine, "respuesta-visible")
-	liveHeaderColumn := strings.Index(liveHeaderLine, "◆ Thinking…")
-	if chatContentColumn < 0 || liveHeaderColumn < 0 {
-		t.Fatalf("View() sin ANSI = %q, deben verse el contenido assistant y el encabezado vivo", liveView)
-	}
+	// Columna medida en celdas de display, no en offset de bytes: la fila del
+	// arbol en la linea del asistente lleva un icono de carpeta multibyte, asi
+	// que strings.Index (bytes) no cuadraria con la fila del encabezado (prefijo
+	// ASCII) aunque ambos caigan en la misma columna visible.
+	column := func(line, sub string) int { return ansi.StringWidth(line[:strings.Index(line, sub)]) }
+	chatContentColumn := column(assistantLine, "respuesta-visible")
+	liveHeaderColumn := column(liveHeaderLine, "◆ Thinking…")
 	if got, want := liveHeaderColumn, chatContentColumn; got != want {
 		t.Fatalf("columna de ◆ Thinking… = %d, want %d: debe alinearse con el contenido visible del chat", got, want)
 	}
-	if got, want := liveHeaderLine[:liveHeaderColumn], "│  "; !strings.HasSuffix(got, want) {
-		t.Fatalf("prefijo antes de ◆ Thinking… = %q, want suffix %q: el panel chat debe aportar exactamente dos espacios", got, want)
+	// Sin caja el chat ya no aporta borde: el encabezado arranca tras el arbol,
+	// su gutter de una columna y la sangria del propio bloque de pensamiento.
+	if got, want := liveHeaderColumn, m.treePanelWidth()+1+len(thinkingInset); got != want {
+		t.Fatalf("columna de ◆ Thinking… = %d, want %d: arbol + gutter + sangria del pensamiento", got, want)
 	}
 
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: "preview-sin-indentacion-adicional"})
@@ -6509,7 +6513,7 @@ func TestModel_LiveThinkingHeaderKeepsChatIndentWhenSettledWithExplorer(t *testi
 
 	settledView := ansi.Strip(m.View())
 	settledHeaderLine := lineWith(t, settledView, "◆ Thought")
-	settledHeaderColumn := strings.Index(settledHeaderLine, "◆ Thought")
+	settledHeaderColumn := column(settledHeaderLine, "◆ Thought")
 	if got, want := settledHeaderColumn, liveHeaderColumn; got != want {
 		t.Fatalf("columna del resumen asentado = %d, want %d: ReasoningEnded no debe desplazar horizontalmente el encabezado", got, want)
 	}
@@ -6856,8 +6860,8 @@ func TestModel_ClickExpandsScrolledThinkingInChatWithExplorerFocus(t *testing.T)
 	if m.viewport.YOffset <= 0 {
 		t.Fatalf("viewport.YOffset = %d, want > 0 for a scrolled transcript", m.viewport.YOffset)
 	}
-	clickY := topBarHeight + 2 + summaryRow - m.viewport.YOffset
-	if clickY < topBarHeight+2 || clickY >= m.viewport.Height+topBarHeight+2 {
+	clickY := topBarHeight + summaryRow - m.viewport.YOffset
+	if clickY < topBarHeight || clickY >= m.viewport.Height+topBarHeight {
 		t.Fatalf("target summary row=%d, offset=%d, clickY=%d, viewport height=%d: el resumen objetivo debe estar visible dentro del transcript derecho", summaryRow, m.viewport.YOffset, clickY, m.viewport.Height)
 	}
 
@@ -6985,8 +6989,8 @@ func TestModel_LeaderSpaceE_OpensTree(t *testing.T) {
 	if !m.treeOpen {
 		t.Fatal("Space then e must open the file tree")
 	}
-	if got := m.View(); !strings.Contains(got, "explorer") {
-		t.Fatalf("View() = %q, open tree must render explorer title", got)
+	if got := m.View(); !strings.Contains(got, "go.mod") {
+		t.Fatalf("View() = %q, open tree must render the file tree", got)
 	}
 }
 
@@ -7055,8 +7059,8 @@ func TestModel_KeyRunesBatch_LeaderSpaceEOpensTree(t *testing.T) {
 	if got := m.input.Value(); got != "" {
 		t.Fatalf("input.Value() = %q, leader batch must not insert into composer", got)
 	}
-	if got := m.View(); !strings.Contains(got, "explorer") {
-		t.Fatalf("View() = %q, open tree must render explorer title", got)
+	if got := m.View(); !strings.Contains(got, "go.mod") {
+		t.Fatalf("View() = %q, open tree must render the file tree", got)
 	}
 }
 
@@ -7151,7 +7155,7 @@ func TestModel_TreeNavigationScrollsSelectedRowIntoView(t *testing.T) {
 			"file-04.go",
 		}, nil
 	})
-	m = apply(t, m, tea.WindowSizeMsg{Width: 50, Height: 8})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 50, Height: 3 + topBarHeight})
 	m = m.toggleTree()
 
 	for range 3 {
@@ -7173,7 +7177,7 @@ func TestModel_TreeNavigationScrollsBackAtTopAndAfterResize(t *testing.T) {
 			"file-04.go",
 		}, nil
 	})
-	m = apply(t, m, tea.WindowSizeMsg{Width: 50, Height: 8 + topBarHeight})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 50, Height: 4 + topBarHeight})
 	m = m.toggleTree()
 
 	for range 4 {
@@ -7183,7 +7187,7 @@ func TestModel_TreeNavigationScrollsBackAtTopAndAfterResize(t *testing.T) {
 		t.Fatalf("treeOffset at bottom = %d, want %d", got, want)
 	}
 
-	m = apply(t, m, tea.WindowSizeMsg{Width: 50, Height: 6 + topBarHeight})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 50, Height: 2 + topBarHeight})
 	if got, want := m.treeOffset, 3; got != want {
 		t.Fatalf("treeOffset after shrinking = %d, want %d", got, want)
 	}
@@ -7209,7 +7213,7 @@ func TestModel_TreeMouseWheelScrollsSelectionWithoutMovingTranscript(t *testing.
 			"file-04.go",
 		}, nil
 	})
-	m = apply(t, m, tea.WindowSizeMsg{Width: 50, Height: 6 + topBarHeight})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 50, Height: 2 + topBarHeight})
 	m = m.toggleTree()
 	for i := 0; i < 20; i++ {
 		m.entries = append(m.entries, entry{kind: entryUser, text: fmt.Sprintf("message-%d", i)})
@@ -7328,7 +7332,7 @@ func TestModel_TreeMouseClickOpensFileFromAnyColumnInRow(t *testing.T) {
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonLeft,
 		X:      m.treePanelWidth() - 1,
-		Y:      3 + topBarHeight,
+		Y:      topBarHeight,
 	})
 
 	if !m.viewer.active() {
@@ -7348,9 +7352,9 @@ func TestModel_TreeMouseClickReplacesOpenFileViewer(t *testing.T) {
 		}))
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 12})
 	m = m.toggleTree()
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() - 1, Y: 3 + topBarHeight})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() - 1, Y: topBarHeight})
 
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() - 1, Y: 4 + topBarHeight})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() - 1, Y: 1 + topBarHeight})
 
 	if got, want := m.viewer.path, "second.go"; got != want {
 		t.Fatalf("viewer.path = %q, want %q", got, want)
@@ -7368,7 +7372,7 @@ func TestModel_TreeMouseClickFolderRowTogglesExpansion(t *testing.T) {
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonLeft,
 		X:      m.treePanelWidth() - 1,
-		Y:      3 + topBarHeight,
+		Y:      topBarHeight,
 	})
 
 	if !m.tree.expanded["internal"] {
@@ -7479,8 +7483,8 @@ func TestModel_TreeViewHandlesNarrowTerminal(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeySpace})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
 
-	if got := m.View(); !strings.Contains(got, "explorer") {
-		t.Fatalf("View() = %q, narrow terminal must still render explorer without panic", got)
+	if got := m.View(); !strings.Contains(got, "internal") {
+		t.Fatalf("View() = %q, narrow terminal must still render the file tree without panic", got)
 	}
 	for _, line := range strings.Split(m.View(), "\n") {
 		if width := ansi.StringWidth(line); width > 12 {
@@ -7606,7 +7610,7 @@ func TestModel_FileViewerTrackpadScrollKeepsTabbedRowsWithinLayout(t *testing.T)
 			Y:      topBarHeight,
 		})
 	}
-	if got, want := m.viewer.offset, 10; got != want {
+	if got, want := m.viewer.offset, 7; got != want {
 		t.Fatalf("viewer offset after continuous wheel events = %d, want %d", got, want)
 	}
 	for _, line := range strings.Split(m.View(), "\n") {
@@ -7628,7 +7632,7 @@ func TestModel_FileViewerHeightMatchesRenderedLayout(t *testing.T) {
 		wantRows int
 	}{
 		{name: "full screen", width: 12, height: 24 + topBarHeight, openTree: true, wantRows: 23},
-		{name: "split panels", width: 80, height: 24 + topBarHeight, openTree: true, wantRows: 20},
+		{name: "split panels", width: 80, height: 24 + topBarHeight, openTree: true, wantRows: 23},
 		{name: "without explorer", width: 80, height: 24 + topBarHeight, wantRows: 23},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -7700,7 +7704,7 @@ func TestModel_FileViewerReplacesChatWithHeaderAndGutter(t *testing.T) {
 	m = m.toggleTree()
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	view := ansi.Strip(m.View())
-	for _, want := range []string{"explorer", "main.go · 1-2/2", "1", "package main", "2", "func main() {}"} {
+	for _, want := range []string{"main.go · 1-2/2", "1", "package main", "2", "func main() {}"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("View() missing %q: %q", want, view)
 		}
@@ -7732,21 +7736,30 @@ func TestModel_FileViewerResizeBetweenSplitAndFullScreenKeepsScroll(t *testing.T
 	m := NewModel(&fakeAgent{}, "s1", nil).
 		WithCompletions(nil, func() ([]string, error) { return []string{"many.txt"}, nil }).
 		WithFileReader(viewerReader(map[string][]byte{"many.txt": []byte("1\n2\n3\n4\n5\n6\n7\n8\n")}))
-	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 5})
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 10})
 	m = m.toggleTree()
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyPgDown})
 	beforeOffset := m.viewer.offset
-	m = apply(t, m, tea.WindowSizeMsg{Width: 12, Height: 4})
-	if view := ansi.Strip(m.View()); !strings.Contains(view, "many.txt ·") || strings.Contains(view, "explorer") {
+	if beforeOffset == 0 {
+		t.Fatal("precondition: PgDown must scroll the split viewer so the test exercises offset preservation")
+	}
+	m = apply(t, m, tea.WindowSizeMsg{Width: 12, Height: 10})
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "many.txt ·") {
 		t.Fatalf("narrow viewer must fill the screen: %q", view)
+	}
+	if m.treeVisible() {
+		t.Fatalf("narrow viewer must hide the tree: treePanelWidth=%d width=%d", m.treePanelWidth(), m.width)
 	}
 	if m.viewer.offset != beforeOffset {
 		t.Fatalf("viewer offset after narrow resize = %d, want %d", m.viewer.offset, beforeOffset)
 	}
-	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 5})
-	if view := ansi.Strip(m.View()); !strings.Contains(view, "explorer") || !strings.Contains(view, "many.txt ·") {
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 10})
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "many.txt ·") {
 		t.Fatalf("wide viewer must restore split layout: %q", view)
+	}
+	if !m.treeVisible() {
+		t.Fatalf("wide viewer must restore the split layout with the tree visible: treePanelWidth=%d width=%d", m.treePanelWidth(), m.width)
 	}
 }
 
@@ -7777,33 +7790,7 @@ func TestModel_ResizeToFullWidthTreeNormalizesFocusAndKeepsItAfterSplitReturns(t
 	}
 }
 
-func TestModel_SplitFocusChromeMarksExactlyOneActivePanel(t *testing.T) {
-	m := NewModel(&fakeAgent{}, "s1", nil).
-		WithCompletions(nil, func() ([]string, error) { return []string{"main.go"}, nil }).
-		WithFileReader(viewerReader(map[string][]byte{"main.go": []byte("package main\n")}))
-	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 12})
-	m = m.toggleTree()
-
-	view := ansi.Strip(m.View())
-	if got, want := strings.Count(view, "*"), 1; got != want {
-		t.Fatalf("split explorer view has %d active markers, want %d: %q", got, want, view)
-	}
-	if !strings.Contains(view, "explorer *") || strings.Contains(view, "chat *") {
-		t.Fatalf("split explorer view must mark only explorer active: %q", view)
-	}
-
-	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() + 2, Y: topBarHeight})
-	view = ansi.Strip(m.View())
-	if got, want := strings.Count(view, "*"), 1; got != want {
-		t.Fatalf("split viewer view has %d active markers, want %d: %q", got, want, view)
-	}
-	if !strings.Contains(view, "viewer *") || strings.Contains(view, "explorer *") {
-		t.Fatalf("split viewer view must mark only viewer active: %q", view)
-	}
-}
-
-func TestModel_ClickChatMarksOnlyChatActiveWithoutOverflow(t *testing.T) {
+func TestModel_ClickChatFocusesChatWithoutOverflow(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil).
 		WithCompletions(nil, func() ([]string, error) { return []string{"main.go"}, nil })
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 12})
@@ -7815,12 +7802,8 @@ func TestModel_ClickChatMarksOnlyChatActiveWithoutOverflow(t *testing.T) {
 		Y:      10,
 	})
 
-	view := ansi.Strip(m.View())
-	if got, want := strings.Count(view, "*"), 1; got != want {
-		t.Fatalf("split chat view has %d active markers, want %d: %q", got, want, view)
-	}
-	if !strings.Contains(view, "chat *") || strings.Contains(view, "explorer *") || strings.Contains(view, "viewer *") {
-		t.Fatalf("split chat view must mark only chat active: %q", view)
+	if got, want := m.focus, chatFocus; got != want {
+		t.Fatalf("focus after chat click = %v, want %v", got, want)
 	}
 	assertNoLineWiderThan(t, m.View(), 80)
 }
@@ -8017,7 +8000,7 @@ func TestModel_ClickViewerFocusesFileScroll(t *testing.T) {
 		WithFileReader(viewerReader(map[string][]byte{"many.txt": []byte("1\n2\n3\n4\n5\n6\n7\n8\n9\n")}))
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 5 + topBarHeight})
 	m = m.toggleTree()
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: 3 + topBarHeight})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: topBarHeight})
 
 	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() + 2, Y: 4 + topBarHeight})
 	if got, want := m.focus, chatFocus; got != want {
@@ -8049,7 +8032,7 @@ func TestModel_ClickChatAfterOpeningViewerRoutesMouseWheelToTranscript(t *testin
 	}
 	m = m.syncViewport()
 	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp, X: m.treePanelWidth() + 2, Y: 4 + topBarHeight})
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: 3 + topBarHeight})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: topBarHeight})
 	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() + 2, Y: topBarHeight})
 	if got, want := m.focus, viewerFocus; got != want {
 		t.Fatalf("focus after viewer click = %v, want %v", got, want)
@@ -8075,7 +8058,7 @@ func TestModel_ClickChatAfterOpeningViewerRoutesMouseWheelToTranscript(t *testin
 
 func TestModel_MouseWheelRoutesByPointerWithoutChangingKeyboardFocus(t *testing.T) {
 	t.Run("narrow split chat scrolls from its leftmost visible column while explorer keeps keyboard focus", func(t *testing.T) {
-		const width, height = 24, 4
+		const width, height = 22, 4
 		m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
 			return []string{"file.go"}, nil
 		})
@@ -8182,8 +8165,8 @@ func TestModel_MouseWheelRoutesByPointerWithoutChangingKeyboardFocus(t *testing.
 			t.Fatalf("transcript offset = %d, want greater than %d: wheel over right chat must scroll chat", got, transcriptOffset)
 		}
 		view := m.View()
-		if !strings.Contains(view, "chat") {
-			t.Fatalf("View() = %q, split layout must keep the chat panel rendered", view)
+		if !strings.Contains(ansi.Strip(view), "message-") {
+			t.Fatalf("View() = %q, split layout must keep the chat transcript rendered", view)
 		}
 		assertNoLineWiderThan(t, view, width)
 		if lines := len(strings.Split(view, "\n")); lines > height {
@@ -8256,13 +8239,13 @@ func TestModel_ExplorerSelectionAfterOpeningViewerRoutesTreeKeysAndEsc(t *testin
 		}))
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 10})
 	m = m.toggleTree()
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: 3 + topBarHeight})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: topBarHeight})
 	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() + 2, Y: topBarHeight})
 	if got, want := m.focus, viewerFocus; got != want {
 		t.Fatalf("focus after viewer click = %v, want %v", got, want)
 	}
 
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: 4 + topBarHeight})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: 1 + topBarHeight})
 	if got, want := m.focus, explorerFocus; got != want {
 		t.Fatalf("focus after explorer file click = %v, want %v", got, want)
 	}
@@ -8301,8 +8284,8 @@ func TestModel_TreeFileClickKeepsExplorerFocus(t *testing.T) {
 		}))
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 12})
 	m = m.toggleTree()
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: 3 + topBarHeight})
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: 4 + topBarHeight})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: topBarHeight})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: 1 + topBarHeight})
 	if got, want := m.focus, explorerFocus; got != want {
 		t.Fatalf("focus after explorer file click = %v, want %v", got, want)
 	}
@@ -8322,8 +8305,8 @@ func TestModel_ClosingFocusedViewerReturnsChatFocus(t *testing.T) {
 		WithFileReader(viewerReader(map[string][]byte{"one.go": []byte("package one\n")}))
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 12})
 	m = m.toggleTree()
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: 3})
-	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() + 2, Y: 0})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: topBarHeight})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() + 2, Y: topBarHeight})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("chat")})
 
@@ -8332,6 +8315,41 @@ func TestModel_ClosingFocusedViewerReturnsChatFocus(t *testing.T) {
 	}
 	if got, want := m.input.Value(), "chat"; got != want {
 		t.Fatalf("input.Value() = %q, want %q: Esc from the focused viewer must return keyboard focus to chat", got, want)
+	}
+}
+
+// Reproduce: with the tree open, open a file into the viewer (a mouse click
+// keeps explorer focus), close the tree with `q`, then close the viewer. The
+// chat must expand back to full width — closing the tree via the explorer key
+// path used to skip resizeViewport, leaving the chat frozen at the split width.
+func TestModel_ClosingTreeWithViewerOpenExpandsChat(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).
+		WithCompletions(nil, func() ([]string, error) { return []string{"main.go"}, nil }).
+		WithFileReader(viewerReader(map[string][]byte{"main.go": []byte("package main\n")}))
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	full := m.viewport.Width
+
+	m = m.toggleTree()
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: topBarHeight})
+	if !m.viewer.active() {
+		t.Fatal("precondition: clicking a tree file row must open the viewer")
+	}
+	if m.viewport.Width >= full {
+		t.Fatalf("precondition: split viewport width = %d, want narrower than %d", m.viewport.Width, full)
+	}
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	if m.treeOpen {
+		t.Fatal("precondition: q must close the tree")
+	}
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: m.treePanelWidth() + 2, Y: topBarHeight})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.viewer.active() {
+		t.Fatal("precondition: Esc must close the focused viewer")
+	}
+
+	if got := m.viewport.Width; got != full {
+		t.Fatalf("chat viewport width = %d, want %d: closing the tree and viewer must expand the chat to full width", got, full)
 	}
 }
 

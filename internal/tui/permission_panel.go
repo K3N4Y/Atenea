@@ -58,9 +58,6 @@ func (m Model) permissionPanelHeight() int {
 		return permissionPanelMaxHeight
 	}
 	contentHeight := m.bodyHeight()
-	if m.chatPanelVisible() {
-		contentHeight -= 4
-	}
 	// No working-line reservation: a pending permission suppresses it (see
 	// showsWorking), so the panel takes that row too.
 	baseReserved := m.composerReservedLines() + len(m.menuItems)
@@ -87,8 +84,9 @@ func (m Model) permissionPanelLayout() (permissionPanelLayout, bool) {
 	x := margin
 	y := m.viewport.Height + len(m.menuItems)
 	if m.chatPanelVisible() {
-		x += m.treePanelWidth() + 2
-		y += 2
+		// El chat es la columna derecha: se corre x tras el arbol y su gutter de
+		// una columna. Sin caja no hay borde ni titulo, asi que y no se desplaza.
+		x += m.treePanelWidth() + 1
 	}
 	return permissionPanelLayout{
 		x: x, y: y, width: panelWidth, height: len(lines),

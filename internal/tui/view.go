@@ -160,7 +160,11 @@ var (
 	thinkingLabelStyle  = lipgloss.NewStyle().Bold(true) // "◆ Thought"/"◆ Thinking…" label of the thinking block header
 	composerBorderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Border))
 	treeCursorStyle     = lipgloss.NewStyle().Reverse(true)
-	treeBorderStyle     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder())
+	// treePanelStyle dimensiona (ancho y alto) las columnas del cuerpo cuando el
+	// arbol esta abierto —arbol, chat y visor— sin dibujar borde alguno: el arbol
+	// simplemente empuja al chat hacia la derecha, sin encapsular cada lado en su
+	// propia caja. El padding vertical/horizontal lo aporta el propio contenido.
+	treePanelStyle = lipgloss.NewStyle()
 
 	// composerBoxStyle es la caja de borde redondeado del composer (estilo
 	// Claude Code). Es la excepcion deliberada a la regla de arriba: agrega las
@@ -1248,9 +1252,6 @@ func (m Model) resizeViewport() Model {
 	m.input.SetWidth(max(contentWidth-2*composerOuterMargin-composerBoxBorderWidth-2*composerBoxPadding-inputCursorWidth, 1))
 	m.viewport.Width = max(contentWidth, 0)
 	contentHeight := m.bodyHeight()
-	if m.chatPanelVisible() {
-		contentHeight -= 4
-	}
 	inputHeight := max(contentHeight-(m.reservedLines()-m.input.Height()), 1)
 	m.input.SetHeight(min(m.input.Height(), inputHeight))
 	m.viewport.Height = max(contentHeight-m.reservedLines(), 0)
@@ -1621,34 +1622,28 @@ func (m Model) chatContent() string {
 	return m.transcriptView() + m.menuView() + status + m.permissionPanelView() + m.composerView()
 }
 
+// chatView dimensiona el chat como la columna derecha cuando el arbol esta
+// abierto: sin borde ni titulo, solo acotado a contentWidth x bodyHeight para
+// que JoinHorizontal lo alinee junto al arbol. El contenido ya viene envuelto
+// al ancho del chat (viewport y composer se dimensionan con chatContentWidth).
 func (m Model) chatView(content string) string {
-	innerWidth := max(m.contentWidth()-2, 0)
-	content = panelTitle("chat", m.focus == chatFocus) + "\n" + content
-	style := treeBorderStyle
+	style := treePanelStyle
 	if m.ready {
-		style = style.Width(innerWidth).Height(max(m.bodyHeight()-2, 0))
+		style = style.Width(max(m.contentWidth(), 0)).Height(max(m.bodyHeight(), 0))
 	}
 	return style.Render(content)
 }
 
+// viewerView dimensiona el visor como la columna derecha, sin borde ni titulo,
+// igual que chatView. renderFileViewer recibe el alto completo del cuerpo (el
+// mismo que en pantalla completa) y reserva por si solo la fila de cabecera.
 func (m Model) viewerView(width int) string {
-	innerWidth := max(width-2, 0)
-	content := panelTitle("viewer", m.focus == viewerFocus)
-	if file := m.renderFileViewer(innerWidth, max(m.bodyHeight()-3, 0)); file != "" {
-		content += "\n" + file
-	}
-	style := treeBorderStyle
+	content := m.renderFileViewer(max(width, 0), max(m.bodyHeight(), 0))
+	style := treePanelStyle
 	if m.ready {
-		style = style.Width(innerWidth).Height(max(m.bodyHeight()-2, 0))
+		style = style.Width(max(width, 0)).Height(max(m.bodyHeight(), 0))
 	}
 	return style.Render(content)
-}
-
-func panelTitle(name string, active bool) string {
-	if active {
-		return name + " " + accentStyle.Render("*")
-	}
-	return name
 }
 
 func (m Model) renderFileViewer(width, height int) string {
@@ -1854,11 +1849,7 @@ func formatTokenCount(tokens int) string {
 }
 
 func (m Model) chatContentWidth() int {
-	width := m.contentWidth()
-	if m.chatPanelVisible() {
-		width -= 2
-	}
-	return max(width, 0)
+	return max(m.contentWidth(), 0)
 }
 
 func (m Model) chatPanelVisible() bool {
@@ -1887,8 +1878,8 @@ func (m Model) treePanelWidth() int {
 
 func (m Model) treeView() string {
 	panelWidth := m.treePanelWidth()
-	innerWidth := max(panelWidth-2, 0)
-	lines := []string{panelTitle("explorer", m.focus == explorerFocus && panelWidth < m.width), ""}
+	innerWidth := max(panelWidth, 0)
+	var lines []string
 	if m.treeLoading {
 		lines = append(lines, statusStyle.Render("cargando workspace…"))
 	} else if m.treeError != "" {
@@ -1923,9 +1914,9 @@ func (m Model) treeView() string {
 		}
 	}
 	content := strings.Join(lines, "\n")
-	style := treeBorderStyle
+	style := treePanelStyle
 	if m.ready {
-		style = style.Width(innerWidth).Height(max(m.bodyHeight()-2, 0))
+		style = style.Width(innerWidth).Height(max(m.bodyHeight(), 0))
 	}
 	return style.Render(content)
 }
@@ -1934,7 +1925,7 @@ func (m Model) treeVisibleRowCount() int {
 	if !m.ready {
 		return 0
 	}
-	return max(m.bodyHeight()-4, 0)
+	return max(m.bodyHeight(), 0)
 }
 
 // transcriptView devuelve el transcript con su separador hacia el resto de la

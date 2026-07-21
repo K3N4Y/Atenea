@@ -1158,7 +1158,9 @@ func (m Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	rows := m.tree.visibleRows()
 	switch {
 	case msg.Type == tea.KeyEsc || keyRune(msg) == "q":
-		m.treeOpen = false
+		// Reuse the toggle's close path so the chat resizes back to full width;
+		// setting treeOpen=false alone would freeze the viewport at split width.
+		return m.toggleTreeAsync()
 	case msg.Type == tea.KeyDown || keyRune(msg) == "j":
 		if m.treeCursor < len(rows)-1 {
 			m.treeCursor++
@@ -1280,11 +1282,13 @@ func (m Model) transcriptLineAtMouse(msg tea.MouseMsg) (int, bool) {
 	}
 	y := msg.Y
 	if m.chatPanelVisible() {
-		chatLeft := m.treePanelWidth() + 1
-		if msg.X < chatLeft+1 || msg.X >= m.width-1 {
+		// El chat es la columna derecha: el arbol ocupa [0, treePanelWidth) y una
+		// columna de gutter, asi que el transcript arranca en treePanelWidth+1. Sin
+		// caja ya no hay borde ni titulo, de modo que la fila 0 del cuerpo es la
+		// primera fila del transcript (sin desplazamiento vertical).
+		if msg.X < m.treePanelWidth()+1 {
 			return 0, false
 		}
-		y -= 2
 	}
 	if y < 0 || y >= m.viewport.Height {
 		return 0, false
@@ -1301,7 +1305,8 @@ func (m Model) treeVisible() bool {
 }
 
 func (m Model) treeRowAtMouse(y int) (int, bool) {
-	const treeRowsStartY = 3
+	// Sin caja ni titulo, la primera fila del arbol es la fila 0 del cuerpo.
+	const treeRowsStartY = 0
 	if y < treeRowsStartY {
 		return 0, false
 	}
@@ -1323,9 +1328,8 @@ func (m *Model) moveTreeCursor(delta int) {
 }
 
 func (m Model) fileViewerHeight() int {
-	if m.ready && m.treeOpen && m.treePanelWidth() < m.width {
-		return max(m.bodyHeight()-4, 0)
-	}
+	// El visor llena el cuerpo tanto en pantalla completa como en la columna
+	// derecha junto al arbol; en ambos casos reserva solo su fila de cabecera.
 	return max(m.bodyHeight()-1, 0)
 }
 

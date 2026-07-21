@@ -159,13 +159,12 @@ func TestModel_ViewAlignsGitSummaryWithComposerWhenExplorerIsOpen(t *testing.T) 
 		if !strings.Contains(line, "2 files changed") {
 			continue
 		}
-		rightBorder := strings.LastIndex(line, "│")
+		// Sin caja el panel de chat ya no tiene borde derecho: la linea del
+		// resumen termina justo tras las estadisticas y el margen del composer
+		// (composerOuterMargin celdas), que es la columna derecha del chat.
 		statEnd := strings.Index(line, "−1") + len("−1")
-		if rightBorder < 0 || statEnd < len("−1") {
-			t.Fatalf("summary line = %q, want chat panel border and stats", line)
-		}
-		if gap := line[statEnd:rightBorder]; gap != "  " {
-			t.Fatalf("summary right gap = %q, want composer margin of two cells", gap)
+		if gap := line[statEnd:]; gap != strings.Repeat(" ", composerOuterMargin) {
+			t.Fatalf("summary right gap = %q, want composer margin of %d cells with no panel border", gap, composerOuterMargin)
 		}
 		return
 	}

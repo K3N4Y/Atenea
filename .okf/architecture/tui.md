@@ -326,9 +326,13 @@ rows.
  returns the session to normal mode.
 - With the explorer open, the split layout has direct mouse focus. Clicking the
   explorer focuses its navigation; clicking the right side focuses the active
-  file viewer, or the chat transcript/composer when no viewer is open. The
-  focused panel title includes a cyan `*`; the chat remains the
-  composer/transcript input and scrolling surface when it owns focus. Keyboard
+  file viewer, or the chat transcript/composer when no viewer is open. The split
+  layout is borderless: the explorer is a plain left column (`treePanelWidth`,
+  25% clamped to `[20, 36]`) that pushes the chat (or viewer) to the right,
+  separated by a one-column whitespace gutter — no panel boxes, titles, or focus
+  markers, and the tree's first row sits at the top of the body. Panel focus is
+  tracked internally to route keys but has no visual indicator; the chat remains
+  the composer/transcript input and scrolling surface when it owns focus. Keyboard
   navigation follows focus: explorer receives `j`/Down, `k`/Up, `h`, `l`, and
   Enter; viewer receives `j`/Down, `k`/Up, PgUp, and PgDn. Mouse-wheel
   scrolling instead follows the panel under the pointer without changing
@@ -427,8 +431,8 @@ configured, and previously cached models.
 - The explorer occupies a bounded left column and transcript, menus and
  composer are recalculated to the remaining width. If `listFiles` fails or the workspace
  is empty, the panel remains usable and displays the non-panic status.
-- In split layout, direct mouse clicks focus explorer, chat, or viewer. The
-  focused panel has the cyan `*` in its title; explorer row activation retains
+- In split layout, direct mouse clicks focus explorer, chat, or viewer. Focus is
+  tracked internally without any visual marker; explorer row activation retains
   explorer focus, chat restores the transcript/composer target, and viewer
   receives `j`/`k` and PgUp/PgDn. The mouse wheel follows the hovered panel
   without changing keyboard focus. `Tab` still switches

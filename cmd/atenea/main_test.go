@@ -459,10 +459,10 @@ func TestTUI_FileViewerScrollsToLastLineUnderPTY(t *testing.T) {
 	if _, err := terminal.Write([]byte("\r\x1b[6~")); err != nil {
 		t.Fatal(err)
 	}
-	// El chrome de la top bar toma dos filas del cuerpo: el visor a pantalla
-	// completa muestra dos lineas menos, asi que la ventana al fondo abre en la
-	// linea 15 (no 13).
-	waitForPTYText(t, output, "long.txt · 15-31/31")
+	// El visor en split ya no lleva caja: llena el cuerpo menos su fila de
+	// cabecera (bodyHeight-1 = 20 con 24 filas), asi que la ventana al fondo abre
+	// en la linea 12.
+	waitForPTYText(t, output, "long.txt · 12-31/31")
 	waitForPTYText(t, output, "line 31")
 }
 
@@ -508,16 +508,19 @@ func TestTUI_FileTreeMouseWheelAndClickUnderPTY(t *testing.T) {
 	}
 	waitForPTYText(t, output, "file-05.go · 1-1/1")
 	waitForPTYText(t, output, "package file05")
+	// Clic sobre la columna del visor: sin marcadores de foco, la senal es que el
+	// visor conserva file-05 (no cambia de archivo ni se abre el arbol).
 	if _, err := terminal.Write([]byte("\x1b[<0;50;7M")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYText(t, output, "viewer *")
 	waitForPTYText(t, output, "file-05.go · 1-1/1")
+	// Clic sobre el arbol (columna izquierda, primera fila) abre file-00: el
+	// cambio de archivo en el visor evidencia que el clic se enruto al explorer.
 	if _, err := terminal.Write([]byte("\x1b[<0;1;4M")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYText(t, output, "explorer *")
-	waitForPTYText(t, output, "file-05.go · 1-1/1")
+	waitForPTYText(t, output, "file-00.go · 1-1/1")
+	waitForPTYText(t, output, "package file00")
 	if _, err := terminal.Write([]byte("\x03")); err != nil {
 		t.Fatal(err)
 	}
@@ -545,7 +548,7 @@ func TestTUI_ExplorerLeaderRapidSequencesUnderPTY(t *testing.T) {
 		t.Fatal(err)
 	}
 	latest := waitForStablePTYOutputAfter(t, output, before)
-	if !strings.Contains(latest, "explorer *") || !strings.Contains(latest, "hello.go") {
+	if !strings.Contains(latest, "hello.go") {
 		t.Fatalf("rapid Space+e sequences should leave explorer open after an odd count; latest PTY output:\n%s", latest)
 	}
 
@@ -554,7 +557,7 @@ func TestTUI_ExplorerLeaderRapidSequencesUnderPTY(t *testing.T) {
 		t.Fatal(err)
 	}
 	latest = waitForStablePTYOutputAfter(t, output, before)
-	if strings.Contains(latest, "explorer") || strings.Contains(latest, "hello.go") {
+	if strings.Contains(latest, "hello.go") {
 		t.Fatalf("one more Space+e sequence should close the explorer after the rapid burst; latest PTY output:\n%s", latest)
 	}
 	if _, err := terminal.Write([]byte("\x03")); err != nil {
