@@ -93,24 +93,48 @@ const activityRailPrefix = activityInset + "│ "
 // se resume en la misma marca "│ … +N lines".
 const toolDiffPreviewLines = 16
 
+// editDiffCardMaxRows caps the body rows of the rich edit diff card (see
+// renderEditDiff). More generous than toolDiffPreviewLines because the
+// before/after split repeats each context line in both blocks; the rest is
+// summarized in the "… +N lines" mark so a large edit never floods the
+// transcript.
+const editDiffCardMaxRows = 40
+
+// diffRailGlyph is the solid left bar of each row in the edit diff card's
+// blocks (U+258C LEFT HALF BLOCK): one cell, colored in the block's accent, so
+// the "antes"/"después" blocks read as continuous colored columns.
+const diffRailGlyph = "▌"
+
 // Estilos de presentacion. Solo envuelven lineas o segmentos ya renderizados,
 // sin margenes ni padding, para no alterar el conteo de lineas de la vista.
 // Cada linea con marcador se estiliza como UN segmento (o cortando solo donde
 // ningun assert busca substrings contiguos), asi el contenido plano que fijan
 // los tests nunca se parte con codigos ANSI.
 var (
-	canvasStyle         = lipgloss.NewStyle().Background(lipgloss.Color(theme.Canvas))
-	accentStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Accent)) // marcador de usuario y prompt del input
-	userMessageStyle    = lipgloss.NewStyle().Background(lipgloss.Color(theme.UserMessage)).Padding(1, 3)
-	userMarkerStyle     = lipgloss.NewStyle().Faint(true)
-	userTextStyle       = lipgloss.NewStyle().Background(lipgloss.Color(theme.UserMessage))
-	toolRunningStyle    = lipgloss.NewStyle().Faint(true)
-	toolOKStyle         = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color(theme.Success))
-	toolFailedStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Error))
-	toolDeniedStyle     = lipgloss.NewStyle().Faint(true)
-	toolOutputStyle     = lipgloss.NewStyle().Faint(true)                               // preview del output de la tool (detalle, no protagonista)
-	diffAddStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Success)) // lineas agregadas del diff (+)
-	diffDelStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Error))   // lineas quitadas del diff (-)
+	canvasStyle      = lipgloss.NewStyle().Background(lipgloss.Color(theme.Canvas))
+	accentStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Accent)) // marcador de usuario y prompt del input
+	userMessageStyle = lipgloss.NewStyle().Background(lipgloss.Color(theme.UserMessage)).Padding(1, 3)
+	userMarkerStyle  = lipgloss.NewStyle().Faint(true)
+	userTextStyle    = lipgloss.NewStyle().Background(lipgloss.Color(theme.UserMessage))
+	toolRunningStyle = lipgloss.NewStyle().Faint(true)
+	toolOKStyle      = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color(theme.Success))
+	toolFailedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Error))
+	toolDeniedStyle  = lipgloss.NewStyle().Faint(true)
+	toolOutputStyle  = lipgloss.NewStyle().Faint(true)                               // preview del output de la tool (detalle, no protagonista)
+	diffAddStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Success)) // lineas agregadas del diff (+)
+	diffDelStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Error))   // lineas quitadas del diff (-)
+
+	// Styles of the rich edit diff card (see renderEditDiff). The header bars
+	// (file path and "@@ … @@") share a muted gray band; the "antes"/"después"
+	// blocks each carry a full-width tinted band on changed rows plus a solid
+	// left rail bar in the block's color, while context rows stay plain gray.
+	diffPathStyle       = lipgloss.NewStyle().Background(lipgloss.Color(theme.DiffHeaderBg))
+	diffHunkStyle       = lipgloss.NewStyle().Background(lipgloss.Color(theme.DiffHeaderBg)).Foreground(lipgloss.Color(theme.Muted))
+	diffDelBandStyle    = lipgloss.NewStyle().Background(lipgloss.Color(theme.DiffDelBg)).Foreground(lipgloss.Color(theme.Error))
+	diffAddBandStyle    = lipgloss.NewStyle().Background(lipgloss.Color(theme.DiffAddBg)).Foreground(lipgloss.Color(theme.Success))
+	diffDelRailStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Error))
+	diffAddRailStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Success))
+	diffCtxStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted))
 	permissionStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(theme.Warning))
 	errorStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Error))
 	statusStyle         = lipgloss.NewStyle().Faint(true)
@@ -160,7 +184,7 @@ func (e entry) render(width int) string {
 	case entryReasoning:
 		return e.renderThinking(width)
 	case entryTool:
-		return e.renderTool()
+		return e.renderTool(width)
 	case entryPermission:
 		return permissionStyle.Render(activityHeader(activityAskMarker, e.tool, summarizeToolInput(e.input)))
 	case entryPlanApproval:
@@ -267,7 +291,16 @@ func formatThinkingDuration(d time.Duration) string {
 // resumen (`● skill    demo`, el campo "name" del Input JSON; sin nombre
 // parseable el header queda pelado) y en exito SIN detalle: el cuerpo del
 // SKILL.md que viaja en el output es para el modelo, no para el transcript.
-func (e entry) renderTool() string {
+func (e entry) renderTool(width int) string {
+	// A successful edit renders as the rich diff card (file path + per-hunk
+	// before/after blocks) instead of the generic activity line. The other
+	// states (running, failed, denied) keep the minimal activity line: there is
+	// no diff to show yet. An unparseable diff falls back to renderActivity.
+	if e.tool == "edit" && e.status == toolOK && e.diff != "" {
+		if card := renderEditDiff(e.diff, width); card != "" {
+			return card
+		}
+	}
 	if e.tool == "read" {
 		label := "Reading"
 		if e.status != toolRunning {
@@ -479,6 +512,252 @@ func renderDiffPreview(diff string) string {
 		}
 		return style.Render(activityRailPrefix + line)
 	})
+}
+
+// diffLine is one body line of a unified-diff hunk: kind is its marker byte
+// (' ' context, '-' removed, '+' added) and text the content after the marker.
+type diffLine struct {
+	kind byte
+	text string
+}
+
+// diffHunk is one hunk of a unified diff: header is the raw "@@ … @@" text,
+// oldStart/newStart the 1-indexed first line numbers of each side (from the
+// header), and lines its body in unified order.
+type diffHunk struct {
+	header   string
+	oldStart int
+	newStart int
+	lines    []diffLine
+}
+
+// parseUnifiedDiff splits the unified diff produced by hashline.UnifiedDiff
+// into the edited path (from the "+++ b/…" header) and its hunks. ok is false
+// when the text is not a unified diff with at least one hunk (the caller then
+// falls back to the plain diff preview).
+func parseUnifiedDiff(diff string) (path string, hunks []diffHunk, ok bool) {
+	for _, line := range strings.Split(diff, "\n") {
+		switch {
+		case len(hunks) == 0 && strings.HasPrefix(line, "+++ "):
+			// File headers only appear before the first hunk; guarding on that
+			// keeps an added line whose content is "++ …" (diff line "+++ …")
+			// from being mistaken for the header once inside a hunk.
+			path = strings.TrimPrefix(strings.TrimPrefix(line, "+++ "), "b/")
+		case len(hunks) == 0 && strings.HasPrefix(line, "--- "):
+			// The old-side file header carries no per-line data we render.
+		case strings.HasPrefix(line, "@@"):
+			oldStart, newStart, headerOK := parseHunkHeader(line)
+			if !headerOK {
+				continue
+			}
+			hunks = append(hunks, diffHunk{header: line, oldStart: oldStart, newStart: newStart})
+		case line == "" || strings.HasPrefix(line, `\`):
+			// Trailing blank split segment or a "\ No newline" marker: skip.
+		default:
+			if len(hunks) == 0 {
+				continue
+			}
+			h := &hunks[len(hunks)-1]
+			h.lines = append(h.lines, diffLine{kind: line[0], text: line[1:]})
+		}
+	}
+	return path, hunks, len(hunks) > 0
+}
+
+// parseHunkHeader reads the 1-indexed start line of each side from a
+// "@@ -A[,B] +C[,D] @@" header. difflib prints the start already 1-indexed
+// (it omits ",length" when the length is 1), so only the start matters here.
+func parseHunkHeader(line string) (oldStart, newStart int, ok bool) {
+	fields := strings.Fields(line)
+	if len(fields) < 3 || fields[0] != "@@" {
+		return 0, 0, false
+	}
+	oldStart, okOld := parseHunkSide(fields[1], '-')
+	newStart, okNew := parseHunkSide(fields[2], '+')
+	return oldStart, newStart, okOld && okNew
+}
+
+// parseHunkSide reads the start line of one hunk side ("-A", "-A,B", "+C" …):
+// the sign byte then digits up to an optional ",length" that is discarded.
+func parseHunkSide(field string, sign byte) (int, bool) {
+	if len(field) == 0 || field[0] != sign {
+		return 0, false
+	}
+	num := field[1:]
+	if i := strings.IndexByte(num, ','); i >= 0 {
+		num = num[:i]
+	}
+	start, err := strconv.Atoi(num)
+	if err != nil {
+		return 0, false
+	}
+	return start, true
+}
+
+// renderEditDiff renders a successful edit as the rich diff card: a file-path
+// bar, then for each hunk a "@@ … @@" bar with its "+N -M" stat and, below,
+// the removed side ("antes", red) above the added side ("después", green).
+// Context lines repeat in both blocks in gray so each block reads as the whole
+// before/after slice of the hunk. Returns "" when the diff does not parse, so
+// the caller falls back to renderDiffPreview. width is the viewport width; rows
+// truncate to it (never wrap) and changed rows fill it as a colored band.
+func renderEditDiff(diff string, width int) string {
+	path, hunks, ok := parseUnifiedDiff(diff)
+	if !ok {
+		return ""
+	}
+	gutter := diffGutterWidth(hunks)
+	// Inset the card by composerOuterMargin cells on each side so it lines up
+	// with the rest of the chat content (activity lines, user messages); the
+	// margin cells reveal the canvas background. A width too small to inset
+	// falls back to full bleed.
+	contentW, margin := width, ""
+	if width > 2*composerOuterMargin {
+		contentW = width - 2*composerOuterMargin
+		margin = strings.Repeat(" ", composerOuterMargin)
+	}
+	rows := []string{diffPathBar(path, contentW)}
+	for _, h := range hunks {
+		rows = append(rows, diffHunkBar(h, contentW))
+		rows = append(rows, diffBlockRows(h, gutter, contentW, false)...) // antes (removed, red)
+		rows = append(rows, diffBlockRows(h, gutter, contentW, true)...)  // después (added, green)
+	}
+	if len(rows) > editDiffCardMaxRows {
+		hidden := len(rows) - editDiffCardMaxRows
+		rows = rows[:editDiffCardMaxRows]
+		rows = append(rows, diffCtxStyle.Render("… +"+strconv.Itoa(hidden)+" lines"))
+	}
+	for i, r := range rows {
+		rows[i] = margin + r + margin
+	}
+	return strings.Join(rows, "\n")
+}
+
+// diffGutterWidth is the width of the line-number column: the digit count of
+// the largest line number any hunk can show on either side, so numbers align
+// across every block of the card.
+func diffGutterWidth(hunks []diffHunk) int {
+	maxNum := 1
+	for _, h := range hunks {
+		oldNum, newNum := h.oldStart, h.newStart
+		for _, l := range h.lines {
+			switch l.kind {
+			case '+':
+				newNum++
+			case '-':
+				oldNum++
+			default:
+				oldNum++
+				newNum++
+			}
+		}
+		maxNum = max(maxNum, oldNum, newNum)
+	}
+	return len(strconv.Itoa(maxNum))
+}
+
+// diffPathBar renders the file-path header bar of the card, a full-width muted
+// band with the edited path.
+func diffPathBar(path string, width int) string {
+	return diffPathStyle.Render(fitBand(sanitizeTerminalText(path), width))
+}
+
+// diffHunkBar renders a hunk's "@@ … @@" header as a full-width muted band with
+// the hunk's "+N -M" stat pinned to the right edge (green added, red removed).
+func diffHunkBar(h diffHunk, width int) string {
+	added, removed := 0, 0
+	for _, l := range h.lines {
+		switch l.kind {
+		case '+':
+			added++
+		case '-':
+			removed++
+		}
+	}
+	header := sanitizeTerminalText(h.header)
+	// The stat rides the same muted band as the header, so its "+N"/"-M" and the
+	// space between them carry the header background too (green/red foreground
+	// on gray), not the bare canvas.
+	bg := lipgloss.Color(theme.DiffHeaderBg)
+	stat := diffAddStyle.Background(bg).Render("+"+strconv.Itoa(added)) +
+		diffHunkStyle.Render(" ") +
+		diffDelStyle.Background(bg).Render("-"+strconv.Itoa(removed))
+	statWidth := ansi.StringWidth("+" + strconv.Itoa(added) + " -" + strconv.Itoa(removed))
+	if width <= 0 {
+		return diffHunkStyle.Render(header) + "  " + stat
+	}
+	// Truncate the header so the header text and the stat never collide, then
+	// pad the gap between them so the stat sits flush against the right edge.
+	headerRoom := max(width-statWidth-1, 1)
+	header = ansi.Truncate(header, headerRoom, "…")
+	gap := max(width-ansi.StringWidth(header)-statWidth, 1)
+	return diffHunkStyle.Render(header+strings.Repeat(" ", gap)) + stat
+}
+
+// diffBlockRows renders one side of a hunk: with added true the "después"
+// block (context + added lines, new-side numbers, green); otherwise the "antes"
+// block (context + removed lines, old-side numbers, red). An empty side (e.g.
+// no removed lines on a pure insertion) yields no rows.
+func diffBlockRows(h diffHunk, gutter, width int, added bool) []string {
+	bandStyle, railStyle, keep := diffDelBandStyle, diffDelRailStyle, byte('-')
+	if added {
+		bandStyle, railStyle, keep = diffAddBandStyle, diffAddRailStyle, '+'
+	}
+	num := h.oldStart
+	if added {
+		num = h.newStart
+	}
+	var rows []string
+	for _, l := range h.lines {
+		switch {
+		case l.kind == keep:
+			rows = append(rows, diffRow(railStyle, bandStyle, gutter, width, num, l.kind, l.text))
+			num++
+		case l.kind == ' ':
+			rows = append(rows, diffRow(railStyle, diffCtxStyle, gutter, width, num, ' ', l.text))
+			num++
+		}
+	}
+	return rows
+}
+
+// diffRow renders one row of a diff block: the colored rail bar, then the line
+// number, marker and content. A changed row (band != diffCtxStyle) fills the
+// full width as a colored band; a context row stays plain (no trailing fill).
+// Content truncates with an ellipsis so the row is always exactly one line and
+// the gutter stays aligned.
+func diffRow(railStyle, bodyStyle lipgloss.Style, gutter, width, num int, marker byte, text string) string {
+	inner := fmt.Sprintf("%*d %c %s", gutter, num, marker, sanitizeTerminalText(text))
+	railCells := ansi.StringWidth(diffRailGlyph)
+	innerWidth := width - railCells
+	if width <= 0 {
+		return railStyle.Render(diffRailGlyph) + bodyStyle.Render(inner)
+	}
+	if innerWidth < 1 {
+		innerWidth = 1
+	}
+	inner = ansi.Truncate(inner, innerWidth, "…")
+	// Changed rows fill the band to the full width; context rows stay unpadded
+	// so they read as plain text without a trailing colored block.
+	if bodyStyle.GetBackground() != diffCtxStyle.GetBackground() {
+		if pad := innerWidth - ansi.StringWidth(inner); pad > 0 {
+			inner += strings.Repeat(" ", pad)
+		}
+	}
+	return railStyle.Render(diffRailGlyph) + bodyStyle.Render(inner)
+}
+
+// fitBand truncates text to width and pads it back to width so a header bar's
+// background spans the full line. width <= 0 leaves the text untouched.
+func fitBand(text string, width int) string {
+	if width <= 0 {
+		return text
+	}
+	text = ansi.Truncate(text, width, "…")
+	if pad := width - ansi.StringWidth(text); pad > 0 {
+		text += strings.Repeat(" ", pad)
+	}
+	return text
 }
 
 // markdownRuleWidth is the fixed width of the horizontal rule glyph run:

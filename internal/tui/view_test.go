@@ -7,6 +7,29 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+// parseUnifiedDiff reads the path and hunk starts, and does not mistake an
+// added line whose content is "++ foo" (diff line "+++ foo") for the file
+// header once inside a hunk: file headers only precede the first hunk.
+func TestParseUnifiedDiff_HunkStartsAndAddedTripledPlus(t *testing.T) {
+	diff := "--- a/pkg/x.go\n+++ b/pkg/x.go\n@@ -5,1 +5,2 @@\n keep\n+++ foo"
+	path, hunks, ok := parseUnifiedDiff(diff)
+	if !ok || path != "pkg/x.go" {
+		t.Fatalf("parseUnifiedDiff() path=%q ok=%v, want path %q ok true", path, ok, "pkg/x.go")
+	}
+	if len(hunks) != 1 || hunks[0].oldStart != 5 || hunks[0].newStart != 5 {
+		t.Fatalf("hunks = %+v, want one hunk starting at old 5 / new 5", hunks)
+	}
+	want := []diffLine{{kind: ' ', text: "keep"}, {kind: '+', text: "++ foo"}}
+	if len(hunks[0].lines) != len(want) {
+		t.Fatalf("hunk lines = %+v, want %+v", hunks[0].lines, want)
+	}
+	for i, w := range want {
+		if hunks[0].lines[i] != w {
+			t.Fatalf("hunk line %d = %+v, want %+v: an added '++ foo' must not read as the +++ file header", i, hunks[0].lines[i], w)
+		}
+	}
+}
+
 // The markdown theme tests below assert over the ANSI-stripped render:
 // colors follow the Ascii profile (tests run without a TTY) but glamour
 // still emits attribute sequences (bold, underline), so structure —

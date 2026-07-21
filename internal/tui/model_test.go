@@ -2108,11 +2108,11 @@ func TestModel_ToolSuccessShowsOutputPreview(t *testing.T) {
 	}
 }
 
-// Contrato del diff en Tool.Success: cuando el evento trae Diff (edit/write),
-// el detalle bajo el header muestra EL DIFF en lugar del preview del output:
-// cada linea del diff con el rail `│ ` tras el margen, las lineas `+` en
-// verde, las `-` en rojo y el resto tenue (cada linea un segmento contiguo
-// estilizado).
+// Edit success renders the rich diff card instead of the generic activity
+// line: a file-path bar, the "@@ … @@" hunk header, then the removed side
+// ("antes", red) above the added side ("después", green), each line numbered
+// with its real file line. The output preview ("ok") is dropped: the diff IS
+// the result worth reviewing.
 func TestModel_ToolSuccessShowsEditDiff(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -2124,14 +2124,56 @@ func TestModel_ToolSuccessShowsEditDiff(t *testing.T) {
 		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "ok", ToolCallID: "c1"},
 	})
 
-	view := m.View()
-	for _, want := range []string{"│ -viejo", "│ +nuevo"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("View() = %q, debe contener %q: con Diff en Tool.Success cada linea del diff se muestra bajo el header como linea de rail", view, want)
+	plain := ansi.Strip(m.View())
+	for _, want := range []string{"a.go", "@@ -1 +1 @@", "1 - viejo", "1 + nuevo"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("View() sin ANSI = %q, debe contener %q: la edit exitosa se rinde como la tarjeta de diff con ruta, hunk y bloques antes/después", plain, want)
 		}
 	}
-	if strings.Contains(view, "│ ok") {
-		t.Fatalf("View() = %q, NO debe contener %q: el diff desplaza al preview del output", view, "│ ok")
+	// El bloque rojo ("antes", quitadas) va arriba del verde ("después", agregadas).
+	if i, j := strings.Index(plain, "1 - viejo"), strings.Index(plain, "1 + nuevo"); i < 0 || j < 0 || i > j {
+		t.Fatalf("View() sin ANSI = %q, el bloque de quitadas debe ir antes que el de agregadas", plain)
+	}
+	// La tarjeta se inseta como el resto del contenido: la fila abre con el
+	// margen (activityInset) y el rail ▌ en la misma columna que "✓ read".
+	if row := lineWith(t, plain, "1 - viejo"); !strings.HasPrefix(row, activityInset+"▌") {
+		t.Fatalf("fila del diff = %q, debe abrir con el margen %q y el rail ▌", row, activityInset)
+	}
+	// Ni el rail viejo del preview unificado ni el preview del output sobreviven.
+	for _, banned := range []string{"│ -viejo", "│ +nuevo", "│ ok"} {
+		if strings.Contains(plain, banned) {
+			t.Fatalf("View() sin ANSI = %q, NO debe contener %q: la tarjeta reemplaza al preview unificado y al del output", plain, banned)
+		}
+	}
+}
+
+// The before/after split repeats every context line in BOTH blocks, in gray:
+// the red block is the whole old slice of the hunk (context + removed) and the
+// green block the whole new slice (context + added), each numbered with its
+// side's real file line.
+func TestModel_EditDiffShowsContextInBothBlocks(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "edit", Input: json.RawMessage(`{"path":"main.go"}`)})
+	m = apply(t, m, EventMsg{
+		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "edit", Text: "ok",
+		Diff:    "--- a/main.go\n+++ b/main.go\n@@ -10,3 +10,3 @@\n ctxA\n-old\n+new\n ctxB",
+		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "ok", ToolCallID: "c1"},
+	})
+
+	plain := ansi.Strip(m.View())
+	// La quitada lleva el numero del archivo viejo y la agregada el del nuevo.
+	for _, want := range []string{"11 - old", "11 + new"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("View() sin ANSI = %q, debe contener %q con el numero de linea real", plain, want)
+		}
+	}
+	// Cada linea de contexto aparece en el bloque rojo Y en el verde.
+	for _, ctx := range []string{"ctxA", "ctxB"} {
+		if got := strings.Count(plain, ctx); got < 2 {
+			t.Fatalf("View() sin ANSI = %q, la linea de contexto %q debe aparecer en ambos bloques (antes/después), got %d", plain, ctx, got)
+		}
 	}
 }
 
@@ -2380,13 +2422,13 @@ func TestModel_GroupsAdjacentActivityEntriesWithoutBlankLine(t *testing.T) {
 	}
 }
 
-// Contrato del stat de diff: el exito de edit/write lleva en el header el
-// conteo `+N -M` de lineas agregadas/quitadas del unified diff, contando las
-// que empiezan con +/- pero excluyendo las cabeceras `+++`/`---`, separado del
-// resumen por dos espacios (`✓ edit     main.go  +2 -1`); las lineas del diff
-// van debajo con el rail `│ ` tras el margen (`  │ +nueva`).
+// The "+N -M" stat rides on the hunk header bar (not on a "✓ edit" line): it
+// counts the +/- content lines of that hunk, excluding the +++/--- file
+// headers. The changed lines render as numbered rows in the before/after
+// blocks, no longer with the "│ " rail of the old unified preview.
 func TestModel_EditSuccessShowsDiffStatInHeader(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "edit", Input: json.RawMessage(`{"path":"main.go"}`)})
 	m = apply(t, m, EventMsg{
@@ -2396,14 +2438,47 @@ func TestModel_EditSuccessShowsDiffStatInHeader(t *testing.T) {
 	})
 
 	plain := ansi.Strip(m.View())
-	if want := "✓ edit     main.go  +2 -1"; !strings.Contains(plain, want) {
-		t.Fatalf("View() sin ANSI = %q, el header de la edit exitosa debe contener %q: el stat cuenta las lineas +/- de contenido del diff y excluye las cabeceras +++/---", plain, want)
-	}
-	for _, needle := range []string{"+nueva", "+extra", "-vieja"} {
-		line := lineWith(t, plain, needle)
-		if want := "  │ " + needle; !strings.HasPrefix(line, want) {
-			t.Fatalf("linea del diff = %q, debe llevar el rail tras el margen como %q", line, want)
+	hunk := lineWith(t, plain, "@@ -1,2 +1,3 @@")
+	for _, want := range []string{"@@ -1,2 +1,3 @@", "+2 -1"} {
+		if !strings.Contains(hunk, want) {
+			t.Fatalf("linea del hunk = %q, debe contener %q: el stat +N -M va en la barra del hunk", hunk, want)
 		}
+	}
+	if strings.Contains(plain, "✓ edit") {
+		t.Fatalf("View() sin ANSI = %q, NO debe contener %q: la tarjeta reemplaza la linea de actividad", plain, "✓ edit")
+	}
+	// Las lineas cambiadas van como filas numeradas en los bloques, sin el rail viejo.
+	for _, want := range []string{"1 - vieja", "1 + nueva", "2 + extra"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("View() sin ANSI = %q, debe contener la fila %q", plain, want)
+		}
+	}
+	if strings.Contains(plain, "│ +nueva") {
+		t.Fatalf("View() sin ANSI = %q, NO debe contener el rail viejo %q", plain, "│ +nueva")
+	}
+}
+
+// A pure insertion (no removed lines) omits the red "antes" block entirely:
+// there is no old slice to show, so only the green "después" block renders.
+func TestModel_EditDiffOmitsEmptyRemovedBlock(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "edit", Input: json.RawMessage(`{"path":"main.go"}`)})
+	m = apply(t, m, EventMsg{
+		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "edit", Text: "ok",
+		Diff:    "--- a/main.go\n+++ b/main.go\n@@ -0,0 +1,2 @@\n+line1\n+line2",
+		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "ok", ToolCallID: "c1"},
+	})
+
+	plain := ansi.Strip(m.View())
+	for _, want := range []string{"1 + line1", "2 + line2"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("View() sin ANSI = %q, debe contener la fila agregada %q", plain, want)
+		}
+	}
+	if strings.Contains(plain, " - ") {
+		t.Fatalf("View() sin ANSI = %q, una insercion pura no debe emitir ninguna fila quitada", plain)
 	}
 }
 

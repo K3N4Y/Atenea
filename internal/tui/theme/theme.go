@@ -47,4 +47,15 @@ const (
 	// styles only accept hex.
 	CodeBlock    = "236"
 	CodeBlockHex = "#303030"
+
+	// DiffHeaderBg is the background of the header bars of the edit diff card:
+	// the file-path bar and each hunk's "@@ … @@" bar. A muted gray band that
+	// frames the card without competing with the red/green content below.
+	DiffHeaderBg = "#2A2A2A"
+	// DiffAddBg and DiffDelBg are the full-width band backgrounds of changed
+	// rows in the edit diff card: a dim green behind added lines and a dim red
+	// behind removed ones. Kept dark so the ANSI green/red text and the rail bar
+	// stay legible on top. Context rows carry no band (they read as plain gray).
+	DiffAddBg = "#12251A"
+	DiffDelBg = "#2C171A"
 )
