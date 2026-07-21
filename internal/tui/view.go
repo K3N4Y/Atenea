@@ -145,8 +145,15 @@ var (
 	// gray instead of the red/green add/remove pair: a write always creates a
 	// brand-new file, so there is no before/after — just the file's contents on
 	// the CodeBlock gray band, a surface future syntax highlighting can paint.
-	writeBandStyle      = lipgloss.NewStyle().Background(lipgloss.Color(theme.CodeBlockHex)).Foreground(lipgloss.Color(theme.Muted))
-	writeRailStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted))
+	writeBandStyle = lipgloss.NewStyle().Background(lipgloss.Color(theme.CodeBlockHex)).Foreground(lipgloss.Color(theme.Muted))
+	// The rail carries the band background too: the "▌" glyph fills only the left
+	// half of its cell, so without a background the right half would show the
+	// canvas and leave a dark sliver between the rail and the gray band.
+	writeRailStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted)).Background(lipgloss.Color(theme.CodeBlockHex))
+	// writePathStyle fills the file-path bar with the olive branch accent
+	// (theme.WriteCardPath) and prints the name in the near-black canvas on top,
+	// so the written file reads as a highlighted, named target.
+	writePathStyle      = lipgloss.NewStyle().Background(lipgloss.Color(theme.WriteCardPath)).Foreground(lipgloss.Color(theme.Canvas))
 	permissionStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(theme.Warning))
 	errorStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Error))
 	statusStyle         = lipgloss.NewStyle().Faint(true)
@@ -629,7 +636,7 @@ func renderEditDiff(diff string, width int) string {
 	}
 	gutter := diffGutterWidth(hunks)
 	contentW, margin := cardInset(width)
-	rows := []string{diffPathBar(path, contentW)}
+	rows := []string{diffPathBar(diffPathStyle, path, contentW)}
 	for _, h := range hunks {
 		rows = append(rows, diffHunkBar(h, contentW))
 		rows = append(rows, diffBlockRows(h, gutter, contentW, false)...) // antes (removed, red)
@@ -652,7 +659,7 @@ func renderWriteCard(diff string, width int) string {
 	}
 	gutter := diffGutterWidth(hunks)
 	contentW, margin := cardInset(width)
-	rows := []string{diffPathBar(path, contentW)}
+	rows := []string{diffPathBar(writePathStyle, path, contentW)}
 	for _, h := range hunks {
 		rows = append(rows, writeBlockRows(h, gutter, contentW)...)
 	}
@@ -709,10 +716,11 @@ func diffGutterWidth(hunks []diffHunk) int {
 	return len(strconv.Itoa(maxNum))
 }
 
-// diffPathBar renders the file-path header bar of the card, a full-width muted
-// band with the edited path.
-func diffPathBar(path string, width int) string {
-	return diffPathStyle.Render(fitBand(sanitizeTerminalText(path), width))
+// diffPathBar renders the file-path header bar of a card: a full-width band, in
+// the given style, carrying the path. The edit card passes diffPathStyle (gray
+// name); the write card passes writePathStyle (olive name on the same band).
+func diffPathBar(style lipgloss.Style, path string, width int) string {
+	return style.Render(fitBand(sanitizeTerminalText(path), width))
 }
 
 // diffHunkBar renders a hunk's "@@ … @@" header as a full-width muted band with

@@ -58,4 +58,10 @@ const (
 	// stay legible on top. Context rows carry no band (they read as plain gray).
 	DiffAddBg = "#12251A"
 	DiffDelBg = "#2C171A"
+
+	// WriteCardPath is the fill of the write card's file-name bar: the olive-green
+	// accent that echoes the current git branch in the top bar, so a freshly
+	// written file reads as a named, highlighted target rather than a diff. The
+	// name is printed in the near-black Canvas on top of it.
+	WriteCardPath = "#a9b061"
 )
