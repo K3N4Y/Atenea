@@ -2482,6 +2482,99 @@ func TestModel_EditDiffOmitsEmptyRemovedBlock(t *testing.T) {
 	}
 }
 
+// A successful write renders as a diff card sibling to the edit card, but in a
+// single neutral gray: the file-path bar and every written line on the gray
+// band, numbered, with NO hunk bar, NO "+N -M" stat, and NO +/- marker. A write
+// always creates a brand-new file, so there is never a removed side to show.
+func TestModel_ToolSuccessShowsWriteCard(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "write", Input: json.RawMessage(`{"path":"nuevo.go","content":"package main"}`)})
+	m = apply(t, m, EventMsg{
+		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "write", Text: "ok",
+		Diff:    "--- a/nuevo.go\n+++ b/nuevo.go\n@@ -0,0 +1,2 @@\n+package main\n+// hola",
+		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "ok", ToolCallID: "c1"},
+	})
+
+	plain := ansi.Strip(m.View())
+	// La ruta y cada linea van numeradas pero SIN marcador +.
+	for _, want := range []string{"nuevo.go", "1  package main", "2  // hola"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("View() sin ANSI = %q, debe contener %q: el write exitoso se rinde como tarjeta gris con ruta y lineas numeradas sin marcador", plain, want)
+		}
+	}
+	// La tarjeta reemplaza la linea de actividad.
+	if strings.Contains(plain, "✓ write") {
+		t.Fatalf("View() sin ANSI = %q, NO debe contener %q: la tarjeta reemplaza la linea de actividad", plain, "✓ write")
+	}
+	// Sin barra de hunk, sin stat +N -M y sin marcador + / - en las filas.
+	for _, banned := range []string{"@@", "+2 -0", "1 + package main", " - "} {
+		if strings.Contains(plain, banned) {
+			t.Fatalf("View() sin ANSI = %q, NO debe contener %q: el write no muestra hunk, stat ni marcador de diff", plain, banned)
+		}
+	}
+	// La fila abre con el margen y el rail ▌ en la misma columna que el resto.
+	if row := lineWith(t, plain, "1  package main"); !strings.HasPrefix(row, activityInset+"▌") {
+		t.Fatalf("fila del write = %q, debe abrir con el margen %q y el rail ▌", row, activityInset)
+	}
+}
+
+// A write longer than editDiffCardMaxRows collapses the overflow into a
+// "… +N lines" tail, matching the edit card, so a big new file never floods
+// the transcript.
+func TestModel_WriteCardTruncatesLongFile(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// 60 lineas: con la barra de ruta son 61 filas, mas que el tope de 40.
+	var b strings.Builder
+	b.WriteString("--- a/big.go\n+++ b/big.go\n@@ -0,0 +1,60 @@\n")
+	for i := 1; i <= 60; i++ {
+		fmt.Fprintf(&b, "+linea-%02d\n", i)
+	}
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "write", Input: json.RawMessage(`{"path":"big.go"}`)})
+	m = apply(t, m, EventMsg{
+		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "write", Text: "ok",
+		Diff:    b.String(),
+		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "ok", ToolCallID: "c1"},
+	})
+
+	plain := ansi.Strip(m.View())
+	// path (1) + 39 filas = 40 (el tope); linea-39 es la ultima que entra y se
+	// ocultan 60-39 = 21 lineas en la marca de resumen.
+	if !strings.Contains(plain, "linea-39") {
+		t.Fatalf("View() sin ANSI = %q, la ultima linea dentro del tope debe mostrarse", plain)
+	}
+	if !strings.Contains(plain, "… +21 lines") {
+		t.Fatalf("View() sin ANSI = %q, debe resumir el exceso como %q", plain, "… +21 lines")
+	}
+	// La primera linea mas alla del tope (y las siguientes) no aparecen.
+	for _, banned := range []string{"linea-40", "linea-60"} {
+		if strings.Contains(plain, banned) {
+			t.Fatalf("View() sin ANSI = %q, NO debe contener %q: se corta en el tope", plain, banned)
+		}
+	}
+}
+
+// An empty-file write yields an empty diff, so it keeps the generic activity
+// line instead of an empty card: there is nothing to show on the band.
+func TestModel_WriteWithoutDiffShowsActivityLine(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "write", Input: json.RawMessage(`{"path":"vacio.go","content":""}`)})
+	m = apply(t, m, EventMsg{
+		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "write", Text: "ok",
+		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "ok", ToolCallID: "c1"},
+	})
+
+	plain := ansi.Strip(m.View())
+	if !strings.Contains(plain, "✓ write") {
+		t.Fatalf("View() sin ANSI = %q, un write sin diff conserva la linea de actividad", plain)
+	}
+}
+
 // TRIANGULATE: tumba un header que trunque el nombre de la tool al ancho de la
 // columna de alineacion (8) o que padee de mas: con un nombre mas largo que la
 // columna, el nombre queda entero y el resumen a UN espacio del nombre.

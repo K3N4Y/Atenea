@@ -105,6 +105,11 @@ const editDiffCardMaxRows = 40
 // the "antes"/"después" blocks read as continuous colored columns.
 const diffRailGlyph = "▌"
 
+// noMarker is the diffRow marker that drops the +/- column entirely (the write
+// card, whose rows are all new file content). Any other byte renders as the
+// unified-diff marker between the line number and the text.
+const noMarker byte = 0
+
 // Estilos de presentacion. Solo envuelven lineas o segmentos ya renderizados,
 // sin margenes ni padding, para no alterar el conteo de lineas de la vista.
 // Cada linea con marcador se estiliza como UN segmento (o cortando solo donde
@@ -128,13 +133,20 @@ var (
 	// (file path and "@@ … @@") share a muted gray band; the "antes"/"después"
 	// blocks each carry a full-width tinted band on changed rows plus a solid
 	// left rail bar in the block's color, while context rows stay plain gray.
-	diffPathStyle       = lipgloss.NewStyle().Background(lipgloss.Color(theme.DiffHeaderBg))
-	diffHunkStyle       = lipgloss.NewStyle().Background(lipgloss.Color(theme.DiffHeaderBg)).Foreground(lipgloss.Color(theme.Muted))
-	diffDelBandStyle    = lipgloss.NewStyle().Background(lipgloss.Color(theme.DiffDelBg)).Foreground(lipgloss.Color(theme.Error))
-	diffAddBandStyle    = lipgloss.NewStyle().Background(lipgloss.Color(theme.DiffAddBg)).Foreground(lipgloss.Color(theme.Success))
-	diffDelRailStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Error))
-	diffAddRailStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Success))
-	diffCtxStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted))
+	diffPathStyle    = lipgloss.NewStyle().Background(lipgloss.Color(theme.DiffHeaderBg))
+	diffHunkStyle    = lipgloss.NewStyle().Background(lipgloss.Color(theme.DiffHeaderBg)).Foreground(lipgloss.Color(theme.Muted))
+	diffDelBandStyle = lipgloss.NewStyle().Background(lipgloss.Color(theme.DiffDelBg)).Foreground(lipgloss.Color(theme.Error))
+	diffAddBandStyle = lipgloss.NewStyle().Background(lipgloss.Color(theme.DiffAddBg)).Foreground(lipgloss.Color(theme.Success))
+	diffDelRailStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Error))
+	diffAddRailStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Success))
+	diffCtxStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted))
+
+	// The write card reuses the diff-card row machinery but in a single neutral
+	// gray instead of the red/green add/remove pair: a write always creates a
+	// brand-new file, so there is no before/after — just the file's contents on
+	// the CodeBlock gray band, a surface future syntax highlighting can paint.
+	writeBandStyle      = lipgloss.NewStyle().Background(lipgloss.Color(theme.CodeBlockHex)).Foreground(lipgloss.Color(theme.Muted))
+	writeRailStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted))
 	permissionStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(theme.Warning))
 	errorStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Error))
 	statusStyle         = lipgloss.NewStyle().Faint(true)
@@ -298,6 +310,15 @@ func (e entry) renderTool(width int) string {
 	// no diff to show yet. An unparseable diff falls back to renderActivity.
 	if e.tool == "edit" && e.status == toolOK && e.diff != "" {
 		if card := renderEditDiff(e.diff, width); card != "" {
+			return card
+		}
+	}
+	// A successful write is a brand-new file, so it renders as a diff card
+	// sibling to the edit card but in a single neutral gray: the file-path bar
+	// and the written lines, no before/after. An empty file yields no diff and
+	// an unparseable diff both fall back to the generic activity line.
+	if e.tool == "write" && e.status == toolOK && e.diff != "" {
+		if card := renderWriteCard(e.diff, width); card != "" {
 			return card
 		}
 	}
@@ -607,21 +628,53 @@ func renderEditDiff(diff string, width int) string {
 		return ""
 	}
 	gutter := diffGutterWidth(hunks)
-	// Inset the card by composerOuterMargin cells on each side so it lines up
-	// with the rest of the chat content (activity lines, user messages); the
-	// margin cells reveal the canvas background. A width too small to inset
-	// falls back to full bleed.
-	contentW, margin := width, ""
-	if width > 2*composerOuterMargin {
-		contentW = width - 2*composerOuterMargin
-		margin = strings.Repeat(" ", composerOuterMargin)
-	}
+	contentW, margin := cardInset(width)
 	rows := []string{diffPathBar(path, contentW)}
 	for _, h := range hunks {
 		rows = append(rows, diffHunkBar(h, contentW))
 		rows = append(rows, diffBlockRows(h, gutter, contentW, false)...) // antes (removed, red)
 		rows = append(rows, diffBlockRows(h, gutter, contentW, true)...)  // después (added, green)
 	}
+	return frameDiffCard(rows, margin)
+}
+
+// renderWriteCard renders a successful write as a diff card sibling to
+// renderEditDiff, but in a single neutral gray instead of the red/green
+// before/after pair. A write always creates a brand-new file (it refuses to
+// overwrite), so there is no old side to show: the card is just the file-path
+// bar and, below it, every written line on the gray band — no hunk bar, no
+// "+N -M" stat, no +/- marker. Returns "" when the diff does not parse, so the
+// caller falls back to renderActivity.
+func renderWriteCard(diff string, width int) string {
+	path, hunks, ok := parseUnifiedDiff(diff)
+	if !ok {
+		return ""
+	}
+	gutter := diffGutterWidth(hunks)
+	contentW, margin := cardInset(width)
+	rows := []string{diffPathBar(path, contentW)}
+	for _, h := range hunks {
+		rows = append(rows, writeBlockRows(h, gutter, contentW)...)
+	}
+	return frameDiffCard(rows, margin)
+}
+
+// cardInset splits width into the card's content width and the left/right
+// margin string that insets it by composerOuterMargin cells, so a card lines up
+// with the rest of the chat content (activity lines, user messages) and the
+// margin cells reveal the canvas background. A width too small to inset falls
+// back to full bleed (no margin).
+func cardInset(width int) (contentW int, margin string) {
+	if width > 2*composerOuterMargin {
+		return width - 2*composerOuterMargin, strings.Repeat(" ", composerOuterMargin)
+	}
+	return width, ""
+}
+
+// frameDiffCard finishes a diff card: it caps the rows at editDiffCardMaxRows
+// (collapsing the overflow into a "… +N lines" tail) and insets every row by
+// margin. Shared by renderEditDiff and renderWriteCard.
+func frameDiffCard(rows []string, margin string) string {
 	if len(rows) > editDiffCardMaxRows {
 		hidden := len(rows) - editDiffCardMaxRows
 		rows = rows[:editDiffCardMaxRows]
@@ -721,13 +774,36 @@ func diffBlockRows(h diffHunk, gutter, width int, added bool) []string {
 	return rows
 }
 
+// writeBlockRows renders every added line of a write's hunk as a gray write-card
+// row: the neutral band and rail, new-side line numbers, and no +/- marker
+// (marker 0). A write diff is a pure insertion, so only '+' lines carry content;
+// anything else is ignored.
+func writeBlockRows(h diffHunk, gutter, width int) []string {
+	num := h.newStart
+	var rows []string
+	for _, l := range h.lines {
+		if l.kind != '+' {
+			continue
+		}
+		rows = append(rows, diffRow(writeRailStyle, writeBandStyle, gutter, width, num, noMarker, l.text))
+		num++
+	}
+	return rows
+}
+
 // diffRow renders one row of a diff block: the colored rail bar, then the line
 // number, marker and content. A changed row (band != diffCtxStyle) fills the
 // full width as a colored band; a context row stays plain (no trailing fill).
 // Content truncates with an ellipsis so the row is always exactly one line and
 // the gutter stays aligned.
 func diffRow(railStyle, bodyStyle lipgloss.Style, gutter, width, num int, marker byte, text string) string {
-	inner := fmt.Sprintf("%*d %c %s", gutter, num, marker, sanitizeTerminalText(text))
+	// noMarker drops the +/- column entirely (the write card): line number, two
+	// spaces, then the text. Otherwise the marker sits between the number and the
+	// text as in a unified diff.
+	inner := fmt.Sprintf("%*d  %s", gutter, num, sanitizeTerminalText(text))
+	if marker != noMarker {
+		inner = fmt.Sprintf("%*d %c %s", gutter, num, marker, sanitizeTerminalText(text))
+	}
 	railCells := ansi.StringWidth(diffRailGlyph)
 	innerWidth := width - railCells
 	if width <= 0 {
