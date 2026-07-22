@@ -2613,3 +2613,25 @@ func TestEngine_ConnectUnavailableWithoutConnectService(t *testing.T) {
 		t.Fatal("expected an error without a connect-capable model service")
 	}
 }
+
+// TestEngine_RequestCompactionDuringShutdownReleasesCompactingSlot pins the
+// startCompaction shutdown branch: it must release the compacting slot claimed
+// in requestCompaction. Otherwise the key leaks and every later compaction
+// request for that session is a silent no-op against the pending/compacting
+// guard.
+func TestEngine_RequestCompactionDuringShutdownReleasesCompactingSlot(t *testing.T) {
+	e := New(Config{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore()})
+
+	e.lifecycleMu.Lock()
+	e.shuttingDown = true
+	e.lifecycleMu.Unlock()
+
+	e.requestCompaction("s1")
+
+	e.mu.Lock()
+	leaked := e.compacting["s1"]
+	e.mu.Unlock()
+	if leaked {
+		t.Fatal("requestCompaction during shutdown left the compacting slot set; later requests would be silent no-ops")
+	}
+}

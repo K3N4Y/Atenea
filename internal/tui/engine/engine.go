@@ -778,6 +778,12 @@ func (e *Engine) startCompaction(sessionID string) {
 	e.lifecycleMu.Lock()
 	if e.shuttingDown {
 		e.lifecycleMu.Unlock()
+		// Release the compacting slot we claimed in requestCompaction; otherwise
+		// the key leaks and every later requestCompaction for this session is a
+		// silent no-op against the guard.
+		e.mu.Lock()
+		delete(e.compacting, sessionID)
+		e.mu.Unlock()
 		return
 	}
 	e.compactions.Add(1)
