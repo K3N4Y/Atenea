@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -593,6 +595,161 @@ func TestTUI_ExplorerLeaderRapidSequencesUnderPTY(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForPTYExit(t, done)
+}
+
+// fakeOpenRouter is a local OpenAI-compatible gateway for the /connect E2E
+// flow: GET /v1/key validates the API key (200 good, 401 anything else),
+// GET /v1/models lists the catalog, and POST /v1/chat/completions streams one
+// SSE completion. Every endpoint checks Authorization, so a chat reply proves
+// the stored credential (not the empty environment) reached the wire.
+func fakeOpenRouter(goodKey string) *httptest.Server {
+	authorized := func(r *http.Request) bool {
+		return r.Header.Get("Authorization") == "Bearer "+goodKey
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/key", func(w http.ResponseWriter, r *http.Request) {
+		if !authorized(r) {
+			http.Error(w, `{"error":{"message":"invalid key"}}`, http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"data":{"label":"e2e"}}`)
+	})
+	mux.HandleFunc("/v1/models", func(w http.ResponseWriter, r *http.Request) {
+		if !authorized(r) {
+			http.Error(w, `{"error":{"message":"invalid key"}}`, http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"data":[{"id":"openrouter/free"}]}`)
+	})
+	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
+		if !authorized(r) {
+			http.Error(w, `{"error":{"message":"invalid key"}}`, http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, `data: {"id":"gen-1","object":"chat.completion.chunk","created":1,"model":"openrouter/free","choices":[{"index":0,"delta":{"role":"assistant","content":"CONNECTED-OK from fake gateway"},"finish_reason":null}]}`+"\n\n")
+		fmt.Fprint(w, `data: {"id":"gen-1","object":"chat.completion.chunk","created":1,"model":"openrouter/free","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`+"\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	})
+	return httptest.NewServer(mux)
+}
+
+// TestTUI_ConnectCommandFullFlowUnderPTY pins the /connect journey end to end
+// through the real binary, exactly as a user drives it: launch with no key
+// anywhere (demo mode with the /connect notice), open the panel, fail with a
+// wrong key, retry with the right one, and land connected — credential
+// persisted privately, selection saved, the live provider swapped without a
+// restart (the next chat reply comes from the connected gateway), and the
+// panel reflecting the connected state when reopened.
+func TestTUI_ConnectCommandFullFlowUnderPTY(t *testing.T) {
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "atenea")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, output)
+	}
+
+	const goodKey = "sk-or-good-e2e"
+	gateway := fakeOpenRouter(goodKey)
+	defer gateway.Close()
+
+	// The user's config shape before ever connecting: OpenRouter declared (its
+	// base_url pointed at the fake gateway) but no selection and no credential.
+	configRoot := t.TempDir()
+	configDir := filepath.Join(configRoot, "atenea")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	config := `{"providers":[{"id":"openrouter","name":"OpenRouter","type":"openai-compatible","base_url":"` + gateway.URL + `/v1","api_key_env":"OPENROUTER_API_KEY","openrouter_reasoning":true,"models":["openrouter/free"]}]}`
+	if err := os.WriteFile(filepath.Join(configDir, "providers.json"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(binary)
+	// Inside the repo so prompt checkpoints find a Git workspace, like the
+	// other PTY tests.
+	cmd.Dir = filepath.Join(repoRoot, "cmd/atenea/testdata/file-viewer/project")
+	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY=", "OPENAI_API_KEY=", "XDG_CONFIG_HOME="+configRoot, "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
+	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stopPTYProcess(cmd, terminal)
+	output := &lockedBuffer{}
+	copyPTYAnsweringTerminalQueries(terminal, output)
+
+	// No key anywhere: demo mode, and the launch notice points at /connect.
+	waitForPTYText(t, output, " demo ─╯")
+	waitForPTYText(t, output, "run /connect to use OpenRouter")
+
+	// /connect opens the panel on the provider list, not yet connected.
+	if _, err := terminal.Write([]byte("/connect\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, output, "Connect Provider")
+	waitForPTYText(t, output, "○ OpenRouter")
+	waitForPTYText(t, output, "not connected")
+
+	// Enter on the provider opens the masked key entry.
+	if _, err := terminal.Write([]byte("\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, output, "API key:")
+
+	// Edge case: a wrong key is rejected by the gateway and the entry stays
+	// open for a retry instead of dumping the user back to the chat.
+	if _, err := terminal.Write([]byte("sk-or-bad-e2e\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, output, "invalid API key")
+
+	// Ctrl+U clears the rejected key; the right one connects and activates the
+	// provider's default model without a restart.
+	if _, err := terminal.Write([]byte("\x15" + goodKey + "\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, output, "Connected to OpenRouter · openrouter/free")
+	waitForPTYText(t, output, " openrouter/free ─╯")
+
+	// The credential is persisted privately and the selection is saved.
+	credentialsPath := filepath.Join(configDir, "credentials.json")
+	credentials, err := os.ReadFile(credentialsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(credentials), goodKey) {
+		t.Fatalf("credentials.json does not hold the connected key:\n%s", credentials)
+	}
+	if info, err := os.Stat(credentialsPath); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("credentials.json permissions = %v, %v; want 0600", info.Mode().Perm(), err)
+	}
+	persisted, err := os.ReadFile(filepath.Join(configDir, "providers.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(persisted), `"provider": "openrouter"`) {
+		t.Fatalf("selection was not persisted after /connect:\n%s", persisted)
+	}
+
+	// The live provider swapped: the next chat turn streams from the fake
+	// gateway using the stored credential (the environment key is empty).
+	before := output.String()
+	if _, err := terminal.Write([]byte("hola\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYTextAfter(t, output, before, "CONNECTED-OK from fake gateway")
+
+	// Reopening the panel reflects the stored credential.
+	if _, err := terminal.Write([]byte("/connect\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, output, "● OpenRouter")
 }
 
 func waitForPTYText(t *testing.T, output *lockedBuffer, want string) {
