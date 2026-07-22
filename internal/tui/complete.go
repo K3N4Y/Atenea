@@ -5,8 +5,8 @@ package tui
 // (detectCommand/filterCommands) y el @-menu de archivos espeja mention.ts
 // (detectMention/filterFiles); a diferencia del @, un comando es TODO el
 // mensaje: solo dispara cuando "/" es el primer caracter del input. Los
-// helpers de Model (applySelection/refreshMenu/closeMenu y el cache de
-// listFiles) cablean esos tokens al estado del popup.
+// metodos del composer (applySelection/refreshMenu/closeMenu y el cache de
+// listFiles) cablean esos tokens al estado del popup; ver composer.go.
 
 import (
 	"fmt"
@@ -285,31 +285,31 @@ func filterFiles(files []string, query string, limit int) []string {
 // applyMention: text[:start] + insert + text[end:]). En ambos el caret queda
 // tras el espacio, listo para seguir escribiendo, y el recomputo final cierra
 // el menu (el token ya no es vigente por el espacio). Sin menu abierto es no-op.
-func (m Model) applySelection() (Model, tea.Cmd) {
-	if len(m.menuItems) == 0 {
-		return m, nil
+func (c composer) applySelection(commands []command.Command, listFiles func() ([]string, error), models modelSource) (composer, tea.Cmd) {
+	if len(c.menuItems) == 0 {
+		return c, nil
 	}
-	item := m.menuItems[m.menuSelected]
+	item := c.menuItems[c.menuSelected]
 	if item.empty {
-		return m, nil
+		return c, nil
 	}
 	if item.model != "" {
 		value := "/model " + item.providerID + " " + item.model + " "
-		m.input.SetValue(value)
-		m.input.SetCursor(len([]rune(value)))
-		return m.closeMenu(), nil
+		c.input.SetValue(value)
+		c.input.SetCursor(len([]rune(value)))
+		return c.closeMenu(), nil
 	}
-	runes := []rune(m.input.Value())
-	if q := detectCommand(m.input.Value(), m.input.Position()); q.active {
+	runes := []rune(c.input.Value())
+	if q := detectCommand(c.input.Value(), c.input.Position()); q.active {
 		insert := item.label + " "
-		m.input.SetValue(insert + string(runes[q.end:]))
-		m.input.SetCursor(len([]rune(insert)))
-	} else if q := detectMention(m.input.Value(), m.input.Position()); q.active {
+		c.input.SetValue(insert + string(runes[q.end:]))
+		c.input.SetCursor(len([]rune(insert)))
+	} else if q := detectMention(c.input.Value(), c.input.Position()); q.active {
 		insert := "@" + item.label + " "
-		m.input.SetValue(string(runes[:q.start]) + insert + string(runes[q.end:]))
-		m.input.SetCursor(q.start + len([]rune(insert)))
+		c.input.SetValue(string(runes[:q.start]) + insert + string(runes[q.end:]))
+		c.input.SetCursor(q.start + len([]rune(insert)))
 	}
-	return m.refreshMenu()
+	return c.refreshMenu(commands, listFiles, models)
 }
 
 // refreshMenu recomputa el popup de autocompletado desde el texto y el caret
@@ -319,36 +319,39 @@ func (m Model) applySelection() (Model, tea.Cmd) {
 // activo; mientras corre o falla, el menu muestra el estado correspondiente).
 // Sin token vigente lo cierra, invalida resultados pendientes y descarta el
 // cache. En todos los casos el primer item queda seleccionado. Se llama tras
-// cada tecla que alimenta el input. El popup ocupa lineas bajo el transcript
-// (reservedLines las descuenta), asi que recalcula el alto del viewport.
-func (m Model) refreshMenu() (Model, tea.Cmd) {
-	m.menuItems = nil
-	m.menuSelected = 0
-	text, caret := m.input.Value(), m.input.Position()
+// cada tecla que alimenta el input. commands es la fuente de slash-commands,
+// listFiles la del @-menu y models la busqueda inline "/model" (inyectados por
+// la raiz, como el listFiles del explorer). Value-in / value-out: el llamador
+// (el seam de Model refreshMenu) recalcula el alto del viewport, que es una
+// preocupacion de layout del Model.
+func (c composer) refreshMenu(commands []command.Command, listFiles func() ([]string, error), models modelSource) (composer, tea.Cmd) {
+	c.menuItems = nil
+	c.menuSelected = 0
+	text, caret := c.input.Value(), c.input.Position()
 	if q := detectModelQuery(text, caret); q.active {
-		m = m.dropFileCache()
-		controller, ok := m.agent.(modelAgent)
-		if ok && isCanonicalModelCommand(text, controller.ModelCatalog()) {
-			m.modelSearch = false
-			return m.resizeViewport(), nil
+		c = c.dropFileCache()
+		catalog, ok := models.catalog()
+		if ok && isCanonicalModelCommand(text, catalog) {
+			c.modelSearch = false
+			return c, nil
 		}
 		if ok {
-			m.menuItems = filterModels(controller.ModelCatalog(), q.query, menuLimit)
-			if !m.modelSearch {
-				controller.RefreshModels()
+			c.menuItems = filterModels(catalog, q.query, menuLimit)
+			if !c.modelSearch && models.refresh != nil {
+				models.refresh()
 			}
 		}
-		m.modelSearch = true
-		if len(m.menuItems) == 0 {
+		c.modelSearch = true
+		if len(c.menuItems) == 0 {
 			label := "No matches"
-			if ok && len(controller.ModelCatalog()) == 0 {
+			if ok && len(catalog) == 0 {
 				label = "No models available"
 			}
-			m.menuItems = []menuItem{{label: label, empty: true}}
+			c.menuItems = []menuItem{{label: label, empty: true}}
 		}
 	} else if q := detectCommand(text, caret); q.active {
-		m.modelSearch = false
-		m = m.dropFileCache()
+		c.modelSearch = false
+		c = c.dropFileCache()
 		query := strings.ToLower(q.query)
 		includeNew := strings.HasPrefix("new", query)
 		includeCompact := strings.HasPrefix("compact", query)
@@ -356,9 +359,9 @@ func (m Model) refreshMenu() (Model, tea.Cmd) {
 		includeMcp := strings.HasPrefix("mcp", query)
 		includeConnect := strings.HasPrefix("connect", query)
 		if includeNew {
-			m.menuItems = append(m.menuItems, menuItem{label: "/new", builtin: true})
+			c.menuItems = append(c.menuItems, menuItem{label: "/new", builtin: true})
 		}
-		reserved := len(m.menuItems)
+		reserved := len(c.menuItems)
 		if includeCompact {
 			reserved++
 		}
@@ -371,18 +374,18 @@ func (m Model) refreshMenu() (Model, tea.Cmd) {
 		if includeConnect {
 			reserved++
 		}
-		for _, cmd := range filterCommands(m.commands, q.query, menuLimit-reserved) {
-			m.menuItems = append(m.menuItems, menuItem{label: "/" + cmd.Name, description: cmd.Description, builtin: cmd.Name == "resume"})
+		for _, cmd := range filterCommands(commands, q.query, menuLimit-reserved) {
+			c.menuItems = append(c.menuItems, menuItem{label: "/" + cmd.Name, description: cmd.Description, builtin: cmd.Name == "resume"})
 		}
 		if includeCompact {
 			item := menuItem{label: "/compact", description: "Compact conversation context", builtin: true}
-			if query == "" && len(m.menuItems) > 1 {
-				insertAt := len(m.menuItems) - 1
-				m.menuItems = append(m.menuItems, menuItem{})
-				copy(m.menuItems[insertAt+1:], m.menuItems[insertAt:])
-				m.menuItems[insertAt] = item
+			if query == "" && len(c.menuItems) > 1 {
+				insertAt := len(c.menuItems) - 1
+				c.menuItems = append(c.menuItems, menuItem{})
+				copy(c.menuItems[insertAt+1:], c.menuItems[insertAt:])
+				c.menuItems[insertAt] = item
 			} else {
-				m.menuItems = append(m.menuItems, item)
+				c.menuItems = append(c.menuItems, item)
 			}
 		}
 		if includeModel {
@@ -392,99 +395,118 @@ func (m Model) refreshMenu() (Model, tea.Cmd) {
 				if includeNew {
 					insertAt = 1
 				}
-				m.menuItems = append(m.menuItems, menuItem{})
-				copy(m.menuItems[insertAt+1:], m.menuItems[insertAt:])
-				m.menuItems[insertAt] = item
-			} else if len(m.menuItems) > 1 {
-				last := m.menuItems[len(m.menuItems)-1]
-				m.menuItems[len(m.menuItems)-1] = item
-				m.menuItems = append(m.menuItems, last)
+				c.menuItems = append(c.menuItems, menuItem{})
+				copy(c.menuItems[insertAt+1:], c.menuItems[insertAt:])
+				c.menuItems[insertAt] = item
+			} else if len(c.menuItems) > 1 {
+				last := c.menuItems[len(c.menuItems)-1]
+				c.menuItems[len(c.menuItems)-1] = item
+				c.menuItems = append(c.menuItems, last)
 			} else {
-				m.menuItems = append(m.menuItems, item)
+				c.menuItems = append(c.menuItems, item)
 			}
 		}
 		if includeMcp {
 			item := menuItem{label: "/mcp", description: "Toggle MCP servers on or off", builtin: true}
-			if query == "" && len(m.menuItems) > 1 {
-				insertAt := len(m.menuItems) - 1
-				m.menuItems = append(m.menuItems, menuItem{})
-				copy(m.menuItems[insertAt+1:], m.menuItems[insertAt:])
-				m.menuItems[insertAt] = item
+			if query == "" && len(c.menuItems) > 1 {
+				insertAt := len(c.menuItems) - 1
+				c.menuItems = append(c.menuItems, menuItem{})
+				copy(c.menuItems[insertAt+1:], c.menuItems[insertAt:])
+				c.menuItems[insertAt] = item
 			} else {
-				m.menuItems = append(m.menuItems, item)
+				c.menuItems = append(c.menuItems, item)
 			}
 		}
 		if includeConnect {
 			item := menuItem{label: "/connect", description: "Connect a provider with an API key", builtin: true}
-			if query == "" && len(m.menuItems) > 1 {
-				insertAt := len(m.menuItems) - 1
-				m.menuItems = append(m.menuItems, menuItem{})
-				copy(m.menuItems[insertAt+1:], m.menuItems[insertAt:])
-				m.menuItems[insertAt] = item
+			if query == "" && len(c.menuItems) > 1 {
+				insertAt := len(c.menuItems) - 1
+				c.menuItems = append(c.menuItems, menuItem{})
+				copy(c.menuItems[insertAt+1:], c.menuItems[insertAt:])
+				c.menuItems[insertAt] = item
 			} else {
-				m.menuItems = append(m.menuItems, item)
+				c.menuItems = append(c.menuItems, item)
 			}
 		}
 	} else if q := detectMention(text, caret); q.active {
-		m.modelSearch = false
+		c.modelSearch = false
 		var cmd tea.Cmd
-		m, cmd = m.loadFilesOnce()
-		if m.filesLoading {
-			m.menuItems = []menuItem{{label: "Loading files…", empty: true}}
-			return m.resizeViewport(), cmd
+		c, cmd = c.loadFilesOnce(listFiles)
+		if c.filesLoading {
+			c.menuItems = []menuItem{{label: "Loading files…", empty: true}}
+			return c, cmd
 		}
-		if m.filesError != "" {
-			m.menuItems = []menuItem{{label: "Could not list files: " + m.filesError, empty: true}}
-			return m.resizeViewport(), cmd
+		if c.filesError != "" {
+			c.menuItems = []menuItem{{label: "Could not list files: " + c.filesError, empty: true}}
+			return c, cmd
 		}
-		for _, f := range filterFiles(m.files, q.query, menuLimit) {
-			m.menuItems = append(m.menuItems, menuItem{label: f})
+		for _, f := range filterFiles(c.files, q.query, menuLimit) {
+			c.menuItems = append(c.menuItems, menuItem{label: f})
 		}
-		return m.resizeViewport(), cmd
+		return c, cmd
 	} else {
-		m.modelSearch = false
-		m = m.dropFileCache()
+		c.modelSearch = false
+		c = c.dropFileCache()
 	}
-	return m.resizeViewport(), nil
+	return c, nil
 }
 
 // closeMenu cierra el popup descartando items y seleccion, sin tocar el input
 // ni el cache de archivos (la proxima tecla que alimente el input recomputa el
-// token y puede reabrirlo). El popup ocupaba lineas bajo el transcript
-// (reservedLines las descontaba), asi que recalcula el alto del viewport.
-// refreshMenu no lo reusa: alli el reset precede al repoblado y el viewport se
-// recalcula una sola vez al final.
-func (m Model) closeMenu() Model {
-	m.menuItems = nil
-	m.menuSelected = 0
-	return m.resizeViewport()
+// token y puede reabrirlo). El llamador recalcula el alto del viewport porque
+// el popup ocupaba lineas bajo el transcript (reservedLines las descontaba).
+// refreshMenu no lo reusa: alli el reset precede al repoblado.
+func (c composer) closeMenu() composer {
+	c.menuItems = nil
+	c.menuSelected = 0
+	return c
 }
 
 // loadFilesOnce agenda listFiles la primera vez que el token "@" esta vigente y
 // cachea el resultado mientras lo siga estando (dropFileCache lo descarta al
 // desactivarse). La generacion permite ignorar respuestas de tokens anteriores.
-func (m Model) loadFilesOnce() (Model, tea.Cmd) {
-	if m.filesLoaded || m.filesLoading {
-		return m, nil
+func (c composer) loadFilesOnce(listFiles func() ([]string, error)) (composer, tea.Cmd) {
+	if c.filesLoaded || c.filesLoading {
+		return c, nil
 	}
-	m.files = nil
-	m.filesError = ""
-	if m.listFiles == nil {
-		m.filesLoaded = true
-		return m, nil
+	c.files = nil
+	c.filesError = ""
+	if listFiles == nil {
+		c.filesLoaded = true
+		return c, nil
 	}
-	m.filesLoading = true
-	m.filesGen++
-	return m, listFilesCmd(m.listFiles, fileListMenu, m.filesGen)
+	c.filesLoading = true
+	c.filesGen++
+	return c, listFilesCmd(listFiles, fileListMenu, c.filesGen)
 }
 
 // dropFileCache descarta el listado cacheado del @-menu: la proxima activacion
 // del token vuelve a llamar listFiles (el workspace pudo cambiar entre tokens).
-func (m Model) dropFileCache() Model {
-	m.files = nil
-	m.filesLoaded = false
-	m.filesLoading = false
-	m.filesError = ""
-	m.filesGen++
-	return m
+func (c composer) dropFileCache() composer {
+	c.files = nil
+	c.filesLoaded = false
+	c.filesLoading = false
+	c.filesError = ""
+	c.filesGen++
+	return c
+}
+
+// applyListedFiles folds an async "@"-menu listing result into the file cache,
+// guarded by the generation so a stale result is ignored, then rebuilds the
+// popup from the current input. It mirrors the explorer's applyListed but feeds
+// the mention menu instead of the tree. The caller (the Model refreshMenu seam)
+// recomputes the viewport height.
+func (c composer) applyListedFiles(msg filesListedMsg, commands []command.Command, listFiles func() ([]string, error), models modelSource) (composer, tea.Cmd, bool) {
+	if msg.generation != c.filesGen {
+		return c, nil, false
+	}
+	c.filesLoading = false
+	c.filesLoaded = true
+	c.files = msg.files
+	if msg.err != nil {
+		c.files = nil
+		c.filesError = msg.err.Error()
+	}
+	c, cmd := c.refreshMenu(commands, listFiles, models)
+	return c, cmd, true
 }

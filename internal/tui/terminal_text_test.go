@@ -88,16 +88,16 @@ func TestAuxiliaryViews_RemoveUntrustedTerminalControlsBeforeStyling(t *testing.
 	})
 
 	t.Run("completion menu", func(t *testing.T) {
-		malicious := Model{menuItems: []menuItem{{label: terminalAttack, description: terminalAttack}}}
-		clean := Model{menuItems: []menuItem{{label: terminalAttackVisibleText, description: terminalAttackVisibleText}}}
+		malicious := Model{composer: composer{menuItems: []menuItem{{label: terminalAttack, description: terminalAttack}}}}
+		clean := Model{composer: composer{menuItems: []menuItem{{label: terminalAttackVisibleText, description: terminalAttackVisibleText}}}}
 		if got, want := malicious.menuView(), clean.menuView(); got != want {
 			t.Fatalf("menu with terminal controls = %q, want sanitized menu %q", got, want)
 		}
 	})
 
 	t.Run("file tree", func(t *testing.T) {
-		malicious := Model{tree: newFileTree([]string{terminalAttack + ".go"})}
-		clean := Model{tree: newFileTree([]string{terminalAttackVisibleText + ".go"})}
+		malicious := Model{explorer: explorer{tree: newFileTree([]string{terminalAttack + ".go"})}}
+		clean := Model{explorer: explorer{tree: newFileTree([]string{terminalAttackVisibleText + ".go"})}}
 		if got, want := malicious.treeView(), clean.treeView(); got != want {
 			t.Fatalf("tree with terminal controls = %q, want sanitized tree %q", got, want)
 		}

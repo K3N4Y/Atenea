@@ -19,7 +19,8 @@ session store. Shutdown stops active runs, cancels and waits for context
 compactions, and disables further Bubble Tea messages once its event loop has
 ended. This preserves final events and prompt checkpoints before SQLite closes.
 
-The composer also owns built-in commands that never become model messages:
+The root `Model` intercepts built-in commands that never become model messages
+(the composer only submits the literal text; `submitPrompt` dispatches):
 `/new` stops any in-flight run and then creates a session (otherwise the old
 session would keep collecting events and win the resume-on-startup ordering),
 `/resume` opens a searchable picker of TUI sessions
@@ -103,7 +104,9 @@ atenea:     agent.Service -> runner -> EmittingStore -> Bus -> chan tea.Msg     
   and non-ignored untracked files, executable modes, and symlinks. Ignored
   files remain untouched, and the workspace's main `.git` directory, index,
   branch, HEAD, refs, and staged changes are never mutated.
-- `internal/tui/model.go` + `transcript.go` + `view.go` + `reveal.go` — the
+- `internal/tui/model.go` + `transcript.go` + `explorer.go` +
+  `file_viewer_panel.go` + `composer.go` + `complete.go` + `view.go` +
+  `reveal.go` — the
   Model of Bubble Tea. `transcript.go` is the `Transcript` module: a pure,
   I/O-free value type (embedded on `Model`) that projects durable
   `SessionEvent` to conversation inputs (streaming assistant text, collapsible
@@ -125,6 +128,55 @@ atenea:     agent.Service -> runner -> EmittingStore -> Bus -> chan tea.Msg     
   behavior stays put — the pointer path keeps its own differences (the resume
   picker swallows mouse events, the plan gate has no pointer short-circuit,
   wheel scrolling follows the hovered panel);
+  `explorer.go` is the `explorer` module: the workspace file tree panel
+  (the left column) extracted into a self-contained value type embedded on
+  `Model` (its tree state fields promote onto `Model` the same way the
+  `Transcript` fields do), the first panel decomposed behind that router. It
+  owns the tree's open/close/load lifecycle, its keyboard and mouse handling,
+  its windowed rendering, and the async listing it shares with the `@`
+  completion (both feed through the same `listFiles`/`fileListTree` path). It
+  never reaches into the file viewer: activating a file surfaces an
+  `explorerIntent{openPath}` and `Esc`/`q` an `explorerIntent{closePanel}` that
+  the root `Model` applies, driving the viewer panel and the chat-column resize;
+  `file_viewer_panel.go` is the `fileViewerPanel` module: the read-only file
+  viewer (the main-area file view opened from the explorer) extracted into a
+  self-contained value type embedded on `Model` the same way the `explorer` is
+  (its viewer state fields — `viewer`, `fileReader`, `viewerLoading`,
+  `viewerGen`, `viewerPending`, `viewerReturnY` — promote onto `Model`), the
+  second panel decomposed behind that router. It owns the viewer's open/close
+  lifecycle, the generation/pending-guarded async load (a stale `fileOpenedMsg`
+  whose generation or path no longer matches is discarded so slow disk work
+  never overwrites a newer request; scroll deltas requested while loading queue
+  into `viewerPending` and replay on landing), its keyboard and wheel handling,
+  and its rendering (`fileViewerPanel.view`, deferring to the `fileViewer`
+  content/scroll type in `file_viewer.go`). It never reaches into focus or the
+  transcript viewport: `Esc` surfaces a `viewerIntent{closeToChat}` that the
+  root applies by returning focus to the chat and restoring the transcript
+  scroll offset the panel captured at open (`returnY`);
+  `composer.go` (with its autocomplete logic in `complete.go`) is the `composer`
+  module: the chat input crossroads extracted into a self-contained value type
+  embedded on `Model` the same way the `explorer` and `fileViewerPanel` are (its
+  state fields — `input`, `history`/`histIdx`, `menuItems`/`menuSelected`,
+  `modelSearch`, and the `@`-file cache `files`/`filesLoaded`/`filesLoading`/
+  `filesError`/`filesGen` — promote onto `Model`), the third panel decomposed
+  behind that router. It owns the editable textarea (draft, cursor, growth to
+  five visible rows then scroll with literal newlines preserved), the in-memory
+  prompt-history navigation, and the autocomplete popup (the `/` slash-command
+  menu, the `@` file-mention menu with its once-per-token async listing shared
+  with the explorer through the same `listFiles`/`fileListMenu` path, and the
+  inline `/model <query>` search fed by an injected `modelSource` so the composer
+  never imports the agent). `composer.handleKey` encodes the composer-internal
+  precedence (open menu wins over history over the default keys) and surfaces a
+  small `composerIntent`: `submit` (Enter or a builtin menu selection — the root
+  `submitPrompt` remains the SINGLE dispatch point for local-command
+  interception, slash expansion, and build/plan mode routing), `leaderArm` (an
+  empty-composer `Space`, which the root turns into the `Space e` leader), and
+  `handled` (the composer consumed the key internally). It never owns submission
+  routing, prompt-history persistence, the leader, the Esc-cancel confirmation,
+  or focus: those stay on the root, which seeds/appends the history slice and
+  drives focus via `syncComposerFocus`. Thin `Model` seams (`refreshMenu`,
+  `closeMenu`, `applySelection`) add only the viewport recompute the popup's
+  line-count change requires;
   `view.go` renders with a height-bounded viewport and smart following:
   incoming events and reveal ticks follow the queue only while the user is at
   the bottom; scrolling upward preserves the reading position during streaming

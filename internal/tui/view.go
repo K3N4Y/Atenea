@@ -1600,10 +1600,10 @@ func (m Model) chatView(content string) string {
 }
 
 // viewerView dimensiona el visor como la columna derecha, sin borde ni titulo,
-// igual que chatView. renderFileViewer recibe el alto completo del cuerpo (el
-// mismo que en pantalla completa) y reserva por si solo la fila de cabecera.
+// igual que chatView. El panel recibe el alto completo del cuerpo (el mismo que
+// en pantalla completa) y reserva por si solo la fila de cabecera.
 func (m Model) viewerView(width int) string {
-	content := m.renderFileViewer(max(width, 0), max(m.bodyHeight(), 0))
+	content := m.fileViewerPanel.view(max(width, 0), max(m.bodyHeight(), 0))
 	style := treePanelStyle
 	if m.ready {
 		style = style.Width(max(width, 0)).Height(max(m.bodyHeight(), 0))
@@ -1611,14 +1611,10 @@ func (m Model) viewerView(width int) string {
 	return style.Render(content)
 }
 
+// renderFileViewer draws the full-screen viewer body, deferring to the embedded
+// panel which owns the viewer state and reserves its own header row.
 func (m Model) renderFileViewer(width, height int) string {
-	contentHeight := max(height-1, 0)
-	header := statusStyle.Render(m.viewer.header(width, contentHeight))
-	body := m.viewer.render(width, contentHeight)
-	if body == "" {
-		return header
-	}
-	return header + "\n" + body
+	return m.fileViewerPanel.view(width, height)
 }
 
 // menuView rinde el popup de autocompletado: una linea por item, con el
@@ -1841,49 +1837,11 @@ func (m Model) treePanelWidth() int {
 	return width
 }
 
+// treeView renders the explorer panel column. It supplies the Model-level
+// layout quantities (panel width, body height, row capacity, ready) and defers
+// the drawing to the embedded explorer, which owns the tree state.
 func (m Model) treeView() string {
-	panelWidth := m.treePanelWidth()
-	innerWidth := max(panelWidth, 0)
-	var lines []string
-	if m.treeLoading {
-		lines = append(lines, statusStyle.Render("cargando workspace…"))
-	} else if m.treeError != "" {
-		lines = append(lines, statusStyle.Render(sanitizeTerminalText(m.treeError)))
-	} else {
-		rows := m.tree.visibleRows()
-		if len(rows) == 0 {
-			lines = append(lines, statusStyle.Render("workspace vacio"))
-		}
-		start := min(m.treeOffset, len(rows))
-		end := len(rows)
-		if visibleRows := m.treeVisibleRowCount(); visibleRows > 0 {
-			end = min(start+visibleRows, len(rows))
-		}
-		for i := start; i < end; i++ {
-			row := rows[i]
-			icon := iconForFile(row.node.name)
-			if row.node.dir {
-				icon = iconFolderClosed
-				if m.tree.expanded[row.node.path] {
-					icon = iconFolderOpen
-				}
-			}
-			line := strings.Repeat("  ", row.depth) + icon + " " + sanitizeTerminalText(row.node.name)
-			if innerWidth > 0 {
-				line = ansi.Truncate(line, innerWidth, "…")
-			}
-			if i == m.treeCursor {
-				line = treeCursorStyle.Render(line)
-			}
-			lines = append(lines, line)
-		}
-	}
-	content := strings.Join(lines, "\n")
-	style := treePanelStyle
-	if m.ready {
-		style = style.Width(innerWidth).Height(max(m.bodyHeight(), 0))
-	}
-	return style.Render(content)
+	return m.explorer.view(m.treePanelWidth(), m.bodyHeight(), m.treeVisibleRowCount(), m.ready)
 }
 
 func (m Model) treeVisibleRowCount() int {
