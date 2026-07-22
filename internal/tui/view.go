@@ -1231,13 +1231,16 @@ func (m Model) resizeViewport() Model {
 		return m
 	}
 	m.focus = m.normalizedFocus()
-	contentWidth := m.chatContentWidth()
-	m.input.SetWidth(max(contentWidth-2*composerOuterMargin-composerBoxBorderWidth-2*composerBoxPadding-inputCursorWidth, 1))
-	m.viewport.Width = max(contentWidth, 0)
-	contentHeight := m.bodyHeight()
-	inputHeight := max(contentHeight-(m.reservedLines()-m.input.Height()), 1)
-	m.input.SetHeight(min(m.input.Height(), inputHeight))
-	m.viewport.Height = max(contentHeight-m.reservedLines(), 0)
+	// One geometry pass owns every dimension applied here: the textarea width and
+	// height and the viewport width and height. resizeViewport only APPLIES them
+	// (it legitimately mutates m.input/m.viewport from Update); the arithmetic —
+	// stripping the box border/padding/prompt/cursor from the width and bounding
+	// the input against the reserved-line budget — lives in layout.go.
+	l := m.layout()
+	m.input.SetWidth(l.inputWidth)
+	m.viewport.Width = l.viewportWidth
+	m.input.SetHeight(l.inputHeight)
+	m.viewport.Height = l.viewportHeight
 	return m.syncViewport()
 }
 
@@ -1543,7 +1546,8 @@ func (m Model) renderCanvas(content string) string {
 		}
 		return strings.Join(lines, "\n")
 	}
-	return canvasStyle.Width(max(m.width, 0)).Height(max(m.bodyHeight(), 0)).Render(content)
+	l := m.baseLayout()
+	return canvasStyle.Width(l.width).Height(max(l.bodyHeight, 0)).Render(content)
 }
 
 func (m Model) renderFullCanvas(content string) string {
@@ -1551,7 +1555,8 @@ func (m Model) renderFullCanvas(content string) string {
 	if !m.ready {
 		return m.renderCanvas(content)
 	}
-	return canvasStyle.Width(max(m.width, 0)).Height(max(m.height, 0)).Render(content)
+	l := m.baseLayout()
+	return canvasStyle.Width(l.width).Height(l.height).Render(content)
 }
 
 func restoreCanvasBackground(content string) string {
@@ -1580,7 +1585,10 @@ func (m Model) chatContent() string {
 		// sin tamano conocido (m.ready == false) queda el margen fijo.
 		margin := composerOuterMargin
 		if m.ready {
-			margin = min(composerOuterMargin, m.chatContentWidth()/2)
+			// Same chat-column outer margin the composer box and permission panel
+			// inset by (layout.chatMargin), so the spinner glyph starts in the same
+			// column as the box's "╭" corner.
+			margin = m.baseLayout().chatMargin
 		}
 		status = strings.Repeat(" ", margin) + m.spinner.View() + statusStyle.Render(" working") + "\n"
 	}
@@ -1665,9 +1673,10 @@ func (m Model) composerView() string {
 	if !m.ready {
 		return m.composerBox()
 	}
-	width := m.chatContentWidth()
-	margin := min(composerOuterMargin, width/2)
-	box := m.composerBoxWithWidth(max(width-2*margin, 0))
+	l := m.baseLayout()
+	width := l.chatContentWidth
+	margin := l.chatMargin
+	box := m.composerBoxWithWidth(l.chatInnerWidth)
 	box = lipgloss.NewStyle().Margin(0, margin).Render(box)
 	if _, permissionPending := m.pendingPermission(); permissionPending {
 		return box
@@ -1809,8 +1818,13 @@ func formatTokenCount(tokens int) string {
 	return strings.TrimSuffix(strconv.FormatFloat(float64(tokens)/1_000, 'f', 1, 64), ".0") + "k"
 }
 
+// chatContentWidth, contentWidth and treePanelWidth are thin seams onto the
+// layout module (computeLayout via baseLayout): the width arithmetic and the
+// explorer clamp [20,36] live once in layout.go, and these methods read the
+// computed rects. baseLayout suffices because none of these widths depend on the
+// reserved-line count.
 func (m Model) chatContentWidth() int {
-	return max(m.contentWidth(), 0)
+	return m.baseLayout().chatContentWidth
 }
 
 func (m Model) chatPanelVisible() bool {
@@ -1818,23 +1832,11 @@ func (m Model) chatPanelVisible() bool {
 }
 
 func (m Model) contentWidth() int {
-	if !m.ready || !m.treeOpen {
-		return m.width
-	}
-	return max(m.width-m.treePanelWidth()-1, 0)
+	return m.baseLayout().contentWidth
 }
 
 func (m Model) treePanelWidth() int {
-	if !m.ready || m.width <= 0 {
-		return 28
-	}
-	width := m.width / 4
-	width = max(width, 20)
-	width = min(width, 36)
-	if width+1 >= m.width {
-		return max(m.width, 0)
-	}
-	return width
+	return m.baseLayout().treePanelWidth
 }
 
 // treeView renders the explorer panel column. It supplies the Model-level
@@ -1845,10 +1847,7 @@ func (m Model) treeView() string {
 }
 
 func (m Model) treeVisibleRowCount() int {
-	if !m.ready {
-		return 0
-	}
-	return max(m.bodyHeight(), 0)
+	return m.baseLayout().treeVisibleRows
 }
 
 // transcriptView devuelve el transcript con su separador hacia el resto de la

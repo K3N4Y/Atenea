@@ -337,14 +337,51 @@ start through `WithWorkspaceRoot(branch, dir, root)`, fed by `cmd/atenea/main.go
 home-abbreviated). After every successful `bash` tool call the model refreshes
 the branch asynchronously from that workspace, so checkouts and newly created
 branches update the bar without polling. On a width too narrow for both sides
-the left segment truncates with `…` so the context label always fits.
+the left segment truncates with `…` so the context label always fits (the inset
+math and its narrow-width clamp come from the layout module; the truncation
+decision stays in the render helper).
 
 Because the chrome owns the top `topBarHeight` rows, the body (chat, explorer,
 viewer) sizes against `bodyHeight = height - topBarHeight` rather than the full
-terminal height, and mouse events subtract `topBarHeight` from their row before
+terminal height, and mouse events subtract the same origin from their row before
 the body handlers read it, so a click anywhere in the chrome is inert. Total
 rendered height is unchanged: the chrome comes out of the body, never adds extra
 rows.
+
+### Layout geometry (`layout.go`)
+
+All terminal geometry — the width/height/inset/clamp/rect arithmetic and the
+narrow-terminal thresholds — lives in one place: `computeLayout(size, state)
+Layout`, a pure function of the terminal size and the panel state (explorer
+open, the reserved-line count below the transcript, the textarea row count). It
+returns a `Layout` value with the frame's rectangles: the top-bar height and
+body height, the mouse body-Y origin, the explorer column width (25% clamped to
+`[20, 36]`, `28` before the first size, full-bleed when the column plus its
+one-cell gutter would leave no room for the chat), the full-screen flag, the
+chat/content width, the transcript viewport rect (width, and `bodyHeight` minus
+the reserved rows, bounded `>= 0`), the composer textarea width (chat width
+minus the outer margins, box border, padding, prompt and cursor cell, bounded
+`>= 1`) and height (bounded against the reserved budget), the file-viewer height
+(`bodyHeight - 1` header row), the shared chat-column margin/inner width and the
+full-width top-bar margin/inner width.
+
+The consumers only READ this value: the `View()` render helpers build strings
+from the rects (staying read-only), `resizeViewport` (which runs from `Update`)
+applies the viewport and textarea dimensions, and the mouse hit-tests read the
+same `mouseBodyYOffset` and `treeRowsStartY` origins — so rendering and
+click-targeting share one geometry and cannot drift. The `Model` geometry
+methods (`bodyHeight`, `treePanelWidth`, `contentWidth`, `chatContentWidth`,
+`fileViewerHeight`, `treeVisibleRowCount`) are thin seams onto fields of this
+result. The reserved-independent ones read `baseLayout()` (a layout computed
+with the reserved count zeroed), because the reserved count is itself derived
+from `bodyHeight` and the chat width and reading the full layout there would
+recurse.
+
+The module deliberately does NOT own rendering-flavored degradation: the
+reserved-line count (how many menu and permission-panel rows a render draws)
+arrives as an input, not pure geometry; and the git-summary progressive fallback
+and the permission-panel progressive row omission stay in their render helpers,
+each consuming a width or flag from `Layout`.
 
 ## Contracts that the TUI establishes with tests
 

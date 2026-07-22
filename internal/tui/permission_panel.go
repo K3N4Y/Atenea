@@ -73,9 +73,9 @@ func (m Model) permissionPanelLayout() (permissionPanelLayout, bool) {
 	if !ok {
 		return permissionPanelLayout{}, false
 	}
-	width := m.chatContentWidth()
-	margin := min(composerOuterMargin, width/2)
-	panelWidth := max(width-2*margin, 0)
+	l := m.baseLayout()
+	margin := l.chatMargin
+	panelWidth := l.chatInnerWidth
 	height := m.permissionPanelHeight()
 	lines, metadata := m.permissionPanelLines(permission, panelWidth, height)
 	if len(lines) == 0 {
@@ -101,12 +101,17 @@ func (m Model) permissionPanelView() string {
 	if !ok {
 		return ""
 	}
-	width := m.chatContentWidth()
+	l := m.baseLayout()
+	width := l.chatContentWidth
+	margin := l.chatMargin
+	panelWidth := l.chatInnerWidth
 	if !m.ready || width <= 0 {
+		// No known size: fall back to a fixed panel width, full-bleed (no margin),
+		// so the panel still renders before the first WindowSizeMsg.
 		width = permissionPanelFallbackWidth
+		margin = min(composerOuterMargin, width/2)
+		panelWidth = max(width-2*margin, 0)
 	}
-	margin := min(composerOuterMargin, width/2)
-	panelWidth := max(width-2*margin, 0)
 	lines, _ := m.permissionPanelLines(permission, panelWidth, m.permissionPanelHeight())
 	if len(lines) == 0 {
 		return ""

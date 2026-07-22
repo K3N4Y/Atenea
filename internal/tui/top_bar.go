@@ -10,20 +10,6 @@ import (
 	"atenea/internal/tui/theme"
 )
 
-// topBarMargin es el margen vertical (en filas) sobre y bajo la barra. Es 1, no
-// composerOuterMargin (el margen horizontal): una fila es el ritmo vertical del
-// proyecto (los bloques del transcript se separan con una linea en blanco) y
-// equivale visualmente a las dos celdas del margen horizontal, porque una celda
-// de terminal mide casi el doble de alto que de ancho. Dos filas ademas
-// desbordarian terminales bajas (el composer no entra bajo ~9 filas de cuerpo).
-const topBarMargin = 1
-
-// topBarHeight es el alto total del chrome de la barra superior: el margen
-// vertical de arriba, la fila de la barra y el margen de abajo. bodyHeight lo
-// descuenta del alto de la terminal y el manejador de mouse lo resta a la fila
-// del clic, porque el cuerpo empieza justo bajo todo ese chrome.
-const topBarHeight = 2*topBarMargin + 1
-
 // branchGlyph es el glifo powerline de rama que precede el nombre de la rama
 // git en la barra superior (nerd-font PUA, como los iconos del arbol en tree.go).
 const branchGlyph = ""
@@ -33,17 +19,18 @@ const branchGlyph = ""
 var branchStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Success))
 
 // bodyHeight es el espacio vertical del cuerpo (chat/arbol/visor): el alto de
-// la terminal menos el chrome de la barra superior. La barra es chrome fijo por
-// encima del cuerpo, asi que todo el layout del cuerpo mide contra este alto y
-// no contra la altura total de la terminal.
-func (m Model) bodyHeight() int { return max(m.height-topBarHeight, 0) }
+// la terminal menos el chrome de la barra superior. Lo computa el modulo layout
+// (computeLayout); este metodo es un seam delgado que lo lee. Usa baseLayout
+// (no layout) porque reservedLines depende de bodyHeight: el panel de permiso
+// dimensiona contra el, y layout() pide reservedLines — leerlo aca recurse.
+func (m Model) bodyHeight() int { return m.baseLayout().bodyHeight }
 
 // topBar rinde el chrome de la barra superior: topBarMargin filas en blanco, la
 // fila de la barra y otras topBarMargin filas en blanco, todas con el fondo del
 // lienzo. Asi la barra queda separada del borde de la terminal y del cuerpo con
 // el mismo margen que el composer usa en sus lados.
 func (m Model) topBar() string {
-	width := max(m.width, 0)
+	width := m.baseLayout().width
 	blank := restoreCanvasBackground(canvasStyle.Width(width).Render(""))
 	rows := make([]string, 0, topBarHeight)
 	for range topBarMargin {
@@ -74,13 +61,15 @@ func (m Model) topBarLine() string {
 		}
 	}
 	right := m.topBarContext()
-	width := max(m.width, 0)
 	// Mismo margen horizontal externo que el composer y los mensajes de usuario
 	// (composerOuterMargin): el contenido no toca los bordes de la terminal y la
-	// rama queda alineada con la caja del composer. Se acota a width/2 para que
-	// en terminales minusculas la barra siga midiendo exactamente el ancho.
-	margin := min(composerOuterMargin, width/2)
-	inner := width - 2*margin
+	// rama queda alineada con la caja del composer. El clamp a width/2 (para que
+	// en terminales minusculas la barra siga midiendo exactamente el ancho) vive
+	// en el modulo layout; aca solo se leen el margen y el ancho interior.
+	l := m.baseLayout()
+	width := l.width
+	margin := l.topBarMarginCells
+	inner := l.topBarInnerWidth
 	if lipgloss.Width(left)+lipgloss.Width(right)+1 > inner {
 		// La etiqueta de contexto de la derecha siempre debe caber: se recorta
 		// la izquierda (rama + directorio) dejando al menos un espacio de

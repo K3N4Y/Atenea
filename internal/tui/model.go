@@ -808,13 +808,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case targetConnectPanel:
 			return m.handleConnectPanelMouse(ev)
 		}
-		// La top bar ocupa la fila 0 de la pantalla, asi que el contenido del
-		// cuerpo empieza una fila mas abajo: se traslada el clic a coordenadas
-		// del cuerpo antes de leer ev.Y. Los handlers de abajo ya tratan una Y
-		// negativa como fallo, asi que un clic sobre la barra queda inerte.
-		if m.ready {
-			ev.Y -= topBarHeight
-		}
+		// El chrome de la top bar ocupa las filas superiores de la pantalla, asi
+		// que el cuerpo empieza mas abajo: se traslada el clic a coordenadas del
+		// cuerpo restando el mismo origen (mouseBodyYOffset) que el render usa para
+		// pintar el chrome. Los handlers de abajo ya tratan una Y negativa como
+		// fallo, asi que un clic sobre la barra queda inerte. Sin tamano conocido
+		// el offset es 0 (no hay chrome dibujado todavia).
+		ev.Y -= m.layout().mouseBodyYOffset
 		if m.activeInputTarget() == targetPermissionGate {
 			perm, _ := m.pendingPermission()
 			if next, handled := m.handlePermissionMouse(ev, perm); handled {
@@ -1277,10 +1277,41 @@ func (m Model) transcriptLineAtMouse(msg tea.MouseMsg) (int, bool) {
 	return m.viewport.YOffset + y, true
 }
 
-// treeRowsStartY is the screen row of the explorer panel's first file row.
-// Without a box or title the panel's first row is body row 0; the mouse router
-// passes this to explorer.rowAtMouse when mapping a click to a row.
-const treeRowsStartY = 0
+// layoutSize projects the announced terminal size into the layout module's
+// input. It is the raw size seam: the ready flag decides whether the geometry is
+// bounded or degrades to sentinels.
+func (m Model) layoutSize() layoutSize {
+	return layoutSize{width: m.width, height: m.height, ready: m.ready}
+}
+
+// layout is the Model's single geometry pass: it gathers the panel state
+// (explorer open, the reserved-line count below the transcript, the textarea's
+// current row count) and hands it to computeLayout, which returns the frame's
+// rectangles. Every geometry query method below is a thin seam onto a field of
+// this result, so the render, the resize and the mouse hit-tests read ONE
+// geometry. reservedLines is rendering-derived (it counts how many menu and
+// permission-panel rows a render draws), so it is passed in as state rather than
+// recomputed inside the pure module.
+func (m Model) layout() Layout {
+	return computeLayout(m.layoutSize(), layoutState{
+		explorerOpen:  m.treeOpen,
+		reservedLines: m.reservedLines(),
+		inputHeight:   m.input.Height(),
+	})
+}
+
+// baseLayout computes the geometry that does NOT depend on the reserved-line
+// count: the body height, the explorer/chat widths, the viewer height and the
+// mouse origins. reservedLines is itself derived from bodyHeight and
+// chatContentWidth (the permission panel sizes against them), so those methods
+// must read a layout that does not, in turn, ask for reservedLines — that would
+// recurse. computeLayout is pure, and its reserved-independent fields are the
+// same whatever reservedLines is, so passing 0 here is exact for every field
+// those methods read; only viewportHeight and inputHeight (which layout()
+// supplies with the real count) differ.
+func (m Model) baseLayout() Layout {
+	return computeLayout(m.layoutSize(), layoutState{explorerOpen: m.treeOpen})
+}
 
 func (m Model) treeMouseOverPanel(msg tea.MouseMsg) bool {
 	return m.ready && m.treeVisible() && msg.X >= 0 && msg.X < m.treePanelWidth()
@@ -1293,7 +1324,10 @@ func (m Model) treeVisible() bool {
 func (m Model) fileViewerHeight() int {
 	// El visor llena el cuerpo tanto en pantalla completa como en la columna
 	// derecha junto al arbol; en ambos casos reserva solo su fila de cabecera.
-	return max(m.bodyHeight()-1, 0)
+	// La geometria la computa el modulo layout (computeLayout); este metodo es un
+	// seam delgado que la lee. baseLayout basta: la altura del visor no depende de
+	// las lineas reservadas.
+	return m.baseLayout().fileViewerHeight
 }
 
 // startOpenTreeFile drives the viewer's open from the explorer's openPath
