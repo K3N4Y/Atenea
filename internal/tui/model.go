@@ -858,27 +858,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleResumePickerKey(msg)
 	}
 	if m.modelPicker.open {
-		switch msg.Type {
-		case tea.KeyEsc:
-			m.modelPicker.open = false
-		case tea.KeyLeft:
-			m.modelPicker.modelsFocused = false
-		case tea.KeyRight:
-			m.modelPicker.modelsFocused = true
-		case tea.KeyTab:
-			m.modelPicker.modelsFocused = !m.modelPicker.modelsFocused
-		case tea.KeyUp:
-			m.modelPicker.move(-1)
-		case tea.KeyDown:
-			m.modelPicker.move(1)
-		case tea.KeyEnter:
-			if !m.modelPicker.modelsFocused {
-				m.modelPicker.modelsFocused = true
-				return m, nil
-			}
-			return m.confirmModelSelection()
-		}
-		return m, nil
+		return m.handleModelPickerKey(msg)
 	}
 	if m.mcpPicker.open {
 		return m.handleMCPPickerKey(msg)

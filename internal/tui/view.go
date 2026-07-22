@@ -1475,22 +1475,12 @@ func (m Model) resumePickerBody(visibleRows, width int) []string {
 		return []string{ansi.Truncate(statusStyle.Render("No sessions found"), width, "")}
 	}
 
-	start := resumePickerWindowStart(len(m.resumePicker.filtered), m.resumePicker.selected, visibleRows)
-	end := min(start+visibleRows, len(m.resumePicker.filtered))
+	start, end := m.resumePicker.window(visibleRows)
 	rows := make([]string, 0, end-start)
 	for index := start; index < end; index++ {
 		rows = append(rows, m.resumePickerRow(m.resumePicker.filtered[index], index == m.resumePicker.selected, width))
 	}
 	return rows
-}
-
-func resumePickerWindowStart(total, selected, visible int) int {
-	if total <= visible || visible <= 0 {
-		return 0
-	}
-	selected = min(max(selected, 0), total-1)
-	start := selected - visible/2
-	return min(max(start, 0), total-visible)
 }
 
 func (m Model) resumePickerRow(summary session.SessionSummary, selected bool, width int) string {

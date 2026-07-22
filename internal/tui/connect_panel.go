@@ -11,10 +11,8 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"atenea/internal/providerconfig"
-	"atenea/internal/tui/theme"
 )
 
 // connectAgent is the engine surface the panel needs. ConnectProvider blocks
@@ -34,9 +32,9 @@ type connectDoneMsg struct {
 }
 
 type connectPanel struct {
-	open      bool
-	providers []providerconfig.ConnectableProvider
-	selected  int
+	open        bool
+	providers   []providerconfig.ConnectableProvider
+	overlayList // navigation: selected + move + window over the provider list
 	// entering is the key input stage for providers[selected]; key holds the
 	// typed runes, rendered masked.
 	entering bool
@@ -48,21 +46,17 @@ type connectPanel struct {
 }
 
 func newConnectPanel(providers []providerconfig.ConnectableProvider) connectPanel {
-	return connectPanel{open: true, providers: append([]providerconfig.ConnectableProvider(nil), providers...)}
-}
-
-func (p *connectPanel) move(delta int) {
-	if len(p.providers) == 0 {
-		return
-	}
-	p.selected = wrapSelection(p.selected+delta, len(p.providers))
+	panel := connectPanel{open: true, providers: append([]providerconfig.ConnectableProvider(nil), providers...)}
+	panel.setCount(len(panel.providers))
+	return panel
 }
 
 func (p connectPanel) selectedProvider() (providerconfig.ConnectableProvider, bool) {
-	if p.selected < 0 || p.selected >= len(p.providers) {
+	index, ok := p.hasSelection()
+	if !ok || index >= len(p.providers) {
 		return providerconfig.ConnectableProvider{}, false
 	}
-	return p.providers[p.selected], true
+	return p.providers[index], true
 }
 
 // handleConnectPanelKey routes the keyboard while the panel is open. On the
@@ -215,62 +209,65 @@ func (m Model) handleConnectPanelMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 	case tea.MouseButtonWheelDown:
 		m.connectPanel.move(1)
 	case tea.MouseButtonLeft:
-		layout := m.modelPickerLayout()
-		// Same screen geometry as the model picker: blank row, top border,
-		// header, separator, then the item rows.
-		row := msg.Y - 4
-		x := msg.X - layout.marginLeft - 1
-		if row < 0 || row >= layout.itemRows || x < 0 || x >= layout.innerWidth {
+		layout := overlayLayoutFor(m.width, m.height)
+		row, ok := layout.rowAt(msg.X, msg.Y)
+		if !ok {
 			return m, nil
 		}
-		errRows := 0
-		if m.connectPanel.err != "" {
-			errRows = 1
-		}
-		start, end := modelPickerWindow(len(m.connectPanel.providers), m.connectPanel.selected, layout.itemRows-errRows)
+		errRows := m.connectPanel.errRows()
+		start, end := m.connectPanel.window(layout.itemRows - errRows)
 		index := start + row - errRows
 		if row < errRows || index >= end {
 			return m, nil
 		}
-		m.connectPanel.selected = index
+		m.connectPanel.overlayList.selected = index
 		m.connectPanel.entering = true
 		m.connectPanel.err = ""
 	}
 	return m, nil
 }
 
+// errRows is the number of header rows the inline error banner consumes; the
+// window and hit-testing offset item rows past it.
+func (p connectPanel) errRows() int {
+	if p.err != "" {
+		return 1
+	}
+	return 0
+}
+
 func (m Model) connectPanelView() string {
-	layout := m.modelPickerLayout()
+	layout := overlayLayoutFor(m.width, m.height)
 	innerWidth := layout.innerWidth
 	itemRows := layout.itemRows
 
 	rows := make([]string, 0, itemRows)
 	if m.connectPanel.err != "" {
-		rows = append(rows, errorStyle.Render(modelPickerCell(" "+sanitizeTerminalText(m.connectPanel.err), innerWidth)))
+		rows = append(rows, errorStyle.Render(overlayCell(" "+sanitizeTerminalText(m.connectPanel.err), innerWidth)))
 	}
 	hint := " ↑↓ move · enter select · esc close"
 	if m.connectPanel.entering {
 		provider, _ := m.connectPanel.selectedProvider()
-		rows = append(rows, modelPickerCell(" Connect "+sanitizeTerminalText(provider.Name)+" with an API key", innerWidth), strings.Repeat(" ", max(innerWidth, 0)))
+		rows = append(rows, overlayCell(" Connect "+sanitizeTerminalText(provider.Name)+" with an API key", innerWidth), strings.Repeat(" ", max(innerWidth, 0)))
 		masked := strings.Repeat("•", len(m.connectPanel.key))
 		switch {
 		case m.connectPanel.busy:
-			rows = append(rows, modelPickerCell(" API key: "+masked, innerWidth), strings.Repeat(" ", max(innerWidth, 0)), statusStyle.Render(modelPickerCell(" validating…", innerWidth)))
+			rows = append(rows, overlayCell(" API key: "+masked, innerWidth), strings.Repeat(" ", max(innerWidth, 0)), statusStyle.Render(overlayCell(" validating…", innerWidth)))
 			hint = " validating… · esc close"
 		case len(m.connectPanel.key) == 0:
-			rows = append(rows, modelPickerCell(" API key: ", innerWidth)+"", statusStyle.Render(modelPickerCell(" paste or type the key; it is stored privately, never shown", innerWidth)))
+			rows = append(rows, overlayCell(" API key: ", innerWidth)+"", statusStyle.Render(overlayCell(" paste or type the key; it is stored privately, never shown", innerWidth)))
 			hint = " enter connect · ctrl+u clear · esc back"
 		default:
-			rows = append(rows, modelPickerCell(" API key: "+accentStyle.Render(masked+"▌"), innerWidth))
+			rows = append(rows, overlayCell(" API key: "+accentStyle.Render(masked+"▌"), innerWidth))
 			hint = " enter connect · ctrl+u clear · esc back"
 		}
 	} else {
-		start, end := modelPickerWindow(len(m.connectPanel.providers), m.connectPanel.selected, itemRows-len(rows))
+		start, end := m.connectPanel.window(itemRows - len(rows))
 		for index := start; index < end; index++ {
 			rows = append(rows, m.connectPanelRow(m.connectPanel.providers[index], index == m.connectPanel.selected, innerWidth))
 		}
 		if len(m.connectPanel.providers) == 0 {
-			rows = append(rows, modelPickerCell("  No connectable providers", innerWidth))
+			rows = append(rows, overlayCell("  No connectable providers", innerWidth))
 		}
 	}
 	for len(rows) < itemRows {
@@ -278,27 +275,18 @@ func (m Model) connectPanelView() string {
 	}
 
 	lines := []string{
-		modelPickerCell(" Provider", innerWidth),
+		overlayCell(" Provider", innerWidth),
 		strings.Repeat("─", max(innerWidth, 0)),
 	}
 	for index := 0; index < itemRows; index++ {
-		lines = append(lines, modelPickerCell(rows[index], innerWidth))
+		lines = append(lines, overlayCell(rows[index], innerWidth))
 	}
 	lines = append(lines,
 		strings.Repeat("─", max(innerWidth, 0)),
-		modelPickerCell(hint, innerWidth),
+		overlayCell(hint, innerWidth),
 	)
 
-	panelStyle := lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color(theme.Border)).
-		Width(innerWidth)
-	if layout.innerHeight > 0 {
-		panelStyle = panelStyle.Height(layout.innerHeight)
-	}
-	panel := pickerPanelTitle(panelStyle.Render(strings.Join(lines, "\n")), "Connect Provider")
-	panel = lipgloss.NewStyle().MarginLeft(layout.marginLeft).Render(panel)
-	return m.renderFullCanvas("\n" + panel)
+	return m.renderOverlayPanel(layout, "Connect Provider", lines)
 }
 
 func (m Model) connectPanelRow(provider providerconfig.ConnectableProvider, selected bool, width int) string {
@@ -314,8 +302,8 @@ func (m Model) connectPanelRow(provider providerconfig.ConnectableProvider, sele
 	}
 	statusWidth := min(16, max(width/4, 0))
 	nameWidth := max(width-statusWidth, 0)
-	row := modelPickerCell(prefix+glyph+sanitizeTerminalText(provider.Name), nameWidth)
-	statusCell := modelPickerCell(status, statusWidth)
+	row := overlayCell(prefix+glyph+sanitizeTerminalText(provider.Name), nameWidth)
+	statusCell := overlayCell(status, statusWidth)
 	if selected {
 		return accentStyle.Render(row + statusCell)
 	}

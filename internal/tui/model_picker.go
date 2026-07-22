@@ -10,7 +10,6 @@ import (
 
 	"atenea/internal/llm"
 	"atenea/internal/providerconfig"
-	"atenea/internal/tui/theme"
 )
 
 var modelPrices = map[string]string{
@@ -28,31 +27,38 @@ var modelPrices = map[string]string{
 	"gpt-4o-mini":   "$0.15/$0.60",
 }
 
+// modelPicker composes TWO overlay lists — one over the providers, one over
+// the selected provider's models — with a modelsFocused flag choosing which
+// column the arrows move. The flag lives here, not in the lists: the overlay
+// module owns single-list navigation, and a two-column widget is exactly the
+// place that composes two of them.
 type modelPicker struct {
-	open             bool
-	providers        []providerconfig.ProviderModels
-	providerSelected int
-	modelSelected    int
-	modelsFocused    bool
-	active           providerconfig.Active
-	err              string
+	open          bool
+	providers     []providerconfig.ProviderModels
+	providerList  overlayList
+	modelList     overlayList
+	modelsFocused bool
+	active        providerconfig.Active
+	err           string
 }
 
 func newModelPicker(providers []providerconfig.ProviderModels, active providerconfig.Active) modelPicker {
 	picker := modelPicker{open: true, providers: providerconfig.CloneProviderModels(providers), active: active}
+	picker.providerList.setCount(len(picker.providers))
 	for providerIndex, provider := range picker.providers {
 		if provider.ID != active.ProviderID {
 			continue
 		}
-		picker.providerSelected = providerIndex
+		picker.providerList.selected = providerIndex
 		for modelIndex, model := range provider.Models {
 			if model == active.Model {
-				picker.modelSelected = modelIndex
+				picker.modelList.selected = modelIndex
 				break
 			}
 		}
 		break
 	}
+	picker.syncModelList()
 	return picker
 }
 
@@ -60,82 +66,75 @@ func (p *modelPicker) setProviders(providers []providerconfig.ProviderModels) {
 	selectedProvider, _ := p.selectedProvider()
 	selectedModel, _ := p.selectedModel()
 	p.providers = providerconfig.CloneProviderModels(providers)
-	p.providerSelected = 0
-	p.modelSelected = 0
+	p.providerList.selected = 0
+	p.modelList.selected = 0
+	p.providerList.setCount(len(p.providers))
 	for providerIndex, provider := range p.providers {
 		if provider.ID != selectedProvider.ID {
 			continue
 		}
-		p.providerSelected = providerIndex
+		p.providerList.selected = providerIndex
 		for modelIndex, model := range provider.Models {
 			if model == selectedModel {
-				p.modelSelected = modelIndex
+				p.modelList.selected = modelIndex
 				break
 			}
 		}
 		break
 	}
+	p.syncModelList()
+}
+
+// syncModelList points the model list at the currently selected provider's
+// models, clamping its cursor into the new range. It runs whenever the
+// selected provider changes so the model column and its cursor stay coherent.
+func (p *modelPicker) syncModelList() {
+	provider, ok := p.selectedProvider()
+	if !ok {
+		p.modelList.setCount(0)
+		return
+	}
+	p.modelList.setCount(len(provider.Models))
 }
 
 func (p *modelPicker) move(delta int) {
-	count := len(p.providers)
 	if p.modelsFocused {
-		provider, ok := p.selectedProvider()
-		if !ok {
-			return
-		}
-		count = len(provider.Models)
-	}
-	if count == 0 {
+		p.modelList.move(delta)
 		return
 	}
-	if p.modelsFocused {
-		p.modelSelected = wrapSelection(p.modelSelected+delta, count)
-		return
-	}
-	p.providerSelected = wrapSelection(p.providerSelected+delta, count)
-	p.modelSelected = 0
+	p.providerList.move(delta)
+	p.modelList.selected = 0
+	p.syncModelList()
 }
 
-func wrapSelection(value, count int) int {
-	value %= count
-	if value < 0 {
-		value += count
+// selectProvider points the picker at a provider by index (keyboard focus
+// change or a mouse click), resetting the model cursor when the provider
+// actually changes so the model column reflects the new provider.
+func (p *modelPicker) selectProvider(index int) {
+	if p.providerList.selected != index {
+		p.modelList.selected = 0
 	}
-	return value
+	p.providerList.selected = index
+	p.syncModelList()
 }
 
-// modelPickerLayout congela las medidas del panel para que la vista y el
-// hit-testing del raton compartan la misma geometria.
+// modelPickerLayout freezes the two-column panel measurements so the view and
+// the mouse hit-testing share one geometry. It extends the shared overlay
+// layout with the provider/model column split down the middle.
 type modelPickerLayout struct {
-	marginLeft  int
-	innerWidth  int
-	innerHeight int
-	leftWidth   int
-	rightWidth  int
-	itemRows    int
+	overlayLayout
+	leftWidth  int
+	rightWidth int
 }
 
 func (m Model) modelPickerLayout() modelPickerLayout {
-	width := m.width
-	if width <= 0 {
-		width = 80
-	}
-	height := m.height
-	if height <= 0 {
-		height = 16
-	}
-	innerWidth := max(width-2*composerOuterMargin-composerBoxBorderWidth, 0)
-	innerHeight := max(max(height-2, 0)-composerBoxBorderWidth, 0)
-	leftWidth := max(innerWidth/4, 18)
-	leftWidth = min(leftWidth, max(innerWidth-1, 0))
+	base := overlayLayoutFor(m.width, m.height)
+	leftWidth := max(base.innerWidth/4, 18)
+	leftWidth = min(leftWidth, max(base.innerWidth-1, 0))
 	return modelPickerLayout{
-		marginLeft:  min(composerOuterMargin, width),
-		innerWidth:  innerWidth,
-		innerHeight: innerHeight,
-		leftWidth:   leftWidth,
-		rightWidth:  max(innerWidth-leftWidth-1, 0),
-		itemRows:    max(innerHeight-4, 0),
+		overlayLayout: base,
+		leftWidth:     leftWidth,
+		rightWidth:    max(base.innerWidth-leftWidth-1, 0),
 	}
 }
 
@@ -158,6 +157,33 @@ func (l modelPickerLayout) rowAt(x, y int) (overModels bool, row int, ok bool) {
 	return false, 0, false
 }
 
+// handleModelPickerKey routes the keyboard while the two-column picker is
+// open: left/right (or tab) switch the focused column, up/down move within it,
+// enter jumps focus into the models column and then confirms, esc closes.
+func (m Model) handleModelPickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		m.modelPicker.open = false
+	case tea.KeyLeft:
+		m.modelPicker.modelsFocused = false
+	case tea.KeyRight:
+		m.modelPicker.modelsFocused = true
+	case tea.KeyTab:
+		m.modelPicker.modelsFocused = !m.modelPicker.modelsFocused
+	case tea.KeyUp:
+		m.modelPicker.move(-1)
+	case tea.KeyDown:
+		m.modelPicker.move(1)
+	case tea.KeyEnter:
+		if !m.modelPicker.modelsFocused {
+			m.modelPicker.modelsFocused = true
+			return m, nil
+		}
+		return m.confirmModelSelection()
+	}
+	return m, nil
+}
+
 func (m Model) modelPickerView() string {
 	layout := m.modelPickerLayout()
 	innerWidth := layout.innerWidth
@@ -166,51 +192,51 @@ func (m Model) modelPickerView() string {
 	itemRows := layout.itemRows
 
 	providers := make([]string, 0, itemRows)
-	providerStart, providerEnd := modelPickerWindow(len(m.modelPicker.providers), m.modelPicker.providerSelected, itemRows)
+	providerStart, providerEnd := m.modelPicker.providerList.window(itemRows)
 	for index := providerStart; index < providerEnd; index++ {
 		provider := m.modelPicker.providers[index]
 		prefix := "  "
-		if !m.modelPicker.modelsFocused && index == m.modelPicker.providerSelected {
+		if !m.modelPicker.modelsFocused && index == m.modelPicker.providerList.selected {
 			prefix = "> "
 		} else if provider.ID == m.modelPicker.active.ProviderID {
 			prefix = "● "
 		}
 		row := modelPickerProviderRow(prefix, provider.Name, len(provider.Models), leftWidth)
-		if !m.modelPicker.modelsFocused && index == m.modelPicker.providerSelected {
+		if !m.modelPicker.modelsFocused && index == m.modelPicker.providerList.selected {
 			row = accentStyle.Render(row)
 		}
 		providers = append(providers, row)
 	}
 	if len(m.modelPicker.providers) == 0 {
-		providers = append(providers, modelPickerCell("  No providers", leftWidth))
+		providers = append(providers, overlayCell("  No providers", leftWidth))
 	}
 
 	models := make([]string, 0, itemRows)
 	if m.modelPicker.err != "" {
-		models = append(models, errorStyle.Render(modelPickerCell(m.modelPicker.err, rightWidth)))
+		models = append(models, errorStyle.Render(overlayCell(m.modelPicker.err, rightWidth)))
 	}
 	selectedProvider, hasProvider := m.modelPicker.selectedProvider()
 	if hasProvider {
-		modelStart, modelEnd := modelPickerWindow(len(selectedProvider.Models), m.modelPicker.modelSelected, itemRows-len(models))
+		modelStart, modelEnd := m.modelPicker.modelList.window(itemRows - len(models))
 		for index := modelStart; index < modelEnd; index++ {
 			model := selectedProvider.Models[index]
 			prefix := "  "
-			if m.modelPicker.modelsFocused && index == m.modelPicker.modelSelected {
+			if m.modelPicker.modelsFocused && index == m.modelPicker.modelList.selected {
 				prefix = "> "
 			} else if selectedProvider.ID == m.modelPicker.active.ProviderID && model == m.modelPicker.active.Model {
 				prefix = "● "
 			}
 			row := modelPickerModelRow(prefix, model, rightWidth)
-			if m.modelPicker.modelsFocused && index == m.modelPicker.modelSelected {
+			if m.modelPicker.modelsFocused && index == m.modelPicker.modelList.selected {
 				row = accentStyle.Render(row)
 			}
 			models = append(models, row)
 		}
 		if len(selectedProvider.Models) == 0 {
-			models = append(models, modelPickerCell("  No models available", rightWidth))
+			models = append(models, overlayCell("  No models available", rightWidth))
 		}
 	} else {
-		models = append(models, modelPickerCell("  No models available", rightWidth))
+		models = append(models, overlayCell("  No models available", rightWidth))
 	}
 
 	for len(providers) < itemRows {
@@ -225,27 +251,18 @@ func (m Model) modelPickerView() string {
 		providerName = " · " + sanitizeTerminalText(selectedProvider.Name)
 	}
 	lines := []string{
-		modelPickerCell(" Providers", leftWidth) + "│" + modelPickerModelHeader(" Available models"+providerName, rightWidth),
+		overlayCell(" Providers", leftWidth) + "│" + modelPickerModelHeader(" Available models"+providerName, rightWidth),
 		strings.Repeat("─", leftWidth) + "┼" + strings.Repeat("─", rightWidth),
 	}
 	for index := 0; index < itemRows; index++ {
-		lines = append(lines, modelPickerCell(providers[index], leftWidth)+"│"+modelPickerCell(models[index], rightWidth))
+		lines = append(lines, overlayCell(providers[index], leftWidth)+"│"+overlayCell(models[index], rightWidth))
 	}
 	lines = append(lines,
 		strings.Repeat("─", leftWidth)+"┴"+strings.Repeat("─", rightWidth),
-		modelPickerCell(" ↑↓ move · ←→ column · enter select · esc close", innerWidth),
+		overlayCell(" ↑↓ move · ←→ column · enter select · esc close", innerWidth),
 	)
 
-	panelStyle := lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color(theme.Border)).
-		Width(innerWidth)
-	if layout.innerHeight > 0 {
-		panelStyle = panelStyle.Height(layout.innerHeight)
-	}
-	panel := pickerPanelTitle(panelStyle.Render(strings.Join(lines, "\n")), "Models")
-	panel = lipgloss.NewStyle().MarginLeft(layout.marginLeft).Render(panel)
-	return m.renderFullCanvas("\n" + panel)
+	return m.renderOverlayPanel(layout.overlayLayout, "Models", lines)
 }
 
 // handleModelPickerMouse traduce el raton a las mismas acciones del teclado:
@@ -269,33 +286,29 @@ func (m Model) handleModelPickerMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 			return m, nil
 		}
 		if !overModels {
-			start, end := modelPickerWindow(len(m.modelPicker.providers), m.modelPicker.providerSelected, layout.itemRows)
+			start, end := m.modelPicker.providerList.window(layout.itemRows)
 			index := start + row
 			if index >= end {
 				return m, nil
 			}
-			if m.modelPicker.providerSelected != index {
-				m.modelPicker.modelSelected = 0
-			}
-			m.modelPicker.providerSelected = index
+			m.modelPicker.selectProvider(index)
 			m.modelPicker.modelsFocused = false
 			return m, nil
 		}
-		provider, hasProvider := m.modelPicker.selectedProvider()
-		if !hasProvider {
+		if _, hasProvider := m.modelPicker.selectedProvider(); !hasProvider {
 			return m, nil
 		}
 		errRows := 0
 		if m.modelPicker.err != "" {
 			errRows = 1
 		}
-		start, end := modelPickerWindow(len(provider.Models), m.modelPicker.modelSelected, layout.itemRows-errRows)
+		start, end := m.modelPicker.modelList.window(layout.itemRows - errRows)
 		index := start + row - errRows
 		if row < errRows || index >= end {
 			return m, nil
 		}
 		m.modelPicker.modelsFocused = true
-		m.modelPicker.modelSelected = index
+		m.modelPicker.modelList.selected = index
 		return m.confirmModelSelection()
 	}
 	return m, nil
@@ -333,32 +346,22 @@ func modelPickerProviderRow(prefix, name string, count, width int) string {
 	return ansi.Truncate(row+strings.Repeat(" ", gap)+countText+" ", width, "")
 }
 
-func modelPickerCell(value string, width int) string {
-	value = ansi.Truncate(value, max(width, 0), "…")
-	return value + strings.Repeat(" ", max(width-lipgloss.Width(value), 0))
-}
-
 func modelPickerModelHeader(title string, width int) string {
 	nameWidth, contextWidth, priceWidth := modelPickerMetadataWidths(width)
-	return modelPickerCell(title, nameWidth) + modelPickerCell("Context", contextWidth) + modelPickerRightCell("Price $/1M", priceWidth)
+	return overlayCell(title, nameWidth) + overlayCell("Context", contextWidth) + overlayRightCell("Price $/1M", priceWidth)
 }
 
 func modelPickerModelRow(prefix, model string, width int) string {
 	nameWidth, contextWidth, priceWidth := modelPickerMetadataWidths(width)
-	return modelPickerCell(prefix+sanitizeTerminalText(model), nameWidth) +
-		modelPickerCell(modelContextLabel(model), contextWidth) +
-		modelPickerRightCell(modelPriceLabel(model), priceWidth)
+	return overlayCell(prefix+sanitizeTerminalText(model), nameWidth) +
+		overlayCell(modelContextLabel(model), contextWidth) +
+		overlayRightCell(modelPriceLabel(model), priceWidth)
 }
 
 func modelPickerMetadataWidths(width int) (int, int, int) {
 	priceWidth := min(12, max(width/4, 0))
 	contextWidth := min(9, max((width-priceWidth)/4, 0))
 	return max(width-contextWidth-priceWidth, 0), contextWidth, priceWidth
-}
-
-func modelPickerRightCell(value string, width int) string {
-	value = ansi.Truncate(value, max(width, 0), "…")
-	return strings.Repeat(" ", max(width-lipgloss.Width(value), 0)) + value
 }
 
 func modelContextLabel(model string) string {
@@ -388,39 +391,22 @@ func modelPriceLabel(model string) string {
 	return "—"
 }
 
-// pickerPanelTitle incrusta el titulo en el borde superior del panel; lo
-// comparten el picker de modelos y el de MCPs.
-func pickerPanelTitle(panel, title string) string {
-	lines := strings.Split(panel, "\n")
-	if len(lines) == 0 {
-		return panel
-	}
-	width := ansi.StringWidth(lines[0])
-	remaining := max(width-ansi.StringWidth(title)-5, 0)
-	border := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Border))
-	lines[0] = border.Render("┌─ ") + accentStyle.Render(title) + border.Render(" "+strings.Repeat("─", remaining)+"┐")
-	return strings.Join(lines, "\n")
-}
-
-func modelPickerWindow(total, selected, visible int) (int, int) {
-	if visible <= 0 || total <= visible {
-		return 0, total
-	}
-	start := resumePickerWindowStart(total, selected, visible)
-	return start, min(start+visible, total)
-}
-
 func (p modelPicker) selectedProvider() (providerconfig.ProviderModels, bool) {
-	if p.providerSelected < 0 || p.providerSelected >= len(p.providers) {
+	index, ok := p.providerList.hasSelection()
+	if !ok || index >= len(p.providers) {
 		return providerconfig.ProviderModels{}, false
 	}
-	return p.providers[p.providerSelected], true
+	return p.providers[index], true
 }
 
 func (p modelPicker) selectedModel() (string, bool) {
 	provider, ok := p.selectedProvider()
-	if !ok || p.modelSelected < 0 || p.modelSelected >= len(provider.Models) {
+	if !ok {
 		return "", false
 	}
-	return provider.Models[p.modelSelected], true
+	index, ok := p.modelList.hasSelection()
+	if !ok || index >= len(provider.Models) {
+		return "", false
+	}
+	return provider.Models[index], true
 }

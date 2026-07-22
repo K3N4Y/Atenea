@@ -5,16 +5,18 @@ package tui
 // Connecting spawns a subprocess and can take seconds, so toggles run as
 // asynchronous commands: the row shows starting…/stopping… until the
 // mcpToggleDoneMsg lands and the list refreshes from the agent.
+//
+// The list UX (cursor, wrap, scroll window) and the bordered panel chrome live
+// in the overlay module; this file owns only the MCP domain and its async
+// toggles (the busy map and the mcpGen-guarded mcpToggleDoneMsg).
 
 import (
 	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"atenea/internal/mcpclient"
-	"atenea/internal/tui/theme"
 )
 
 // mcpAgent is the engine surface the picker needs. Connect/Disconnect block
@@ -35,9 +37,9 @@ type mcpToggleDoneMsg struct {
 }
 
 type mcpPicker struct {
-	open     bool
-	servers  []mcpclient.ServerStatus
-	selected int
+	open        bool
+	servers     []mcpclient.ServerStatus
+	overlayList // navigation: selected + move + window over servers
 	// busy marks servers with a toggle in flight; each entry clears when its
 	// mcpToggleDoneMsg arrives, so several servers can toggle concurrently.
 	busy map[string]bool
@@ -60,34 +62,29 @@ func (p *mcpPicker) refreshFromAgent(agent Agent) {
 	servers, err := controller.MCPServers()
 	if err != nil {
 		p.servers = nil
-		p.selected = 0
+		p.setCount(0)
 		p.err = err.Error()
 		return
 	}
 	p.servers = servers
-	p.selected = 0
+	p.overlayList.selected = 0
 	if hadSelection {
 		for index, server := range servers {
 			if server.Name == selected.Name {
-				p.selected = index
+				p.overlayList.selected = index
 				break
 			}
 		}
 	}
-}
-
-func (p *mcpPicker) move(delta int) {
-	if len(p.servers) == 0 {
-		return
-	}
-	p.selected = wrapSelection(p.selected+delta, len(p.servers))
+	p.setCount(len(servers))
 }
 
 func (p mcpPicker) selectedServer() (mcpclient.ServerStatus, bool) {
-	if p.selected < 0 || p.selected >= len(p.servers) {
+	index, ok := p.hasSelection()
+	if !ok || index >= len(p.servers) {
 		return mcpclient.ServerStatus{}, false
 	}
-	return p.servers[p.selected], true
+	return p.servers[index], true
 }
 
 // handleMCPPickerKey routes the keyboard while the picker is open: arrows
@@ -129,24 +126,18 @@ func (m Model) handleMCPPickerMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 	case tea.MouseButtonWheelDown:
 		m.mcpPicker.move(1)
 	case tea.MouseButtonLeft:
-		layout := m.modelPickerLayout()
-		// Same screen geometry as the model picker: blank row, top border,
-		// header, separator, then the item rows.
-		row := msg.Y - 4
-		x := msg.X - layout.marginLeft - 1
-		if row < 0 || row >= layout.itemRows || x < 0 || x >= layout.innerWidth {
+		layout := overlayLayoutFor(m.width, m.height)
+		row, ok := layout.rowAt(msg.X, msg.Y)
+		if !ok {
 			return m, nil
 		}
-		errRows := 0
-		if m.mcpPicker.err != "" {
-			errRows = 1
-		}
-		start, end := modelPickerWindow(len(m.mcpPicker.servers), m.mcpPicker.selected, layout.itemRows-errRows)
+		errRows := m.mcpPicker.errRows()
+		start, end := m.mcpPicker.window(layout.itemRows - errRows)
 		index := start + row - errRows
 		if row < errRows || index >= end {
 			return m, nil
 		}
-		m.mcpPicker.selected = index
+		m.mcpPicker.overlayList.selected = index
 		return m.toggleMCPSelection()
 	}
 	return m, nil
@@ -185,17 +176,26 @@ func (m Model) toggleMCPSelection() (Model, tea.Cmd) {
 	}
 }
 
+// errRows is the number of header rows the inline error banner consumes; the
+// window and hit-testing offset item rows past it.
+func (p mcpPicker) errRows() int {
+	if p.err != "" {
+		return 1
+	}
+	return 0
+}
+
 func (m Model) mcpPickerView() string {
-	layout := m.modelPickerLayout()
+	layout := overlayLayoutFor(m.width, m.height)
 	innerWidth := layout.innerWidth
 	itemRows := layout.itemRows
 	nameWidth, statusWidth, toolsWidth, commandWidth := mcpPickerWidths(innerWidth)
 
 	rows := make([]string, 0, itemRows)
 	if m.mcpPicker.err != "" {
-		rows = append(rows, errorStyle.Render(modelPickerCell(" "+sanitizeTerminalText(m.mcpPicker.err), innerWidth)))
+		rows = append(rows, errorStyle.Render(overlayCell(" "+sanitizeTerminalText(m.mcpPicker.err), innerWidth)))
 	}
-	start, end := modelPickerWindow(len(m.mcpPicker.servers), m.mcpPicker.selected, itemRows-len(rows))
+	start, end := m.mcpPicker.window(itemRows - len(rows))
 	for index := start; index < end; index++ {
 		rows = append(rows, m.mcpPickerRow(m.mcpPicker.servers[index], index == m.mcpPicker.selected,
 			nameWidth, statusWidth, toolsWidth, commandWidth))
@@ -206,8 +206,8 @@ func (m Model) mcpPickerView() string {
 			hint += " or " + global
 		}
 		rows = append(rows,
-			modelPickerCell("  No MCP servers configured", innerWidth),
-			statusStyle.Render(modelPickerCell(hint, innerWidth)),
+			overlayCell("  No MCP servers configured", innerWidth),
+			statusStyle.Render(overlayCell(hint, innerWidth)),
 		)
 	}
 	for len(rows) < itemRows {
@@ -215,28 +215,19 @@ func (m Model) mcpPickerView() string {
 	}
 
 	lines := []string{
-		modelPickerCell(" Server", nameWidth) + modelPickerCell("Status", statusWidth) +
-			modelPickerCell("Tools", toolsWidth) + modelPickerCell("Command", commandWidth),
+		overlayCell(" Server", nameWidth) + overlayCell("Status", statusWidth) +
+			overlayCell("Tools", toolsWidth) + overlayCell("Command", commandWidth),
 		strings.Repeat("─", max(innerWidth, 0)),
 	}
 	for index := 0; index < itemRows; index++ {
-		lines = append(lines, modelPickerCell(rows[index], innerWidth))
+		lines = append(lines, overlayCell(rows[index], innerWidth))
 	}
 	lines = append(lines,
 		strings.Repeat("─", max(innerWidth, 0)),
-		modelPickerCell(" ↑↓ move · enter toggle · r reload · esc close", innerWidth),
+		overlayCell(" ↑↓ move · enter toggle · r reload · esc close", innerWidth),
 	)
 
-	panelStyle := lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color(theme.Border)).
-		Width(innerWidth)
-	if layout.innerHeight > 0 {
-		panelStyle = panelStyle.Height(layout.innerHeight)
-	}
-	panel := pickerPanelTitle(panelStyle.Render(strings.Join(lines, "\n")), "MCP Servers")
-	panel = lipgloss.NewStyle().MarginLeft(layout.marginLeft).Render(panel)
-	return m.renderFullCanvas("\n" + panel)
+	return m.renderOverlayPanel(layout, "MCP Servers", lines)
 }
 
 // mcpPickerWidths splits the panel into name/status/tools/command columns;
@@ -275,9 +266,9 @@ func (m Model) mcpPickerRow(server mcpclient.ServerStatus, selected bool, nameWi
 	}
 	command := sanitizeTerminalText(strings.TrimSpace(server.Command + " " + strings.Join(server.Args, " ")))
 
-	row := modelPickerCell(prefix+glyph+sanitizeTerminalText(server.Name), nameWidth) +
-		modelPickerCell(status, statusWidth) + modelPickerCell(tools, toolsWidth)
-	commandCell := modelPickerCell(command, commandWidth)
+	row := overlayCell(prefix+glyph+sanitizeTerminalText(server.Name), nameWidth) +
+		overlayCell(status, statusWidth) + overlayCell(tools, toolsWidth)
+	commandCell := overlayCell(command, commandWidth)
 	if selected {
 		return accentStyle.Render(row + commandCell)
 	}

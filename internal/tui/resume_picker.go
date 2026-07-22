@@ -12,16 +12,21 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
+// resumePicker keeps its own search-box chrome (a live-filter textinput above
+// plain rows, unlike the bordered /model, /mcp and /connect panels), so it
+// reuses only the navigation core of the overlay module — the embedded
+// overlayList owns the cursor (selected), its wrap movement (move) and the
+// scroll window. The session list, live filter and async load stay here.
 type resumePicker struct {
-	open      bool
-	loading   bool
-	currentID string
-	query     textinput.Model
-	sessions  []session.SessionSummary
-	filtered  []session.SessionSummary
-	selected  int
-	targetID  string
-	err       error
+	open        bool
+	loading     bool
+	currentID   string
+	query       textinput.Model
+	sessions    []session.SessionSummary
+	filtered    []session.SessionSummary
+	overlayList // navigation over filtered: selected + move + window
+	targetID    string
+	err         error
 }
 
 func newResumePicker(currentID string) resumePicker {
@@ -67,6 +72,7 @@ func (p *resumePicker) filter() {
 			}
 		}
 	}
+	p.setCount(len(p.filtered))
 }
 
 func normalizeResumeSearch(value string) string {
@@ -74,21 +80,12 @@ func normalizeResumeSearch(value string) string {
 	return norm.NFKC.String(cases.Fold().String(normalized))
 }
 
-func (p *resumePicker) move(delta int) {
-	if len(p.filtered) == 0 {
-		return
-	}
-	p.selected = (p.selected + delta) % len(p.filtered)
-	if p.selected < 0 {
-		p.selected += len(p.filtered)
-	}
-}
-
 func (p resumePicker) selectedSession() (session.SessionSummary, bool) {
-	if p.selected < 0 || p.selected >= len(p.filtered) {
+	index, ok := p.hasSelection()
+	if !ok || index >= len(p.filtered) {
 		return session.SessionSummary{}, false
 	}
-	return p.filtered[p.selected], true
+	return p.filtered[index], true
 }
 
 func (p *resumePicker) close() {
