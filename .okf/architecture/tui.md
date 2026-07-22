@@ -115,7 +115,16 @@ atenea:     agent.Service -> runner -> EmittingStore -> Bus -> chan tea.Msg     
   cursor, and exposes one ordered `visibleEntries` projection (see below) that
   both the render and click-targeting paths consume; `model.go` handles
   keyboard and channel event pump (its thin `foldEvent`/`replaceEvents`/
-  `foldCompactionStatus` wrappers thread the session id into the module);
+  `foldCompactionStatus` wrappers thread the session id into the module).
+  `input_router.go` owns the input-precedence ORDER once as
+  `Model.activeInputTarget` (resume/model/mcp pickers, connect panel,
+  permission gate, plan gate, then the focused viewer/explorer/composer): the
+  keyboard router, `syncComposerFocus`, and the mouse branch's modal
+  short-circuits all consult that single resolver instead of re-listing the
+  chain, so the three sites cannot drift out of lockstep. Per-context leaf
+  behavior stays put — the pointer path keeps its own differences (the resume
+  picker swallows mouse events, the plan gate has no pointer short-circuit,
+  wheel scrolling follows the hovered panel);
   `view.go` renders with a height-bounded viewport and smart following:
   incoming events and reveal ticks follow the queue only while the user is at
   the bottom; scrolling upward preserves the reading position during streaming

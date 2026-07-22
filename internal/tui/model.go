@@ -784,16 +784,21 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKey(ev)
 	case tea.MouseMsg:
-		if m.resumePicker.open {
+		// Modal short-circuits share the precedence resolver (see input_router.go)
+		// with the keyboard, but the pointer LEAF behavior differs and is spelled
+		// out explicitly here: the resume picker swallows mouse events without
+		// dispatching, the other pickers route to their own mouse handlers, and the
+		// permission gate is checked below AFTER the top-bar Y adjustment (unlike the
+		// pickers, whose overlays cover the whole screen). The plan gate has no
+		// pointer short-circuit at all — plan approval is keyboard-only.
+		switch m.activeInputTarget() {
+		case targetResumePicker:
 			return m, nil
-		}
-		if m.modelPicker.open {
+		case targetModelPicker:
 			return m.handleModelPickerMouse(ev)
-		}
-		if m.mcpPicker.open {
+		case targetMCPPicker:
 			return m.handleMCPPickerMouse(ev)
-		}
-		if m.connectPanel.open {
+		case targetConnectPanel:
 			return m.handleConnectPanelMouse(ev)
 		}
 		// La top bar ocupa la fila 0 de la pantalla, asi que el contenido del
@@ -803,7 +808,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.ready {
 			ev.Y -= topBarHeight
 		}
-		if perm, ok := m.pendingPermission(); ok {
+		if m.activeInputTarget() == targetPermissionGate {
+			perm, _ := m.pendingPermission()
 			if next, handled := m.handlePermissionMouse(ev, perm); handled {
 				return next, nil
 			}
@@ -930,25 +936,26 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	confirmCancel := m.cancelPending && time.Now().Before(m.cancelDeadline)
 	m.cancelPending = false
-	if m.resumePicker.open {
+	// The precedence ORDER of overlays and gates lives once in activeInputTarget
+	// (see input_router.go). handleKey only dispatches to the leaf handler for the
+	// active target and keeps each target's key-specific exceptions here (e.g.
+	// PgUp/PgDn still scroll during the permission gate).
+	switch m.activeInputTarget() {
+	case targetResumePicker:
 		return m.handleResumePickerKey(msg)
-	}
-	if m.modelPicker.open {
+	case targetModelPicker:
 		return m.handleModelPickerKey(msg)
-	}
-	if m.mcpPicker.open {
+	case targetMCPPicker:
 		return m.handleMCPPickerKey(msg)
-	}
-	if m.connectPanel.open {
+	case targetConnectPanel:
 		return m.handleConnectPanelKey(msg)
-	}
-	if perm, ok := m.pendingPermission(); ok {
+	case targetPermissionGate:
 		if msg.Type == tea.KeyPgUp || msg.Type == tea.KeyPgDown {
 			return m.scrollViewport(msg)
 		}
+		perm, _ := m.pendingPermission()
 		return m.handlePermissionKey(msg, perm), nil
-	}
-	if m.hasPendingPlan() {
+	case targetPlanGate:
 		return m.resolvePlanKey(msg)
 	}
 	if msg.Type == tea.KeyRunes && len(msg.Runes) > 1 {
@@ -1173,13 +1180,22 @@ func (m Model) reloadTree(loadNow bool) (Model, tea.Cmd) {
 	return m.startTreeLoad()
 }
 
+// syncComposerFocus derives which widget holds terminal focus from the shared
+// precedence resolver (see input_router.go): the composer textarea owns focus
+// iff the active input target is the composer AND the terminal itself is
+// focused. Everything else blurs the composer. The resume picker keeps its
+// own query-box focus as leaf behavior, since that widget lives inside the
+// overlay rather than in the composer.
 func (m *Model) syncComposerFocus() tea.Cmd {
-	if m.modelPicker.open || m.mcpPicker.open {
-		m.input.Blur()
+	target := m.activeInputTarget()
+	if target == targetComposer && m.terminalFocused {
+		if !m.input.Focused() {
+			return m.input.Focus()
+		}
 		return nil
 	}
-	if m.resumePicker.open {
-		m.input.Blur()
+	m.input.Blur()
+	if target == targetResumePicker {
 		if m.terminalFocused {
 			if !m.resumePicker.query.Focused() {
 				return m.resumePicker.query.Focus()
@@ -1187,16 +1203,7 @@ func (m *Model) syncComposerFocus() tea.Cmd {
 			return nil
 		}
 		m.resumePicker.query.Blur()
-		return nil
 	}
-	_, permissionPending := m.pendingPermission()
-	if m.terminalFocused && m.normalizedFocus() == chatFocus && !permissionPending && !m.hasPendingPlan() {
-		if !m.input.Focused() {
-			return m.input.Focus()
-		}
-		return nil
-	}
-	m.input.Blur()
 	return nil
 }
 
