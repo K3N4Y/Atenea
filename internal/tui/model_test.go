@@ -56,7 +56,7 @@ type fakeAgent struct {
 }
 
 func (f *fakeAgent) ModelCatalog() []providerconfig.ProviderModels {
-	return cloneProviderModels(f.models)
+	return providerconfig.CloneProviderModels(f.models)
 }
 func (f *fakeAgent) CurrentModel() providerconfig.Active { return f.active }
 func (f *fakeAgent) SelectModel(providerID, model string) (providerconfig.Active, error) {

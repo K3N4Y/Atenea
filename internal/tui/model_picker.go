@@ -38,19 +38,8 @@ type modelPicker struct {
 	err              string
 }
 
-// cloneProviderModels deep-copies the catalog before the picker keeps it, so
-// selection bookkeeping never mutates the slice the model service still owns.
-func cloneProviderModels(in []providerconfig.ProviderModels) []providerconfig.ProviderModels {
-	out := make([]providerconfig.ProviderModels, len(in))
-	for i, provider := range in {
-		out[i] = provider
-		out[i].Models = append([]string(nil), provider.Models...)
-	}
-	return out
-}
-
 func newModelPicker(providers []providerconfig.ProviderModels, active providerconfig.Active) modelPicker {
-	picker := modelPicker{open: true, providers: cloneProviderModels(providers), active: active}
+	picker := modelPicker{open: true, providers: providerconfig.CloneProviderModels(providers), active: active}
 	for providerIndex, provider := range picker.providers {
 		if provider.ID != active.ProviderID {
 			continue
@@ -70,7 +59,7 @@ func newModelPicker(providers []providerconfig.ProviderModels, active providerco
 func (p *modelPicker) setProviders(providers []providerconfig.ProviderModels) {
 	selectedProvider, _ := p.selectedProvider()
 	selectedModel, _ := p.selectedModel()
-	p.providers = cloneProviderModels(providers)
+	p.providers = providerconfig.CloneProviderModels(providers)
 	p.providerSelected = 0
 	p.modelSelected = 0
 	for providerIndex, provider := range p.providers {

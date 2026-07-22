@@ -114,7 +114,7 @@ func (c *Catalog) Refresh(ctx context.Context) ([]ProviderModels, error) {
 		case <-ctx.Done():
 			return c.Snapshot(), ctx.Err()
 		case <-refresh.done:
-			return cloneCatalogProviders(refresh.providers), refresh.err
+			return CloneProviderModels(refresh.providers), refresh.err
 		}
 	}
 	refresh := &catalogRefresh{done: make(chan struct{})}
@@ -122,7 +122,7 @@ func (c *Catalog) Refresh(ctx context.Context) ([]ProviderModels, error) {
 	c.refreshMu.Unlock()
 
 	providers, err := c.refresh(ctx)
-	refresh.providers = cloneCatalogProviders(providers)
+	refresh.providers = CloneProviderModels(providers)
 	refresh.err = err
 	close(refresh.done)
 	c.refreshMu.Lock()
@@ -173,7 +173,10 @@ func cachedFetchedAt(cache Cache, providerID, baseURL string) time.Time {
 	return time.Time{}
 }
 
-func cloneCatalogProviders(in []ProviderModels) []ProviderModels {
+// CloneProviderModels deep-copies a catalog snapshot (each entry's Models slice
+// too), so callers that keep or mutate the result never touch the slice another
+// owner still holds.
+func CloneProviderModels(in []ProviderModels) []ProviderModels {
 	out := make([]ProviderModels, len(in))
 	for i, provider := range in {
 		out[i] = provider

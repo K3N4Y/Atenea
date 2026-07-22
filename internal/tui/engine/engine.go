@@ -240,7 +240,7 @@ func (e *Engine) ModelCatalog() []providerconfig.ProviderModels {
 		return nil
 	}
 	providers := e.models.Catalog()
-	return cloneProviderModels(providers)
+	return providerconfig.CloneProviderModels(providers)
 }
 
 func (e *Engine) CurrentModel() providerconfig.Active {
@@ -290,21 +290,12 @@ func (e *Engine) RefreshModels() {
 		e.mu.Lock()
 		e.refreshingModels = false
 		e.mu.Unlock()
-		msg := ModelsRefreshedMsg{Providers: cloneProviderModels(providers)}
+		msg := ModelsRefreshedMsg{Providers: providerconfig.CloneProviderModels(providers)}
 		if err != nil {
 			msg.Err = err.Error()
 		}
 		e.sendEvent(msg)
 	}()
-}
-
-func cloneProviderModels(in []providerconfig.ProviderModels) []providerconfig.ProviderModels {
-	out := make([]providerconfig.ProviderModels, len(in))
-	for i, provider := range in {
-		out[i] = provider
-		out[i].Models = append([]string(nil), provider.Models...)
-	}
-	return out
 }
 
 // Commands lista los slash-commands disponibles (nombre + descripcion) para el
