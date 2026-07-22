@@ -27,6 +27,35 @@ func TestEnvironmentFallbackSnapshot_UsesCurrentOpenAIDefault(t *testing.T) {
 	}
 }
 
+func TestAteneaVersion_PrintsReleaseMetadataAndExits(t *testing.T) {
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "atenea")
+	build := exec.Command(
+		"go", "build",
+		"-tags", "production",
+		"-ldflags", "-X main.version=v1.2.3 -X main.commit=abc1234 -X main.buildDate=2026-07-21T12:00:00Z",
+		"-o", binary,
+		"./cmd/atenea",
+	)
+	build.Dir = repoRoot
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build release binary: %v\n%s", err, output)
+	}
+
+	cmd := exec.Command(binary, "--version")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("atenea --version: %v\n%s", err, output)
+	}
+	want := "atenea v1.2.3 (commit abc1234, built 2026-07-21T12:00:00Z)\n"
+	if string(output) != want {
+		t.Fatalf("atenea --version = %q, want %q", output, want)
+	}
+}
+
 func TestDefaultProviderConfig_UsesCuratedOpenAIModels(t *testing.T) {
 	cfg := defaultProviderConfig()
 	if len(cfg.Providers) != 2 {

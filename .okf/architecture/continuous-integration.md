@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-10
+updated_at: 2026-07-21
 summary: Continuous integration and automated review contract for Atenea.
 ---
 
@@ -45,11 +45,24 @@ The frontend job installs the exact lockfile state with `npm ci` and runs:
 
 All frontend commands run from `frontend/`.
 
+### TUI release quality
+
+The release-quality job asks GoReleaser to create a clean snapshot release
+without publishing it. This cross-compiles all four supported Linux/macOS and
+`amd64`/`arm64` targets with the production build tag, then creates the same
+archives and checksum manifest used by a tagged release. The Go suite separately
+exercises `install.sh` against a local release fixture and runs the installed
+binary through `atenea --version`.
+
+`.github/workflows/release.yml` runs only for `v*` tags and grants its job
+`contents: write` so GoReleaser can publish the verified TUI artifacts. Normal
+CI remains read-only.
+
 ### Deliberate omissions
 
-The workflow does not run `npm run build`, `wails build`, or platform packaging.
-Those gates should be introduced together when desktop release work resumes so
-the required native dependencies and platform matrix are designed explicitly.
+The workflow does not run `npm run build`, `wails build`, or desktop platform
+packaging. Those gates should be introduced together when desktop release work
+resumes so the required native dependencies and platform matrix are designed explicitly.
 The placeholder created by the Go job exists only to satisfy compile-time asset
 embedding and is not treated as a production frontend build.
 

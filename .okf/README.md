@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-18
+updated_at: 2026-07-21
 summary: Navigation index for Atenea project documentation in the OKF convention.
 ---
 
@@ -23,6 +23,7 @@ uses Markdown and begins with `updated_at` and `summary` YAML metadata.
 - [Agent loop](architecture/agent-loop.md)
 - [Claude LLM integration](architecture/llm-claude.md)
 - [Continuous integration and automated review](architecture/continuous-integration.md)
+- [TUI distribution](architecture/distribution.md)
 - [OpenCode/OpenAI LLM integration](architecture/llm-opencode-openai.md)
 - [OpenCode agent loop](architecture/opencode-agent-loop.md)
 - [OpenCode architecture](architecture/opencode-architecture.md)

@@ -43,6 +43,10 @@ const (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Fprintln(os.Stdout, versionString())
+		return
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "atenea:", err)
 		os.Exit(1)

@@ -46,12 +46,12 @@ terminal.
 
 ```
 wails app:  agent.Service -> runner -> EmittingStore -> Bus -> runtime.EventsEmit -> frontend web
-atenea-tui: agent.Service -> runner -> EmittingStore -> Bus -> chan tea.Msg       -> Bubble Tea
+atenea:     agent.Service -> runner -> EmittingStore -> Bus -> chan tea.Msg       -> Bubble Tea
 ```
 
 ## Pieces
 
-- `cmd/atenea-tui/main.go` — the thin border (equivalent to `main.go` from
+- `cmd/atenea/main.go` — the thin border (equivalent to `main.go` from
  Wails): loads `.env` (development builds only — `-tags production` compiles
  `dotenv.Load` to a no-op), opens the global provider service from
  `os.UserConfigDir()/atenea/providers.json` with the shared credential store
@@ -259,7 +259,7 @@ faint) and, aligned to the right inset, the context usage `used / window` (e.g.
 `16k / 200k`) taken from the last `Step.Ended` input tokens and
 `llm.ContextWindow(model)`. When the model's window is unknown only the used
 count shows, and without any usage the right side is empty. Branch and directory
-start through `WithWorkspaceRoot(branch, dir, root)`, fed by `cmd/atenea-tui/main.go`
+start through `WithWorkspaceRoot(branch, dir, root)`, fed by `cmd/atenea/main.go`
 (branch via `git rev-parse --abbrev-ref HEAD`, `""` outside a repo; directory
 home-abbreviated). After every successful `bash` tool call the model refreshes
 the branch asynchronously from that workspace, so checkouts and newly created
@@ -317,7 +317,7 @@ rows.
   while the current non-ignored workspace still matches its captured after
   tree; later workspace changes make undo fail without changing files or the
   effective conversation. Ignored-file changes do not block undo and survive
-  restore. This control exists only in `atenea-tui`; the desktop frontend has
+ restore. This control exists only in `atenea`; the desktop frontend has
   no undo control.
 - Tab toggles the build/plan agent mode: it's sticky between submissions (each
  Enter routes down the active mode path, without resetting it) and inert with a
@@ -480,9 +480,9 @@ desktop adapter.
 ## Run
 
 ```bash
-go build -o build/bin/atenea-tui ./cmd/atenea-tui
-./build/bin/atenea-tui          # demo sin red si no hay OPENROUTER_API_KEY
-OPENROUTER_API_KEY=... ./build/bin/atenea-tui
+go build -tags production -o build/bin/atenea ./cmd/atenea
+./build/bin/atenea          # demo sin red si no hay OPENROUTER_API_KEY
+OPENROUTER_API_KEY=... ./build/bin/atenea
 ```
 
 ## Known Pending (v1)

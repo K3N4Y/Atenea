@@ -2,8 +2,10 @@ build/bin
 node_modules
 frontend/dist
 
-# Binario local de la TUI (go build ./cmd/atenea-tui deja el ejecutable en la raiz)
+# Binario local de la TUI (go build ./cmd/atenea deja el ejecutable en la raiz)
+/atenea
 /atenea-tui
+/dist/
 
 # Secretos locales (API keys de pruebas) y DB local
 .env

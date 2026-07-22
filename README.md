@@ -18,12 +18,42 @@ to this in your browser, and you can call your Go code from devtools.
 
 To build a redistributable, production mode package, use `wails build`.
 
-## TUI provider selection
+## Install the TUI
 
-Install the terminal agent once and run it from any workspace:
+Install the latest Linux or macOS release (`amd64` and `arm64`) without sudo:
 
 ```bash
-go install ./cmd/atenea
+curl -fsSL https://raw.githubusercontent.com/K3N4Y/Atenea/main/install.sh | sh
+```
+
+The installer downloads the platform archive from GitHub Releases, verifies its
+SHA-256 checksum, and writes `atenea` to `~/.local/bin`. Add that directory to
+`PATH` if your shell does not already include it.
+
+Install a specific version or destination with:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/K3N4Y/Atenea/main/install.sh |
+  sh -s -- --version v0.1.0 --bin-dir "$HOME/bin"
+```
+
+Running the installer again updates or replaces the existing binary. To
+uninstall it, remove the installed executable:
+
+```bash
+rm "$HOME/.local/bin/atenea"
+```
+
+Contributors can instead build the current checkout:
+
+```bash
+go build -tags production -o ./build/bin/atenea ./cmd/atenea
+```
+
+Verify any installation and then launch it from a workspace:
+
+```bash
+atenea --version
 cd /path/to/project
 atenea
 ```
