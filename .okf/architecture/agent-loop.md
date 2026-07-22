@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-13
+updated_at: 2026-07-21
 summary: Architecture of Atenea’s Go agent execution loop.
 ---
 
@@ -113,6 +113,12 @@ type Materialized struct {
 
 func (r *Registry) Materialize(perms Permissions) Materialized
 ```
+
+The registry is also the single source of truth for the default permission set:
+`Registry.Permissions()` derives it from the registered tool names. Assembly
+must not repeat those names in a second allowlist. Mode-only tools are explicit
+exclusions from that default (`present_plan` is excluded from normal mode), and
+restricted modes still pass an explicit subset to `Materialize`.
 
 ```go
 // internal/session/inbox.go

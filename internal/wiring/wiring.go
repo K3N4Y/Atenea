@@ -146,10 +146,11 @@ func Build(cfg Config) Built {
 	}
 	registryTools = append(registryTools, cfg.MCPTools...)
 	registry := tool.NewRegistry(tool.NewOutputStore(outputLimit), registryTools...)
-	permissions := tool.Permissions{"read": true, "write": true, "edit": true, "glob": true, "grep": true, "bash": true, "skill": true, "task": true, "web_fetch": true, "todo_write": true}
-	for _, mcpTool := range cfg.MCPTools {
-		permissions[mcpTool.Name()] = true
-	}
+	permissions := registry.Permissions()
+	// present_plan is executable by the shared registry but is mode-only: normal
+	// mode must not advertise it. Every ordinary and dynamic MCP tool derives
+	// from the registry above; this is the sole explicit normal-mode exclusion.
+	delete(permissions, "present_plan")
 	r := runner.NewRunner(cfg.Store, cfg.Inbox, cfg.Provider, registry,
 		permissions,
 		cfg.NextID)

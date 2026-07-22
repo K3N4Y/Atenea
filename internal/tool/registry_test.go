@@ -306,6 +306,21 @@ func TestRegistry_SettleExecutesAllowedTool(t *testing.T) {
 	}
 }
 
+func TestRegistry_PermissionsReflectCatalogAndAreIndependent(t *testing.T) {
+	var calls int
+	reg := NewRegistry(NewOutputStore(0), Echo{}, spyTool{name: "secret", calls: &calls})
+
+	permissions := reg.Permissions()
+	if !permissions["echo"] || !permissions["secret"] || len(permissions) != 2 {
+		t.Fatalf("Permissions() = %v, want exactly the registered tools", permissions)
+	}
+
+	delete(permissions, "secret")
+	if fresh := reg.Permissions(); !fresh["secret"] {
+		t.Fatalf("mutating returned permissions changed Registry: %v", fresh)
+	}
+}
+
 // TestRegistry_DeniedToolAbsentFromDefinitions afirma que una tool registrada
 // pero no permitida no se anuncia: Definitions lista solo la permitida. El set
 // anunciado es la compuerta; lo denegado no aparece para el modelo.

@@ -99,6 +99,19 @@ func NewRegistry(outputs *OutputStore, tools ...Tool) *Registry {
 	return &Registry{tools: m, outputs: outputs}
 }
 
+// Permissions returns a permission set containing every registered tool.
+// The returned map is independent from the Registry, so callers may narrow it
+// without mutating the catalog. Assembly code should use this instead of
+// repeating tool names next to NewRegistry: registration then remains the
+// single source of truth for the default tool set.
+func (r *Registry) Permissions() Permissions {
+	permissions := make(Permissions, len(r.tools))
+	for name := range r.tools {
+		permissions[name] = true
+	}
+	return permissions
+}
+
 // Materialize filtra el catalogo por permisos y devuelve las definiciones
 // anunciables y un Settle cerrado sobre las tools permitidas. Las Definitions van
 // ordenadas por nombre para que el request sea determinista (estabiliza el cache
