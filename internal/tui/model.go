@@ -204,9 +204,17 @@ type Model struct {
 	sessionID string
 	activeRun uint64
 	events    <-chan tea.Msg
-	entries   []entry
-	input     composerInput
-	working   bool // true desde que arranca una corrida (Enter o aceptar el plan) hasta RunDoneMsg
+
+	// transcript is the conversation log and the pure state derived from it
+	// (entries, token usage, the smooth-reveal cursor). It is embedded so its
+	// fields and methods promote onto Model: `m.entries`, `m.usage`,
+	// `m.foldEvent(...)`, `m.hasBacklog()` read as the Model's own. It owns what
+	// used to be ~7 scattered Model fields; its own test file exercises the fold,
+	// reveal, usage and gating logic directly, without going through View().
+	Transcript
+
+	input   composerInput
+	working bool // true desde que arranca una corrida (Enter o aceptar el plan) hasta RunDoneMsg
 
 	cancelPending    bool
 	cancelDeadline   time.Time
@@ -226,14 +234,6 @@ type Model struct {
 	// spinner.TickMsg de Update corta el reagendado con !working.
 	spinner spinner.Model
 
-	// revealing indica si el loop de ticks del reveal (smooth streaming) esta
-	// corriendo. Espejo del loop del spinner: nace cuando un EventMsg deja
-	// backlog sin loop activo, se rearma en cada tick mientras quede backlog
-	// y muere (cmd nil) cuando se agota; un delta posterior lo reinicia. El
-	// flag evita duplicar cadenas de ticks cuando llegan varios deltas antes
-	// del proximo tick.
-	revealing bool
-
 	// viewport acota el transcript al alto de la terminal siguiendo la cola;
 	// ready se activa con el primer tea.WindowSizeMsg (sin tamano conocido la
 	// vista usa el render completo como fallback). width/height guardan el
@@ -248,12 +248,7 @@ type Model struct {
 	// model alimenta la etiqueta del borde inferior del composer; entra una
 	// sola vez via WithStatus y sigue fijo por corrida. planMode alterna con
 	// Tab y agrega el sufijo "· plan" a esa etiqueta.
-	model          string
-	usage          *session.Usage
-	liveUsage      bool
-	outputBytes    int
-	reasoningBytes int
-	toolInputBytes int
+	model string
 
 	// branch es la rama git actual que la top bar muestra a la izquierda;
 	// "" la oculta. workDir es el directorio de trabajo ya listo para mostrar
@@ -431,6 +426,87 @@ func (m Model) PendingPermission() (string, bool) {
 		return e.callID, true
 	}
 	return "", false
+}
+
+// The methods below are thin Model-level seams onto the embedded Transcript.
+// The transcript module returns a Transcript (value-in/value-out, so it stays
+// unit-testable in isolation); these wrappers thread that back into the Model
+// so the Bubble Tea update loop keeps its `m = m.foldEvent(...)` idiom and the
+// two mutators that need the Model's session id can pass it in. Query methods
+// (hasBacklog, hasPendingPlan, pendingPermission, ...) are promoted directly
+// from the embedded Transcript and need no wrapper.
+
+// foldEvent folds a durable event into the transcript, scoping the compaction
+// upsert to the Model's current session.
+func (m Model) foldEvent(ev EventMsg) Model {
+	m.Transcript = m.Transcript.foldEvent(ev, m.sessionID)
+	return m
+}
+
+// replaceEvents rebuilds the transcript from a full durable log.
+func (m Model) replaceEvents(events []session.SessionEvent) Model {
+	m.Transcript = m.Transcript.replaceEvents(events, m.sessionID)
+	return m
+}
+
+// foldCompactionStatus folds a manual-compaction status message into the
+// transcript, scoped to the Model's session.
+func (m Model) foldCompactionStatus(status CompactionStatusMsg) Model {
+	m.Transcript = m.Transcript.foldCompactionStatus(status, m.sessionID)
+	return m
+}
+
+// updateLiveUsage refreshes the estimated live token usage from the streamed
+// byte counts.
+func (m Model) updateLiveUsage() Model {
+	m.Transcript = m.Transcript.updateLiveUsage()
+	return m
+}
+
+// advanceReveal advances one reveal tick over the transcript.
+func (m Model) advanceReveal() Model {
+	m.Transcript = m.Transcript.advanceReveal()
+	return m
+}
+
+// appendError appends an error block to the transcript.
+func (m Model) appendError(text string) Model {
+	m.Transcript = m.Transcript.appendError(text)
+	return m
+}
+
+// appendNotice appends a dim informational line to the transcript.
+func (m Model) appendNotice(text string) Model {
+	m.Transcript = m.Transcript.appendNotice(text)
+	return m
+}
+
+// removePendingPlan drops the plan approval offer from the transcript.
+func (m Model) removePendingPlan() Model {
+	m.Transcript = m.Transcript.removePendingPlan()
+	return m
+}
+
+// applyPermissionDecision settles a permission entry (approved or denied).
+func (m Model) applyPermissionDecision(permission entry, approved bool) Model {
+	m.Transcript = m.Transcript.applyPermissionDecision(permission, approved)
+	return m
+}
+
+// toggleThinking flips the expanded state of every settled thought block.
+func (m Model) toggleThinking() Model {
+	m.Transcript = m.Transcript.toggleThinking()
+	return m
+}
+
+// toggleThinkingAt flips the settled thought block under the given viewport
+// line and reports whether one was toggled (so the caller re-syncs the
+// viewport). It hands the module the wrapped viewport lines, which depend on
+// the render width the Model owns.
+func (m Model) toggleThinkingAt(viewportLine int) (Model, bool) {
+	next, ok := m.Transcript.toggleThinkingAt(m.entryLines(), viewportLine)
+	m.Transcript = next
+	return m, ok
 }
 
 // Working indica si hay una corrida en curso (desde que arranca, por Enter o

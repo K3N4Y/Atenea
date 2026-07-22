@@ -1155,47 +1155,30 @@ func renderMarkdown(text string, width int) string {
 	return strings.Trim(paintCodeBlockBackgrounds(out), "\n")
 }
 
-// compactActivityJoin decide si la entrada cur se une a prev SIN linea en
-// blanco: ambas deben ser de actividad (tool, permiso o error de step), que
-// forman un grupo compacto de headers fisicamente contiguos; cualquier otra
-// vecindad (narrativa del assistant, pensamiento, usuario, compaction)
-// conserva el parrafo propio ("\n\n"). renderTranscript y entryLines DEBEN
-// compartir esta condicion: entryLines replica el contenido del viewport
-// linea a linea para mapear clics a entradas, y si las condiciones
-// divergieran la fila clicada dejaria de corresponder a la entrada real.
-func compactActivityJoin(prev, cur entry) bool {
-	isActivity := func(kind entryKind) bool {
-		return kind == entryTool || kind == entryPermission || kind == entryError
-	}
-	return isActivity(prev.kind) && isActivity(cur.kind)
-}
-
 // renderTranscript une los bloques de la conversacion, un parrafo por
 // entrada, salvo las entradas de actividad adyacentes, que se agrupan sin
 // linea en blanco entre si (ver compactActivityJoin). Pasa el ancho util del
 // viewport (0 sin tamano conocido = sin envolver) para que el render markdown
-// envuelva al mismo ancho que luego usa syncViewport.
+// envuelva al mismo ancho que luego usa syncViewport. Consume la misma
+// proyeccion ordenada (visibleEntries) que entryLines, de modo que la condicion
+// de ocultamiento por permiso y la de union de parrafos se aplican una sola vez
+// en el modulo: la vista y el mapeo de clics no pueden divergir por
+// construccion.
 func (m Model) renderTranscript() string {
 	width := 0
 	if m.ready {
 		width = m.viewport.Width
 	}
-	gated := m.permissionGatedTools()
 	var b strings.Builder
-	prev := -1
-	for i, e := range m.entries {
-		if toolGatedByPermission(e, gated) {
-			continue
-		}
-		if prev >= 0 {
-			if compactActivityJoin(m.entries[prev], e) {
+	for i, ve := range m.visibleEntries() {
+		if i > 0 {
+			if ve.joinCompact {
 				b.WriteString("\n")
 			} else {
 				b.WriteString("\n\n")
 			}
 		}
-		b.WriteString(e.render(width))
-		prev = i
+		b.WriteString(ve.entry.render(width))
 	}
 	return b.String()
 }
@@ -1320,32 +1303,24 @@ func (m Model) entryLines() []entryLine {
 	if m.ready {
 		width = m.viewport.Width
 	}
-	gated := m.permissionGatedTools()
 	var out []entryLine
-	prev := -1
-	for i, e := range m.entries {
-		// Misma condicion de ocultamiento que renderTranscript: una tool con su
-		// permiso pendiente no emite header en ejecucion, y sin esta paridad la
-		// numeracion de lineas divergeria y el mapeo de clics se correria.
-		if toolGatedByPermission(e, gated) {
-			continue
-		}
-		if prev >= 0 && !compactActivityJoin(m.entries[prev], e) {
-			// Separador de parrafo entre bloques (una linea vacia), SOLO
-			// cuando renderTranscript separa con "\n\n": la condicion
-			// compartida compactActivityJoin evita que ambas numeraciones
-			// de lineas diverjan.
+	for i, ve := range m.visibleEntries() {
+		// Same ordered projection renderTranscript consumes: the permission
+		// gating and the paragraph-join decision come from visibleEntries, so
+		// the line numbering here cannot drift from what the viewport shows.
+		if i > 0 && !ve.joinCompact {
+			// Paragraph separator between blocks (one empty line), ONLY when
+			// renderTranscript separates with "\n\n": the shared join decision
+			// keeps both line numberings from diverging.
 			out = append(out, entryLine{idx: -1, line: ""})
 		}
-		// hardWrapOverflow (mismo que syncViewport) puede partir una linea larga
-		// en varias fisicas; cada una es su propio entryLine para que la fila N
-		// de esta lista sea la fila N absoluta del viewport y el mapeo de clics
-		// no se corra.
-		block := hardWrapOverflow(e.render(width), width)
+		// hardWrapOverflow (same as syncViewport) may split a long line into
+		// several physical ones; each is its own entryLine so row N of this list
+		// is the absolute row N of the viewport and click mapping does not shift.
+		block := hardWrapOverflow(ve.entry.render(width), width)
 		for _, l := range strings.Split(block, "\n") {
-			out = append(out, entryLine{idx: i, line: l})
+			out = append(out, entryLine{idx: ve.idx, line: l})
 		}
-		prev = i
 	}
 	return out
 }

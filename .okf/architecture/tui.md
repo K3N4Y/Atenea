@@ -103,14 +103,19 @@ atenea:     agent.Service -> runner -> EmittingStore -> Bus -> chan tea.Msg     
   and non-ignored untracked files, executable modes, and symlinks. Ignored
   files remain untouched, and the workspace's main `.git` directory, index,
   branch, HEAD, refs, and staged changes are never mutated.
-- `internal/tui/model.go` + `fold.go` + `view.go` + `reveal.go` — the Model of
-  Bubble Tea. `fold.go` projects durable `SessionEvent` to
-  conversation inputs (streaming assistant text, collapsible
+- `internal/tui/model.go` + `transcript.go` + `view.go` + `reveal.go` — the
+  Model of Bubble Tea. `transcript.go` is the `Transcript` module: a pure,
+  I/O-free value type (embedded on `Model`) that projects durable
+  `SessionEvent` to conversation inputs (streaming assistant text, collapsible
   thought blocks, user messages, stateful tool calls, pending permissions,
   errors) and keeps live token usage: estimated request input from
   `Step.Started`, generated tokens estimated from streaming deltas, and exact
-  provider usage from `Step.Ended`; `model.go` handles keyboard and channel
-  event pump;
+  provider usage from `Step.Ended`. It also owns the keyboard-gate query
+  predicates (`pendingPermission`, `hasPendingPlan`) and the smooth-reveal
+  cursor, and exposes one ordered `visibleEntries` projection (see below) that
+  both the render and click-targeting paths consume; `model.go` handles
+  keyboard and channel event pump (its thin `foldEvent`/`replaceEvents`/
+  `foldCompactionStatus` wrappers thread the session id into the module);
   `view.go` renders with a height-bounded viewport and smart following:
   incoming events and reveal ticks follow the queue only while the user is at
   the bottom; scrolling upward preserves the reading position during streaming
@@ -124,12 +129,15 @@ atenea:     agent.Service -> runner -> EmittingStore -> Bus -> chan tea.Msg     
   the last estimate remains visible without the approximation marker. The
   built-in `/new` command clears both exact and live token usage so a new
   session never inherits the previous session's counters;
-  `reveal.go` is the smooth
- streaming of the text that arrives by deltas, assistant and thought (parity
- with `frontend/src/lib/reveal.ts`): the view reveals a prefix by runes that
- advances with a loop of ticks, with catch-up proportional to the backlog; an
-  assistant renders that revealed prefix as Markdown while live, then renders
-  its complete Markdown once the reveal drains.
+  the smooth streaming of the text that arrives by deltas, assistant and
+  thought (parity with `frontend/src/lib/reveal.ts`), is split by concern: the
+  pure pacing math and the per-entry reveal advance live on the `Transcript`
+  module (`transcript.go`, with the state they mutate), while `reveal.go` holds
+  only the Bubble Tea tick message and the `tea.Cmd` that schedules it, so the
+  module takes no dependency on Bubble Tea. The view reveals a prefix by runes
+  that advances with a loop of ticks, with catch-up proportional to the
+  backlog; an assistant renders that revealed prefix as Markdown while live,
+  then renders its complete Markdown once the reveal drains.
 
 - `internal/tui/theme/theme.go` (package `theme`) — the color palette: the
   single source of truth for every color the presentation layer paints with.
@@ -164,9 +172,12 @@ tool name padded to an 8-column name field and the summarized input
 preview, diff lines, the failure reason, and the truncation mark. Successful
 edits/writes append a `+N -M` stat computed from the unified diff (file
 headers excluded). Adjacent activity entries join without a blank line into
-one contiguous block, while narrative keeps its own paragraph; the shared
-predicate `compactActivityJoin` keeps `renderTranscript` and `entryLines`
-(click targeting) in lockstep. Full contract:
+one contiguous block, while narrative keeps its own paragraph; both
+`renderTranscript` and `entryLines` (click targeting) iterate the single
+ordered `Transcript.visibleEntries` projection, which applies the permission
+gate and the `compactActivityJoin` decision once, so the render and
+click-targeting paths cannot drift out of lockstep by construction. Full
+contract:
 [TUI transcript activity hierarchy](../specs/2026-07-11-tui-transcript-activity-hierarchy.md).
 
 ### Tool permission panel
@@ -178,8 +189,9 @@ before `Tool.Permission.Requested` (`? <tool>`) for the same call, so while the
 gate is open the transcript hides the running header and shows only the `?`
 ask; the same call is never duplicated on two adjacent rows. Approving reveals
 the running header again (the tool proceeds); denial settles it to the neutral
-`– <tool> Denied by user` state. `renderTranscript` and `entryLines` share the
-gating predicate so line numbering — and therefore click targeting — stays in
+`– <tool> Denied by user` state. Both `renderTranscript` and `entryLines`
+consume the same `Transcript.visibleEntries` projection, which applies the
+gate once, so line numbering — and therefore click targeting — stays in
 lockstep. The panel uses the existing two-cell composer inset and width, a
 `#303030` surface, and a `#3A3A3A` command surface.
 

@@ -4598,8 +4598,8 @@ func TestModel_LiveUsageTransitions(t *testing.T) {
 
 func TestModel_UpdateLiveUsageRequiresActiveUsage(t *testing.T) {
 	for _, m := range []Model{
-		{liveUsage: false, usage: &session.Usage{OutputTokens: 7}, outputBytes: 30},
-		{liveUsage: true, usage: nil, outputBytes: 30},
+		{Transcript: Transcript{liveUsage: false, usage: &session.Usage{OutputTokens: 7}, outputBytes: 30}},
+		{Transcript: Transcript{liveUsage: true, usage: nil, outputBytes: 30}},
 	} {
 		beforeUsage := m.usage
 		m = m.updateLiveUsage()
