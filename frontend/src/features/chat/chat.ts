@@ -10,7 +10,7 @@ import {
   ListCommands,
 } from '../../../wailsjs/go/main/App'
 import { EventsOn } from '../../../wailsjs/runtime/runtime'
-import type { Command } from '../../lib/command'
+import type { Command } from './command'
 import type {
   AssistantItem,
   PlanState,

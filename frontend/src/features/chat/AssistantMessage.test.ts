@@ -5,14 +5,14 @@ import { mount } from '@vue/test-utils'
 import AssistantMessage from './AssistantMessage.vue'
 
 // El streaming visual (reveal caracter a caracter) vive en useSmoothText y se
-// prueba en aislamiento en lib/useSmoothText.test.ts. Aca lo mockeamos para
+// prueba en aislamiento en useSmoothText.test.ts. Aca lo mockeamos para
 // verificar el contrato de render del componente: que pasa `visible` a
 // Markdown durante la escritura y conserva el caret hasta que `done`.
 const smooth = vi.hoisted(() => ({
   visible: null as unknown as Ref<string>,
   done: null as unknown as Ref<boolean>,
 }))
-vi.mock('../../lib/useSmoothText', () => ({
+vi.mock('./useSmoothText', () => ({
   useSmoothText: () => ({ visible: smooth.visible, done: smooth.done }),
 }))
 

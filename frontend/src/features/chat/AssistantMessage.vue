@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import type { AssistantItem } from './types'
 import MarkdownContent from '../../components/MarkdownContent.vue'
-import { useSmoothText } from '../../lib/useSmoothText'
+import { useSmoothText } from './useSmoothText'
 
 // Respuesta de la IA (identidad §8): se renderiza directamente sobre el Blanco
 // Papel, sin contenedor propio. Durante el streaming se revela el Markdown

@@ -2,7 +2,7 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import { PhPlugs, PhX } from '@phosphor-icons/vue'
 import { useMcpStore } from './mcp'
-import { PrettyModal } from '../../lib/modal'
+import { PrettyModal } from './modal'
 
 // Menu de servidores MCP en la navbar: dialog anclado al boton (Flip desde
 // el trigger), con un switch por servidor para conectar/desconectar. Es la

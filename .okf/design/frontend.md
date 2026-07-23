@@ -99,7 +99,6 @@ src/
 ├── features/       # Capability modules, for example Git
 ├── components/     # Presentation shared by multiple capabilities
 ├── stores/         # Cross-capability application state
-├── views/          # Route-level composition
 └── lib/            # Framework-independent shared utilities
 ```
 
@@ -138,6 +137,12 @@ definition through the backend and removes only the historical `mcpServers`
 field after all saves succeed; failures preserve the original value for retry.
 Chat no longer exposes or persists MCP configuration, keeping the modules
 independent and the backend configuration as MCP's source of truth.
+Chat-specific behavior such as composer parsing, context-window calculations,
+reduced-motion handling, and smooth text reveal is colocated with Chat rather
+than exposed as shared utilities. MCP likewise owns its modal animation helper.
+The remaining `lib` modules are reused across capabilities or back generic
+shared presentation. `stores` contains only cross-capability UI and developer
+tool tab state; route-level views live with the feature they compose.
 
 ## Persistence and source of truth
 

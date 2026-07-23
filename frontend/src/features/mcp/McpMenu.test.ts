@@ -14,7 +14,7 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   SaveMCPConfig: vi.fn(() => Promise.resolve()),
 }))
 
-vi.mock('../../lib/modal', () => ({
+vi.mock('./modal', () => ({
   PrettyModal: class {
     open(id: string) {
       const el = document.getElementById(id)

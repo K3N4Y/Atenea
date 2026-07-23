@@ -1,4 +1,4 @@
-import { basename } from './path'
+import { basename } from '../../lib/path'
 
 // @-menciones de archivos en el composer (logica pura, sin DOM). detectMention
 // lee el token bajo el caret; filterFiles ordena candidatos; applyMention inserta

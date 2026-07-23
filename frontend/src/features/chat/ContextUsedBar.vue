@@ -1,11 +1,7 @@
 <script lang="ts" setup>
 import { computed } from 'vue'
 import type { Usage } from './types'
-import {
-  contextWindowFor,
-  contextPercent,
-  formatTokens,
-} from '../../lib/contextWindow'
+import { contextWindowFor, contextPercent, formatTokens } from './contextWindow'
 
 // Indicador del contexto usado en el header: porcentaje + barra de progreso +
 // tokens compactos, escalado contra la ventana del modelo. Presentational:
