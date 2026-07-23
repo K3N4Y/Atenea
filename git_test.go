@@ -1,13 +1,38 @@
 package main
 
 import (
+	"bytes"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"atenea/internal/llm"
+	"atenea/internal/workspacegit"
 )
+
+func runGit(root string, args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = root
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), strings.TrimSpace(stderr.String()))
+	}
+	return stdout.String(), nil
+}
+
+func gitStatus(root string) (GitStatus, error) { return workspacegit.Open(root).Status() }
+func gitFileDiff(root, path string) (string, error) {
+	return workspacegit.Open(root).FileDiff(path)
+}
+func gitInit(root string) error { return workspacegit.Open(root).Init() }
+func gitCommit(root, message string) error {
+	return workspacegit.Open(root).Commit(message)
+}
 
 // setupRepo arma un repo git temporal con identidad de commit, para los tests de
 // las funciones de git sin tocar el repo real.

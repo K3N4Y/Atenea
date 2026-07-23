@@ -30,6 +30,7 @@ uses Markdown and begins with `updated_at` and `summary` YAML metadata.
 - [MCP servers](architecture/mcp.md)
 - [Read and edit tools](architecture/read-edit-tools.md)
 - [Terminal UI](architecture/tui.md)
+- [Workspace Git](architecture/workspace-git.md)
 
 ## Design
 
