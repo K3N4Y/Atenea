@@ -106,7 +106,10 @@ separated. Shared chat, session, tool, plan, todo, usage, and event contracts
 live in `features/chat/types.ts`; feature modules depend on these contracts
 instead of importing types from the chat store implementation. The chat feature
 also owns its Pinia store, route-level `ChatView`, and their tests; the router
-loads the view from this module.
+loads the view from this module. Chat-specific presentation—including the
+composer and its menus, message renderers, planning UI, todo list, context bar,
+and error notice—is colocated in the same feature. Generic Markdown and inline
+diff rendering remain in shared components.
 
 ## Persistence and source of truth
 

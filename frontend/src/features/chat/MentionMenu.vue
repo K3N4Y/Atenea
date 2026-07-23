@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { basename } from '../lib/path'
+import { basename } from '../../lib/path'
 
 // MentionMenu: la lista flotante del @-menu de archivos del composer.
 // Presentacional: recibe las rutas (items) y el indice activo, emite select al

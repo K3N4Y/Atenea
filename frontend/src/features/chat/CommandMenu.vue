@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import type { Command } from '../lib/command'
+import type { Command } from '../../lib/command'
 
 // CommandMenu: la lista flotante del slash-menu de comandos del composer.
 // Presentacional: recibe los comandos (items) y el indice activo, emite select con

@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import CommandMenu from './CommandMenu.vue'
-import type { Command } from '../lib/command'
+import type { Command } from '../../lib/command'
 
 const commands: Command[] = [
   { name: 'commit', description: 'arma el mensaje y commitea' },

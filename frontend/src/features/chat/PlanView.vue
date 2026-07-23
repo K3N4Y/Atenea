@@ -1,8 +1,8 @@
 <script lang="ts" setup>
 import { ref, computed } from 'vue'
 import { PhCheck, PhPencilSimple, PhArrowsInSimple } from '@phosphor-icons/vue'
-import MarkdownContent from './MarkdownContent.vue'
-import type { PlanState } from '../features/chat/types'
+import MarkdownContent from '../../components/MarkdownContent.vue'
+import type { PlanState } from './types'
 
 // Vista expandida del plan (estilo Cursor): el agente lo presenta via la tool
 // present_plan y aqui se muestra el markdown completo con las acciones: aceptar

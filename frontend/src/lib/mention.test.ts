@@ -56,7 +56,7 @@ describe('filterFiles', () => {
     'app.go',
     'internal/tool/glob.go',
     'internal/tool/grep.go',
-    'frontend/src/components/ChatComposer.vue',
+    'frontend/src/features/chat/ChatComposer.vue',
   ]
 
   it('query vacia: devuelve la cabeza de la lista hasta el limite', () => {

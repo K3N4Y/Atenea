@@ -7,9 +7,9 @@ import {
   PhX,
   PhWarning,
 } from '@phosphor-icons/vue'
-import type { ToolItem } from '../features/chat/types'
-import { basename } from '../lib/path'
-import DiffView from './DiffView.vue'
+import type { ToolItem } from './types'
+import { basename } from '../../lib/path'
+import DiffView from '../../components/DiffView.vue'
 
 const props = defineProps<{ item: ToolItem }>()
 

@@ -1,9 +1,9 @@
 <script lang="ts" setup>
 import { ref, computed } from 'vue'
 import { PhBrain, PhCaretRight } from '@phosphor-icons/vue'
-import type { ReasoningItem } from '../features/chat/types'
-import { formatThinkingDuration } from '../lib/duration'
-import { useSmoothText } from '../lib/useSmoothText'
+import type { ReasoningItem } from './types'
+import { formatThinkingDuration } from '../../lib/duration'
+import { useSmoothText } from '../../lib/useSmoothText'
 
 // Streaming de pensamiento (identidad §9): durante la generacion se revela suave
 // caracter a caracter (useSmoothText) y solo se ven las ultimas 4 lineas; al

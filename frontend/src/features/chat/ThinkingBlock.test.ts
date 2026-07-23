@@ -11,7 +11,7 @@ const smooth = vi.hoisted(() => ({
   visible: null as unknown as Ref<string>,
   done: null as unknown as Ref<boolean>,
 }))
-vi.mock('../lib/useSmoothText', () => ({
+vi.mock('../../lib/useSmoothText', () => ({
   useSmoothText: () => ({ visible: smooth.visible, done: smooth.done }),
 }))
 
