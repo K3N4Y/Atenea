@@ -7,7 +7,7 @@ import {
   PhX,
   PhWarning,
 } from '@phosphor-icons/vue'
-import type { ToolItem } from '../stores/chat'
+import type { ToolItem } from '../features/chat/types'
 import { basename } from '../lib/path'
 import DiffView from './DiffView.vue'
 

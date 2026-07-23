@@ -102,7 +102,9 @@ store instead of taking ownership of that module. `features/workspace` owns the
 working-folder selector and the derivation of known folders from session
 summaries. `features/sessions` owns session grouping and the history sidebar;
 session mutations remain in the chat store until their shared contracts are
-separated.
+separated. Shared chat, session, tool, plan, todo, usage, and event contracts
+live in `features/chat/types.ts`; feature modules depend on these contracts
+instead of importing types from the chat store implementation.
 
 ## Persistence and source of truth
 

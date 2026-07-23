@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { knownWorkspaces } from './workspaces'
-import type { SessionSummary } from '../../stores/chat'
+import type { SessionSummary } from '../chat/types'
 
 const session = (ID: string, Cwd: string): SessionSummary => ({
   ID,

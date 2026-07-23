@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { groupSessionsByFolder } from './sessions'
-import type { SessionSummary } from '../../stores/chat'
+import type { SessionSummary } from '../chat/types'
 
 const s = (ID: string, Cwd: string): SessionSummary => ({
   ID,

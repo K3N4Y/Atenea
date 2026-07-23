@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import TodoList from './TodoList.vue'
-import type { TodoItem } from '../stores/chat'
+import type { TodoItem } from '../features/chat/types'
 
 const todos = (items: TodoItem[]) => ({ todos: items })
 

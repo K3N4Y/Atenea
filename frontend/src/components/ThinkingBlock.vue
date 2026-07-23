@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { ref, computed } from 'vue'
 import { PhBrain, PhCaretRight } from '@phosphor-icons/vue'
-import type { ReasoningItem } from '../stores/chat'
+import type { ReasoningItem } from '../features/chat/types'
 import { formatThinkingDuration } from '../lib/duration'
 import { useSmoothText } from '../lib/useSmoothText'
 

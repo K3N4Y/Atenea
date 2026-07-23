@@ -1,5 +1,5 @@
 import { basename } from '../../lib/path'
-import type { SessionSummary } from '../../stores/chat'
+import type { SessionSummary } from '../chat/types'
 
 export interface WorkspaceOption {
   path: string

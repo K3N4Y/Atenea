@@ -2,7 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import type { Component } from 'vue'
 import gsap from 'gsap'
-import type { TurnItem } from '../stores/chat'
+import type { TurnItem } from '../features/chat/types'
 import { prefersReducedMotion } from '../lib/motion'
 import UserMessage from './UserMessage.vue'
 import AssistantMessage from './AssistantMessage.vue'

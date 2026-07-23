@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import MessageList from './MessageList.vue'
-import type { TurnItem } from '../stores/chat'
+import type { TurnItem } from '../features/chat/types'
 
 function configureScroller(scroller: HTMLElement, scrollTop: number) {
   Object.defineProperty(scroller, 'scrollHeight', {

@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import type { UserItem } from '../stores/chat'
+import type { UserItem } from '../features/chat/types'
 
 // Mensaje del usuario (identidad §8): fondo sutil, sin borde, redondeado 24px.
 defineProps<{ item: UserItem }>()

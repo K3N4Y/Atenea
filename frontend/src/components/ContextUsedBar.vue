@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { computed } from 'vue'
-import type { Usage } from '../stores/chat'
+import type { Usage } from '../features/chat/types'
 import {
   contextWindowFor,
   contextPercent,

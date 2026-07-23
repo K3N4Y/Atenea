@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { computed } from 'vue'
 import { PhClipboardText, PhCheck } from '@phosphor-icons/vue'
-import type { PlanState } from '../stores/chat'
+import type { PlanState } from '../features/chat/types'
 
 // PlanCard es el plan minimizado: una tarjeta en el flujo de la conversacion
 // (como una tool card) que resume el plan vigente. Toda la tarjeta expande el

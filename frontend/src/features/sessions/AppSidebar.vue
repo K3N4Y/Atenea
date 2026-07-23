@@ -2,7 +2,7 @@
 import { ref, computed } from 'vue'
 import { PhPlus, PhTrash, PhCheck, PhX, PhGear } from '@phosphor-icons/vue'
 import { useUiStore } from '../../stores/ui'
-import type { SessionSummary } from '../../stores/chat'
+import type { SessionSummary } from '../chat/types'
 import { groupSessionsByFolder } from './sessions'
 
 // Sidebar persistente (identidad §4): el estado colapsado vive en el store de

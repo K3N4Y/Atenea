@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { PhCircle, PhCircleNotch, PhCheckCircle } from '@phosphor-icons/vue'
-import type { TodoItem } from '../stores/chat'
+import type { TodoItem } from '../features/chat/types'
 
 // TodoList es el checklist de tareas en vivo (estilo Codex): una tarjeta flotante
 // arriba a la derecha que pinta los todos del agente. Presentacional: recibe la

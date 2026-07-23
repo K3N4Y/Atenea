@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import type { AssistantItem } from '../stores/chat'
+import type { AssistantItem } from '../features/chat/types'
 import MarkdownContent from './MarkdownContent.vue'
 import { useSmoothText } from '../lib/useSmoothText'
 

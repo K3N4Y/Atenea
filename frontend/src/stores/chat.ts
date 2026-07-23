@@ -21,6 +21,19 @@ import {
 } from '../../wailsjs/go/main/App'
 import { EventsOn } from '../../wailsjs/runtime/runtime'
 import type { Command } from '../lib/command'
+import type {
+  AssistantItem,
+  MCPServerConfig,
+  PlanState,
+  ReasoningItem,
+  SessionEvent,
+  SessionSummary,
+  TodoItem,
+  TodoStatus,
+  ToolItem,
+  TurnItem,
+  Usage,
+} from '../features/chat/types'
 
 // Mapeo evento->estado de la sesion (front.md §74). El store formaliza la
 // traduccion de los eventos durables del canal `session:<id>` a items del log
@@ -35,55 +48,6 @@ function newSessionID(): string {
 
 // 'pending' = awaiting user approval (ask-before-run): the UI offers
 // Approve/Deny before the tool runs.
-export type ToolStatus = 'pending' | 'running' | 'success' | 'failed'
-
-export interface UserItem {
-  kind: 'user'
-  id: string
-  text: string
-}
-
-export interface AssistantItem {
-  kind: 'assistant'
-  id: string
-  text: string
-  streaming: boolean
-}
-
-export interface ReasoningItem {
-  kind: 'reasoning'
-  id: string
-  text: string
-  streaming: boolean
-  durationMs: number | null
-}
-
-export interface ToolItem {
-  kind: 'tool'
-  id: string
-  callID: string
-  name: string
-  input: unknown
-  status: ToolStatus
-  output: string
-  error: string | null
-  // diff unificado solo-UI de edit/write (vacio en el resto); lo renderiza DiffView.
-  diff: string
-}
-
-// El log es una secuencia plana y ordenada de items de distinto tipo, que se
-// renderizan como un lienzo continuo (identidad §8).
-export type TurnItem = UserItem | AssistantItem | ReasoningItem | ToolItem
-
-// Estado del plan vigente en modo plan. El agente lo presenta via la tool
-// `present_plan` (Tool.Called con Input {plan, title?}); la UI lo muestra a
-// pantalla completa (no como tool card inline) para aceptarlo o pedir cambios.
-export interface PlanState {
-  callID: string
-  title: string
-  markdown: string
-}
-
 // planFromInput normaliza el Input de la tool present_plan a PlanState.
 // json.RawMessage llega como objeto JS, pero toleramos un string JSON por si
 // el backend lo serializa distinto; un input invalido degrada a campos vacios.
@@ -107,12 +71,6 @@ function planFromInput(callID: string, input: unknown): PlanState {
 
 // Item del checklist de tareas en vivo (tool todo_write). El agente reemplaza la
 // lista entera en cada call; la UI la pinta arriba a la derecha (estilo Codex).
-export type TodoStatus = 'pending' | 'in_progress' | 'completed'
-export interface TodoItem {
-  content: string
-  status: TodoStatus
-}
-
 // todosFromInput normaliza el Input de todo_write a TodoItem[]. Como planFromInput,
 // tolera un string JSON y degrada a lista vacia ante cualquier forma inesperada;
 // descarta items sin content o con status fuera del enum (defensa de frontera).
@@ -141,60 +99,6 @@ function todosFromInput(input: unknown): TodoItem[] {
 
 // Uso de tokens de la sesion (ocupacion de contexto). camelCase para la UI; el
 // backend lo emite en PascalCase dentro de Step.Ended. Solo tokens, sin costos.
-export interface Usage {
-  inputTokens: number
-  outputTokens: number
-  reasoningTokens: number
-  cacheReadTokens: number
-  cacheWriteTokens: number
-}
-
-// Forma del evento durable serializado por Wails (campos PascalCase, sin json
-// tags en Go). Solo declaramos lo que el frontend consume.
-export interface SessionEvent {
-  Kind?: string
-  Text?: string
-  Error?: string
-  CallID?: string
-  ToolName?: string
-  Input?: unknown
-  Diff?: string
-  // SessionID identifies the session that originated the event. For a subagent's
-  // surfaced permission request it is the CHILD session id (the parent channel
-  // carries it), so the UI resolves the gate with (childID, callID). Empty/absent
-  // for the parent's own events: they resolve with the active (parent) sessionID.
-  SessionID?: string
-  Message?: { Role?: string; Text?: string }
-  Usage?: {
-    InputTokens: number
-    OutputTokens: number
-    ReasoningTokens: number
-    CacheReadTokens: number
-    CacheWriteTokens: number
-  }
-}
-
-// Resumen de una sesion para el historial de la sidebar (espejo de
-// session.SessionSummary del backend). El Title puede venir vacio (sesion sin
-// prompt aun); la UI cae a un placeholder.
-export interface SessionSummary {
-  ID: string
-  Title: string
-  // Carpeta de trabajo en que se creo la sesion; '' en chats viejos anteriores a
-  // la captura. La sidebar agrupa por esta carpeta (groupSessionsByFolder).
-  Cwd: string
-  LastActivity: string
-}
-
-// MCPServerConfig is the durable, non-secret definition of a local MCP server.
-// A connection is deliberately not persisted: reopening Atenea must not execute
-// an arbitrary command without an explicit action from the user.
-export interface MCPServerConfig {
-  name: string
-  command: string
-  args: string[]
-}
-
 export const useChatStore = defineStore(
   'chat',
   () => {

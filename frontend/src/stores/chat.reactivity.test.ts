@@ -16,7 +16,8 @@ vi.mock('../../wailsjs/runtime/runtime', () => ({
   EventsOn: vi.fn(() => () => {}),
 }))
 
-import { useChatStore, type TurnItem } from './chat'
+import { useChatStore } from './chat'
+import type { TurnItem } from '../features/chat/types'
 
 beforeEach(() => {
   setActivePinia(createPinia())

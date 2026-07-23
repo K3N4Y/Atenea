@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { ref } from 'vue'
-import { useChatStore, type SessionEvent } from '../stores/chat'
+import { useChatStore } from '../stores/chat'
+import type { SessionEvent } from '../features/chat/types'
 import { useGitStore } from '../features/git/git'
 import { useUiStore } from '../stores/ui'
 
