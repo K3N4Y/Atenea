@@ -13,7 +13,7 @@ import (
 // para no dejar procesos colgados.
 func (a *App) shutdown(_ context.Context) {
 	a.term.CloseAll()
-	a.mcp.Close()
+	a.workspace.Close()
 }
 
 // ptyChannel es el canal por el que una tab Terminal recibe la salida de SU shell

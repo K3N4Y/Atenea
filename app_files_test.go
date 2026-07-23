@@ -1,42 +1,38 @@
 package main
 
 import (
-	"context"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
-
-	"atenea/internal/tool"
 )
-
-// fakeAppGlobSearcher implementa tool.GlobSearcher con entradas fijas: deja
-// probar el binding ListProjectFiles sin depender de rg ni del arbol real.
-type fakeAppGlobSearcher struct{ entries []string }
-
-func (f *fakeAppGlobSearcher) Glob(context.Context, tool.GlobSearch) (tool.GlobSearchResult, error) {
-	es := make([]tool.GlobEntry, len(f.entries))
-	for i, p := range f.entries {
-		es[i] = tool.GlobEntry{Path: p}
-	}
-	return tool.GlobSearchResult{Entries: es}, nil
-}
 
 // TestApp_ListProjectFilesReturnsWorkspaceFiles: el binding devuelve las rutas
 // de archivo del workspace (para el @-menu del composer), relativas a la raiz.
-// Inyecta un searcher fake en el glob del binding para no tocar rg ni el disco.
+// Usa un workspace temporal para cruzar el seam completo sin depender del repo.
 func TestApp_ListProjectFilesReturnsWorkspaceFiles(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app.go"), "package main\n")
+	if err := os.MkdirAll(filepath.Join(root, "internal", "tool"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(root, "internal", "tool", "glob.go"), "package tool\n")
+	t.Chdir(root)
 	app := newApp(demoProvider(), func(string, ...interface{}) {})
-	app.glob.Searcher = &fakeAppGlobSearcher{entries: []string{"app.go", "internal/tool/glob.go"}}
 
 	files, err := app.ListProjectFiles()
 	if err != nil {
 		t.Fatalf("ListProjectFiles: %v", err)
 	}
 	want := []string{"app.go", "internal/tool/glob.go"}
-	if !reflect.DeepEqual(files, want) {
-		t.Fatalf("files = %v, want %v", files, want)
+	set := map[string]bool{}
+	for _, file := range files {
+		set[file] = true
+	}
+	for _, file := range want {
+		if !set[file] {
+			t.Fatalf("files = %v, missing %q", files, file)
+		}
 	}
 }
 

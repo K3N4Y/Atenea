@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"atenea/internal/agent"
@@ -21,7 +20,7 @@ import (
 	"atenea/internal/terminal"
 	"atenea/internal/tool"
 	"atenea/internal/wailsprovider"
-	"atenea/internal/wiring"
+	"atenea/internal/wailsworkspace"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -60,11 +59,9 @@ type App struct {
 	emit      event.EmitFunc                // la misma frontera que usa el bus; la tab Terminal empuja su salida por aca
 	store     session.Store                 // lectura del historial para la sidebar (ListSessions/SessionHistory)
 	gate      *session.MemoryPermissionGate // ask-before-run: the UI resolves via ResolveToolPermission
-	glob      *tool.GlobTool                // listado de archivos del workspace para el @-menu del composer (ListProjectFiles)
 	agent     *agent.Service                // ciclo headless compartido con la TUI
 	providers *wailsprovider.Manager        // provider/config atomicos; SetProvider publica snapshots completos
-	snaps     *tool.SessionSnapshots        // read-state por sesion; sobrevive a los cambios de workspace (se crea una vez)
-	root      string                        // raiz del workspace; mutable via SetWorkspace, leida con mu (workspaceRoot)
+	workspace *wailsworkspace.Manager       // root, wiring, glob y MCP publicados como un snapshot serializado
 
 	// versioner es el store crudo si sabe exponer su data_version (SQLite sobre
 	// archivo); startup lanza con el un watcher que emite "sessions:changed"
@@ -79,18 +76,13 @@ type App struct {
 	// al fallback.
 	titler func(firstMessage string) string
 
-	mu sync.Mutex
-	// lifecycleMu hace atomico el swap root/glob/runner respecto de la admision
-	// de prompts, sin mezclar ese bloqueo con el estado general de App.
-	lifecycleMu sync.Mutex
-
 	term *terminal.Manager // las tabs Terminal: varias sesiones pty vivas por id
-	mcp  *mcpclient.Manager
 }
 
 // newAppWithStore arma la app sobre un store, un provider y la frontera (emit)
 // inyectados. El store se decora con EmittingStore (puente Store -> UI) y el
-// cableado del agente (tools, skills, subagentes, runner) se delega en wire.
+// cableado del agente (tools, skills, subagentes, runner) se delega al modulo
+// wailsworkspace.
 // Es el punto unico de ensamblado: los tests lo llaman via newApp (MemoryStore +
 // provider fake) y produccion via NewApp (SQLiteStore + provider real).
 func newAppWithStore(store session.Store, provider llm.Provider, emit event.EmitFunc, providerConfigs ...wailsprovider.Config) *App {
@@ -121,75 +113,25 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 	// vistas, edit lo lee para anclar ediciones, write crea archivos nuevos con su
 	// snapshot. El read-state es por sesion (no por carpeta): se crea una vez y
 	// sobrevive a los cambios de workspace.
-	a.snaps = tool.NewSessionSnapshots()
+	snaps := tool.NewSessionSnapshots()
 	// Ask-before-run: bash is the only gated tool for now. The UI approves/denies
 	// each command via ResolveToolPermission. El gate no depende del root: se crea
-	// una vez y wire lo recablea en cada runner.
+	// una vez y wailsworkspace lo recablea en cada runner.
 	a.gate = session.NewMemoryPermissionGate()
 	// La raiz inicial es el cwd del proceso; SetWorkspace la cambia en vivo.
 	root, err := os.Getwd()
 	if err != nil {
 		root = "."
 	}
-	a.mcp = mcpclient.NewManager(root)
-	a.wire(root)
-	return a
-}
-
-// wire arma (o re-arma) todo el cableado anclado a root delegando en
-// wiring.Build (la unica fuente de verdad del ensamblado, compartida con el
-// engine headless de la TUI). Construye fuera del lock y publica los punteros
-// mutables (root y glob) bajo mu y reconfigura el servicio en el mismo swap,
-// asi SetWorkspace en vivo no compite con las lecturas. Lo llama el constructor
-// (root = cwd) y SetWorkspace (root nuevo).
-func (a *App) wire(root string) {
-	a.mcp.SetRoot(root)
-	// El provider vigente se lee como un snapshot atomico (SetProvider puede cambiarlo)
-	// para que el cableado nuevo (runner, taskTool, web_fetch) quede anclado a un
-	// unico provider sin competir con el swap. SetProvider lo fija ANTES de llamar wire.
-	providerState := a.providers.Snapshot()
-	provider := providerState.Provider
-	// local marca si el provider vigente es un endpoint local (LM Studio, Ollama):
-	// decide el prompt base (function-calling explicito) en vez de la persona code-gen
-	// del default. Viene en el mismo snapshot que el provider; SetProvider lo fija ANTES de
-	// llamar wire.
-	local := providerState.Local
-	built := wiring.Build(wiring.Config{
-		Root:     root,
-		Provider: provider,
-		Store:    a.store, // ya decorado con EmittingStore en newAppWithStore
-		Inbox:    a.inbox,
-		Gate:     a.gate,
-		Snaps:    a.snaps,
-		Bus:      a.bus,
-		Local:    local,
-		NextID:   wiring.NewIDGen(),
-		Mode:     a.agent.Mode,
-		MCPTools: a.mcp.Tools(),
+	a.workspace = wailsworkspace.New(wailsworkspace.Config{
+		Root: root,
+		ProviderState: func() wailsworkspace.ProviderState {
+			state := a.providers.Snapshot()
+			return wailsworkspace.ProviderState{Provider: state.Provider, Local: state.Local}
+		},
+		Store: a.store, Inbox: a.inbox, Gate: a.gate, Snapshots: snaps, Bus: a.bus, Agent: a.agent,
 	})
-
-	a.lifecycleMu.Lock()
-	a.mu.Lock()
-	a.root = root
-	a.glob = built.Glob
-	a.mu.Unlock()
-	a.agent.Configure(built.Runner, built.Commands)
-	a.lifecycleMu.Unlock()
-}
-
-// workspaceRoot devuelve la raiz vigente bajo mu (SetWorkspace la cambia en vivo).
-func (a *App) workspaceRoot() string {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.root
-}
-
-// currentGlob devuelve el puntero vigente bajo mu; wire lo reemplaza al cambiar
-// de workspace, asi las lecturas no compiten con el swap.
-func (a *App) currentGlob() *tool.GlobTool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.glob
+	return a
 }
 
 // newApp arma la app con un MemoryStore (no durable) y el provider/emit inyectados.
@@ -266,12 +208,10 @@ func (a *App) ProviderConfig() ProviderConfig {
 // tools/subagentes/web_fetch al provider nuevo, igual que SetWorkspace con el root. Es
 // el binding que el frontend llama al elegir OpenRouter o un endpoint local.
 func (a *App) SetProvider(kind, baseURL, model string) error {
-	_, err := a.providers.Set(kind, baseURL, model)
-	if err != nil {
+	return a.workspace.Reconfigure(func() error {
+		_, err := a.providers.Set(kind, baseURL, model)
 		return err
-	}
-	a.wire(a.workspaceRoot())
-	return nil
+	})
 }
 
 // ListModels devuelve el catalogo de modelos de un endpoint OpenAI-compatible (GET
@@ -318,10 +258,10 @@ func (a *App) startup(ctx context.Context) {
 // sesion que estaba en plan-mode vuelve a las tools normales al enviar.
 func (a *App) SendPrompt(sessionID, text string) error {
 	job := a.titleJob(sessionID, text)
-	a.lifecycleMu.Lock()
-	defer a.lifecycleMu.Unlock()
-	_, err := a.agent.Send(sessionID, text, a.turnHooks(sessionID, job))
-	return err
+	return a.workspace.Admit(func() error {
+		_, err := a.agent.Send(sessionID, text, a.turnHooks(sessionID, job))
+		return err
+	})
 }
 
 // auxTurnTimeout acota los turnos aislados auxiliares (titulo de sesion, mensaje de
@@ -394,59 +334,42 @@ func (a *App) captureCwd(sessionID string) {
 		return // la sesion ya existe: no es el primer prompt
 	}
 	if _, err := a.store.AppendEvent(context.Background(), sessionID,
-		session.SessionEvent{Kind: session.KindSessionCwd, Text: a.workspaceRoot()}); err != nil {
+		session.SessionEvent{Kind: session.KindSessionCwd, Text: a.workspace.Root()}); err != nil {
 		log.Printf("atenea: no se pudo guardar la carpeta de %s: %v", sessionID, err)
 	}
 }
 
 // Workspace devuelve la carpeta de trabajo vigente. La UI la muestra en la sidebar
 // y la usa para decidir si abrir un chat de otra carpeta cambia el workspace.
-func (a *App) Workspace() string { return a.workspaceRoot() }
+func (a *App) Workspace() string { return a.workspace.Root() }
 
 // SetWorkspace cambia la carpeta de trabajo en vivo: valida que path sea una
 // carpeta, corta las corridas en vuelo (apuntaban al root viejo) y recablea todas
 // las tools/skills/subagentes/prompt al root nuevo. Las sesiones nuevas capturan
 // esta carpeta. Es el binding que el frontend llama al elegir o cambiar de carpeta.
 func (a *App) SetWorkspace(path string) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("workspace invalido: %w", err)
-	}
-	if !info.IsDir() {
-		return fmt.Errorf("workspace invalido: %s no es una carpeta", path)
-	}
-	a.wire(path)
-	return nil
+	return a.workspace.SetRoot(path)
 }
 
 // ConnectMCP starts a local stdio MCP server and makes its discovered tools
 // available to subsequent agent turns.
 func (a *App) ConnectMCP(config mcpclient.ServerConfig) (mcpclient.ServerStatus, error) {
-	status, err := a.mcp.Connect(context.Background(), config)
-	if err != nil {
-		return mcpclient.ServerStatus{}, err
-	}
-	a.wire(a.workspaceRoot())
-	return status, nil
+	return a.workspace.ConnectMCP(context.Background(), config)
 }
 
 // DisconnectMCP removes a local MCP server and its tools from future turns.
 func (a *App) DisconnectMCP(name string) error {
-	if err := a.mcp.Disconnect(name); err != nil {
-		return err
-	}
-	a.wire(a.workspaceRoot())
-	return nil
+	return a.workspace.DisconnectMCP(name)
 }
 
 // ListMCPs returns every declared MCP server (the global config merged with
 // the workspace .mcp.json) overlaid with its live connection state.
 func (a *App) ListMCPs() ([]mcpclient.ServerStatus, error) {
-	configs, err := mcpclient.LoadConfig(a.workspaceRoot())
+	configs, err := mcpclient.LoadConfig(a.workspace.Root())
 	if err != nil {
 		return nil, err
 	}
-	return mcpclient.Merge(configs, a.mcp.Status()), nil
+	return mcpclient.Merge(configs, a.workspace.MCPStatus()), nil
 }
 
 // SaveMCPConfig persists a server into the global MCP config
@@ -459,15 +382,14 @@ func (a *App) SaveMCPConfig(config mcpclient.ServerConfig) error {
 // global MCP config. A server declared in the workspace .mcp.json cannot be
 // removed from here: the error points at the file to edit.
 func (a *App) RemoveMCPConfig(name string) error {
-	if err := a.mcp.Disconnect(name); err != nil {
+	if err := a.workspace.DisconnectMCP(name); err != nil {
 		return err
 	}
-	a.wire(a.workspaceRoot())
 	removed, err := mcpclient.RemoveGlobalConfig(name)
 	if err != nil || removed {
 		return err
 	}
-	configs, err := mcpclient.LoadConfig(a.workspaceRoot())
+	configs, err := mcpclient.LoadConfig(a.workspace.Root())
 	if err != nil {
 		return err
 	}
@@ -486,41 +408,36 @@ func (a *App) RemoveMCPConfig(name string) error {
 func (a *App) SelectWorkspace() (string, error) {
 	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "Elegir carpeta de trabajo"})
 	if err != nil {
-		return a.workspaceRoot(), err
+		return a.workspace.Root(), err
 	}
 	if dir == "" {
-		return a.workspaceRoot(), nil // cancelado
+		return a.workspace.Root(), nil // cancelado
 	}
 	if err := a.SetWorkspace(dir); err != nil {
-		return a.workspaceRoot(), err
+		return a.workspace.Root(), err
 	}
 	return dir, nil
 }
-
-// cancelAllRuns corta toda corrida en vuelo. ponytail: las cancela pero no las
-// espera; cada runner viejo termina solo en su ctx cancelado mientras el nuevo ya
-// atiende los envios. Lo usa SetWorkspace antes de recablear.
-func (a *App) cancelAllRuns() { a.agent.StopAll() }
 
 // SendPlanPrompt admite el texto en plan-mode: investigacion de solo lectura mas
 // present_plan, con el contrato de plan-mode en el system prompt. Fija ModePlan
 // antes de arrancar. Es el binding que el frontend llama al planear una feature.
 func (a *App) SendPlanPrompt(sessionID, text string) error {
 	job := a.titleJob(sessionID, text)
-	a.lifecycleMu.Lock()
-	defer a.lifecycleMu.Unlock()
-	_, err := a.agent.SendPlan(sessionID, text, a.turnHooks(sessionID, job))
-	return err
+	return a.workspace.Admit(func() error {
+		_, err := a.agent.SendPlan(sessionID, text, a.turnHooks(sessionID, job))
+		return err
+	})
 }
 
 // AcceptPlan acepta y ejecuta el plan: vuelve a modo normal y promueve el prompt
 // fijo de implementacion como prompt del usuario. Es el binding que el frontend
 // llama al aprobar un plan presentado.
 func (a *App) AcceptPlan(sessionID string) error {
-	a.lifecycleMu.Lock()
-	defer a.lifecycleMu.Unlock()
-	_, err := a.agent.AcceptPlan(sessionID, a.turnHooks(sessionID, nil))
-	return err
+	return a.workspace.Admit(func() error {
+		_, err := a.agent.AcceptPlan(sessionID, a.turnHooks(sessionID, nil))
+		return err
+	})
 }
 
 // ListSessions devuelve el historial de chats para la sidebar: un resumen por
@@ -543,19 +460,14 @@ func (a *App) SessionHistory(sessionID string) ([]session.SessionEvent, error) {
 // composer. El frontend filtra/ordena en cliente conforme el usuario escribe;
 // aqui se devuelve el listado completo, acotado por el limite del glob.
 func (a *App) ListProjectFiles() ([]string, error) {
-	g := a.currentGlob()
-	files, _, err := g.Files(context.Background(), "", ".", g.MaxLimit)
-	if err != nil {
-		return nil, err
-	}
-	return files, nil
+	return a.workspace.Files(context.Background())
 }
 
 // ListCommands lista los slash-commands disponibles (nombre + descripcion) para
 // el menu del composer, ordenados por nombre. El frontend filtra/ordena en cliente
 // conforme el usuario escribe tras "/"; al enviar, el backend expande el comando.
 func (a *App) ListCommands() ([]command.Command, error) {
-	return a.agent.Commands(), nil
+	return a.workspace.Commands(), nil
 }
 
 // ResolveToolPermission delivers the user's decision on a gated tool call

@@ -38,7 +38,7 @@ func commitMessageFromProvider(p llm.Provider, model, diff string) string {
 }
 
 func (a *App) workspaceGit() *workspacegit.Repository {
-	return workspacegit.Open(a.workspaceRoot())
+	return workspacegit.Open(a.workspace.Root())
 }
 
 func (a *App) GitStatus() (GitStatus, error)        { return a.workspaceGit().Status() }

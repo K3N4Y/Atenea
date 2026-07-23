@@ -15,6 +15,8 @@ active provider/configuration snapshot.
 provider state to the manager. When a selection succeeds, `App` uses the
 manager's complete snapshot to rebuild workspace-dependent agent wiring. A
 validation failure leaves both provider and configuration unchanged.
+Provider mutation and workspace wiring publication are serialized by
+`internal/wailsworkspace.Manager`, so no prompt is admitted between them.
 
 The seam consumed by agent wiring is `Manager.Snapshot`: it returns the active
 `llm.Provider`, its secret-free configuration, and whether local-model prompt
