@@ -8,7 +8,7 @@ import {
 } from '../../wailsjs/go/main/App'
 import ProviderSettings from './ProviderSettings.vue'
 import { useChatStore } from '../stores/chat'
-import { useMcpStore } from '../stores/mcp'
+import { useMcpStore } from '../features/mcp/mcp'
 
 const chat = useChatStore()
 const mcp = useMcpStore()

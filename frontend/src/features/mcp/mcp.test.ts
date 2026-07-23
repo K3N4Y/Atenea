@@ -7,7 +7,7 @@ const ConnectMCP = vi.fn()
 const DisconnectMCP = vi.fn()
 const SaveMCPConfig = vi.fn()
 
-vi.mock('../../wailsjs/go/main/App', () => ({
+vi.mock('../../../wailsjs/go/main/App', () => ({
   ListMCPs: (...a: unknown[]) => ListMCPs(...a),
   ConnectMCP: (...a: unknown[]) => ConnectMCP(...a),
   DisconnectMCP: (...a: unknown[]) => DisconnectMCP(...a),
@@ -15,7 +15,7 @@ vi.mock('../../wailsjs/go/main/App', () => ({
 }))
 
 import { useMcpStore } from './mcp'
-import { useChatStore } from './chat'
+import { useChatStore } from '../../stores/chat'
 
 beforeEach(() => {
   setActivePinia(createPinia())

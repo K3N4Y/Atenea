@@ -7,14 +7,14 @@ const ListMCPs = vi.fn()
 const ConnectMCP = vi.fn()
 const DisconnectMCP = vi.fn()
 
-vi.mock('../../wailsjs/go/main/App', () => ({
+vi.mock('../../../wailsjs/go/main/App', () => ({
   ListMCPs: (...a: unknown[]) => ListMCPs(...a),
   ConnectMCP: (...a: unknown[]) => ConnectMCP(...a),
   DisconnectMCP: (...a: unknown[]) => DisconnectMCP(...a),
   SaveMCPConfig: vi.fn(() => Promise.resolve()),
 }))
 
-vi.mock('../lib/modal', () => ({
+vi.mock('../../lib/modal', () => ({
   PrettyModal: class {
     open(id: string) {
       const el = document.getElementById(id)

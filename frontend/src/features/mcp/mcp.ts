@@ -5,8 +5,8 @@ import {
   DisconnectMCP,
   ListMCPs,
   SaveMCPConfig,
-} from '../../wailsjs/go/main/App'
-import { useChatStore } from './chat'
+} from '../../../wailsjs/go/main/App'
+import { useChatStore } from '../../stores/chat'
 
 // El backend es la fuente de verdad de los servidores MCP: las definiciones
 // viven en la config global (~/.config/atenea/mcp.json) mas el .mcp.json del
