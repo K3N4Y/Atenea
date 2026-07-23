@@ -1,7 +1,7 @@
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { StartPty, ResizePty, ClosePty } from '../../wailsjs/go/main/App'
+import { StartPty, ResizePty, ClosePty } from '../../../wailsjs/go/main/App'
 import { connectTerminal } from './terminal'
 import { FONT, active } from './terminalThemes'
 

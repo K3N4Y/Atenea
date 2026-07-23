@@ -29,7 +29,7 @@ class FakeFitAddon {
 
 vi.mock('@xterm/xterm', () => ({ Terminal: FakeTerminal }))
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: FakeFitAddon }))
-vi.mock('../../wailsjs/go/main/App', () => ({
+vi.mock('../../../wailsjs/go/main/App', () => ({
   StartPty: (id: string, c: number, r: number) => StartPty(id, c, r),
   ResizePty: (id: string, c: number, r: number) => ResizePty(id, c, r),
   ClosePty: (id: string) => ClosePty(id),

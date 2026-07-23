@@ -11,8 +11,8 @@ import { useGitStore } from '../features/git/git'
 import { useChatStore } from '../stores/chat'
 import { useUiStore } from '../stores/ui'
 import { useTabsStore, type Tab, type TabKind } from '../stores/tabs'
-import { destroy } from '../lib/terminalSession'
-import TerminalPanel from './TerminalPanel.vue'
+import { destroy } from '../features/terminal/terminalSession'
+import TerminalPanel from '../features/terminal/TerminalPanel.vue'
 
 // Panel de herramientas: barra de tabs ABIERTAS (instancias, no un set fijo) con
 // un boton "+" para agregar Git/Terminal y un cierre por tab. El contenido se elige

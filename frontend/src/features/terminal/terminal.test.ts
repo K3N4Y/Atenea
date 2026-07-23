@@ -5,11 +5,11 @@ const WritePty = vi.fn()
 const ClosePty = vi.fn()
 const EventsOn = vi.fn()
 
-vi.mock('../../wailsjs/go/main/App', () => ({
+vi.mock('../../../wailsjs/go/main/App', () => ({
   WritePty: (id: string, d: string) => WritePty(id, d),
   ClosePty: (id: string) => ClosePty(id),
 }))
-vi.mock('../../wailsjs/runtime/runtime', () => ({
+vi.mock('../../../wailsjs/runtime/runtime', () => ({
   EventsOn: (ev: string, cb: (...a: unknown[]) => void) => EventsOn(ev, cb),
 }))
 

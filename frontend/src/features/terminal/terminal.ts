@@ -1,5 +1,5 @@
-import { WritePty, ClosePty } from '../../wailsjs/go/main/App'
-import { EventsOn } from '../../wailsjs/runtime/runtime'
+import { WritePty, ClosePty } from '../../../wailsjs/go/main/App'
+import { EventsOn } from '../../../wailsjs/runtime/runtime'
 
 // Canal de la salida del pty, uno por sesion (coincide con ptyChannel en el backend).
 const ptyData = (id: string) => `pty:data:${id}`

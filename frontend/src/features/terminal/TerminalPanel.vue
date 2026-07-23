@@ -1,12 +1,12 @@
 <script lang="ts" setup>
 import { onMounted, onBeforeUnmount, ref } from 'vue'
-import { attach, detach, resize } from '../lib/terminalSession'
+import { attach, detach, resize } from './terminalSession'
 
 // Tab Terminal: presta el xterm de SU sesion (sessionId) del registro
-// lib/terminalSession, que vive fuera del arbol de componentes. Al desmontar
+// terminalSession, que vive fuera del arbol de componentes. Al desmontar
 // (cambiar de tab o cerrar el panel) solo lo devuelve: el shell sigue vivo y el
 // scrollback se conserva. Cerrar la tab (destroy) lo mata; eso lo hace el panel.
-// ponytail: GUI pura, no corre headless; la logica testeable vive en lib.
+// ponytail: GUI pura, no corre headless; la logica testeable vive en el modulo.
 const props = defineProps<{ sessionId: string }>()
 const host = ref<HTMLDivElement | null>(null)
 let ro: ResizeObserver | null = null

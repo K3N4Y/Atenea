@@ -94,8 +94,9 @@ src/
 A feature owns its local store, dedicated views, and colocated tests. Code stays
 in `components`, `stores`, or `lib` when it is genuinely shared. For example,
 `features/git` owns Git state and its full-screen diff, and `features/mcp` owns
-server connection state and its menu. The inline `DiffView` remains shared
-because tool results also use it.
+server connection state and its menu. `features/terminal` owns the PTY adapter,
+persistent terminal sessions, visual theme, and panel. The inline `DiffView`
+remains shared because tool results also use it.
 
 ## Persistence and source of truth
 
