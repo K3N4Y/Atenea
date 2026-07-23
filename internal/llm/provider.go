@@ -55,9 +55,10 @@ type Request struct {
 type EventKind int
 
 const (
-	StepStarted EventKind = iota // arranca el turno            -> Step.Started
-	StepEnded                    // cierra el turno con tokens  -> Step.Ended (lleva Usage)
-	StepFailed                   // fallo del stream            -> Step.Failed
+	StepStarted  EventKind = iota // arranca el turno            -> Step.Started
+	StepEnded                     // cierra el turno con tokens  -> Step.Ended (lleva Usage)
+	StepFailed                    // fallo del stream            -> Step.Failed
+	StepRetrying                  // espera transitoria antes de reintentar
 
 	TextStarted // abre un bloque de texto      -> Text.Started
 	TextDelta   // fragmento de texto           -> Text.Delta   (lleva Text)

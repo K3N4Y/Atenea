@@ -215,9 +215,17 @@ func (e entry) render(width int) string {
 		// "plan" como nombre), con el gesto que lo resuelve como sufijo.
 		return permissionStyle.Render(activityHeader(activityAskMarker, "plan", "presentado") + " (y ejecutar / n seguir en plan)")
 	case entryError:
-		// El fallo duro del step usa la misma gramatica de actividad, con
-		// "error" como nombre y el mensaje como resumen.
-		return errorStyle.Render(activityHeader(activityFailMarker, "error", e.text))
+		if !isProviderError(e.text) {
+			return errorStyle.Render(activityHeader(activityFailMarker, "error", e.text))
+		}
+		summary := friendlyProviderError(e.text)
+		line := activityHeader(activityFailMarker, "error", summary) + "  [r retry] [d details]"
+		if e.expanded {
+			line += "\n" + statusStyle.Render("  │ "+sanitizeProviderDetails(e.text))
+		}
+		return errorStyle.Render(line)
+	case entryRetry:
+		return permissionStyle.Render(activityHeader("↻", "retry", e.text))
 	case entryCompaction:
 		if e.err != "" {
 			return errorStyle.Render("[error] " + sanitizeTerminalText(e.err))

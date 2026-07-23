@@ -98,6 +98,10 @@ type modelAgent interface {
 	RefreshModels()
 }
 
+type retryAgent interface {
+	RetryPrompt(sessionID string) (RunHandle, error)
+}
+
 // entryKind distingue los tipos de bloque de la conversacion.
 type entryKind int
 
@@ -109,6 +113,7 @@ const (
 	entryPermission                    // solicitud de aprobacion pendiente (ask-before-run)
 	entryPlanApproval                  // oferta de aprobacion del plan presentado (present_plan)
 	entryError                         // fallo duro del step (Step.Failed)
+	entryRetry                         // espera transitoria de un reintento del provider
 	entryCompaction                    // estado transitorio o resultado de compactacion manual
 	entryNotice                        // informational line (connected provider, first-run hint)
 )
@@ -948,6 +953,24 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyShiftTab {
 		m = m.toggleThinking()
 		return m.syncViewport(), nil
+	}
+	if !m.working && m.input.Value() == "" && m.lastErrorIsProvider() && keyRune(msg) == "d" {
+		m.Transcript = m.Transcript.toggleLastErrorDetails()
+		return m.syncViewport(), nil
+	}
+	if !m.working && m.input.Value() == "" && m.lastErrorIsProvider() && keyRune(msg) == "r" {
+		retrier, ok := m.agent.(retryAgent)
+		if !ok {
+			return m, nil
+		}
+		handle, err := retrier.RetryPrompt(m.sessionID)
+		if err != nil {
+			return m.appendError(err.Error()).syncViewport(), nil
+		}
+		m.Transcript = m.Transcript.removeLastError()
+		m.working = true
+		m.activeRun = handle.RunID
+		return m.resizeViewport(), m.spinner.Tick
 	}
 	if m.focus == viewerFocus {
 		return m.viewerKey(msg)

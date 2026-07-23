@@ -3,6 +3,10 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,6 +36,7 @@ const defaultRequestTimeout = 60 * time.Second
 type OpenAIProvider struct {
 	client openai.Client
 	model  string
+	label  string
 	// reasoning controla la inyeccion del campo top-level `reasoning` (extension de
 	// OpenRouter) en el request. Default true (OpenRouter); los endpoints locales
 	// OpenAI-compatible (LM Studio, Ollama) no entienden ese campo, asi que se apaga
@@ -77,11 +82,55 @@ func newOpenAIProviderWithTimeout(apiKey, baseURL, model string, timeout time.Du
 		option.WithBaseURL(baseURL),
 		option.WithRequestTimeout(timeout),
 	)
-	p := &OpenAIProvider{client: client, model: model, reasoning: true}
+	p := &OpenAIProvider{client: client, model: model, label: providerLabel(baseURL), reasoning: true}
 	for _, opt := range opts {
 		opt(p)
 	}
 	return p
+}
+
+func providerLabel(baseURL string) string {
+	parsed, _ := url.Parse(baseURL)
+	switch {
+	case strings.Contains(parsed.Host, "openrouter"):
+		return "OpenRouter"
+	case strings.Contains(parsed.Host, "openai"):
+		return "OpenAI"
+	default:
+		return "Provider"
+	}
+}
+
+// retryTiming keeps the SDK's built-in retry policy, but gives its two retries
+// predictable delays and refuses provider-requested waits longer than 10s.
+func retryTiming(req *http.Request, next option.MiddlewareNext) (*http.Response, error) {
+	resp, err := next(req)
+	if resp == nil {
+		return resp, err
+	}
+	if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode != http.StatusBadGateway &&
+		resp.StatusCode != http.StatusServiceUnavailable && resp.StatusCode != http.StatusGatewayTimeout {
+		resp.Header.Set("x-should-retry", "false")
+	}
+	if ms, parseErr := strconv.ParseFloat(resp.Header.Get("Retry-After-Ms"), 64); parseErr == nil && ms > 10_000 {
+		resp.Header.Set("Retry-After-Ms", "10000")
+	}
+	retryAfter := resp.Header.Get("Retry-After")
+	if seconds, parseErr := strconv.ParseFloat(retryAfter, 64); parseErr == nil {
+		if seconds > 10 {
+			resp.Header.Set("Retry-After", "10")
+		}
+	} else if at, dateErr := http.ParseTime(retryAfter); dateErr == nil && time.Until(at) > 10*time.Second {
+		resp.Header.Set("Retry-After", "10")
+	}
+	if resp.Header.Get("Retry-After") == "" && resp.Header.Get("Retry-After-Ms") == "" {
+		delays := [...]string{"2", "5"}
+		attempt, _ := strconv.Atoi(req.Header.Get("X-Stainless-Retry-Count"))
+		if attempt < len(delays) {
+			resp.Header.Set("Retry-After", delays[attempt])
+		}
+	}
+	return resp, err
 }
 
 // Stream abre un turno completo. Resuelve el modelo (req.Model con fallback al
@@ -122,14 +171,23 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request) (<-chan Event,
 		})
 	}
 
-	stream := p.client.Chat.Completions.NewStreaming(ctx, params)
-
 	go func() {
 		defer close(out)
 
 		if !emit(ctx, out, Event{Kind: StepStarted}) {
 			return
 		}
+		stream := p.client.Chat.Completions.NewStreaming(ctx, params,
+			option.WithMiddleware(func(req *http.Request, next option.MiddlewareNext) (*http.Response, error) {
+				resp, err := retryTiming(req, next)
+				attempt, _ := strconv.Atoi(req.Header.Get("X-Stainless-Retry-Count"))
+				if attempt < 2 && retryableResponse(resp, err) {
+					delay := [...]string{"2", "5"}[attempt]
+					emit(ctx, out, Event{Kind: StepRetrying, Text: fmt.Sprintf("%s (%s): %s Retrying in %ss…", p.label, model, retryReason(resp), delay)})
+				}
+				return resp, err
+			}),
+		)
 
 		var usage *Usage
 		textOpen := false
@@ -255,7 +313,7 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request) (<-chan Event,
 		}
 
 		if err := stream.Err(); err != nil {
-			emit(ctx, out, Event{Kind: StepFailed, Text: err.Error()})
+			emit(ctx, out, Event{Kind: StepFailed, Text: fmt.Sprintf("%s (%s): %v", p.label, model, err)})
 			return
 		}
 
@@ -273,6 +331,24 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request) (<-chan Event,
 	}()
 
 	return out, nil
+}
+
+func retryReason(resp *http.Response) string {
+	if resp != nil && resp.StatusCode == http.StatusTooManyRequests {
+		return "Rate limit reached."
+	}
+	if resp == nil {
+		return "Connection interrupted."
+	}
+	return "Provider temporarily unavailable."
+}
+
+func retryableResponse(resp *http.Response, err error) bool {
+	if err != nil || resp == nil {
+		return true
+	}
+	return resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusBadGateway ||
+		resp.StatusCode == http.StatusServiceUnavailable || resp.StatusCode == http.StatusGatewayTimeout
 }
 
 // emit envia ev por out respetando la cancelacion del ctx. Devuelve false si el

@@ -161,6 +161,34 @@ func TestService_AcceptPlanUsesNormalModeAndFixedPrompt(t *testing.T) {
 	}
 }
 
+func TestService_RetryRunsWithoutAdmittingPromptAgain(t *testing.T) {
+	inbox := &recordingInbox{MemoryInbox: session.NewMemoryInbox()}
+	forced := make(chan bool, 1)
+	service := NewService(inbox)
+	service.Configure(runnerFunc(func(_ context.Context, _ string, force bool) error {
+		forced <- force
+		return nil
+	}), command.New(nil))
+
+	first, err := service.Send("s1", "hello", Hooks{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-first.Done()
+	<-forced
+	retry, err := service.Retry("s1", Hooks{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-retry.Done()
+	if !<-forced {
+		t.Fatal("Retry must force the runner with the existing conversation")
+	}
+	if len(inbox.admitted) != 1 {
+		t.Fatalf("admitted prompts = %v, retry duplicated the user turn", inbox.admitted)
+	}
+}
+
 func TestService_ConfigureWaitsForAdmissionAndCancelsOldRuntime(t *testing.T) {
 	service := NewService(session.NewMemoryInbox())
 	service.Configure(runnerFunc(func(ctx context.Context, _ string, _ bool) error {

@@ -967,6 +967,103 @@ func activeRunDone(m Model, err string) RunDoneMsg {
 	return RunDoneMsg{SessionID: m.sessionID, RunID: m.activeRun, Err: err}
 }
 
+func TestModel_ProviderRateLimitIsCompactAndNotDuplicated(t *testing.T) {
+	raw := `provider stream failed: POST "https://openrouter.ai/api/v1/chat/completions?api_key=super-secret": 429 Too Many Requests {"error":{"message":"temporarily rate-limited upstream"}}`
+	root := t.TempDir()
+	eng := engine.New(engine.Config{
+		Root:     root,
+		Provider: llm.NewFakeProvider(llm.Event{Kind: llm.StepStarted}, llm.Event{Kind: llm.StepFailed, Text: strings.TrimPrefix(raw, "provider stream failed: ")}),
+		Store:    session.NewMemoryStore(),
+	})
+	m := NewModel(eng, "s1", eng.Events())
+	m = typeRunes(t, m, "hello")
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	for m.working {
+		m = apply(t, m, nextMsg(t, eng.Events(), 5*time.Second))
+	}
+
+	errorCount := 0
+	for _, entry := range m.entries {
+		if entry.kind == entryError {
+			errorCount++
+		}
+	}
+	if errorCount != 1 {
+		t.Fatalf("error entries = %d, want one compact entry: %+v", errorCount, m.entries)
+	}
+	view := m.View()
+	if !strings.Contains(view, "Rate limit reached") || !strings.Contains(view, "[r retry] [d details]") {
+		t.Fatalf("View() = %q, want compact actionable rate-limit message", view)
+	}
+	if strings.Contains(view, "temporarily rate-limited upstream") || strings.Contains(view, "https://openrouter.ai") {
+		t.Fatalf("View() leaked raw provider details while collapsed: %q", view)
+	}
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	if view = m.View(); !strings.Contains(view, "temporarily rate-limited upstream") {
+		t.Fatalf("View() = %q, d must reveal sanitized technical details", view)
+	}
+	if strings.Contains(view, "super-secret") || !strings.Contains(view, "[redacted]") {
+		t.Fatalf("View() = %q, details must redact provider credentials", view)
+	}
+}
+
+func TestModel_ProviderRetryStatusIsTransient(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil)
+	m = apply(t, m, EventMsg(session.SessionEvent{Kind: session.KindStepRetrying, Text: "Rate limit reached. Retrying in 2s…"}))
+	if view := m.View(); !strings.Contains(view, "Retrying in 2s") {
+		t.Fatalf("View() = %q, want visible retry wait", view)
+	}
+	m = apply(t, m, EventMsg(session.SessionEvent{Kind: session.KindTextStarted}))
+	for _, entry := range m.entries {
+		if entry.kind == entryRetry {
+			t.Fatalf("retry status survived provider recovery: %+v", m.entries)
+		}
+	}
+}
+
+type failOnceProvider struct{ calls int }
+
+func (p *failOnceProvider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Event, error) {
+	p.calls++
+	if p.calls == 1 {
+		return llm.NewFakeProvider(
+			llm.Event{Kind: llm.StepStarted},
+			llm.Event{Kind: llm.StepFailed, Text: "429 Too Many Requests"},
+		).Stream(ctx, req)
+	}
+	return llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.TextStarted},
+		llm.Event{Kind: llm.TextDelta, Text: "recovered"},
+		llm.Event{Kind: llm.TextEnded},
+		llm.Event{Kind: llm.StepEnded},
+	).Stream(ctx, req)
+}
+
+func TestModel_RetryReusesFailedTurnWithoutDuplicatingPrompt(t *testing.T) {
+	store := session.NewMemoryStore()
+	provider := &failOnceProvider{}
+	eng := engine.New(engine.Config{Root: t.TempDir(), Provider: provider, Store: store})
+	m := NewModel(eng, "s1", eng.Events())
+	m = typeRunes(t, m, "hello")
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	for m.working {
+		m = apply(t, m, nextMsg(t, eng.Events(), 5*time.Second))
+	}
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	for m.working {
+		m = apply(t, m, nextMsg(t, eng.Events(), 5*time.Second))
+	}
+	messages, err := store.Messages(context.Background(), "s1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 2 || messages[0].Text != "hello" || messages[1].Text != "recovered" {
+		t.Fatalf("messages = %+v, retry must reuse one user turn and append one answer", messages)
+	}
+}
+
 // drainReveal aplica ticks de reveal hasta agotar el backlog del smooth
 // streaming: los tests cuya asercion presupone el texto ya revelado lo usan
 // para no depender del ritmo de la animacion. El tope de iteraciones evita

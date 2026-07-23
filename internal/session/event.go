@@ -8,9 +8,10 @@ package session
 type EventKind string
 
 const (
-	KindStepStarted EventKind = "Step.Started"
-	KindStepEnded   EventKind = "Step.Ended"
-	KindStepFailed  EventKind = "Step.Failed" // lo emite M8 (manejo de fallos)
+	KindStepStarted  EventKind = "Step.Started"
+	KindStepEnded    EventKind = "Step.Ended"
+	KindStepFailed   EventKind = "Step.Failed" // lo emite M8 (manejo de fallos)
+	KindStepRetrying EventKind = "Step.Retrying"
 
 	KindTextStarted EventKind = "Text.Started"
 	KindTextDelta   EventKind = "Text.Delta"

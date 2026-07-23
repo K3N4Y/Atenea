@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-20
+updated_at: 2026-07-22
 summary: Architecture and behavior of the Atenea terminal user interface.
 ---
 
@@ -44,6 +44,13 @@ text boundary before Markdown, Chroma, or Lip Gloss render it. The boundary
 removes pre-existing ANSI/OSC sequences and C0/C1 controls (preserving line
 breaks and expanding tabs), so only styles generated inside the TUI reach the
 terminal.
+
+Provider failures render once per turn as a compact, categorized English
+message. The raw provider response stays collapsed behind `d details`, where
+terminal controls and credential-shaped values are redacted. `r retry` reruns
+the existing failed turn without admitting a duplicate user message. The
+OpenAI-compatible client performs at most two transient retries, using 2s and
+5s defaults and honoring provider `Retry-After` values up to 10s.
 
 ```
 wails app:  agent.Service -> runner -> EmittingStore -> Bus -> runtime.EventsEmit -> frontend web

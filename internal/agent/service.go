@@ -134,6 +134,25 @@ func (s *Service) AcceptPlan(sessionID string, hooks Hooks) (RunHandle, error) {
 	return s.send(sessionID, AcceptPlanPrompt, session.ModeNormal, hooks)
 }
 
+// Retry reruns the current conversation state without admitting another user
+// message. The failed attempt did not materialize an assistant message, so the
+// last user turn remains the request to execute.
+func (s *Service) Retry(sessionID string, hooks Hooks) (RunHandle, error) {
+	operation := s.operationLock(sessionID)
+	operation.Lock()
+	defer operation.Unlock()
+	s.runtimeMu.RLock()
+	defer s.runtimeMu.RUnlock()
+
+	s.mu.Lock()
+	runner := s.runner
+	s.mu.Unlock()
+	if runner == nil {
+		return RunHandle{}, fmt.Errorf("agent service: runner is not configured")
+	}
+	return s.start(operation, runner, sessionID, true, hooks.AfterRun), nil
+}
+
 func (s *Service) send(sessionID, text string, mode session.Mode, hooks Hooks) (RunHandle, error) {
 	operation := s.operationLock(sessionID)
 	operation.Lock()
@@ -170,6 +189,10 @@ func (s *Service) send(sessionID, text string, mode session.Mode, hooks Hooks) (
 		hooks.AfterAdmit()
 	}
 
+	return s.start(operation, runner, sessionID, false, hooks.AfterRun), nil
+}
+
+func (s *Service) start(operation *sync.Mutex, runner Runner, sessionID string, force bool, afterRun func(RunResult)) RunHandle {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	s.mu.Lock()
@@ -183,17 +206,17 @@ func (s *Service) send(sessionID, text string, mode session.Mode, hooks Hooks) (
 	s.mu.Unlock()
 
 	s.wg.Add(1)
-	go s.execute(operation, runner, ctx, sessionID, run, previous, hooks.AfterRun)
-	return run.RunHandle, nil
+	go s.execute(operation, runner, ctx, sessionID, force, run, previous, afterRun)
+	return run.RunHandle
 }
 
-func (s *Service) execute(operation *sync.Mutex, runner Runner, ctx context.Context, sessionID string, run, previous *activeRun, afterRun func(RunResult)) {
+func (s *Service) execute(operation *sync.Mutex, runner Runner, ctx context.Context, sessionID string, force bool, run, previous *activeRun, afterRun func(RunResult)) {
 	defer s.wg.Done()
 	defer close(run.done)
 	if previous != nil {
 		<-previous.done
 	}
-	err := runner.Run(ctx, sessionID, false)
+	err := runner.Run(ctx, sessionID, force)
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		err = nil
 	}

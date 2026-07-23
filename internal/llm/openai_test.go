@@ -433,7 +433,7 @@ func TestOpenAIProvider_StreamBracketsTextTurn(t *testing.T) {
 // que ignore stream.Err() o que emita StepEnded incondicionalmente.
 func TestOpenAIProvider_StreamEmitsStepFailedOnError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "boom", http.StatusInternalServerError)
+		http.Error(w, "boom", http.StatusServiceUnavailable)
 	}))
 	defer server.Close()
 
@@ -447,7 +447,11 @@ func TestOpenAIProvider_StreamEmitsStepFailedOnError(t *testing.T) {
 	got := drain(out)
 
 	foundFailed := false
+	var retries []string
 	for _, ev := range got {
+		if ev.Kind == StepRetrying {
+			retries = append(retries, ev.Text)
+		}
 		if ev.Kind == StepFailed {
 			foundFailed = true
 		}
@@ -457,6 +461,31 @@ func TestOpenAIProvider_StreamEmitsStepFailedOnError(t *testing.T) {
 	}
 	if !foundFailed {
 		t.Fatalf("no se encontro un evento StepFailed; eventos: %#v", got)
+	}
+	if len(retries) != 2 || !strings.Contains(retries[0], "2s") || !strings.Contains(retries[1], "5s") {
+		t.Fatalf("retry notices = %v, want visible 2s and 5s waits", retries)
+	}
+}
+
+func TestRetryTimingDefaultsAndCapsProviderDelay(t *testing.T) {
+	tests := []struct {
+		attempt string
+		header  http.Header
+		want    string
+	}{
+		{"0", http.Header{}, "2"},
+		{"1", http.Header{}, "5"},
+		{"0", http.Header{"Retry-After": []string{"30"}}, "10"},
+	}
+	for _, tc := range tests {
+		req := httptest.NewRequest(http.MethodPost, "https://example.test", nil)
+		req.Header.Set("X-Stainless-Retry-Count", tc.attempt)
+		resp, err := retryTiming(req, func(*http.Request) (*http.Response, error) {
+			return &http.Response{Header: tc.header}, nil
+		})
+		if err != nil || resp.Header.Get("Retry-After") != tc.want {
+			t.Fatalf("attempt %s: Retry-After = %q, err = %v, want %q", tc.attempt, resp.Header.Get("Retry-After"), err, tc.want)
+		}
 	}
 }
 

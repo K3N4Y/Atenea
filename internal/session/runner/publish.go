@@ -70,6 +70,8 @@ func (p *Publisher) Publish(ctx context.Context, ev llm.Event) error {
 			Kind:  session.KindStepStarted,
 			Usage: &session.Usage{InputTokens: p.estimatedInputTokens},
 		})
+	case llm.StepRetrying:
+		return p.emit(ctx, session.SessionEvent{Kind: session.KindStepRetrying, Text: ev.Text})
 	case llm.StepEnded:
 		// Materializa aqui el unico Message del assistant del turno, coalesciendo el
 		// texto acumulado con los tool_calls (en orden de Tool.Called). Si no hubo

@@ -67,6 +67,7 @@ func (t Transcript) foldEvent(ev EventMsg, sessionID string) Transcript {
 			t.toolInputBytes = 0
 		}
 	case session.KindTextStarted:
+		t = t.removeRetryStatus()
 		t = t.openAssistantBlock()
 	case session.KindTextDelta:
 		t.outputBytes += len(ev.Text)
@@ -77,6 +78,7 @@ func (t Transcript) foldEvent(ev EventMsg, sessionID string) Transcript {
 		}
 		t.lastEntry().text += ev.Text
 	case session.KindReasoningStarted:
+		t = t.removeRetryStatus()
 		t = t.openReasoningBlock()
 	case session.KindReasoningDelta:
 		t.reasoningBytes += len(ev.Text)
@@ -93,6 +95,7 @@ func (t Transcript) foldEvent(ev EventMsg, sessionID string) Transcript {
 			last.closeThinking()
 		}
 	case session.KindStepEnded:
+		t = t.removeRetryStatus()
 		if ev.Usage != nil {
 			usage := *ev.Usage
 			t.usage = &usage
@@ -129,7 +132,10 @@ func (t Transcript) foldEvent(ev EventMsg, sessionID string) Transcript {
 		})
 	case session.KindStepFailed:
 		t.liveUsage = false
+		t = t.removeRetryStatus()
 		t = t.appendError(ev.Error)
+	case session.KindStepRetrying:
+		t = t.setRetryStatus(ev.Text)
 	case session.KindToolInputDelta:
 		t.toolInputBytes += len(ev.Text)
 		t = t.updateLiveUsage()
@@ -142,6 +148,23 @@ func (t Transcript) foldEvent(ev EventMsg, sessionID string) Transcript {
 			t.entries = append(t.entries, entry{kind: entryUser, text: ev.Message.Text})
 		}
 	}
+	return t
+}
+
+func (t Transcript) setRetryStatus(text string) Transcript {
+	t = t.removeRetryStatus()
+	t.entries = append(t.entries, entry{kind: entryRetry, text: text})
+	return t
+}
+
+func (t Transcript) removeRetryStatus() Transcript {
+	kept := t.entries[:0]
+	for _, entry := range t.entries {
+		if entry.kind != entryRetry {
+			kept = append(kept, entry)
+		}
+	}
+	t.entries = kept
 	return t
 }
 
@@ -328,8 +351,43 @@ func (t Transcript) removePendingPlan() Transcript {
 // appendError appends an error block to the end of the conversation; shared by
 // the step's hard failure and the end-of-run with error.
 func (t Transcript) appendError(text string) Transcript {
+	if len(t.entries) > 0 {
+		last := t.entries[len(t.entries)-1]
+		if last.kind == entryError && last.text == text {
+			return t
+		}
+	}
 	t.entries = append(t.entries, entry{kind: entryError, text: text})
 	return t
+}
+
+func (t Transcript) toggleLastErrorDetails() Transcript {
+	for i := len(t.entries) - 1; i >= 0; i-- {
+		if t.entries[i].kind == entryError {
+			t.entries[i].expanded = !t.entries[i].expanded
+			break
+		}
+	}
+	return t
+}
+
+func (t Transcript) removeLastError() Transcript {
+	for i := len(t.entries) - 1; i >= 0; i-- {
+		if t.entries[i].kind == entryError {
+			t.entries = append(t.entries[:i], t.entries[i+1:]...)
+			break
+		}
+	}
+	return t
+}
+
+func (t Transcript) lastErrorIsProvider() bool {
+	for i := len(t.entries) - 1; i >= 0; i-- {
+		if t.entries[i].kind == entryError {
+			return isProviderError(t.entries[i].text)
+		}
+	}
+	return false
 }
 
 // appendNotice adds a dim informational line to the conversation (a provider
@@ -563,7 +621,7 @@ func (t Transcript) visibleEntries() []visibleEntry {
 // path and the click-targeting path share one join decision by construction.
 func compactActivityJoin(prev, cur entry) bool {
 	isActivity := func(kind entryKind) bool {
-		return kind == entryTool || kind == entryPermission || kind == entryError
+		return kind == entryTool || kind == entryPermission || kind == entryError || kind == entryRetry
 	}
 	return isActivity(prev.kind) && isActivity(cur.kind)
 }

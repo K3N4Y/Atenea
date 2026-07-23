@@ -557,6 +557,12 @@ func (e *Engine) SendPrompt(sessionID, text string) (RunHandle, error) {
 	return RunHandle{SessionID: sessionID, RunID: run.ID}, nil
 }
 
+// RetryPrompt reruns the failed turn without adding a duplicate user message.
+func (e *Engine) RetryPrompt(sessionID string) (RunHandle, error) {
+	run, err := e.agent.Retry(sessionID, e.turnHooks(sessionID, "", e.agent.Mode(sessionID)))
+	return RunHandle{SessionID: sessionID, RunID: run.ID}, err
+}
+
 // SendPlanPrompt encola el prompt en plan-mode: investigacion de solo lectura
 // mas present_plan, con el contrato de plan-mode en el system prompt. Fija
 // ModePlan antes de arrancar (espejo de App.SendPlanPrompt).
