@@ -40,9 +40,9 @@ import MessageList from '../components/MessageList.vue'
 import PlanView from '../components/PlanView.vue'
 import PlanCard from '../components/PlanCard.vue'
 import WorkspacePicker from '../components/WorkspacePicker.vue'
-import DiffScreen from '../components/DiffScreen.vue'
+import DiffScreen from '../features/git/DiffScreen.vue'
 import { useChatStore } from '../stores/chat'
-import { useGitStore } from '../stores/git'
+import { useGitStore } from '../features/git/git'
 
 function presentPlan(chat: ReturnType<typeof useChatStore>) {
   chat.applyEvent({

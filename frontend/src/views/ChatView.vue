@@ -14,9 +14,9 @@ import PlanCard from '../components/PlanCard.vue'
 import TodoList from '../components/TodoList.vue'
 import ContextUsedBar from '../components/ContextUsedBar.vue'
 import DevEventPanel from '../components/DevEventPanel.vue'
-import DiffScreen from '../components/DiffScreen.vue'
+import DiffScreen from '../features/git/DiffScreen.vue'
 import { useChatStore } from '../stores/chat'
-import { useGitStore } from '../stores/git'
+import { useGitStore } from '../features/git/git'
 import { knownWorkspaces } from '../lib/sessions'
 
 // Solo en dev: panel para disparar eventos canned y construir la UI sin agente.

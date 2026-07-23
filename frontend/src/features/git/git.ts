@@ -6,7 +6,7 @@ import {
   Commit,
   InitRepo,
   FileDiff,
-} from '../../wailsjs/go/main/App'
+} from '../../../wailsjs/go/main/App'
 
 // Estado de la tab Git de las dev tools: los cambios staged/untracked, el mensaje
 // del commit y los flags de carga. Las acciones hablan con el backend (bindings

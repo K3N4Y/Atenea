@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { ref } from 'vue'
 import { useChatStore, type SessionEvent } from '../stores/chat'
-import { useGitStore } from '../stores/git'
+import { useGitStore } from '../features/git/git'
 import { useUiStore } from '../stores/ui'
 
 // ponytail: herramienta solo-dev. Dispara SessionEvents canned por el mismo
@@ -199,7 +199,7 @@ const presets: { key: string; label: string; run: () => void }[] = [
           { path: 'app.go', status: 'M' },
           { path: 'git.go', status: 'A' },
         ],
-        [{ path: 'frontend/src/stores/git.ts', status: 'M' }],
+        [{ path: 'frontend/src/features/git/git.ts', status: 'M' }],
         [{ path: 'docs/Harness.md', status: '??' }],
       ),
   },
@@ -224,7 +224,7 @@ const presets: { key: string; label: string; run: () => void }[] = [
           { path: 'docs/borrado.md', status: 'D' },
         ],
         [
-          { path: 'frontend/src/stores/git.ts', status: '??' },
+          { path: 'frontend/src/features/git/git.ts', status: '??' },
           { path: 'frontend/src/components/DevToolsPanel.vue', status: '??' },
           { path: 'notas/borrador-sin-trackear.md', status: '??' },
         ],

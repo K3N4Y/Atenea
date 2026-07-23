@@ -7,7 +7,7 @@ const Commit = vi.fn()
 const InitRepo = vi.fn()
 const FileDiff = vi.fn()
 
-vi.mock('../../wailsjs/go/main/App', () => ({
+vi.mock('../../../wailsjs/go/main/App', () => ({
   GitStatus: () => GitStatus(),
   GenerateCommitMessage: vi.fn(),
   Commit: (msg: string) => Commit(msg),

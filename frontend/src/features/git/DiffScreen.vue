@@ -3,8 +3,8 @@ import { computed, onMounted, onUnmounted } from 'vue'
 import { PhX } from '@phosphor-icons/vue'
 import hljs from 'highlight.js/lib/common'
 import DOMPurify from 'dompurify'
-import { buildSideBySide, langForPath, type DiffCell } from '../lib/diff'
-import { basename } from '../lib/path'
+import { buildSideBySide, langForPath, type DiffCell } from '../../lib/diff'
+import { basename } from '../../lib/path'
 
 // Pantalla de diff a dos columnas (estilo VSCode): se abre desde el panel de git
 // al seleccionar un archivo. Overlay sobre la columna del chat (no tapa la sidebar

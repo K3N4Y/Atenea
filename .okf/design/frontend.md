@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-09
+updated_at: 2026-07-22
 summary: Frontend experience proposal based on the project visual identity.
 ---
 
@@ -77,6 +77,25 @@ Additionally, channel `session:<id>:error` notifies hard errors of the run (supp
 
 > Today `App.vue` already cables a single session (`sessionID = 'main'`). The Pinia store must formalize this event→state mapping: messages, text streaming, reasoning block (last 4 lines + timer of §9) and state of each tool.
 
+## Source organization
+
+Frontend code is organized by product capability when state, presentation, and
+tests change together:
+
+```text
+src/
+├── features/       # Capability modules, for example Git
+├── components/     # Presentation shared by multiple capabilities
+├── stores/         # Cross-capability application state
+├── views/          # Route-level composition
+└── lib/            # Framework-independent shared utilities
+```
+
+A feature owns its local store, dedicated views, and colocated tests. Code stays
+in `components`, `stores`, or `lib` when it is genuinely shared. For example,
+`features/git` owns Git state and its full-screen diff, while the inline
+`DiffView` remains shared because tool results also use it.
+
 ## Persistence and source of truth
 
 - **Chat History:** lives in the Go backend (SQLite, `internal/session/sqlitestore.go`), which is the **sole source of truth**. The frontend reads it and rehydrates it from there using bindings; does not duplicate it in `localStorage`.
@@ -87,7 +106,7 @@ Additionally, channel `session:<id>:error` notifies hard errors of the run (supp
 ### Phase 1: application base
 - Initialize the project with Vue 3, TypeScript and Vite.
 - Configure Tailwind CSS, Pinia, Vue Router and the Red Hat Mono source.
-- Create the base folder structure: components, stores, views and styles.
+- Create the base folder structure for features, shared components, cross-feature stores, views, and styles.
 
 ### Phase 2: MVP chat experience
  - Build the main layout with a central chat and a persistent sidebar. AI responses in a continuous stream from `Text.*` events.
