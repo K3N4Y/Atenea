@@ -39,7 +39,7 @@ func TestApp_EmitsSessionsChangedOnExternalDBWrite(t *testing.T) {
 
 	rec := &recordingEmit{}
 	a := newAppWithStore(store, demoProvider(), rec.emit)
-	a.watchInterval = 10 * time.Millisecond // acelera el polling en el test
+	a.sessions.SetWatchPeriod(10 * time.Millisecond) // acelera el polling en el test
 	a.startup(ctx)
 
 	// El "otro proceso": un segundo store (otro pool) sobre el mismo archivo.

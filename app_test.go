@@ -13,6 +13,7 @@ import (
 	"atenea/internal/agent"
 	"atenea/internal/llm"
 	"atenea/internal/session"
+	"atenea/internal/wailssession"
 )
 
 // recordingEmit registra cada emision (canal, payload[0]) de forma segura ante
@@ -1158,7 +1159,8 @@ func TestTitleFromProvider_AccumulatesStreamText(t *testing.T) {
 		llm.Event{Kind: llm.TextEnded},
 		llm.Event{Kind: llm.StepEnded},
 	)
-	if got := titleFromProvider(prov, "modelo", "como configuro el proxy"); got != "Configurar el proxy" {
+	titler := wailssession.ProviderTitler(func() (llm.Provider, string) { return prov, "modelo" })
+	if got := titler("como configuro el proxy"); got != "Configurar el proxy" {
 		t.Fatalf("titleFromProvider: got %q, want %q", got, "Configurar el proxy")
 	}
 }
@@ -1194,7 +1196,7 @@ func TestTitleFromProvider_BoundsContextWithDeadline(t *testing.T) {
 		{Kind: llm.TextDelta, Text: "Titulo"},
 		{Kind: llm.TextEnded},
 	}}
-	titleFromProvider(prov, "modelo", "hola")
+	wailssession.ProviderTitler(func() (llm.Provider, string) { return prov, "modelo" })("hola")
 	if prov.gotCtx == nil {
 		t.Fatal("titleFromProvider no llamo a Stream")
 	}
@@ -1207,7 +1209,8 @@ func TestTitleFromProvider_BoundsContextWithDeadline(t *testing.T) {
 // "" para que el caller caiga al fallback (el primer mensaje).
 func TestTitleFromProvider_EmptyWhenNoText(t *testing.T) {
 	prov := llm.NewFakeProvider(llm.Event{Kind: llm.StepStarted}, llm.Event{Kind: llm.StepEnded})
-	if got := titleFromProvider(prov, "modelo", "hola"); got != "" {
+	titler := wailssession.ProviderTitler(func() (llm.Provider, string) { return prov, "modelo" })
+	if got := titler("hola"); got != "" {
 		t.Fatalf("titleFromProvider sin texto: got %q, want empty", got)
 	}
 }
@@ -1217,7 +1220,7 @@ func TestTitleFromProvider_EmptyWhenNoText(t *testing.T) {
 // del primer prompt.
 func TestApp_AutoTitlesFirstMessage(t *testing.T) {
 	app := newApp(demoProvider(), func(string, ...interface{}) {})
-	app.titler = func(string) string { return "Titulo Generado" }
+	app.sessions.SetTitler(func(string) string { return "Titulo Generado" })
 
 	if err := app.SendPrompt("s1", "hola, este es el primer mensaje"); err != nil {
 		t.Fatalf("SendPrompt: %v", err)
@@ -1237,7 +1240,7 @@ func TestApp_AutoTitlesFirstMessage(t *testing.T) {
 // no se persiste nada y la sidebar cae al primer mensaje (el fallback pedido).
 func TestApp_AutoTitleFallsBackToFirstMessageWhenEmpty(t *testing.T) {
 	app := newApp(demoProvider(), func(string, ...interface{}) {})
-	app.titler = func(string) string { return "" }
+	app.sessions.SetTitler(func(string) string { return "" })
 
 	if err := app.SendPrompt("s1", "mi primer mensaje"); err != nil {
 		t.Fatalf("SendPrompt: %v", err)
@@ -1259,12 +1262,12 @@ func TestApp_AutoTitleSkipsSecondMessage(t *testing.T) {
 	app := newApp(demoProvider(), func(string, ...interface{}) {})
 	var mu sync.Mutex
 	calls := 0
-	app.titler = func(string) string {
+	app.sessions.SetTitler(func(string) string {
 		mu.Lock()
 		calls++
 		mu.Unlock()
 		return "T"
-	}
+	})
 
 	if err := app.SendPrompt("s1", "primero"); err != nil {
 		t.Fatalf("SendPrompt #1: %v", err)
@@ -1298,14 +1301,14 @@ func TestApp_TitleGeneratedAfterTurnStreams(t *testing.T) {
 	), rec.emit)
 
 	turnDoneBeforeTitle := false
-	app.titler = func(string) string {
+	app.sessions.SetTitler(func(string) string {
 		for _, ev := range rec.eventsOn("session:s1") {
 			if ev.Kind == session.KindStepEnded {
 				turnDoneBeforeTitle = true
 			}
 		}
 		return "Titulo"
-	}
+	})
 
 	if err := app.SendPrompt("s1", "hola"); err != nil {
 		t.Fatalf("SendPrompt: %v", err)

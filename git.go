@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"atenea/internal/llm"
 	"atenea/internal/wailsprovider"
@@ -16,9 +17,10 @@ type GitStatus = workspacegit.Status
 
 const commitSystemPrompt = "Genera un mensaje de commit conciso (una linea, estilo conventional commits si aplica) para el diff staged que te paso el usuario. Responde SOLO con el mensaje, sin comillas, sin explicaciones."
 const maxDiffRunes = 12000
+const commitTurnTimeout = 30 * time.Second
 
 func commitMessageFromProvider(p llm.Provider, model, diff string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), auxTurnTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), commitTurnTimeout)
 	defer cancel()
 	out, err := p.Stream(ctx, llm.Request{
 		Model:    model,

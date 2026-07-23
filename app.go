@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"atenea/internal/agent"
@@ -20,6 +19,7 @@ import (
 	"atenea/internal/terminal"
 	"atenea/internal/tool"
 	"atenea/internal/wailsprovider"
+	"atenea/internal/wailssession"
 	"atenea/internal/wailsworkspace"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -57,24 +57,11 @@ type App struct {
 	inbox     session.Inbox
 	bus       *event.Bus
 	emit      event.EmitFunc                // la misma frontera que usa el bus; la tab Terminal empuja su salida por aca
-	store     session.Store                 // lectura del historial para la sidebar (ListSessions/SessionHistory)
 	gate      *session.MemoryPermissionGate // ask-before-run: the UI resolves via ResolveToolPermission
 	agent     *agent.Service                // ciclo headless compartido con la TUI
 	providers *wailsprovider.Manager        // provider/config atomicos; SetProvider publica snapshots completos
 	workspace *wailsworkspace.Manager       // root, wiring, glob y MCP publicados como un snapshot serializado
-
-	// versioner es el store crudo si sabe exponer su data_version (SQLite sobre
-	// archivo); startup lanza con el un watcher que emite "sessions:changed"
-	// cuando OTRO proceso (la TUI) escribe la base compartida. nil (MemoryStore)
-	// = sin watcher. watchInterval es el periodo de sondeo; los tests lo acortan.
-	versioner     event.DataVersioner
-	watchInterval time.Duration
-
-	// titler genera el titulo de una sesion a partir de su primer mensaje. nil
-	// (default en tests) = sin auto-title: la sidebar cae al primer mensaje.
-	// NewApp lo cablea contra el provider real; un titler vacio ("") tambien cae
-	// al fallback.
-	titler func(firstMessage string) string
+	sessions  *wailssession.Manager         // historial durable, metadata inicial, titulos y borrado
 
 	term *terminal.Manager // las tabs Terminal: varias sesiones pty vivas por id
 }
@@ -98,15 +85,14 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 	// El watcher del data_version se ancla al store CRUDO (antes de decorarlo):
 	// solo el SQLiteStore sobre archivo sabe exponerlo; un MemoryStore no, y la
 	// app queda sin watcher (no hay otro proceso posible sobre memoria).
-	a.watchInterval = 1 * time.Second
+	var versioner event.DataVersioner
 	if v, ok := store.(event.DataVersioner); ok {
-		a.versioner = v
+		versioner = v
 	}
 	a.emit = emit
 	a.bus = event.NewBus(emit)
 	a.term = terminal.NewManager()
 	emitting := event.NewEmittingStore(store, a.bus)
-	a.store = emitting // las lecturas del historial delegan en inner sin emitir
 	a.inbox = session.NewMemoryInbox()
 	a.agent = agent.NewService(a.inbox)
 	// read, write y edit comparten snapshots por sesion: read graba hash + lineas
@@ -129,7 +115,11 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 			state := a.providers.Snapshot()
 			return wailsworkspace.ProviderState{Provider: state.Provider, Local: state.Local}
 		},
-		Store: a.store, Inbox: a.inbox, Gate: a.gate, Snapshots: snaps, Bus: a.bus, Agent: a.agent,
+		Store: emitting, Inbox: a.inbox, Gate: a.gate, Snapshots: snaps, Bus: a.bus, Agent: a.agent,
+	})
+	a.sessions = wailssession.New(wailssession.Config{
+		Store: emitting, Root: a.workspace.Root, Forget: a.agent.Forget,
+		Versioner: versioner, Emit: emit, WatchPeriod: time.Second,
 	})
 	return a
 }
@@ -168,9 +158,9 @@ func NewApp() *App {
 	// Solo en produccion; los tests dejan titler nil para no doblar las llamadas al
 	// provider en cada envio. Lee provider y modelo vigentes (SetProvider puede
 	// cambiarlos en vivo) desde el snapshot del manager.
-	a.titler = func(message string) string {
-		return titleFromProvider(a.currentProvider(), a.currentModel(), message)
-	}
+	a.sessions.SetTitler(wailssession.ProviderTitler(func() (llm.Provider, string) {
+		return a.currentProvider(), a.currentModel()
+	}))
 	return a
 }
 
@@ -246,97 +236,18 @@ func (a *App) currentModel() string {
 // cancela al cerrar la app, lo que apaga el watcher.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	if a.versioner != nil {
-		go event.WatchStore(ctx, a.versioner, a.watchInterval, func() {
-			a.emit("sessions:changed")
-		})
-	}
+	a.sessions.Watch(ctx)
 }
 
 // SendPrompt admite el texto como prompt en cola y arranca Run en una goroutine.
 // Es el binding que el frontend llama al enviar. Fija modo normal primero: una
 // sesion que estaba en plan-mode vuelve a las tools normales al enviar.
 func (a *App) SendPrompt(sessionID, text string) error {
-	job := a.titleJob(sessionID, text)
+	turn := a.sessions.Turn(sessionID, text)
 	return a.workspace.Admit(func() error {
-		_, err := a.agent.Send(sessionID, text, a.turnHooks(sessionID, job))
+		_, err := a.agent.Send(sessionID, text, a.turnHooks(sessionID, turn))
 		return err
 	})
-}
-
-// auxTurnTimeout acota los turnos aislados auxiliares (titulo de sesion, mensaje de
-// commit). Sin deadline, un SSE colgado deja la goroutine viva para siempre con el
-// body abierto; estos turnos son cortos, asi que un limite acotado es seguro.
-const auxTurnTimeout = 30 * time.Second
-
-// titleSystemPrompt instruye al modelo a devolver SOLO un titulo corto del primer
-// mensaje, sin adornos. El recorte a 80 runes lo hace la proyeccion Sessions.
-const titleSystemPrompt = "Genera un titulo muy corto (maximo 6 palabras) para una conversacion que empieza con el mensaje del usuario. Responde SOLO con el titulo, en el idioma del mensaje, sin comillas, sin punto final y sin prefijos."
-
-// titleJob devuelve la tarea de titulado para el PRIMER mensaje de una sesion
-// nueva, o nil si no aplica (sin titler cableado, o la sesion ya existe). El
-// chequeo de "sesion nueva" es sincrono y debe correr ANTES de arrancar Run (que
-// crea la sesion al promover el prompt). La tarea se ejecuta DESPUES del turno, no
-// en paralelo: el titulado comparte el provider con el turno y, lanzado a la vez,
-// le compite la peticion (en proveedores que encolan/limitan peticiones
-// concurrentes el turno se atrasa y el streaming en vivo no aparece a tiempo).
-// Si el titulo sale vacio no persiste nada y la sidebar cae al primer mensaje.
-func (a *App) titleJob(sessionID, message string) func() {
-	if a.titler == nil {
-		return nil
-	}
-	if _, err := a.store.LoadSession(context.Background(), sessionID); err == nil {
-		return nil // la sesion ya existe: no es el primer mensaje
-	}
-	return func() {
-		title := strings.TrimSpace(a.titler(message))
-		if title == "" {
-			return
-		}
-		if _, err := a.store.AppendEvent(context.Background(), sessionID,
-			session.SessionEvent{Kind: session.KindSessionTitle, Text: title}); err != nil {
-			log.Printf("atenea: no se pudo guardar el titulo de %s: %v", sessionID, err)
-		}
-	}
-}
-
-// titleFromProvider abre un turno aislado contra el provider (system de titulado +
-// el primer mensaje) y concatena el texto del stream como titulo, recortando
-// espacios. "" si el stream falla o no produce texto: el caller cae al fallback.
-func titleFromProvider(p llm.Provider, model, message string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), auxTurnTimeout)
-	defer cancel()
-	out, err := p.Stream(ctx, llm.Request{
-		Model:    model,
-		System:   titleSystemPrompt,
-		Messages: []llm.Message{{Role: "user", Text: message}},
-	})
-	if err != nil {
-		return ""
-	}
-	var b strings.Builder
-	for ev := range out {
-		if ev.Kind == llm.TextDelta {
-			b.WriteString(ev.Text)
-		}
-	}
-	return strings.TrimSpace(b.String())
-}
-
-// captureCwd graba la carpeta de trabajo vigente como Session.Cwd la PRIMERA vez
-// que se manda un prompt a la sesion (cuando aun no existe en el store). La sidebar
-// agrupa los chats por esa carpeta. Debe correr DESPUES del chequeo de "sesion
-// nueva" de titleJob (ambos miran LoadSession) y ANTES de admitir el prompt, asi el
-// Session.Cwd queda de primero en el log. Idempotente: en la sesion ya existente no
-// hace nada. Un fallo al grabar no corta el envio: la carpeta solo afecta la sidebar.
-func (a *App) captureCwd(sessionID string) {
-	if _, err := a.store.LoadSession(context.Background(), sessionID); err == nil {
-		return // la sesion ya existe: no es el primer prompt
-	}
-	if _, err := a.store.AppendEvent(context.Background(), sessionID,
-		session.SessionEvent{Kind: session.KindSessionCwd, Text: a.workspace.Root()}); err != nil {
-		log.Printf("atenea: no se pudo guardar la carpeta de %s: %v", sessionID, err)
-	}
 }
 
 // Workspace devuelve la carpeta de trabajo vigente. La UI la muestra en la sidebar
@@ -423,9 +334,9 @@ func (a *App) SelectWorkspace() (string, error) {
 // present_plan, con el contrato de plan-mode en el system prompt. Fija ModePlan
 // antes de arrancar. Es el binding que el frontend llama al planear una feature.
 func (a *App) SendPlanPrompt(sessionID, text string) error {
-	job := a.titleJob(sessionID, text)
+	turn := a.sessions.Turn(sessionID, text)
 	return a.workspace.Admit(func() error {
-		_, err := a.agent.SendPlan(sessionID, text, a.turnHooks(sessionID, job))
+		_, err := a.agent.SendPlan(sessionID, text, a.turnHooks(sessionID, turn))
 		return err
 	})
 }
@@ -444,7 +355,7 @@ func (a *App) AcceptPlan(sessionID string) error {
 // sesion (ID + Title del primer prompt), mas reciente primero. Es el binding que
 // el frontend llama al montar la vista. Lee del store durable sin emitir.
 func (a *App) ListSessions() ([]session.SessionSummary, error) {
-	return a.store.Sessions(context.Background())
+	return a.sessions.List(context.Background())
 }
 
 // SessionHistory devuelve el log durable completo de una sesion (los mismos
@@ -452,7 +363,7 @@ func (a *App) ListSessions() ([]session.SessionSummary, error) {
 // y rehidrate la conversacion. Es el binding que el frontend llama al abrir una
 // sesion del historial.
 func (a *App) SessionHistory(sessionID string) ([]session.SessionEvent, error) {
-	return a.store.Events(context.Background(), sessionID, 0)
+	return a.sessions.History(context.Background(), sessionID)
 }
 
 // ListProjectFiles lista los archivos del workspace (rutas relativas a la raiz,
@@ -482,8 +393,7 @@ func (a *App) ResolveToolPermission(sessionID, callID string, approved bool) {
 // de la sesion (si la hay), olvida su modo, y borra su log durable del store. Es
 // el binding que el frontend llama al borrar un chat de la sidebar.
 func (a *App) DeleteSession(sessionID string) error {
-	a.agent.Forget(sessionID)
-	return a.store.DeleteSession(context.Background(), sessionID)
+	return a.sessions.Delete(context.Background(), sessionID)
 }
 
 // Stop cancela la corrida en vuelo de sessionID (boton stop). No-op si no corre.
@@ -491,18 +401,20 @@ func (a *App) Stop(sessionID string) {
 	a.agent.Stop(sessionID)
 }
 
-func (a *App) turnHooks(sessionID string, afterRun func()) agent.Hooks {
+func (a *App) turnHooks(sessionID string, turn *wailssession.Turn) agent.Hooks {
 	return agent.Hooks{
 		BeforeAdmit: func() error {
-			a.captureCwd(sessionID)
+			if turn != nil {
+				return turn.BeforeAdmit()
+			}
 			return nil
 		},
 		AfterRun: func(result agent.RunResult) {
 			if result.Err != nil {
 				a.bus.PublishError(sessionID, result.Err)
 			}
-			if result.Current && afterRun != nil {
-				afterRun()
+			if turn != nil {
+				turn.AfterRun(result.Current)
 			}
 		},
 	}
