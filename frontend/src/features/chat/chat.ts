@@ -6,12 +6,8 @@ import {
   AcceptPlan,
   Stop,
   ResolveToolPermission,
-  ListSessions,
-  SessionHistory,
-  DeleteSession,
   ListProjectFiles,
   ListCommands,
-  SetWorkspace,
 } from '../../../wailsjs/go/main/App'
 import { EventsOn } from '../../../wailsjs/runtime/runtime'
 import type { Command } from '../../lib/command'
@@ -21,7 +17,6 @@ import type {
   PlanState,
   ReasoningItem,
   SessionEvent,
-  SessionSummary,
   TodoItem,
   TodoStatus,
   ToolItem,
@@ -30,6 +25,7 @@ import type {
 } from './types'
 import { createProviderState } from '../settings/provider'
 import { createWorkspaceState } from '../workspace/workspace'
+import { createSessionState } from '../sessions/sessionState'
 
 // Mapeo evento->estado de la sesion (front.md §74). El store formaliza la
 // traduccion de los eventos durables del canal `session:<id>` a items del log
@@ -102,9 +98,6 @@ export const useChatStore = defineStore(
     const items = ref<TurnItem[]>([])
     const running = ref(false)
     const errorText = ref<string | null>(null)
-    // Historial de chats para la sidebar. La fuente de verdad es el backend; se
-    // refresca con loadSessions (al montar la vista) y tras enviar un prompt.
-    const sessions = ref<SessionSummary[]>([])
     // Modo de envio: 'normal' manda prompts directos; 'plan' pide al agente que
     // planifique antes de ejecutar. `plan` guarda el plan vigente que la tool
     // present_plan abre a pantalla completa (null = sin overlay de plan).
@@ -173,6 +166,20 @@ export const useChatStore = defineStore(
     let resolveSessionByCall = new Map<string, string>()
     let seq = 0
     const unsubscribe: Array<() => void> = []
+
+    const { sessions, loadSessions, loadSession, deleteSession } =
+      createSessionState({
+        sessionID,
+        workspace,
+        resetChat: () => reset(),
+        clearLog: () => clearLog(),
+        isSubscribed: () => unsubscribe.length > 0,
+        teardown: () => teardown(),
+        subscribe: () => subscribe(),
+        applyEvent: (event) => applyEvent(event),
+        refreshWorkspaceResources: () =>
+          Promise.all([loadProjectFiles(), loadCommands()]),
+      })
 
     function nextId(): string {
       seq += 1
@@ -404,12 +411,6 @@ export const useChatStore = defineStore(
       loadCommands()
     }
 
-    // loadSessions trae el historial del backend para poblar la sidebar. Idempotente:
-    // la vista la llama al montar y el store tras cada send.
-    async function loadSessions(): Promise<void> {
-      sessions.value = await ListSessions()
-    }
-
     // loadProjectFiles trae el listado de archivos del workspace del backend para
     // el @-menu del composer. Idempotente: la vista la llama una vez al montar. Si
     // el binding falla (arranque sin backend) degrada a lista vacia: el menu queda
@@ -436,38 +437,6 @@ export const useChatStore = defineStore(
       } catch {
         commands.value = []
       }
-    }
-
-    // deleteSession borra una conversacion del historial: la quita del backend, y si
-    // era la sesion activa abre un chat nuevo (reset). Luego refresca la sidebar.
-    async function deleteSession(id: string): Promise<void> {
-      await DeleteSession(id)
-      if (id === sessionID.value) reset()
-      await loadSessions()
-    }
-
-    // loadSession abre una sesion del historial: cambia el sessionID activo, mueve
-    // la suscripcion al canal de esa sesion, limpia el lienzo y reproduce el log
-    // durable via applyEvent (reusa todo el render de texto/pensamiento/tools). El
-    // log persistido incluye los *.Ended/Step.Ended, asi que los items convergen a
-    // su estado terminal (no quedan en streaming) y running queda apagado.
-    async function loadSession(id: string): Promise<void> {
-      // Abrir un chat de otra carpeta cambia el workspace en vivo: el agente queda
-      // apuntando a la carpeta en que se creo ese chat. Se hace antes de reproducir
-      // el log para que un envio posterior corra en la carpeta correcta.
-      const summary = sessions.value.find((s) => s.ID === id)
-      if (summary?.Cwd && summary.Cwd !== workspace.value) {
-        await SetWorkspace(summary.Cwd)
-        workspace.value = summary.Cwd
-        await Promise.all([loadProjectFiles(), loadCommands()])
-      }
-      const wasSubscribed = unsubscribe.length > 0
-      teardown()
-      sessionID.value = id
-      clearLog()
-      if (wasSubscribed) subscribe()
-      const history = await SessionHistory(id)
-      for (const ev of history) applyEvent(ev)
     }
 
     async function send(text: string): Promise<void> {

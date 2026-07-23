@@ -8,6 +8,7 @@ summary: Frontend experience proposal based on the project visual identity.
 This document brings together the interface and experience proposal for Atenea, based on the visual identity and UX defined in [visual-identity.md](visual-identity.md).
 
 ## Key principles
+
 - Minimalism and visual cleanliness.
 - Chat experience first, with zero friction.
 - Soft, organic shapes with rounded edges.
@@ -15,6 +16,7 @@ This document brings together the interface and experience proposal for Atenea, 
 - Moderate use of orange as an accent.
 
 ## References
+
 - [visual-identity.md](visual-identity.md)
 - [visual-identity.md](visual-identity.md#1-concepto-principal)
 - [visual-identity.md](visual-identity.md#2-principios-de-diseno-uxui)
@@ -28,11 +30,13 @@ This document brings together the interface and experience proposal for Atenea, 
 - [visual-identity.md](visual-identity.md#11-voz-y-microcopy)
 
 ## UI/UX Direction
+
 The interface should feel accessible, fluid, and simple, with a clean main chat, persistent sidebar, and clear status language to communicate progress and control to the user.
 
 ## Recommended libraries
 
 ### Core
+
 - Vue 3
 - TypeScript
 - Vite
@@ -40,34 +44,42 @@ The interface should feel accessible, fluid, and simple, with a clean main chat,
 - Pinia
 
 ### UI and Styles
+
 - Tailwind CSS
 - Phosphor Icons
 - @fontsource/red-hat-mono
 
 ### Chat and content
+
 - marked
 - DOMPurify
 - highlight.js or shiki
 
 ### UX and utilities
+
 - @vueuse/core
 - GSAP
 - date-fns or dayjs
 
 ### Persistence
+
 - pinia-plugin-persistedstate, **for UI state only** (collapsed sidebar, view preferences). Chat history is not persisted here: it lives in the backend (see [Persistence and source of truth](#persistencia-y-fuente-de-verdad)].
 
 ## Integration with the backend (Wails)
 
-Atenea is a **Wails** desktop application (Go + webview), not a web SPA. The frontend does not talk to an HTTP server or do fetch/REST: it communicates with the Go backend using generated *bindings* and Wails runtime events. Development phases are built on this surface, not on HTTP calls.
+Atenea is a **Wails** desktop application (Go + webview), not a web SPA. The frontend does not talk to an HTTP server or do fetch/REST: it communicates with the Go backend using generated _bindings_ and Wails runtime events. Development phases are built on this surface, not on HTTP calls.
 
 ### Bindings (user actions)
+
 Generated in `frontend/wailsjs/go/main/App`:
+
 - `SendPrompt(sessionID, text)`: sends a prompt to the session.
 - `Stop(sessionID)`: interrupts the generation in progress.
 
 ### Events (state and streaming)
+
 Via `EventsOn` of the runtime (`frontend/wailsjs/runtime/runtime`). Channel `session:<id>` emits the durable log events in order of `Seq`:
+
 - `Text.Started` / `Text.Delta` / `Text.Ended`: AI text streaming.
 - `Reasoning.Started` / `Reasoning.Delta` / `Reasoning.Ended`: AI thinking (powers the identity thinking block §9).
 - `Tool.Called` / `Tool.Success` / `Tool.Failed`: tool execution (feeds the identity tool states §10).
@@ -104,11 +116,14 @@ known folders from session summaries. Chat injects its session-reset and
 history-refresh effects into the workspace module, then exposes the same
 workspace ref and operations through its existing store interface. This keeps
 the persisted `workspace` key compatible without duplicating state or adding a
-second Pinia store. `features/sessions` owns session grouping and the history sidebar;
-session mutations remain in the chat store until their shared contracts are
-separated. Shared chat, session, tool, plan, todo, usage, and event contracts
-live in `features/chat/types.ts`; feature modules depend on these contracts
-instead of importing types from the chat store implementation. The chat feature
+second Pinia store. `features/sessions` owns session grouping, the history
+sidebar, and the state and orchestration for listing, deleting, switching,
+and rehydrating sessions. Chat injects its live-log rendering, subscription,
+reset, and workspace-resource effects into that module while continuing to
+expose the same refs and methods through its existing store interface. Shared
+chat, session, tool, plan, todo, usage, and event contracts live in
+`features/chat/types.ts`; feature modules depend on these contracts instead of
+importing types from the chat store implementation. The chat feature
 also owns its Pinia store, route-level `ChatView`, and their tests; the router
 loads the view from this module. Chat-specific presentation—including the
 composer and its menus, message renderers, planning UI, todo list, context bar,
@@ -126,24 +141,29 @@ keys, but no longer owns that implementation.
 ## Frontend development path
 
 ### Phase 1: application base
+
 - Initialize the project with Vue 3, TypeScript and Vite.
 - Configure Tailwind CSS, Pinia, Vue Router and the Red Hat Mono source.
 - Create the base folder structure for features, shared components, cross-feature stores, views, and styles.
 
 ### Phase 2: MVP chat experience
- - Build the main layout with a central chat and a persistent sidebar. AI responses in a continuous stream from `Text.*` events.
+
+- Build the main layout with a central chat and a persistent sidebar. AI responses in a continuous stream from `Text.*` events.
 
 ### Phase 3: rendering and visual states
+
 - Integrate Markdown for AI responses.
 - Add support for code blocks, tool states and progress states from `Tool.*` and `Step.*` events.
 - Define thought visualization (`Reasoning.*` events), file reading and activity microcopy.
 
 ### Phase 4: persistence and refinement
+
 - Persist only the UI state (collapsed sidebar, preferences) with `pinia-plugin-persistedstate`; chat history is read from the backend (see [Persistence and source of truth](#persistencia-y-fuente-de-verdad)).
 - Add smooth animations with GSAP for transitions and microinteractions.
 - Adjust spacing, typography, colors and components to align with the visual identity.
 
 ### Phase 5: quality and scalability
+
 - Add unit tests for components and stores.
 - Improve accessibility, responsiveness and performance.
 - Prepare the app to integrate new agent capabilities without rewriting the UI.
