@@ -93,6 +93,7 @@ interaction similar to LazyVim, without running tools or modifying the filesyste
 - The explorer retains its current width and viewport.
 - The viewer uses all the remaining width, including the space previously occupied by
  transcript, autocomplete menu, composer and status.
+- The viewer header and file content keep the same two-cell horizontal margin as the chat.
 - If the terminal is too narrow to show both columns, the viewer replaces the
  explorer for the duration of read mode, so the open file remains visible; a
  later resize restores the split layout and the file offset.

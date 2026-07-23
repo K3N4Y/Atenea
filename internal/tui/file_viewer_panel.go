@@ -29,6 +29,7 @@ package tui
 
 import (
 	"errors"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -198,11 +199,18 @@ func (v *fileViewerPanel) scrollBy(delta, height int) {
 // lines. width is the panel column width and height the full body height; the
 // panel reserves its own header row. This mirrors the former renderFileViewer.
 func (v fileViewerPanel) view(width, height int) string {
+	margin := composerOuterMargin
+	if width >= 0 {
+		margin = min(margin, width/2)
+		width = max(width-2*margin, 0)
+	}
 	contentHeight := max(height-1, 0)
 	header := statusStyle.Render(v.viewer.header(width, contentHeight))
 	body := v.viewer.render(width, contentHeight)
+	content := header
 	if body == "" {
-		return header
+		return strings.Repeat(" ", margin) + content
 	}
-	return header + "\n" + body
+	content += "\n" + body
+	return strings.Repeat(" ", margin) + strings.ReplaceAll(content, "\n", "\n"+strings.Repeat(" ", margin))
 }

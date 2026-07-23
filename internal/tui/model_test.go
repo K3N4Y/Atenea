@@ -7811,6 +7811,26 @@ func TestModel_FileViewerReplacesChatWithHeaderAndGutter(t *testing.T) {
 	}
 }
 
+func TestModel_FileViewerContentKeepsTwoCellMargin(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).
+		WithCompletions(nil, func() ([]string, error) { return []string{"main.go"}, nil }).
+		WithFileReader(viewerReader(map[string][]byte{"main.go": []byte("package main\n")}))
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 10})
+	m = m.toggleTree()
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	for _, line := range strings.Split(ansi.Strip(m.View()), "\n") {
+		if strings.Contains(line, "package main") {
+			wantPrefix := strings.Repeat(" ", m.treePanelWidth()+splitGutter+composerOuterMargin)
+			if !strings.HasPrefix(line, wantPrefix) {
+				t.Fatalf("viewer content starts at column %d, want the two-cell margin after the explorer: %q", len(line)-len(strings.TrimLeft(line, " ")), line)
+			}
+			return
+		}
+	}
+	t.Fatal("viewer content line not rendered")
+}
+
 func TestModel_FileViewerNarrowTerminalNeverOverflows(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil).
 		WithCompletions(nil, func() ([]string, error) { return []string{"long.go"}, nil }).
@@ -7819,7 +7839,7 @@ func TestModel_FileViewerNarrowTerminalNeverOverflows(t *testing.T) {
 	m = m.toggleTree()
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	view := ansi.Strip(m.View())
-	if !strings.Contains(view, "long.go ·") || !strings.Contains(view, "package") {
+	if !strings.Contains(view, "long.go") || !strings.Contains(view, "pack") {
 		t.Fatalf("narrow terminal must show the active file viewer: %q", view)
 	}
 	for _, line := range strings.Split(m.View(), "\n") {
@@ -7842,7 +7862,7 @@ func TestModel_FileViewerResizeBetweenSplitAndFullScreenKeepsScroll(t *testing.T
 		t.Fatal("precondition: PgDown must scroll the split viewer so the test exercises offset preservation")
 	}
 	m = apply(t, m, tea.WindowSizeMsg{Width: 12, Height: 10})
-	if view := ansi.Strip(m.View()); !strings.Contains(view, "many.txt ·") {
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "many.tx") {
 		t.Fatalf("narrow viewer must fill the screen: %q", view)
 	}
 	if m.treeVisible() {
@@ -7914,7 +7934,7 @@ func TestModel_NarrowViewerFocusChromePreservesHeaderAndGutterWithoutOverflow(t 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	view := ansi.Strip(m.View())
-	for _, want := range []string{"long-file", "1", "package"} {
+	for _, want := range []string{"long-fi", "1", "pack"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("narrow viewer view must retain %q: %q", want, view)
 		}
