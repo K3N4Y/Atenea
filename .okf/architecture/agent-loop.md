@@ -52,9 +52,11 @@ atenea/
     session/
       session.go              // agregado durable: Session, Message, Seq
       inbox.go                // input durable: queue | steer
-      history.go              // historial proyectado para el runner
+      projection.go           // proyecciones puras compartidas por los stores
       epoch.go                // ContextEpoch
-      store.go                // interface Store (persistencia) + impl SQLite
+      store.go                // interfaces Store y CompactionStore
+      memstore.go             // adaptador en memoria
+      sqlitestore.go          // adaptador SQLite durable
       runner/
         runner.go             // Run(): loop externo + loop de pasos
         turn.go               // runTurn(): un turno de proveedor

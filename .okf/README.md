@@ -29,6 +29,7 @@ uses Markdown and begins with `updated_at` and `summary` YAML metadata.
 - [OpenCode architecture](architecture/opencode-architecture.md)
 - [MCP servers](architecture/mcp.md)
 - [Read and edit tools](architecture/read-edit-tools.md)
+- [Session module](architecture/session.md)
 - [Terminal UI](architecture/tui.md)
 - [Workspace Git](architecture/workspace-git.md)
 - [Wails provider lifecycle](architecture/wails-provider.md)
