@@ -9,15 +9,11 @@ import {
   ListSessions,
   SessionHistory,
   DeleteSession,
-  Model,
   ListProjectFiles,
   ListCommands,
   Workspace,
   SetWorkspace,
   SelectWorkspace,
-  SetProvider,
-  ProviderConfig,
-  ListModels,
 } from '../../../wailsjs/go/main/App'
 import { EventsOn } from '../../../wailsjs/runtime/runtime'
 import type { Command } from '../../lib/command'
@@ -34,6 +30,7 @@ import type {
   TurnItem,
   Usage,
 } from './types'
+import { createProviderState } from '../settings/provider'
 
 // Mapeo evento->estado de la sesion (front.md §74). El store formaliza la
 // traduccion de los eventos durables del canal `session:<id>` a items del log
@@ -122,25 +119,26 @@ export const useChatStore = defineStore(
     // turnos (a proposito: es para no perder el hilo en trabajos de varios pasos);
     // se vacia solo al cambiar de sesion (clearLog) y se reconstruye al rehidratar.
     const todos = ref<TodoItem[]>([])
-    // Uso de tokens del ultimo Step.Ended (ocupacion de contexto actual) y modelo
-    // activo. La UI los combina para pintar la barra de contexto por modelo.
+    // Uso de tokens del ultimo Step.Ended (ocupacion de contexto actual).
     const usage = ref<Usage | null>(null)
-    const model = ref('')
-    // Provider activo (selector OpenRouter/local). La fuente de verdad es el backend
-    // (ProviderConfig/SetProvider); se persiste {providerKind, baseURL, model} en
-    // localStorage y se re-aplica al arrancar (restoreProvider), igual que workspace.
-    // No lleva secretos: la key de OpenRouter vive en el entorno y un endpoint local
-    // (LM Studio, Ollama) no necesita key.
-    const providerKind = ref('')
-    const baseURL = ref('')
+    // Provider/model behavior lives in Settings. These refs remain part of this
+    // store's interface so its persisted shape and callers stay compatible.
+    const {
+      model,
+      providerKind,
+      baseURL,
+      availableModels,
+      loadModel,
+      loadProvider,
+      restoreProvider,
+      setProvider,
+      listModels,
+    } = createProviderState()
     // LEGADO: las configuraciones MCP vivian aca (localStorage); hoy la fuente
     // de verdad es la config global del backend (~/.config/atenea/mcp.json).
     // El ref queda solo para rehidratar lo persistido por versiones viejas: el
     // store MCP lo migra al backend en su primer refresh y lo vacia.
     const mcpServers = ref<MCPServerConfig[]>([])
-    // Catalogo de modelos del endpoint activo, poblado bajo demanda por listModels
-    // para el dropdown del selector. Estado vivo de UI: no se persiste.
-    const availableModels = ref<string[]>([])
     // Rutas del workspace para el @-menu de archivos del composer. La fuente de
     // verdad es el backend (ListProjectFiles); se cargan una vez al montar la vista
     // y el composer filtra/ordena en cliente conforme el usuario escribe tras '@'.
@@ -456,78 +454,6 @@ export const useChatStore = defineStore(
         }
       }
       await loadWorkspace()
-    }
-
-    // loadModel trae el modelo activo del backend una vez (espejo de loadSessions):
-    // la UI lo usa para dimensionar la barra de contexto por modelo. Si el binding
-    // no esta disponible (p. ej. arranque sin backend) cae a un modelo vacio: la
-    // barra usa entonces la ventana por defecto.
-    async function loadModel(): Promise<void> {
-      try {
-        model.value = await Model()
-      } catch {
-        model.value = ''
-      }
-    }
-
-    // loadProvider trae la config del provider activo del backend (kind/baseURL/model)
-    // para que el selector muestre lo vigente. Espejo de loadModel/loadWorkspace; si
-    // el binding no esta disponible (arranque sin backend) deja el estado como este.
-    async function loadProvider(): Promise<void> {
-      try {
-        const cfg = await ProviderConfig()
-        providerKind.value = cfg.kind
-        baseURL.value = cfg.baseURL
-        model.value = cfg.model
-      } catch {
-        // backend ausente: conserva lo que haya (incluida la config rehidratada).
-      }
-    }
-
-    // restoreProvider fija el provider al montar la vista. El backend arranca con la
-    // config del entorno; si hay una config persistida de una corrida anterior
-    // (rehidratada de localStorage) la re-aplica con SetProvider, asi el modelo
-    // elegido (p. ej. LM Studio) sobrevive a los reinicios. Si esa config ya no aplica
-    // (SetProvider falla) o no habia ninguna, cae a la del backend (loadProvider).
-    // Espejo de restoreWorkspace.
-    async function restoreProvider(): Promise<void> {
-      if (providerKind.value) {
-        try {
-          await SetProvider(providerKind.value, baseURL.value, model.value)
-          return
-        } catch {
-          // la config persistida ya no aplica: cae a la vigente del backend.
-        }
-      }
-      await loadProvider()
-    }
-
-    // setProvider cambia el provider activo: lo recablea en el backend via SetProvider
-    // y refleja kind/baseURL/model en el store (que se persisten). Lo usa el selector
-    // del panel de ajustes al elegir OpenRouter o un endpoint local. Propaga el error
-    // del backend (config invalida) para que la UI lo muestre.
-    async function setProvider(
-      kind: string,
-      url: string,
-      m: string,
-    ): Promise<void> {
-      await SetProvider(kind, url, m)
-      providerKind.value = kind
-      baseURL.value = url
-      model.value = m
-    }
-
-    // listModels trae el catalogo de modelos de un endpoint OpenAI-compatible para el
-    // dropdown del selector (LM Studio, Ollama exponen GET baseURL/models). Lo guarda
-    // en availableModels y lo devuelve. Si el endpoint no responde, degrada a lista
-    // vacia: el dropdown queda sin opciones en vez de romper.
-    async function listModels(url: string): Promise<string[]> {
-      try {
-        availableModels.value = await ListModels(url)
-      } catch {
-        availableModels.value = []
-      }
-      return availableModels.value
     }
 
     // loadProjectFiles trae el listado de archivos del workspace del backend para

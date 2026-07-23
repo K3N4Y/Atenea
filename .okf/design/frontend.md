@@ -109,7 +109,10 @@ also owns its Pinia store, route-level `ChatView`, and their tests; the router
 loads the view from this module. Chat-specific presentation—including the
 composer and its menus, message renderers, planning UI, todo list, context bar,
 and error notice—is colocated in the same feature. Generic Markdown and inline
-diff rendering remain in shared components.
+diff rendering remain in shared components. Provider selection and model
+discovery are implemented by `features/settings/provider.ts`; Chat exposes the
+same refs and operations for compatibility and keeps their existing persisted
+keys, but no longer owns that implementation.
 
 ## Persistence and source of truth
 
