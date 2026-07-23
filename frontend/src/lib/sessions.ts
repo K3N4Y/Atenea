@@ -30,31 +30,3 @@ export function groupSessionsByFolder(
   }
   return groups
 }
-
-// Una carpeta candidata para el selector del chat nuevo: ruta completa + nombre
-// corto para mostrar.
-export interface WorkspaceOption {
-  path: string
-  label: string
-}
-
-// knownWorkspaces arma las carpetas elegibles para un chat nuevo: la carpeta
-// vigente primero (aunque aun no tenga chats), seguida por las carpetas de los
-// chats existentes en orden de recencia (la del backend), deduplicadas. Omite las
-// rutas vacias (chats viejos sin carpeta o sin carpeta vigente). La etiqueta es el
-// basename; si la ruta no tiene basename (raro) cae a la ruta completa.
-export function knownWorkspaces(
-  sessions: SessionSummary[],
-  current: string,
-): WorkspaceOption[] {
-  const out: WorkspaceOption[] = []
-  const seen = new Set<string>()
-  const add = (path: string) => {
-    if (!path || seen.has(path)) return
-    seen.add(path)
-    out.push({ path, label: basename(path) || path })
-  }
-  add(current)
-  for (const session of sessions) add(session.Cwd ?? '')
-  return out
-}

@@ -98,7 +98,9 @@ server connection state and its menu. `features/terminal` owns the PTY adapter,
 persistent terminal sessions, visual theme, and panel. The inline `DiffView`
 remains shared because tool results also use it. `features/settings` composes
 general, provider, and MCP configuration while consuming MCP through its public
-store instead of taking ownership of that module.
+store instead of taking ownership of that module. `features/workspace` owns the
+working-folder selector and the derivation of known folders from session
+summaries; session grouping remains independent in `lib/sessions`.
 
 ## Persistence and source of truth
 

@@ -6,7 +6,7 @@ import {
   PhCaretDown,
   PhCheck,
 } from '@phosphor-icons/vue'
-import type { WorkspaceOption } from '../lib/sessions'
+import type { WorkspaceOption } from './workspaces'
 
 // Selector de carpeta del chat nuevo: un dropdown PROPIO (no <select> nativo, cuyo
 // popup lo dibuja el SO y no se puede estilar: chocaba con el look del resto). Un

@@ -7,7 +7,7 @@ import McpMenu from '../features/mcp/McpMenu.vue'
 import MessageList from '../components/MessageList.vue'
 import ErrorNotice from '../components/ErrorNotice.vue'
 import ChatComposer from '../components/ChatComposer.vue'
-import WorkspacePicker from '../components/WorkspacePicker.vue'
+import WorkspacePicker from '../features/workspace/WorkspacePicker.vue'
 import SettingsPanel from '../features/settings/SettingsPanel.vue'
 import PlanView from '../components/PlanView.vue'
 import PlanCard from '../components/PlanCard.vue'
@@ -17,7 +17,7 @@ import DevEventPanel from '../components/DevEventPanel.vue'
 import DiffScreen from '../features/git/DiffScreen.vue'
 import { useChatStore } from '../stores/chat'
 import { useGitStore } from '../features/git/git'
-import { knownWorkspaces } from '../lib/sessions'
+import { knownWorkspaces } from '../features/workspace/workspaces'
 
 // Solo en dev: panel para disparar eventos canned y construir la UI sin agente.
 const dev = import.meta.env.DEV

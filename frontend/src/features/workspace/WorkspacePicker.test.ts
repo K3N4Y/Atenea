@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import WorkspacePicker from './WorkspacePicker.vue'
-import type { WorkspaceOption } from '../lib/sessions'
+import type { WorkspaceOption } from './workspaces'
 
 const options: WorkspaceOption[] = [
   { path: '/home/u/atenea', label: 'atenea' },
