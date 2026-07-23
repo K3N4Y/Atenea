@@ -10,7 +10,7 @@ import piniaPluginPersistedstate from 'pinia-plugin-persistedstate'
 //
 // Como en ui.test.ts, los plugins de pinia solo corren con pinia instalado en una
 // app Vue, asi que montamos una app minima para activar la persistencia.
-vi.mock('../../wailsjs/go/main/App', () => ({
+vi.mock('../../../wailsjs/go/main/App', () => ({
   SendPrompt: vi.fn(() => Promise.resolve()),
   SendPlanPrompt: vi.fn(() => Promise.resolve()),
   AcceptPlan: vi.fn(() => Promise.resolve()),
@@ -31,7 +31,7 @@ vi.mock('../../wailsjs/go/main/App', () => ({
   ),
   ListModels: vi.fn(() => Promise.resolve([])),
 }))
-vi.mock('../../wailsjs/runtime/runtime', () => ({
+vi.mock('../../../wailsjs/runtime/runtime', () => ({
   EventsOn: vi.fn(() => () => {}),
 }))
 

@@ -18,7 +18,7 @@ vi.mock('../../wailsjs/go/main/App', () => ({
 }))
 
 import DevToolsPanel from './DevToolsPanel.vue'
-import { useChatStore } from '../stores/chat'
+import { useChatStore } from '../features/chat/chat'
 
 // TerminalPanel monta xterm (GUI, no corre headless); lo stubeamos para probar
 // el cableado de la tab sin instanciar un terminal real.

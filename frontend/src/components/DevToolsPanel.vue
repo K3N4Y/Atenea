@@ -8,7 +8,7 @@ import {
   PhSpinnerGap,
 } from '@phosphor-icons/vue'
 import { useGitStore } from '../features/git/git'
-import { useChatStore } from '../stores/chat'
+import { useChatStore } from '../features/chat/chat'
 import { useUiStore } from '../stores/ui'
 import { useTabsStore, type Tab, type TabKind } from '../stores/tabs'
 import { destroy } from '../features/terminal/terminalSession'

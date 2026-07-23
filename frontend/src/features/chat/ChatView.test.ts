@@ -7,10 +7,10 @@ import { createPinia, setActivePinia } from 'pinia'
 // La vista cablea el store de chat al canal de la sesion via la frontera Wails;
 // la reemplazamos por fakes para verificar el ciclo de vida de la suscripcion.
 const unsubscribe = vi.fn()
-vi.mock('../../wailsjs/runtime/runtime', () => ({
+vi.mock('../../../wailsjs/runtime/runtime', () => ({
   EventsOn: vi.fn(() => unsubscribe),
 }))
-vi.mock('../../wailsjs/go/main/App', () => ({
+vi.mock('../../../wailsjs/go/main/App', () => ({
   SendPrompt: vi.fn(() => Promise.resolve()),
   SendPlanPrompt: vi.fn(() => Promise.resolve()),
   AcceptPlan: vi.fn(() => Promise.resolve()),
@@ -31,18 +31,18 @@ vi.mock('../../wailsjs/go/main/App', () => ({
   ListMCPs: vi.fn(() => Promise.resolve([])),
 }))
 
-import { EventsOn } from '../../wailsjs/runtime/runtime'
-import * as App from '../../wailsjs/go/main/App'
+import { EventsOn } from '../../../wailsjs/runtime/runtime'
+import * as App from '../../../wailsjs/go/main/App'
 import ChatView from './ChatView.vue'
-import AppSidebar from '../features/sessions/AppSidebar.vue'
-import ChatComposer from '../components/ChatComposer.vue'
-import MessageList from '../components/MessageList.vue'
-import PlanView from '../components/PlanView.vue'
-import PlanCard from '../components/PlanCard.vue'
-import WorkspacePicker from '../features/workspace/WorkspacePicker.vue'
-import DiffScreen from '../features/git/DiffScreen.vue'
-import { useChatStore } from '../stores/chat'
-import { useGitStore } from '../features/git/git'
+import AppSidebar from '../sessions/AppSidebar.vue'
+import ChatComposer from '../../components/ChatComposer.vue'
+import MessageList from '../../components/MessageList.vue'
+import PlanView from '../../components/PlanView.vue'
+import PlanCard from '../../components/PlanCard.vue'
+import WorkspacePicker from '../workspace/WorkspacePicker.vue'
+import DiffScreen from '../git/DiffScreen.vue'
+import { useChatStore } from './chat'
+import { useGitStore } from '../git/git'
 
 function presentPlan(chat: ReturnType<typeof useChatStore>) {
   chat.applyEvent({

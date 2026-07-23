@@ -104,7 +104,9 @@ summaries. `features/sessions` owns session grouping and the history sidebar;
 session mutations remain in the chat store until their shared contracts are
 separated. Shared chat, session, tool, plan, todo, usage, and event contracts
 live in `features/chat/types.ts`; feature modules depend on these contracts
-instead of importing types from the chat store implementation.
+instead of importing types from the chat store implementation. The chat feature
+also owns its Pinia store, route-level `ChatView`, and their tests; the router
+loads the view from this module.
 
 ## Persistence and source of truth
 

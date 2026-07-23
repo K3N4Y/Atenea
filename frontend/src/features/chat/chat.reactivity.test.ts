@@ -6,18 +6,18 @@ import { setActivePinia, createPinia } from 'pinia'
 
 // El store toca la frontera Wails (bindings y runtime). Igual que en
 // chat.test.ts la reemplazamos por fakes para aislar el comportamiento.
-vi.mock('../../wailsjs/go/main/App', () => ({
+vi.mock('../../../wailsjs/go/main/App', () => ({
   SendPrompt: vi.fn(() => Promise.resolve()),
   SendPlanPrompt: vi.fn(() => Promise.resolve()),
   AcceptPlan: vi.fn(() => Promise.resolve()),
   Stop: vi.fn(),
 }))
-vi.mock('../../wailsjs/runtime/runtime', () => ({
+vi.mock('../../../wailsjs/runtime/runtime', () => ({
   EventsOn: vi.fn(() => () => {}),
 }))
 
 import { useChatStore } from './chat'
-import type { TurnItem } from '../features/chat/types'
+import type { TurnItem } from './types'
 
 beforeEach(() => {
   setActivePinia(createPinia())

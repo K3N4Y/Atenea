@@ -1,5 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
-import ChatView from '../views/ChatView.vue'
+import ChatView from '../features/chat/ChatView.vue'
 
 // Hash history: Atenea es una app de escritorio Wails (webview), no una SPA
 // servida por HTTP, asi que evitamos depender del fallback de rutas del server.

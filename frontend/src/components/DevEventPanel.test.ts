@@ -23,7 +23,7 @@ vi.mock('../../wailsjs/runtime/runtime', () => ({
 }))
 
 import DevEventPanel from './DevEventPanel.vue'
-import { useChatStore } from '../stores/chat'
+import { useChatStore } from '../features/chat/chat'
 
 beforeEach(() => setActivePinia(createPinia()))
 

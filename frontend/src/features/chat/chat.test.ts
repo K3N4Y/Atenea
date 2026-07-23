@@ -3,7 +3,7 @@ import { setActivePinia, createPinia } from 'pinia'
 
 // El store toca la frontera Wails (bindings y runtime). En el test la
 // reemplazamos por fakes para verificar el mapeo evento->estado en aislamiento.
-vi.mock('../../wailsjs/go/main/App', () => ({
+vi.mock('../../../wailsjs/go/main/App', () => ({
   SendPrompt: vi.fn(() => Promise.resolve()),
   SendPlanPrompt: vi.fn(() => Promise.resolve()),
   AcceptPlan: vi.fn(() => Promise.resolve()),
@@ -24,12 +24,12 @@ vi.mock('../../wailsjs/go/main/App', () => ({
   ),
   ListModels: vi.fn(() => Promise.resolve([])),
 }))
-vi.mock('../../wailsjs/runtime/runtime', () => ({
+vi.mock('../../../wailsjs/runtime/runtime', () => ({
   EventsOn: vi.fn(() => () => {}),
 }))
 
-import * as App from '../../wailsjs/go/main/App'
-import { EventsOn } from '../../wailsjs/runtime/runtime'
+import * as App from '../../../wailsjs/go/main/App'
+import { EventsOn } from '../../../wailsjs/runtime/runtime'
 import { useChatStore } from './chat'
 
 beforeEach(() => {

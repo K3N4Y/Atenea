@@ -18,9 +18,9 @@ import {
   SetProvider,
   ProviderConfig,
   ListModels,
-} from '../../wailsjs/go/main/App'
-import { EventsOn } from '../../wailsjs/runtime/runtime'
-import type { Command } from '../lib/command'
+} from '../../../wailsjs/go/main/App'
+import { EventsOn } from '../../../wailsjs/runtime/runtime'
+import type { Command } from '../../lib/command'
 import type {
   AssistantItem,
   MCPServerConfig,
@@ -33,7 +33,7 @@ import type {
   ToolItem,
   TurnItem,
   Usage,
-} from '../features/chat/types'
+} from './types'
 
 // Mapeo evento->estado de la sesion (front.md §74). El store formaliza la
 // traduccion de los eventos durables del canal `session:<id>` a items del log

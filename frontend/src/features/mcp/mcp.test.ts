@@ -15,7 +15,7 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
 }))
 
 import { useMcpStore } from './mcp'
-import { useChatStore } from '../../stores/chat'
+import { useChatStore } from '../chat/chat'
 
 beforeEach(() => {
   setActivePinia(createPinia())
