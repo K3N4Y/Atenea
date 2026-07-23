@@ -10,6 +10,7 @@ import (
 
 	"atenea/internal/llm"
 	"atenea/internal/providerconfig"
+	"atenea/internal/wailsprovider"
 )
 
 // TestApp_LocalProviderUsesLocalSystemPrompt: al elegir un provider local, el turno
@@ -22,7 +23,7 @@ func TestApp_LocalProviderUsesLocalSystemPrompt(t *testing.T) {
 	rec := &recordingEmit{}
 	rebuilt := &requestRecordingProvider{FakeProvider: workspaceFake()}
 	app := newApp(demoProvider(), rec.emit)
-	app.newProvider = func(cfg ProviderConfig) llm.Provider { return rebuilt }
+	app.providers.SetFactory(func(cfg wailsprovider.Config) llm.Provider { return rebuilt })
 
 	if err := app.SetProvider("local", "http://localhost:1234/v1", "qwen2.5-coder"); err != nil {
 		t.Fatalf("SetProvider: %v", err)
@@ -62,17 +63,17 @@ func TestApp_SetProviderUpdatesModelAndConfig(t *testing.T) {
 
 // TestApp_SetProviderRebuildsActiveProvider: tras SetProvider los turnos pasan por el
 // provider reconstruido, no por el inyectado al crear la app. Se verifica con un
-// factory inyectado (a.newProvider) que devuelve un provider que graba el request: si
+// factory inyectado en el manager que devuelve un provider que graba el request: si
 // el turno lo atraviesa, captured() trae el system prompt del turno.
 func TestApp_SetProviderRebuildsActiveProvider(t *testing.T) {
 	rec := &recordingEmit{}
 	rebuilt := &requestRecordingProvider{FakeProvider: workspaceFake()}
 	var gotCfg ProviderConfig
 	app := newApp(demoProvider(), rec.emit)
-	app.newProvider = func(cfg ProviderConfig) llm.Provider {
-		gotCfg = cfg
+	app.providers.SetFactory(func(cfg wailsprovider.Config) llm.Provider {
+		gotCfg = ProviderConfig{Kind: cfg.Kind, BaseURL: cfg.BaseURL, Model: cfg.Model}
 		return rebuilt
-	}
+	})
 
 	if err := app.SetProvider("local", "http://localhost:1234/v1", "qwen"); err != nil {
 		t.Fatalf("SetProvider: %v", err)
@@ -97,10 +98,10 @@ func TestApp_SetProviderRebuildsActiveProvider(t *testing.T) {
 func newAppRecordingProviderConfig() (*App, *ProviderConfig) {
 	gotCfg := &ProviderConfig{}
 	app := newApp(demoProvider(), func(string, ...interface{}) {})
-	app.newProvider = func(cfg ProviderConfig) llm.Provider {
-		*gotCfg = cfg
+	app.providers.SetFactory(func(cfg wailsprovider.Config) llm.Provider {
+		*gotCfg = ProviderConfig{Kind: cfg.Kind, BaseURL: cfg.BaseURL, Model: cfg.Model}
 		return demoProvider()
-	}
+	})
 	return app, gotCfg
 }
 
@@ -261,14 +262,14 @@ func TestApp_OpenRouterKeyPrefersEnvironmentThenStoredCredential(t *testing.T) {
 		}
 		return ""
 	}
-	if got := openRouterAPIKey(env, store); got != "sk-env" {
+	if got := wailsprovider.OpenRouterAPIKey(env, store); got != "sk-env" {
 		t.Fatalf("key = %q, want the environment to win", got)
 	}
-	if got := openRouterAPIKey(func(string) string { return "" }, store); got != "sk-stored" {
+	if got := wailsprovider.OpenRouterAPIKey(func(string) string { return "" }, store); got != "sk-stored" {
 		t.Fatalf("key = %q, want the stored credential as fallback", got)
 	}
 	empty := providerconfig.NewFileCredentialStore(filepath.Join(t.TempDir(), "credentials.json"))
-	if got := openRouterAPIKey(func(string) string { return "" }, empty); got != "" {
+	if got := wailsprovider.OpenRouterAPIKey(func(string) string { return "" }, empty); got != "" {
 		t.Fatalf("key = %q, want empty without env nor credential", got)
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +20,7 @@ import (
 	"atenea/internal/skill"
 	"atenea/internal/terminal"
 	"atenea/internal/tool"
+	"atenea/internal/wailsprovider"
 	"atenea/internal/wiring"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -28,19 +28,16 @@ import (
 
 const (
 	// openRouterBaseURL es el gateway OpenAI-compatible que se usa para pruebas.
-	openRouterBaseURL = "https://openrouter.ai/api/v1"
+	openRouterBaseURL = wailsprovider.OpenRouterBaseURL
 	// defaultModel es el modelo por defecto en OpenRouter; override por OPENROUTER_MODEL.
-	defaultModel = "openrouter/free"
+	defaultModel = wailsprovider.DefaultModel
 
 	// providerKind* son los tipos de provider que el selector de la UI puede elegir.
 	// openrouter usa la API key del entorno; local apunta a un endpoint OpenAI-
 	// compatible (LM Studio, Ollama) sin secreto; demo es el fake sin red.
-	providerKindOpenRouter = "openrouter"
-	providerKindLocal      = "local"
-	providerKindDemo       = "demo"
-	// localPlaceholderKey es la "api key" que se manda a un endpoint local: LM Studio
-	// y Ollama no la exigen, pero el cliente OpenAI quiere algo no vacio.
-	localPlaceholderKey = "local"
+	providerKindOpenRouter = wailsprovider.KindOpenRouter
+	providerKindLocal      = wailsprovider.KindLocal
+	providerKindDemo       = wailsprovider.KindDemo
 )
 
 // ProviderConfig es la configuracion del modelo activo que la UI elige y lee. No
@@ -57,17 +54,17 @@ type ProviderConfig struct {
 // App cablea el loop del agente (M1..M8) a la app Wails: arranca/corta Run desde
 // el frontend y reenvia el log durable por el Bus. La logica del loop no cambia.
 type App struct {
-	ctx      context.Context // ctx de Wails; lo fija startup. Solo lo usa la EmitFunc real.
-	inbox    session.Inbox
-	bus      *event.Bus
-	emit     event.EmitFunc                // la misma frontera que usa el bus; la tab Terminal empuja su salida por aca
-	store    session.Store                 // lectura del historial para la sidebar (ListSessions/SessionHistory)
-	gate     *session.MemoryPermissionGate // ask-before-run: the UI resolves via ResolveToolPermission
-	glob     *tool.GlobTool                // listado de archivos del workspace para el @-menu del composer (ListProjectFiles)
-	agent    *agent.Service                // ciclo headless compartido con la TUI
-	provider llm.Provider                  // el modelo; mutable via SetProvider, leido con mu (currentProvider). Lo reusa el titler
-	snaps    *tool.SessionSnapshots        // read-state por sesion; sobrevive a los cambios de workspace (se crea una vez)
-	root     string                        // raiz del workspace; mutable via SetWorkspace, leida con mu (workspaceRoot)
+	ctx       context.Context // ctx de Wails; lo fija startup. Solo lo usa la EmitFunc real.
+	inbox     session.Inbox
+	bus       *event.Bus
+	emit      event.EmitFunc                // la misma frontera que usa el bus; la tab Terminal empuja su salida por aca
+	store     session.Store                 // lectura del historial para la sidebar (ListSessions/SessionHistory)
+	gate      *session.MemoryPermissionGate // ask-before-run: the UI resolves via ResolveToolPermission
+	glob      *tool.GlobTool                // listado de archivos del workspace para el @-menu del composer (ListProjectFiles)
+	agent     *agent.Service                // ciclo headless compartido con la TUI
+	providers *wailsprovider.Manager        // provider/config atomicos; SetProvider publica snapshots completos
+	snaps     *tool.SessionSnapshots        // read-state por sesion; sobrevive a los cambios de workspace (se crea una vez)
+	root      string                        // raiz del workspace; mutable via SetWorkspace, leida con mu (workspaceRoot)
 
 	// versioner es el store crudo si sabe exponer su data_version (SQLite sobre
 	// archivo); startup lanza con el un watcher que emite "sessions:changed"
@@ -75,13 +72,6 @@ type App struct {
 	// = sin watcher. watchInterval es el periodo de sondeo; los tests lo acortan.
 	versioner     event.DataVersioner
 	watchInterval time.Duration
-
-	// providerCfg es la config del provider activo (kind/baseURL/model) que la UI
-	// elige y lee; mutable via SetProvider bajo mu. newProvider construye el provider
-	// real desde una config; es inyectable para que los tests verifiquen el
-	// re-cableado con un fake en vez de tocar la red (default buildProvider).
-	providerCfg ProviderConfig
-	newProvider func(ProviderConfig) llm.Provider
 
 	// titler genera el titulo de una sesion a partir de su primer mensaje. nil
 	// (default en tests) = sin auto-title: la sidebar cae al primer mensaje.
@@ -103,9 +93,16 @@ type App struct {
 // cableado del agente (tools, skills, subagentes, runner) se delega en wire.
 // Es el punto unico de ensamblado: los tests lo llaman via newApp (MemoryStore +
 // provider fake) y produccion via NewApp (SQLiteStore + provider real).
-func newAppWithStore(store session.Store, provider llm.Provider, emit event.EmitFunc) *App {
+func newAppWithStore(store session.Store, provider llm.Provider, emit event.EmitFunc, providerConfigs ...wailsprovider.Config) *App {
 	a := &App{}
-	a.provider = provider
+	credentials := defaultCredentialStore()
+	providerConfig := wailsprovider.Config{}
+	if len(providerConfigs) > 0 {
+		providerConfig = providerConfigs[0]
+	}
+	a.providers = wailsprovider.New(provider, providerConfig, func(cfg wailsprovider.Config) llm.Provider {
+		return wailsprovider.Build(cfg, os.Getenv, credentials, demoProvider())
+	}, os.Getenv, credentials, nil)
 	// El watcher del data_version se ancla al store CRUDO (antes de decorarlo):
 	// solo el SQLiteStore sobre archivo sabe exponerlo; un MemoryStore no, y la
 	// app queda sin watcher (no hay otro proceso posible sobre memoria).
@@ -113,9 +110,6 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 	if v, ok := store.(event.DataVersioner); ok {
 		a.versioner = v
 	}
-	// newProvider arma el provider real desde una config; SetProvider lo usa para
-	// reconstruir en vivo. Los tests lo sobreescriben con un fake.
-	a.newProvider = buildProvider
 	a.emit = emit
 	a.bus = event.NewBus(emit)
 	a.term = terminal.NewManager()
@@ -150,15 +144,16 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 // (root = cwd) y SetWorkspace (root nuevo).
 func (a *App) wire(root string) {
 	a.mcp.SetRoot(root)
-	// El provider vigente se lee bajo mu (SetProvider puede cambiarlo): un snapshot
+	// El provider vigente se lee como un snapshot atomico (SetProvider puede cambiarlo)
 	// para que el cableado nuevo (runner, taskTool, web_fetch) quede anclado a un
 	// unico provider sin competir con el swap. SetProvider lo fija ANTES de llamar wire.
-	provider := a.currentProvider()
+	providerState := a.providers.Snapshot()
+	provider := providerState.Provider
 	// local marca si el provider vigente es un endpoint local (LM Studio, Ollama):
 	// decide el prompt base (function-calling explicito) en vez de la persona code-gen
-	// del default. Se lee bajo mu, como el provider; SetProvider fija el kind ANTES de
+	// del default. Viene en el mismo snapshot que el provider; SetProvider lo fija ANTES de
 	// llamar wire.
-	local := a.currentProviderKind() == providerKindLocal
+	local := providerState.Local
 	built := wiring.Build(wiring.Config{
 		Root:     root,
 		Provider: provider,
@@ -221,13 +216,16 @@ func NewApp() *App {
 	} else if eerr := skill.ExtractBuiltins(filepath.Join(home, ".atenea", "skills")); eerr != nil {
 		log.Printf("atenea: no se pudieron extraer las skills built-in: %v", eerr)
 	}
-	cfg := initialProviderConfig()
-	a = newAppWithStore(openStore(), buildProvider(cfg), emit)
-	a.providerCfg = cfg // seed: Model()/ProviderConfig() reflejan la config inicial
+	credentials := defaultCredentialStore()
+	cfg := wailsprovider.InitialConfig(os.Getenv, credentials)
+	if cfg.Kind == providerKindDemo {
+		log.Print("atenea: no OPENROUTER_API_KEY and no /connect credential; using the demo provider (no network)")
+	}
+	a = newAppWithStore(openStore(), wailsprovider.Build(cfg, os.Getenv, credentials, demoProvider()), emit, cfg)
 	// Auto-title: el primer mensaje de cada sesion se resume con el provider real.
 	// Solo en produccion; los tests dejan titler nil para no doblar las llamadas al
 	// provider en cada envio. Lee provider y modelo vigentes (SetProvider puede
-	// cambiarlos en vivo) bajo mu.
+	// cambiarlos en vivo) desde el snapshot del manager.
 	a.titler = func(message string) string {
 		return titleFromProvider(a.currentProvider(), a.currentModel(), message)
 	}
@@ -247,106 +245,9 @@ func openStore() session.Store {
 	return store
 }
 
-// resolveModel resuelve el modelo por defecto desde el entorno: OPENROUTER_MODEL si
-// esta seteado, si no defaultModel. Es el fallback que usan initialProviderConfig (la
-// config inicial) y currentModel (cuando la config activa no fija modelo) para que la
-// UI y el provider coincidan.
-func resolveModel() string {
-	if model := os.Getenv("OPENROUTER_MODEL"); model != "" {
-		return model
-	}
-	return defaultModel
-}
-
-// openRouterAPIKey resolves the OpenRouter key with the same precedence as
-// the TUI: the real environment variable wins, then the credential stored by
-// /connect (shared via ~/.config/atenea/credentials.json). "" = no key.
-func openRouterAPIKey(getenv func(string) string, credentials providerconfig.CredentialStore) string {
-	if key := getenv("OPENROUTER_API_KEY"); key != "" {
-		return key
-	}
-	if credentials != nil {
-		if credential, ok := credentials.Get("openrouter"); ok && credential.Type == providerconfig.CredentialTypeAPIKey {
-			return credential.APIKey
-		}
-	}
-	return ""
-}
-
 // defaultCredentialStore opens the credential store shared with the TUI.
 func defaultCredentialStore() providerconfig.CredentialStore {
 	return providerconfig.NewFileCredentialStore(providerconfig.DefaultCredentialsPath())
-}
-
-// initialProviderConfig derives the provider config at startup: with an
-// OpenRouter key available (environment or /connect credential), OpenRouter
-// with its model; otherwise the demo (network-less fake) so `wails dev` shows
-// streaming without configuring anything. The frontend can re-apply a
-// persisted local config via SetProvider afterwards.
-func initialProviderConfig() ProviderConfig {
-	if openRouterAPIKey(os.Getenv, defaultCredentialStore()) == "" {
-		log.Print("atenea: no OPENROUTER_API_KEY and no /connect credential; using the demo provider (no network)")
-		return ProviderConfig{Kind: providerKindDemo, Model: defaultModel}
-	}
-	return ProviderConfig{Kind: providerKindOpenRouter, BaseURL: openRouterBaseURL, Model: resolveModel()}
-}
-
-// buildProvider builds the real provider from a config. local uses the
-// OpenAI-compatible adapter WITHOUT OpenRouter's reasoning field (LM Studio
-// and Ollama do not understand it) and a placeholder key; openrouter resolves
-// its key (environment, then /connect credential); any other kind (demo or
-// empty) falls back to the network-less fake. It is the default of
-// a.newProvider.
-func buildProvider(cfg ProviderConfig) llm.Provider {
-	switch cfg.Kind {
-	case providerKindLocal:
-		return llm.NewOpenAIProvider(localPlaceholderKey, cfg.BaseURL, cfg.Model, llm.WithoutOpenRouterReasoning())
-	case providerKindOpenRouter:
-		return llm.NewOpenAIProvider(openRouterAPIKey(os.Getenv, defaultCredentialStore()), cfg.BaseURL, cfg.Model)
-	default:
-		return demoProvider()
-	}
-}
-
-// normalizeProviderConfig valida y completa la config que pide la UI. openrouter
-// fuerza siempre su baseURL e ignora el entrante: la UI no lo ofrece configurar y
-// puede arrastrar el del local al cambiar de proveedor (tambien sanea configs viejas
-// persistidas que restoreProvider re-aplica al arrancar). local exige un baseURL
-// http(s) y un modelo (lo elige el usuario del catalogo). Un kind desconocido es un
-// error. Mantener la validacion aca (no en SetProvider) la hace testeable sin tocar
-// el estado.
-func normalizeProviderConfig(kind, baseURL, model string) (ProviderConfig, error) {
-	switch kind {
-	case providerKindOpenRouter:
-		baseURL = openRouterBaseURL
-		if model == "" {
-			model = defaultModel
-		}
-		return ProviderConfig{Kind: kind, BaseURL: baseURL, Model: model}, nil
-	case providerKindLocal:
-		if err := validateBaseURL(baseURL); err != nil {
-			return ProviderConfig{}, err
-		}
-		if strings.TrimSpace(model) == "" {
-			return ProviderConfig{}, fmt.Errorf("provider local: falta el modelo")
-		}
-		return ProviderConfig{Kind: kind, BaseURL: baseURL, Model: model}, nil
-	default:
-		return ProviderConfig{}, fmt.Errorf("provider desconocido: %q (usa %q o %q)", kind, providerKindOpenRouter, providerKindLocal)
-	}
-}
-
-// validateBaseURL exige un baseURL http(s) con host (p.ej. http://localhost:1234/v1):
-// sin el, el provider local no tiene a donde apuntar.
-func validateBaseURL(raw string) error {
-	if strings.TrimSpace(raw) == "" {
-		return fmt.Errorf("provider local: falta el baseURL (p.ej. http://localhost:1234/v1)")
-	}
-	u, err := url.Parse(raw)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return fmt.Errorf("provider local: baseURL invalido %q (espera http(s)://host:puerto/v1)", raw)
-	}
-	return nil
 }
 
 // Model expone el modelo activo para que la UI dimensione la barra de contexto por
@@ -356,9 +257,8 @@ func (a *App) Model() string { return a.currentModel() }
 // ProviderConfig expone la config del provider activo (kind/baseURL/model) para que
 // el selector de la UI muestre lo elegido. Es el binding que el frontend lee al montar.
 func (a *App) ProviderConfig() ProviderConfig {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.providerCfg
+	cfg := a.providers.Snapshot().Config
+	return ProviderConfig{Kind: cfg.Kind, BaseURL: cfg.BaseURL, Model: cfg.Model}
 }
 
 // SetProvider cambia el provider en vivo: valida/completa la config, reconstruye el
@@ -366,15 +266,10 @@ func (a *App) ProviderConfig() ProviderConfig {
 // tools/subagentes/web_fetch al provider nuevo, igual que SetWorkspace con el root. Es
 // el binding que el frontend llama al elegir OpenRouter o un endpoint local.
 func (a *App) SetProvider(kind, baseURL, model string) error {
-	cfg, err := normalizeProviderConfig(kind, baseURL, model)
+	_, err := a.providers.Set(kind, baseURL, model)
 	if err != nil {
 		return err
 	}
-	prov := a.newProvider(cfg)
-	a.mu.Lock()
-	a.provider = prov
-	a.providerCfg = cfg
-	a.mu.Unlock()
 	a.wire(a.workspaceRoot())
 	return nil
 }
@@ -386,38 +281,22 @@ func (a *App) ListModels(baseURL string) ([]string, error) {
 	// OpenRouter's /models endpoint is public, but sending the resolved key
 	// keeps the listing consistent with the chat path (and with any
 	// account-scoped catalog the provider may expose).
-	apiKey := ""
-	if strings.TrimRight(baseURL, "/") == openRouterBaseURL {
-		apiKey = openRouterAPIKey(os.Getenv, defaultCredentialStore())
-	}
-	return llm.ListModels(context.Background(), baseURL, apiKey)
+	return a.providers.ListModels(context.Background(), baseURL)
 }
 
-// currentProvider devuelve el provider vigente bajo mu (SetProvider lo cambia en vivo).
+// currentProvider reads the provider from the manager's atomic snapshot.
 func (a *App) currentProvider() llm.Provider {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.provider
-}
-
-// currentProviderKind devuelve el kind de la config vigente bajo mu (openrouter/local/
-// demo). wire lo usa para elegir el prompt base local.
-func (a *App) currentProviderKind() string {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.providerCfg.Kind
+	return a.providers.Snapshot().Provider
 }
 
 // currentModel devuelve el modelo de la config vigente, o el default del entorno si
 // la config no lo fija (caso de los tests con provider inyectado y cfg vacia).
 func (a *App) currentModel() string {
-	a.mu.Lock()
-	model := a.providerCfg.Model
-	a.mu.Unlock()
+	model := a.providers.Snapshot().Config.Model
 	if model != "" {
 		return model
 	}
-	return resolveModel()
+	return wailsprovider.ResolveModel(os.Getenv)
 }
 
 // startup guarda el ctx de Wails (lo usa la EmitFunc real) y, si el store

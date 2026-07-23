@@ -31,6 +31,7 @@ uses Markdown and begins with `updated_at` and `summary` YAML metadata.
 - [Read and edit tools](architecture/read-edit-tools.md)
 - [Terminal UI](architecture/tui.md)
 - [Workspace Git](architecture/workspace-git.md)
+- [Wails provider lifecycle](architecture/wails-provider.md)
 
 ## Design
 
