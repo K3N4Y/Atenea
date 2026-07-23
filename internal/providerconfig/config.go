@@ -10,7 +10,10 @@ import (
 	"strings"
 )
 
-const OpenAICompatible = "openai-compatible"
+const (
+	OpenAICompatible = "openai-compatible"
+	Anthropic        = "anthropic"
+)
 
 type Provider struct {
 	ID                    string   `json:"id"`
@@ -96,7 +99,7 @@ func normalizeAndValidate(cfg *Config) error {
 		if provider.ID == "" || provider.Name == "" || provider.BaseURL == "" {
 			return fmt.Errorf("provider %d requires id, name, and base_url", i)
 		}
-		if provider.Type != OpenAICompatible {
+		if provider.Type != OpenAICompatible && provider.Type != Anthropic {
 			return fmt.Errorf("provider %q has unsupported type %q", provider.ID, provider.Type)
 		}
 		if _, ok := seen[provider.ID]; ok {

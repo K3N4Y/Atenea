@@ -21,11 +21,24 @@ import (
 func TestEnvironmentFallbackSnapshot_UsesCurrentOpenAIDefault(t *testing.T) {
 	t.Setenv("OPENROUTER_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "openai-key")
+	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("OPENAI_MODEL", "")
 
 	got := environmentFallbackSnapshot()
 	if got.ProviderID != "openai" || got.Model != "gpt-5.6-terra" {
 		t.Fatalf("fallback = %#v, want OpenAI gpt-5.6-terra", got)
+	}
+}
+
+func TestEnvironmentFallbackSnapshot_UsesAnthropicSDKProvider(t *testing.T) {
+	t.Setenv("OPENROUTER_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-key")
+	t.Setenv("ANTHROPIC_MODEL", "")
+
+	got := environmentFallbackSnapshot()
+	if got.ProviderID != "anthropic" || got.Model != anthropicModel || got.BaseURL != anthropicBaseURL {
+		t.Fatalf("fallback = %#v, want Anthropic %s", got, anthropicModel)
 	}
 }
 
@@ -58,12 +71,23 @@ func TestAteneaVersion_PrintsReleaseMetadataAndExits(t *testing.T) {
 	}
 }
 
-func TestDefaultProviderConfig_IncludesOpenCodeZenAndGo(t *testing.T) {
+func TestDefaultProviderConfig_IncludesAnthropicOpenCodeZenAndGo(t *testing.T) {
 	cfg := defaultProviderConfig()
-	if len(cfg.Providers) != 4 {
-		t.Fatalf("providers = %#v, want OpenRouter, OpenAI, OpenCode Zen, and OpenCode Go", cfg.Providers)
+	if len(cfg.Providers) != 5 {
+		t.Fatalf("providers = %#v, want Anthropic, OpenRouter, OpenAI, OpenCode Zen, and OpenCode Go", cfg.Providers)
 	}
-	openAI := cfg.Providers[1]
+	anthropic := cfg.Providers[0]
+	if anthropic.ID != "anthropic" || anthropic.Type != "anthropic" || anthropic.APIKeyEnv != "ANTHROPIC_API_KEY" || !anthropic.DisableModelDiscovery || len(anthropic.Models) == 0 {
+		t.Fatalf("Anthropic = %#v, want native provider with a curated default catalog", anthropic)
+	}
+	wantAnthropic := []string{"claude-opus-4-8", "claude-fable-5", "claude-sonnet-5", "claude-haiku-4-5"}
+	if anthropicModel != wantAnthropic[0] {
+		t.Fatalf("Anthropic default = %q, want coding-agent default %q", anthropicModel, wantAnthropic[0])
+	}
+	if strings.Join(anthropic.Models, ",") != strings.Join(wantAnthropic, ",") {
+		t.Fatalf("Anthropic models = %#v, want current curated catalog %#v", anthropic.Models, wantAnthropic)
+	}
+	openAI := cfg.Providers[2]
 	want := []string{"gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"}
 	if !openAI.DisableModelDiscovery {
 		t.Fatal("OpenAI model discovery must stay disabled because GET /models includes incompatible model types")
@@ -72,7 +96,7 @@ func TestDefaultProviderConfig_IncludesOpenCodeZenAndGo(t *testing.T) {
 		t.Fatalf("OpenAI models = %#v, want %#v", openAI.Models, want)
 	}
 
-	zen, goPlan := cfg.Providers[2], cfg.Providers[3]
+	zen, goPlan := cfg.Providers[3], cfg.Providers[4]
 	if zen.ID != "opencode" || zen.BaseURL != "https://opencode.ai/zen/v1" || !zen.DisableModelDiscovery {
 		t.Fatalf("OpenCode Zen = %#v, want fixed compatible catalog at the Zen endpoint", zen)
 	}
@@ -257,7 +281,7 @@ func TestTUI_ModelSelectorPersistsSelectionUnderPTY(t *testing.T) {
 
 	cmd := exec.Command(binary)
 	cmd.Dir = t.TempDir()
-	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+configRoot, "OPENROUTER_API_KEY=", "OPENAI_API_KEY=", "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
+	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+configRoot, "OPENROUTER_API_KEY=", "OPENAI_API_KEY=", "ANTHROPIC_API_KEY=", "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
 	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 24})
 	if err != nil {
 		t.Fatal(err)
@@ -301,7 +325,7 @@ func TestTUI_DefaultOpenRouterModelsShowContextUnderPTY(t *testing.T) {
 	}
 	cmd := exec.Command(binary)
 	cmd.Dir = t.TempDir()
-	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+t.TempDir(), "OPENROUTER_API_KEY=test", "OPENAI_API_KEY=", "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
+	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+t.TempDir(), "OPENROUTER_API_KEY=test", "OPENAI_API_KEY=", "ANTHROPIC_API_KEY=", "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
 	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 120, Rows: 24})
 	if err != nil {
 		t.Fatal(err)
@@ -313,7 +337,16 @@ func TestTUI_DefaultOpenRouterModelsShowContextUnderPTY(t *testing.T) {
 	if _, err := terminal.Write([]byte("/model ")); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"tencent/hy3:free", "poolside/laguna-xs-2.1:free", "cohere/north-mini-code:free", "262K context", "256K context"} {
+	for _, want := range []string{"tencent/hy3:free", "poolside/laguna-xs-2.1:free", "262K context"} {
+		waitForPTYText(t, output, want)
+	}
+	// The complete built-in catalog is taller than this PTY. Filter through the
+	// public composer seam instead of assuming every model fits in the initial
+	// viewport, then verify the last OpenRouter model keeps its context label.
+	if _, err := terminal.Write([]byte("cohere")); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"cohere/north-mini-code:free", "256K context"} {
 		waitForPTYText(t, output, want)
 	}
 }
@@ -337,7 +370,7 @@ func TestTUI_FocusedComposerShowsBlinkingCursorUnderPTY(t *testing.T) {
 			cmd.Env = append(cmd.Env, variable)
 		}
 	}
-	cmd.Env = append(cmd.Env, "TERM=xterm-256color", "CLICOLOR_FORCE=1", "OPENROUTER_API_KEY=", "OPENAI_API_KEY=", "XDG_CONFIG_HOME="+t.TempDir(), "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
+	cmd.Env = append(cmd.Env, "TERM=xterm-256color", "CLICOLOR_FORCE=1", "OPENROUTER_API_KEY=", "OPENAI_API_KEY=", "ANTHROPIC_API_KEY=", "XDG_CONFIG_HOME="+t.TempDir(), "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
 	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 24})
 	if err != nil {
 		t.Fatal(err)
@@ -521,7 +554,7 @@ func TestTUI_FileTreeMouseWheelAndClickUnderPTY(t *testing.T) {
 	}
 	cmd := exec.Command(binary)
 	cmd.Dir = filepath.Join(repoRoot, "cmd/atenea/testdata/file-tree-mouse/project")
-	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY=", "OPENAI_API_KEY=", "XDG_CONFIG_HOME="+t.TempDir(), "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
+	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY=", "OPENAI_API_KEY=", "ANTHROPIC_API_KEY=", "XDG_CONFIG_HOME="+t.TempDir(), "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
 	// Rows: 11 = 8 filas de cuerpo (la geometria del arbol/visor que este test
 	// ejercita) mas las 3 filas del chrome de la top bar; asi el cuerpo conserva
 	// el mismo alto que antes de la barra y los clics de mouse suman 3 a su fila.
@@ -686,7 +719,7 @@ func TestTUI_ConnectCommandFullFlowUnderPTY(t *testing.T) {
 	// Inside the repo so prompt checkpoints find a Git workspace, like the
 	// other PTY tests.
 	cmd.Dir = filepath.Join(repoRoot, "cmd/atenea/testdata/file-viewer/project")
-	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY=", "OPENAI_API_KEY=", "XDG_CONFIG_HOME="+configRoot, "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
+	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY=", "OPENAI_API_KEY=", "ANTHROPIC_API_KEY=", "XDG_CONFIG_HOME="+configRoot, "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
 	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 24})
 	if err != nil {
 		t.Fatal(err)
@@ -784,7 +817,7 @@ func startTUIUnderPTY(t *testing.T, binary, workdir, database string) (*exec.Cmd
 	// Los tests dependen del provider demo: se vacian ambas API keys y se aisla
 	// XDG_CONFIG_HOME para que ni el entorno ni el providers.json real del
 	// desarrollador cuelen un provider de red.
-	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY=", "OPENAI_API_KEY=", "XDG_CONFIG_HOME="+t.TempDir(), "ATENEA_DB="+database, "ATENEA_CHECKPOINTS="+filepath.Join(filepath.Dir(database), "checkpoints"))
+	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY=", "OPENAI_API_KEY=", "ANTHROPIC_API_KEY=", "XDG_CONFIG_HOME="+t.TempDir(), "ATENEA_DB="+database, "ATENEA_CHECKPOINTS="+filepath.Join(filepath.Dir(database), "checkpoints"))
 	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 24})
 	if err != nil {
 		t.Fatal(err)

@@ -13,6 +13,7 @@ import (
 // means adding the entry here plus a validation strategy in defaultKeyValidator;
 // the storage, resolution, and UI flow are already generic.
 var connectableProviderIDs = map[string]struct{}{
+	"anthropic":   {},
 	"openrouter":  {},
 	"opencode":    {},
 	"opencode-go": {},
@@ -34,6 +35,8 @@ type KeyValidator func(ctx context.Context, provider Provider, apiKey string) er
 // providers in connectableProviderIDs ever reach it.
 func defaultKeyValidator(ctx context.Context, provider Provider, apiKey string) error {
 	switch provider.ID {
+	case "anthropic":
+		return llm.ValidateAnthropicKey(ctx, provider.BaseURL, apiKey)
 	case "openrouter":
 		return llm.ValidateOpenRouterKey(ctx, provider.BaseURL, apiKey)
 	case "opencode", "opencode-go":

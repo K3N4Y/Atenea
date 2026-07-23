@@ -48,11 +48,25 @@ func TestLoad_ParsesValidatedProviderSelection(t *testing.T) {
 	}
 }
 
+func TestLoad_AcceptsNativeAnthropicProvider(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "providers.json")
+	if err := os.WriteFile(path, []byte(`{"providers":[{"id":"anthropic","name":"Anthropic","type":"anthropic","base_url":"https://api.anthropic.com","api_key_env":"ANTHROPIC_API_KEY","disable_model_discovery":true,"models":["claude-sonnet-4-5-20250929"]}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Providers[0].Type; got != Anthropic {
+		t.Fatalf("Type = %q, want %q", got, Anthropic)
+	}
+}
+
 func TestLoad_RejectsInvalidConfigurations(t *testing.T) {
 	tests := map[string]string{
 		"duplicate provider": `{"providers":[{"id":"x","name":"X","type":"openai-compatible","base_url":"http://one"},{"id":"x","name":"Y","type":"openai-compatible","base_url":"http://two"}]}`,
 		"unknown selection":  `{"providers":[{"id":"x","name":"X","type":"openai-compatible","base_url":"http://one"}],"selected":{"provider":"missing","model":"m"}}`,
-		"unsupported type":   `{"providers":[{"id":"x","name":"X","type":"anthropic","base_url":"http://one"}]}`,
+		"unsupported type":   `{"providers":[{"id":"x","name":"X","type":"unknown","base_url":"http://one"}]}`,
 		"secret value":       `{"providers":[{"id":"x","name":"X","type":"openai-compatible","base_url":"http://one","api_key":"secret"}]}`,
 	}
 	for name, body := range tests {

@@ -100,6 +100,21 @@ func TestRunner_GatedToolDeniedPublishesFailedAndDoesNotExecute(t *testing.T) {
 			}
 		}
 	}
+
+	msgs, err := store.Messages(ctx, "s1", 0)
+	if err != nil {
+		t.Fatalf("Messages after denied tool: %v", err)
+	}
+	projected := toLLMMessages(msgs)
+	for _, message := range projected {
+		if message.Role == string(session.RoleTool) && message.ToolCallID == "c1" {
+			if !message.IsError {
+				t.Fatal("denied tool result reached provider with IsError=false, want true")
+			}
+			return
+		}
+	}
+	t.Fatalf("denied tool result c1 not projected to provider: %+v", projected)
 }
 
 // TestRunner_GatedToolApprovedSettlesAfterAsking asserts the APPROVAL path: the

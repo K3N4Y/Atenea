@@ -260,7 +260,7 @@ func toLLMMessages(msgs []session.Message) []llm.Message {
 				calls[j] = llm.ToolCallPart{ID: tc.ID, Name: tc.Name, Arguments: json.RawMessage(tc.Arguments)}
 			}
 		}
-		out[i] = llm.Message{Role: string(m.Role), Text: m.Text, ToolCalls: calls, ToolCallID: m.ToolCallID}
+		out[i] = llm.Message{Role: string(m.Role), Text: m.Text, ToolCalls: calls, ToolCallID: m.ToolCallID, IsError: m.IsError}
 	}
 	return out
 }

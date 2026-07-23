@@ -1,9 +1,14 @@
 ---
-updated_at: 2026-07-09
-summary: Design for integrating Claude as an LLM provider in Go.
+updated_at: 2026-07-22
+summary: Architecture and current constraints of the native Anthropic Go SDK provider.
 ---
 
 # LLM Integration: Claude (Go)
+
+> Implementation status (2026-07-22): the native provider is implemented for
+> the TUI in `internal/llm/anthropic.go` with the official Go SDK. Wails remains
+> intentionally out of scope. The primary-source implementation record is
+> `../research/2026-07-22-anthropic-go-sdk-provider-integration.md`.
 
 Designed on 2026-06-19. Defines how Athena talks to the model. It is the
 `internal/llm` layer that the loop (`agent-loop.md`) consumes via
@@ -12,7 +17,9 @@ Designed on 2026-06-19. Defines how Athena talks to the model. It is the
 
 ## Decisions
 
-- **Default model**: `claude-opus-4-8` (Opus 4.8). Configurable.
+- **Default model**: `claude-opus-4-8`, Anthropic's recommended starting point
+  for complex agentic coding. Configurable through
+  `ANTHROPIC_MODEL` or `/model`.
 - **SDK**: Go official, `github.com/anthropics/anthropic-sdk-go`. Not raw HTTP.
 - **Manual loop, not the SDK tool runner**: Atenea's durable runner runs
  the tools and persists state. We use direct `Messages.NewStreaming`, one
@@ -45,9 +52,8 @@ Atenea minimum config (see future config/secrets doc):
 
 | Key | Default | Notes |
 | --- | --- | --- |
-| `model` | `claude-opus-4-8` | constant `anthropic.ModelClaudeOpus4_8` |
-| `max_tokens` | `64000` | streaming; Opus 4.8 supports up to 128K |
-| `effort` | `high` | `high`/`xhigh` for agentic work (see Thinking) |
+| `model` | `claude-opus-4-8` | current alias recommended for complex agentic coding |
+| `max_tokens` | `8192` | provider fallback when the request leaves it unset |
 | APIkey | env `ANTHROPIC_API_KEY` | never on disk/prompt |
 
 ## One turn = one streaming call
@@ -179,6 +185,13 @@ The input of each `tool_use` is parsed with `json.Unmarshal` over the raw JSON
 Opus 4.8 can escape Unicode/slashes differently.
 
 ## Thinking and effort
+
+Thinking is deliberately disabled in the current adapter. Atenea's durable
+message model does not yet persist `thinking`/`redacted_thinking` blocks and
+their signatures, which Anthropic requires to be sent back unchanged during a
+tool-use continuation. Enabling it before extending persistence would make
+multi-step tool conversations invalid. The notes below are future design work,
+not current behavior.
 
 - **Adaptive only** in Opus 4.8: `Thinking: {OfAdaptive: &ThinkingConfigAdaptiveParam{}}`.
 - `thinking: {type:"enabled", budget_tokens:N}` gives **400**. Neither does `temperature`,

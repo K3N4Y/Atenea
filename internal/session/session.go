@@ -39,6 +39,7 @@ type Message struct {
 	Text       string
 	ToolCalls  []ToolCall // role=assistant: tool calls del modelo
 	ToolCallID string     // role=tool: empareja con la tool call del assistant
+	IsError    bool       // role=tool: el resultado representa un fallo de ejecucion
 	Seq        Seq
 }
 

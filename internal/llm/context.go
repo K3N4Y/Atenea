@@ -8,6 +8,14 @@ import (
 const preventiveCompactionPercent = 80
 
 var contextWindows = map[string]int{
+	// Native Anthropic IDs are unprefixed. Keep the generally available 200K
+	// window here; extended-context betas must not inflate preventive budgets.
+	"claude-opus-4-8":  200_000,
+	"claude-fable-5":   200_000,
+	"claude-sonnet-5":  200_000,
+	"claude-haiku-4-5": 200_000,
+	// OpenRouter exposes Anthropic models with a provider prefix. Keep these
+	// aliases alongside native IDs because both providers remain selectable.
 	"anthropic/claude-opus-4.8":   200_000,
 	"anthropic/claude-sonnet-4.5": 200_000,
 	"anthropic/claude-3.5-sonnet": 200_000,

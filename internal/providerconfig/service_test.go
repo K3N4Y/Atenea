@@ -177,6 +177,39 @@ func TestService_ConnectStoresKeyAndActivatesDefaultModelWhenNothingSelected(t *
 	}
 }
 
+func TestService_ConnectAnthropicStoresKeyAndActivatesNativeProvider(t *testing.T) {
+	dir := t.TempDir()
+	credentials := NewFileCredentialStore(filepath.Join(dir, "credentials.json"))
+	defaults := Config{Providers: []Provider{{
+		ID: "anthropic", Name: "Anthropic", Type: Anthropic,
+		BaseURL: "https://api.anthropic.com", APIKeyEnv: "ANTHROPIC_API_KEY",
+		DisableModelDiscovery: true, Models: []string{"claude-sonnet-4-5-20250929"},
+	}}}
+	var built Provider
+	factory := func(provider Provider, _ string, _ string) (llm.Provider, error) {
+		built = provider
+		return inertProvider{}, nil
+	}
+	s, err := Open(filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, factory, nil, nil, credentials, defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.validateKey = func(_ context.Context, provider Provider, apiKey string) error {
+		if provider.Type != Anthropic || apiKey != "sk-ant-test" {
+			t.Fatalf("validator got provider=%#v key=%q", provider, apiKey)
+		}
+		return nil
+	}
+
+	active, err := s.Connect(context.Background(), "anthropic", "sk-ant-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.ProviderID != "anthropic" || active.Model != "claude-sonnet-4-5-20250929" || built.Type != Anthropic {
+		t.Fatalf("active=%#v built=%#v, want native Anthropic default", active, built)
+	}
+}
+
 func TestService_ConnectRejectsInvalidKeyWithoutPersisting(t *testing.T) {
 	dir := t.TempDir()
 	credentials := NewFileCredentialStore(filepath.Join(dir, "credentials.json"))

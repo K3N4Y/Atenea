@@ -217,6 +217,9 @@ func resolveAPIKey(provider Provider, getenv func(string) string, credentials Cr
 	return "", fmt.Errorf("no API key for provider %q: set %s or run /connect", provider.ID, provider.APIKeyEnv)
 }
 func defaultProviderFactory(def Provider, model, apiKey string) (llm.Provider, error) {
+	if def.Type == Anthropic {
+		return llm.NewAnthropicProvider(apiKey, def.BaseURL, model), nil
+	}
 	opts := []llm.Option{llm.WithoutOpenRouterReasoning()}
 	if def.OpenRouterReasoning {
 		opts = nil

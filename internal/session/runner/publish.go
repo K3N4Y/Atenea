@@ -242,7 +242,7 @@ func (p *Publisher) failTool(ctx context.Context, callID string, cause error) er
 		CallID:   callID,
 		ToolName: p.tools[callID],
 		Error:    msg,
-		Message:  &session.Message{ID: callID, Role: session.RoleTool, Text: msg, ToolCallID: callID},
+		Message:  &session.Message{ID: callID, Role: session.RoleTool, Text: msg, ToolCallID: callID, IsError: true},
 	}); err != nil {
 		return err
 	}

@@ -79,11 +79,16 @@ from `providers.json` inside the Atenea directory returned by
 ```
 
 Authenticated providers use `api_key_env` for the environment-variable name.
-The built-in `/connect` picker supports OpenRouter, OpenCode Zen, and OpenCode
-Go; both OpenCode services use `OPENCODE_API_KEY`. Keys entered through
+The built-in `/connect` picker supports Anthropic, OpenRouter, OpenCode Zen,
+and OpenCode Go. Anthropic uses its native Messages API through the official Go
+SDK and reads `ANTHROPIC_API_KEY`; both OpenCode services use
+`OPENCODE_API_KEY`. Keys entered through
 `/connect` are stored in Atenea's private credentials file. If provider config
-is absent, the environment startup fallback remains OpenRouter, then OpenAI,
-then the offline demo.
+is absent, the environment startup fallback is OpenRouter, then OpenAI, then
+Anthropic, and finally the offline demo. `ANTHROPIC_MODEL` can override the
+built-in Anthropic default.
+That default is `claude-opus-4-8`, Anthropic's recommended starting point for
+complex agentic coding; set `ANTHROPIC_MODEL` to pin a specific snapshot.
 
 OpenCode Zen and Go are separate providers: Zen is pay-as-you-go at
 `https://opencode.ai/zen/v1`, while Go is the subscription endpoint at

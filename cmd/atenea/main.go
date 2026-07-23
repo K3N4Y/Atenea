@@ -43,6 +43,11 @@ const (
 
 	openCodeZenBaseURL = "https://opencode.ai/zen/v1"
 	openCodeGoBaseURL  = "https://opencode.ai/zen/go/v1"
+	anthropicBaseURL   = "https://api.anthropic.com"
+	// Anthropic recommends Opus 4.8 as the starting point for complex agentic
+	// coding. Keep the moving alias intentionally so the built-in default tracks
+	// compatible model improvements; ANTHROPIC_MODEL can pin a snapshot.
+	anthropicModel = "claude-opus-4-8"
 )
 
 func main() {
@@ -162,10 +167,10 @@ func displayDir(root string) string {
 }
 
 // providerFromEnv elige el provider por entorno, en orden de precedencia:
-// OpenRouter si hay OPENROUTER_API_KEY (modelo por OPENROUTER_MODEL), luego OpenAI
-// si hay OPENAI_API_KEY (modelo por OPENAI_MODEL), y si no el demo sin red para
-// probar la TUI sin configurar nada. Devuelve ademas la etiqueta del modelo para
-// el pie del composer: "demo" con el provider fake, o el modelo real elegido.
+// OpenRouter si hay OPENROUTER_API_KEY (modelo por OPENROUTER_MODEL), luego OpenAI,
+// luego Anthropic (modelo por ANTHROPIC_MODEL), y si no el demo sin red para probar
+// la TUI sin configurar nada. Devuelve ademas la etiqueta del modelo para el pie
+// del composer: "demo" con el provider fake, o el modelo real elegido.
 func providerFromEnv() (llm.Provider, string) {
 	snapshot := environmentFallbackSnapshot()
 	return snapshot.Provider, snapshot.Model
@@ -188,7 +193,14 @@ func environmentFallbackSnapshot() llm.ProviderSnapshot {
 		}
 		return llm.ProviderSnapshot{ProviderID: "openai", ProviderName: "OpenAI", BaseURL: openAIBaseURL, Model: model, Provider: llm.NewOpenAIProvider(key, openAIBaseURL, model, llm.WithoutOpenRouterReasoning())}
 	}
-	log.Print("atenea: sin OPENROUTER_API_KEY ni OPENAI_API_KEY; usando provider de demo (sin red)")
+	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+		model := os.Getenv("ANTHROPIC_MODEL")
+		if model == "" {
+			model = anthropicModel
+		}
+		return llm.ProviderSnapshot{ProviderID: "anthropic", ProviderName: "Anthropic", BaseURL: anthropicBaseURL, Model: model, Provider: llm.NewAnthropicProvider(key, anthropicBaseURL, model)}
+	}
+	log.Print("atenea: sin OPENROUTER_API_KEY, OPENAI_API_KEY ni ANTHROPIC_API_KEY; usando provider de demo (sin red)")
 	return llm.ProviderSnapshot{ProviderID: "demo", ProviderName: "Demo", BaseURL: "demo://local", Model: "demo", Provider: demoProvider()}
 }
 
@@ -199,6 +211,11 @@ func openProviderService() (*providerconfig.Service, error) {
 
 func defaultProviderConfig() providerconfig.Config {
 	return providerconfig.Config{Providers: []providerconfig.Provider{
+		{
+			ID: "anthropic", Name: "Anthropic", Type: providerconfig.Anthropic,
+			BaseURL: anthropicBaseURL, APIKeyEnv: "ANTHROPIC_API_KEY", DisableModelDiscovery: true,
+			Models: []string{anthropicModel, "claude-fable-5", "claude-sonnet-5", "claude-haiku-4-5"},
+		},
 		{
 			ID: "openrouter", Name: "OpenRouter", Type: providerconfig.OpenAICompatible,
 			BaseURL: openRouterBaseURL, APIKeyEnv: "OPENROUTER_API_KEY", OpenRouterReasoning: true,

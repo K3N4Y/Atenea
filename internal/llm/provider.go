@@ -32,6 +32,7 @@ type Message struct {
 	Text       string
 	ToolCalls  []ToolCallPart // role=assistant: tool calls del modelo
 	ToolCallID string         // role=tool: empareja con la tool call del assistant
+	IsError    bool           // role=tool: el resultado representa un fallo de ejecucion
 }
 
 // Request es la entrada de un turno. En M2 lleva solo el modelo; el fake lo

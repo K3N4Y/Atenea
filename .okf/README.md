@@ -55,6 +55,7 @@ uses Markdown and begins with `updated_at` and `summary` YAML metadata.
 - [Harness subagents](research/harness-subagents.md)
 - [SLM tool-calling reliability](research/slm-tool-calling-reliability.md)
 - [OpenCode Zen and Go provider integration](research/2026-07-22-opencode-zen-go-provider-integration.md)
+- [Anthropic Go SDK provider integration](research/2026-07-22-anthropic-go-sdk-provider-integration.md)
 
 ## Specifications
 
