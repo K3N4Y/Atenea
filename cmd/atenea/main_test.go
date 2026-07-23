@@ -58,10 +58,10 @@ func TestAteneaVersion_PrintsReleaseMetadataAndExits(t *testing.T) {
 	}
 }
 
-func TestDefaultProviderConfig_UsesCuratedOpenAIModels(t *testing.T) {
+func TestDefaultProviderConfig_IncludesOpenCodeZenAndGo(t *testing.T) {
 	cfg := defaultProviderConfig()
-	if len(cfg.Providers) != 2 {
-		t.Fatalf("providers = %#v, want OpenRouter and OpenAI", cfg.Providers)
+	if len(cfg.Providers) != 4 {
+		t.Fatalf("providers = %#v, want OpenRouter, OpenAI, OpenCode Zen, and OpenCode Go", cfg.Providers)
 	}
 	openAI := cfg.Providers[1]
 	want := []string{"gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"}
@@ -70,6 +70,17 @@ func TestDefaultProviderConfig_UsesCuratedOpenAIModels(t *testing.T) {
 	}
 	if strings.Join(openAI.Models, ",") != strings.Join(want, ",") {
 		t.Fatalf("OpenAI models = %#v, want %#v", openAI.Models, want)
+	}
+
+	zen, goPlan := cfg.Providers[2], cfg.Providers[3]
+	if zen.ID != "opencode" || zen.BaseURL != "https://opencode.ai/zen/v1" || !zen.DisableModelDiscovery {
+		t.Fatalf("OpenCode Zen = %#v, want fixed compatible catalog at the Zen endpoint", zen)
+	}
+	if goPlan.ID != "opencode-go" || goPlan.BaseURL != "https://opencode.ai/zen/go/v1" || !goPlan.DisableModelDiscovery {
+		t.Fatalf("OpenCode Go = %#v, want fixed compatible catalog at the Go endpoint", goPlan)
+	}
+	if len(zen.Models) == 0 || len(goPlan.Models) == 0 {
+		t.Fatal("OpenCode providers need a compatible default model for /connect")
 	}
 }
 
@@ -666,7 +677,7 @@ func TestTUI_ConnectCommandFullFlowUnderPTY(t *testing.T) {
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	config := `{"providers":[{"id":"openrouter","name":"OpenRouter","type":"openai-compatible","base_url":"` + gateway.URL + `/v1","api_key_env":"OPENROUTER_API_KEY","openrouter_reasoning":true,"models":["openrouter/free"]}]}`
+	config := `{"providers":[{"id":"openrouter","name":"OpenRouter","type":"openai-compatible","base_url":"` + gateway.URL + `/v1","api_key_env":"OPENROUTER_API_KEY","openrouter_reasoning":true,"models":["openrouter/free"]},{"id":"opencode","name":"OpenCode Zen","type":"openai-compatible","base_url":"https://opencode.ai/zen/v1","api_key_env":"OPENCODE_API_KEY","models":["big-pickle"]},{"id":"opencode-go","name":"OpenCode Go","type":"openai-compatible","base_url":"https://opencode.ai/zen/go/v1","api_key_env":"OPENCODE_API_KEY","models":["kimi-k2.7-code"]}]}`
 	if err := os.WriteFile(filepath.Join(configDir, "providers.json"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -686,7 +697,7 @@ func TestTUI_ConnectCommandFullFlowUnderPTY(t *testing.T) {
 
 	// No key anywhere: demo mode, and the launch notice points at /connect.
 	waitForPTYText(t, output, " demo ─╯")
-	waitForPTYText(t, output, "run /connect to use OpenRouter")
+	waitForPTYText(t, output, "run /connect to connect an LLM provider")
 
 	// /connect opens the panel on the provider list, not yet connected.
 	if _, err := terminal.Write([]byte("/connect\r")); err != nil {
@@ -694,6 +705,8 @@ func TestTUI_ConnectCommandFullFlowUnderPTY(t *testing.T) {
 	}
 	waitForPTYText(t, output, "Connect Provider")
 	waitForPTYText(t, output, "○ OpenRouter")
+	waitForPTYText(t, output, "○ OpenCode Zen")
+	waitForPTYText(t, output, "○ OpenCode Go")
 	waitForPTYText(t, output, "not connected")
 
 	// Enter on the provider opens the masked key entry.

@@ -13,7 +13,9 @@ import (
 // means adding the entry here plus a validation strategy in defaultKeyValidator;
 // the storage, resolution, and UI flow are already generic.
 var connectableProviderIDs = map[string]struct{}{
-	"openrouter": {},
+	"openrouter":  {},
+	"opencode":    {},
+	"opencode-go": {},
 }
 
 // ConnectableProvider is one row of the /connect picker: a provider the user
@@ -34,6 +36,11 @@ func defaultKeyValidator(ctx context.Context, provider Provider, apiKey string) 
 	switch provider.ID {
 	case "openrouter":
 		return llm.ValidateOpenRouterKey(ctx, provider.BaseURL, apiKey)
+	case "opencode", "opencode-go":
+		// OpenCode exposes /models publicly and has no documented non-billable
+		// credential check. Connect already rejects empty keys; the first model
+		// request reports invalid credentials or missing Zen/Go entitlement.
+		return nil
 	default:
 		return fmt.Errorf("provider %q does not support key validation", provider.ID)
 	}

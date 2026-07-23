@@ -40,6 +40,9 @@ const (
 	openAIBaseURL = "https://api.openai.com/v1"
 	// openAIDefaultModel es el modelo por defecto de OpenAI; override por OPENAI_MODEL.
 	openAIDefaultModel = "gpt-5.6-terra"
+
+	openCodeZenBaseURL = "https://opencode.ai/zen/v1"
+	openCodeGoBaseURL  = "https://opencode.ai/zen/go/v1"
 )
 
 func main() {
@@ -114,7 +117,7 @@ func run() error {
 	// stored credential): say so, and say how to get out of it, instead of
 	// letting the user chat with the fake and find out the hard way.
 	if active.ProviderID == "demo" {
-		m = m.WithNotice("No provider connected — run /connect to use OpenRouter (or export OPENROUTER_API_KEY). Demo mode: replies are canned.")
+		m = m.WithNotice("No provider connected — run /connect to connect an LLM provider. Demo mode: replies are canned.")
 	}
 	// WithMouseCellMotion habilita el mouse tracking: sin el, la terminal nunca
 	// reporta la rueda a la app (en pantalla alternativa la traduce a flechas
@@ -208,6 +211,16 @@ func defaultProviderConfig() providerconfig.Config {
 			ID: "openai", Name: "OpenAI", Type: providerconfig.OpenAICompatible,
 			BaseURL: openAIBaseURL, APIKeyEnv: "OPENAI_API_KEY", DisableModelDiscovery: true,
 			Models: []string{"gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"},
+		},
+		{
+			ID: "opencode", Name: "OpenCode Zen", Type: providerconfig.OpenAICompatible,
+			BaseURL: openCodeZenBaseURL, APIKeyEnv: "OPENCODE_API_KEY", DisableModelDiscovery: true,
+			Models: []string{"kimi-k2.7-code", "big-pickle", "deepseek-v4-flash-free", "mimo-v2.5-free", "laguna-s-2.1-free", "north-mini-code-free", "nemotron-3-ultra-free", "grok-4.5", "grok-build-0.1", "deepseek-v4-pro", "deepseek-v4-flash", "minimax-m3", "minimax-m2.7", "minimax-m2.5", "glm-5.2", "glm-5.1", "glm-5", "kimi-k2.6", "kimi-k2.5"},
+		},
+		{
+			ID: "opencode-go", Name: "OpenCode Go", Type: providerconfig.OpenAICompatible,
+			BaseURL: openCodeGoBaseURL, APIKeyEnv: "OPENCODE_API_KEY", DisableModelDiscovery: true,
+			Models: []string{"kimi-k2.7-code", "grok-4.5", "glm-5.2", "glm-5.1", "kimi-k3", "kimi-k2.6", "deepseek-v4-pro", "deepseek-v4-flash", "mimo-v2.5", "mimo-v2.5-pro", "hy3"},
 		},
 	}}
 }

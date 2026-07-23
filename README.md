@@ -78,10 +78,18 @@ from `providers.json` inside the Atenea directory returned by
 }
 ```
 
-Authenticated providers use `api_key_env` for the environment-variable name;
-the key value is never stored. If the file is absent, the existing
-`OPENROUTER_API_KEY`/`OPENROUTER_MODEL` startup behavior remains, with the
-offline demo as the final fallback.
+Authenticated providers use `api_key_env` for the environment-variable name.
+The built-in `/connect` picker supports OpenRouter, OpenCode Zen, and OpenCode
+Go; both OpenCode services use `OPENCODE_API_KEY`. Keys entered through
+`/connect` are stored in Atenea's private credentials file. If provider config
+is absent, the environment startup fallback remains OpenRouter, then OpenAI,
+then the offline demo.
+
+OpenCode Zen and Go are separate providers: Zen is pay-as-you-go at
+`https://opencode.ai/zen/v1`, while Go is the subscription endpoint at
+`https://opencode.ai/zen/go/v1`. Atenea only lists their models documented as
+OpenAI Chat Completions-compatible; models requiring Responses, Anthropic, or
+Google protocols are intentionally omitted.
 
 The built-in OpenRouter catalog includes `tencent/hy3:free` (262K),
 `poolside/laguna-xs-2.1:free` (262K), and `cohere/north-mini-code:free` (256K).
