@@ -100,7 +100,9 @@ remains shared because tool results also use it. `features/settings` composes
 general, provider, and MCP configuration while consuming MCP through its public
 store instead of taking ownership of that module. `features/workspace` owns the
 working-folder selector and the derivation of known folders from session
-summaries; session grouping remains independent in `lib/sessions`.
+summaries. `features/sessions` owns session grouping and the history sidebar;
+session mutations remain in the chat store until their shared contracts are
+separated.
 
 ## Persistence and source of truth
 

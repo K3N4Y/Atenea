@@ -1,5 +1,5 @@
-import { basename } from './path'
-import type { SessionSummary } from '../stores/chat'
+import { basename } from '../../lib/path'
+import type { SessionSummary } from '../../stores/chat'
 
 // Un grupo de chats de la sidebar: todos los de una misma carpeta de trabajo.
 export interface SessionGroup {

@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { PhSidebarSimple, PhWrench, PhPlugs } from '@phosphor-icons/vue'
-import AppSidebar from '../components/AppSidebar.vue'
+import AppSidebar from '../features/sessions/AppSidebar.vue'
 import DevToolsPanel from '../components/DevToolsPanel.vue'
 import McpMenu from '../features/mcp/McpMenu.vue'
 import MessageList from '../components/MessageList.vue'

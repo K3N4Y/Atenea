@@ -34,7 +34,7 @@ vi.mock('../../wailsjs/go/main/App', () => ({
 import { EventsOn } from '../../wailsjs/runtime/runtime'
 import * as App from '../../wailsjs/go/main/App'
 import ChatView from './ChatView.vue'
-import AppSidebar from '../components/AppSidebar.vue'
+import AppSidebar from '../features/sessions/AppSidebar.vue'
 import ChatComposer from '../components/ChatComposer.vue'
 import MessageList from '../components/MessageList.vue'
 import PlanView from '../components/PlanView.vue'

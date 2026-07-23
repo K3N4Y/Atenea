@@ -4,7 +4,7 @@ import { nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import AppSidebar from './AppSidebar.vue'
-import { useUiStore } from '../stores/ui'
+import { useUiStore } from '../../stores/ui'
 
 function mountSidebar(props: Record<string, unknown> = {}) {
   const pinia = createPinia()

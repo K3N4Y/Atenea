@@ -1,9 +1,9 @@
 <script lang="ts" setup>
 import { ref, computed } from 'vue'
 import { PhPlus, PhTrash, PhCheck, PhX, PhGear } from '@phosphor-icons/vue'
-import { useUiStore } from '../stores/ui'
-import type { SessionSummary } from '../stores/chat'
-import { groupSessionsByFolder } from '../lib/sessions'
+import { useUiStore } from '../../stores/ui'
+import type { SessionSummary } from '../../stores/chat'
+import { groupSessionsByFolder } from './sessions'
 
 // Sidebar persistente (identidad §4): el estado colapsado vive en el store de
 // UI y se conserva entre sesiones (pinia-plugin-persistedstate). En pantallas
