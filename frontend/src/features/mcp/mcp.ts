@@ -6,7 +6,56 @@ import {
   ListMCPs,
   SaveMCPConfig,
 } from '../../../wailsjs/go/main/App'
-import { useChatStore } from '../chat/chat'
+
+interface LegacyMCPServerConfig {
+  name: string
+  command: string
+  args: string[]
+}
+
+const legacyChatStorageKey = 'chat'
+
+function isLegacyConfig(config: unknown): config is LegacyMCPServerConfig {
+  if (!config || typeof config !== 'object') return false
+  const candidate = config as Record<string, unknown>
+  return (
+    typeof candidate.name === 'string' &&
+    typeof candidate.command === 'string' &&
+    Array.isArray(candidate.args) &&
+    candidate.args.every((arg) => typeof arg === 'string')
+  )
+}
+
+function legacyConfigs(): LegacyMCPServerConfig[] {
+  const stored = localStorage.getItem(legacyChatStorageKey)
+  if (!stored) return []
+
+  try {
+    const parsed: unknown = JSON.parse(stored)
+    if (!parsed || typeof parsed !== 'object') return []
+    const configs = (parsed as Record<string, unknown>).mcpServers
+    if (!Array.isArray(configs)) return []
+    return configs.every(isLegacyConfig) ? configs : []
+  } catch {
+    return []
+  }
+}
+
+function clearLegacyConfigs(): void {
+  const stored = localStorage.getItem(legacyChatStorageKey)
+  if (!stored) return
+
+  try {
+    const parsed: unknown = JSON.parse(stored)
+    if (!parsed || typeof parsed !== 'object') return
+    const chat = parsed as Record<string, unknown>
+    delete chat.mcpServers
+    localStorage.setItem(legacyChatStorageKey, JSON.stringify(chat))
+  } catch {
+    // An unreadable value cannot have produced configs, so there is nothing to
+    // clean. Preserve it rather than replacing unrelated persisted settings.
+  }
+}
 
 // El backend es la fuente de verdad de los servidores MCP: las definiciones
 // viven en la config global (~/.config/atenea/mcp.json) mas el .mcp.json del
@@ -29,8 +78,6 @@ export interface MCPServer {
 }
 
 export const useMcpStore = defineStore('mcp', () => {
-  const chat = useChatStore()
-
   // Lista declarada + estado conectado, tal como la devuelve el backend.
   const list = ref<MCPServer[]>([])
   // Override optimista: nombre -> estado conectado que el usuario acabo de
@@ -57,9 +104,10 @@ export const useMcpStore = defineStore('mcp', () => {
   // quedan configs viejas se suben con SaveMCPConfig y se vacia el legado;
   // si el backend falla se conservan para reintentar en el proximo refresh.
   async function migrateLegacyConfigs() {
-    if (chat.mcpServers.length === 0) return
-    for (const config of chat.mcpServers) await SaveMCPConfig(config)
-    chat.mcpServers = []
+    const configs = legacyConfigs()
+    if (configs.length === 0) return
+    for (const config of configs) await SaveMCPConfig(config)
+    clearLegacyConfigs()
   }
 
   async function refresh() {

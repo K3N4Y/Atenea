@@ -82,10 +82,3 @@ export interface SessionSummary {
   Cwd: string
   LastActivity: string
 }
-
-// Legacy persisted shape used only while migrating old MCP configuration.
-export interface MCPServerConfig {
-  name: string
-  command: string
-  args: string[]
-}

@@ -5,8 +5,8 @@ import { createPinia, setActivePinia } from 'pinia'
 import piniaPluginPersistedstate from 'pinia-plugin-persistedstate'
 
 // La configuracion del chat debe sobrevivir al cierre de la app: la carpeta, el
-// provider y las definiciones MCP se restauran desde localStorage. El historial y
-// las conexiones MCP reales siguen siendo estado vivo del backend.
+// provider se restauran desde localStorage. El historial y MCP pertenecen a sus
+// respectivos modulos y fuentes de verdad.
 //
 // Como en ui.test.ts, los plugins de pinia solo corren con pinia instalado en una
 // app Vue, asi que montamos una app minima para activar la persistencia.
@@ -63,21 +63,12 @@ describe('chat store: persistencia entre reinicios', () => {
     expect(store.workspace).toBe('/home/u/kanban')
   })
 
-  it('persiste workspace, provider y configuraciones MCP legadas en localStorage', async () => {
+  it('persiste workspace y provider, pero no configuraciones MCP', async () => {
     installPinia()
     const store = useChatStore()
 
     await store.pickWorkspace('/home/u/kanban')
     await store.setProvider('local', 'http://localhost:1234/v1', 'qwen')
-    // mcpServers es legado (la fuente de verdad es la config global del
-    // backend), pero sigue persistido para que la migracion lo encuentre.
-    store.mcpServers = [
-      {
-        name: 'github',
-        command: 'npx',
-        args: ['-y', '@modelcontextprotocol/server-github'],
-      },
-    ]
     await nextTick()
 
     const stored = JSON.parse(localStorage.getItem('chat') as string)
@@ -85,18 +76,10 @@ describe('chat store: persistencia entre reinicios', () => {
     expect(stored.providerKind).toBe('local')
     expect(stored.baseURL).toBe('http://localhost:1234/v1')
     expect(stored.model).toBe('qwen')
-    expect(stored.mcpServers).toEqual([
-      {
-        name: 'github',
-        command: 'npx',
-        args: ['-y', '@modelcontextprotocol/server-github'],
-      },
-    ])
     // Solo las preferencias durables: ni el log, ni los punteros de streaming, ni
     // el estado de conexion MCP, ni availableModels van a localStorage.
     expect(Object.keys(stored).sort()).toEqual([
       'baseURL',
-      'mcpServers',
       'model',
       'providerKind',
       'workspace',
@@ -121,7 +104,7 @@ describe('chat store: persistencia entre reinicios', () => {
     expect(store.model).toBe('qwen')
   })
 
-  it('rehidrata las configuraciones MCP legadas sin conectarlas al iniciar', () => {
+  it('ignora configuraciones MCP legadas al rehidratar Chat', () => {
     localStorage.setItem(
       'chat',
       JSON.stringify({
@@ -138,12 +121,6 @@ describe('chat store: persistencia entre reinicios', () => {
 
     const store = useChatStore()
 
-    expect(store.mcpServers).toEqual([
-      {
-        name: 'github',
-        command: 'npx',
-        args: ['-y', '@modelcontextprotocol/server-github'],
-      },
-    ])
+    expect('mcpServers' in store).toBe(false)
   })
 })

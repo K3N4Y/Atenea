@@ -13,7 +13,6 @@ import { EventsOn } from '../../../wailsjs/runtime/runtime'
 import type { Command } from '../../lib/command'
 import type {
   AssistantItem,
-  MCPServerConfig,
   PlanState,
   ReasoningItem,
   SessionEvent,
@@ -134,11 +133,6 @@ export const useChatStore = defineStore(
       resetChat: () => reset(),
       loadSessions: () => loadSessions(),
     })
-    // LEGADO: las configuraciones MCP vivian aca (localStorage); hoy la fuente
-    // de verdad es la config global del backend (~/.config/atenea/mcp.json).
-    // El ref queda solo para rehidratar lo persistido por versiones viejas: el
-    // store MCP lo migra al backend en su primer refresh y lo vacia.
-    const mcpServers = ref<MCPServerConfig[]>([])
     // Rutas del workspace para el @-menu de archivos del composer. La fuente de
     // verdad es el backend (ListProjectFiles); se cargan una vez al montar la vista
     // y el composer filtra/ordena en cliente conforme el usuario escribe tras '@'.
@@ -561,7 +555,6 @@ export const useChatStore = defineStore(
       model,
       providerKind,
       baseURL,
-      mcpServers,
       availableModels,
       projectFiles,
       commands,
@@ -596,15 +589,14 @@ export const useChatStore = defineStore(
     }
   },
   {
-    // Se persisten la carpeta de trabajo, la config del provider (kind/baseURL/model)
-    // y las definiciones MCP locales:
+    // Se persisten la carpeta de trabajo y la config del provider (kind/baseURL/model):
     // asi un chat nuevo sigue en la ultima carpeta y con el ultimo modelo elegido tras
     // cerrar y reabrir la app (restoreWorkspace/restoreProvider los re-aplican al
     // backend). No se guardan secretos (la key de OpenRouter vive en el entorno). El
     // resto del store es estado vivo (log, streaming, suscripcion, availableModels)
     // cuya fuente de verdad es el backend; no debe ir a localStorage.
     persist: {
-      pick: ['workspace', 'providerKind', 'baseURL', 'model', 'mcpServers'],
+      pick: ['workspace', 'providerKind', 'baseURL', 'model'],
     },
   },
 )

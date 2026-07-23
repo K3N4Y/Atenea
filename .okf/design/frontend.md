@@ -132,6 +132,12 @@ diff rendering remain in shared components. Provider selection and model
 discovery are implemented by `features/settings/provider.ts`; Chat exposes the
 same refs and operations for compatibility and keeps their existing persisted
 keys, but no longer owns that implementation.
+MCP owns the one-time migration of server definitions persisted by older
+versions under the `chat` localStorage key. It saves every valid legacy
+definition through the backend and removes only the historical `mcpServers`
+field after all saves succeed; failures preserve the original value for retry.
+Chat no longer exposes or persists MCP configuration, keeping the modules
+independent and the backend configuration as MCP's source of truth.
 
 ## Persistence and source of truth
 

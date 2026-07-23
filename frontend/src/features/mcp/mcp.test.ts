@@ -15,10 +15,10 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
 }))
 
 import { useMcpStore } from './mcp'
-import { useChatStore } from '../chat/chat'
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  localStorage.clear()
   vi.clearAllMocks()
   ListMCPs.mockResolvedValue([])
   ConnectMCP.mockResolvedValue(undefined)
@@ -61,11 +61,16 @@ describe('mcp store', () => {
   })
 
   it('migra las configs legadas de localStorage a la config global', async () => {
-    const chat = useChatStore()
-    chat.mcpServers = [
-      { name: 'github', command: 'npx', args: ['-y'] },
-      { name: 'sentry', command: 'uvx', args: [] },
-    ]
+    localStorage.setItem(
+      'chat',
+      JSON.stringify({
+        workspace: '/home/u/project',
+        mcpServers: [
+          { name: 'github', command: 'npx', args: ['-y'] },
+          { name: 'sentry', command: 'uvx', args: [] },
+        ],
+      }),
+    )
     const mcp = useMcpStore()
     await mcp.refresh()
 
@@ -75,18 +80,23 @@ describe('mcp store', () => {
       command: 'npx',
       args: ['-y'],
     })
-    expect(chat.mcpServers).toEqual([])
+    expect(JSON.parse(localStorage.getItem('chat') as string)).toEqual({
+      workspace: '/home/u/project',
+    })
     expect(ListMCPs).toHaveBeenCalled()
   })
 
   it('conserva las configs legadas si la migracion falla, para reintentar', async () => {
-    const chat = useChatStore()
-    chat.mcpServers = [{ name: 'github', command: 'npx', args: ['-y'] }]
+    const legacy = {
+      workspace: '/home/u/project',
+      mcpServers: [{ name: 'github', command: 'npx', args: ['-y'] }],
+    }
+    localStorage.setItem('chat', JSON.stringify(legacy))
     SaveMCPConfig.mockRejectedValue(new Error('backend down'))
     const mcp = useMcpStore()
     await mcp.refresh()
 
-    expect(chat.mcpServers).toHaveLength(1)
+    expect(JSON.parse(localStorage.getItem('chat') as string)).toEqual(legacy)
     expect(mcp.error).toBe('backend down')
   })
 
