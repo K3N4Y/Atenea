@@ -96,7 +96,9 @@ in `components`, `stores`, or `lib` when it is genuinely shared. For example,
 `features/git` owns Git state and its full-screen diff, and `features/mcp` owns
 server connection state and its menu. `features/terminal` owns the PTY adapter,
 persistent terminal sessions, visual theme, and panel. The inline `DiffView`
-remains shared because tool results also use it.
+remains shared because tool results also use it. `features/settings` composes
+general, provider, and MCP configuration while consuming MCP through its public
+store instead of taking ownership of that module.
 
 ## Persistence and source of truth
 

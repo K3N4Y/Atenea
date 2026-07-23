@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 
-vi.mock('../../wailsjs/go/main/App', () => ({
+vi.mock('../../../wailsjs/go/main/App', () => ({
   Model: vi.fn(() => Promise.resolve('m')),
   ListSessions: vi.fn(() => Promise.resolve([])),
   SessionHistory: vi.fn(() => Promise.resolve([])),
@@ -29,13 +29,13 @@ vi.mock('../../wailsjs/go/main/App', () => ({
   ResolveToolPermission: vi.fn(),
   DeleteSession: vi.fn(() => Promise.resolve()),
 }))
-vi.mock('../../wailsjs/runtime/runtime', () => ({
+vi.mock('../../../wailsjs/runtime/runtime', () => ({
   EventsOn: vi.fn(() => () => {}),
 }))
 
 import SettingsPanel from './SettingsPanel.vue'
 import ProviderSettings from './ProviderSettings.vue'
-import * as App from '../../wailsjs/go/main/App'
+import * as App from '../../../wailsjs/go/main/App'
 
 beforeEach(() => {
   setActivePinia(createPinia())
