@@ -11,9 +11,7 @@ import {
   DeleteSession,
   ListProjectFiles,
   ListCommands,
-  Workspace,
   SetWorkspace,
-  SelectWorkspace,
 } from '../../../wailsjs/go/main/App'
 import { EventsOn } from '../../../wailsjs/runtime/runtime'
 import type { Command } from '../../lib/command'
@@ -31,6 +29,7 @@ import type {
   Usage,
 } from './types'
 import { createProviderState } from '../settings/provider'
+import { createWorkspaceState } from '../workspace/workspace'
 
 // Mapeo evento->estado de la sesion (front.md §74). El store formaliza la
 // traduccion de los eventos durables del canal `session:<id>` a items del log
@@ -106,10 +105,6 @@ export const useChatStore = defineStore(
     // Historial de chats para la sidebar. La fuente de verdad es el backend; se
     // refresca con loadSessions (al montar la vista) y tras enviar un prompt.
     const sessions = ref<SessionSummary[]>([])
-    // Carpeta de trabajo vigente (la raiz a la que apuntan las tools del agente). La
-    // fuente de verdad es el backend (Workspace/SetWorkspace); la sidebar la muestra
-    // y la usa para agrupar y para cambiar de carpeta al abrir un chat de otra.
-    const workspace = ref('')
     // Modo de envio: 'normal' manda prompts directos; 'plan' pide al agente que
     // planifique antes de ejecutar. `plan` guarda el plan vigente que la tool
     // present_plan abre a pantalla completa (null = sin overlay de plan).
@@ -134,6 +129,18 @@ export const useChatStore = defineStore(
       setProvider,
       listModels,
     } = createProviderState()
+    // Workspace behavior lives in its capability module. These refs and methods
+    // remain part of this store's interface so persistence and callers stay stable.
+    const {
+      workspace,
+      loadWorkspace,
+      selectWorkspace,
+      pickWorkspace,
+      restoreWorkspace,
+    } = createWorkspaceState({
+      resetChat: () => reset(),
+      loadSessions: () => loadSessions(),
+    })
     // LEGADO: las configuraciones MCP vivian aca (localStorage); hoy la fuente
     // de verdad es la config global del backend (~/.config/atenea/mcp.json).
     // El ref queda solo para rehidratar lo persistido por versiones viejas: el
@@ -401,59 +408,6 @@ export const useChatStore = defineStore(
     // la vista la llama al montar y el store tras cada send.
     async function loadSessions(): Promise<void> {
       sessions.value = await ListSessions()
-    }
-
-    // loadWorkspace trae la carpeta de trabajo vigente del backend (espejo de
-    // loadModel). La vista la llama al montar. Si el binding falla (arranque sin
-    // backend) degrada a '' y la sidebar omite el encabezado de carpeta.
-    async function loadWorkspace(): Promise<void> {
-      try {
-        workspace.value = await Workspace()
-      } catch {
-        workspace.value = ''
-      }
-    }
-
-    // selectWorkspace abre el dialogo nativo de carpeta (backend) y, si el usuario
-    // elige una distinta, el agente queda apuntando alli; abre un chat nuevo para que
-    // capture la carpeta nueva y refresca la sidebar. Si cancela o repite, no cambia.
-    async function selectWorkspace(): Promise<void> {
-      const dir = await SelectWorkspace()
-      if (dir && dir !== workspace.value) {
-        workspace.value = dir
-        reset()
-      }
-      await loadSessions()
-    }
-
-    // pickWorkspace fija una carpeta ya conocida sin pasar por el dialogo nativo: la
-    // recablea via SetWorkspace, deja el agente apuntando alli y abre un chat nuevo
-    // para que capture la carpeta. Repetir la carpeta vigente es un no-op (no recablea
-    // ni descarta el lienzo). Lo usa el selector de carpeta del chat nuevo, que ofrece
-    // las carpetas conocidas (knownWorkspaces) para elegir con un clic.
-    async function pickWorkspace(path: string): Promise<void> {
-      if (!path || path === workspace.value) return
-      await SetWorkspace(path)
-      workspace.value = path
-      reset()
-    }
-
-    // restoreWorkspace fija la carpeta de trabajo al montar la vista. El backend
-    // siempre arranca en la carpeta por defecto, asi que si hay una carpeta persistida
-    // de una corrida anterior (rehidratada de localStorage) la re-aplica con
-    // SetWorkspace: un chat nuevo sigue en la ultima carpeta usada entre reinicios. Si
-    // esa carpeta ya no existe (SetWorkspace falla) o no habia ninguna, cae a la del
-    // backend (loadWorkspace).
-    async function restoreWorkspace(): Promise<void> {
-      if (workspace.value) {
-        try {
-          await SetWorkspace(workspace.value)
-          return
-        } catch {
-          // la carpeta persistida ya no existe: cae a la vigente del backend.
-        }
-      }
-      await loadWorkspace()
     }
 
     // loadProjectFiles trae el listado de archivos del workspace del backend para

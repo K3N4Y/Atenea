@@ -98,9 +98,13 @@ server connection state and its menu. `features/terminal` owns the PTY adapter,
 persistent terminal sessions, visual theme, and panel. The inline `DiffView`
 remains shared because tool results also use it. `features/settings` composes
 general, provider, and MCP configuration while consuming MCP through its public
-store instead of taking ownership of that module. `features/workspace` owns the
-working-folder selector and the derivation of known folders from session
-summaries. `features/sessions` owns session grouping and the history sidebar;
+store instead of taking ownership of that module. `features/workspace` owns
+working-folder selection, restoration, its selector UI, and the derivation of
+known folders from session summaries. Chat injects its session-reset and
+history-refresh effects into the workspace module, then exposes the same
+workspace ref and operations through its existing store interface. This keeps
+the persisted `workspace` key compatible without duplicating state or adding a
+second Pinia store. `features/sessions` owns session grouping and the history sidebar;
 session mutations remain in the chat store until their shared contracts are
 separated. Shared chat, session, tool, plan, todo, usage, and event contracts
 live in `features/chat/types.ts`; feature modules depend on these contracts
