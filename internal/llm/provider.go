@@ -38,10 +38,11 @@ type Message struct {
 // Request es la entrada de un turno. En M2 lleva solo el modelo; el fake lo
 // ignora (el guion es la fuente de verdad del turno). El runner (M5) lo puebla
 // con el historial proyectado (Messages) y las tools materializadas (Tools) al
-// construir el turno. System (system context/baseline) y ProviderOpts (prompt
-// cache key) llegan en M7. Crece sin cambiar la interface Provider.
+// construir el turno. System contiene el baseline y SessionKey identifica de
+// forma opaca la afinidad de una conversacion. Crece sin cambiar Provider.
 type Request struct {
 	Model           string
+	SessionKey      string    // opaque conversation affinity; provider adapters may map it to supported routing/cache fields
 	System          string    // turn baseline prompt (<env>, identity, repo instructions); the runner builds it
 	Messages        []Message // historial proyectado convertido al formato del proveedor
 	Tools           []ToolDef // schemas materializados por el registry (M4)
