@@ -197,6 +197,13 @@ atenea:     agent.Service -> runner -> EmittingStore -> Bus -> chan tea.Msg     
   the last estimate remains visible without the approximation marker. The
   built-in `/new` command clears both exact and live token usage so a new
   session never inherits the previous session's counters;
+  development builds also expose the local `/cache-stats` toggle. It appends
+  cache-read, cache-write, and normalized hit-rate values to this label without
+  sending a model message or persisting the toggle. Files selected by the
+  `production` build tag omit the command, autocomplete entry, and rendering.
+  The hit-rate denominator is normalized by each LLM adapter as logical
+  cacheable input: OpenAI's prompt total already includes cached tokens, while
+  Anthropic's uncached input must be combined with cache reads and writes;
   the smooth streaming of the text that arrives by deltas, assistant and
   thought (parity with `frontend/src/lib/reveal.ts`), is split by concern: the
   pure pacing math and the per-entry reveal advance live on the `Transcript`

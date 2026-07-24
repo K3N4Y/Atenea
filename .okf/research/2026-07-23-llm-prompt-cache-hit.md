@@ -198,10 +198,13 @@ Chat-Completions-only catalog.
 4. **Implemented:** thread a stable session cache/routing identity through `llm.Request`, using
    it as OpenAI `prompt_cache_key` and OpenRouter `session_id`. Keep provider
    extensions scoped by provider capability rather than base adapter defaults.
-5. Add observability: cache read tokens, write tokens, eligible input tokens,
-   and hit ratio (`cache_read / input`) per provider/model. Validate with two
-   real requests made within the provider TTL; a successful response alone is
-   not proof of caching.
+5. **Implemented for development TUI builds:** `/cache-stats` toggles cache read
+   tokens, write tokens, and hit ratio without reaching the model. Provider
+   adapters persist a normalized eligible-input denominator so Anthropic
+   (`input + cache read + cache write`) and OpenAI (`prompt_tokens`, which
+   already includes cached input) cannot produce incompatible percentages.
+   Production builds omit the command and UI. Real-provider validation with
+   two requests inside the TTL remains part of the end-to-end cache test.
 6. Revisit explicit breakpoints only from measured misses. Optimize stable
    prefix size and breakpoint placement before increasing TTL, because TTL
    cannot rescue a prefix that changes byte-for-byte.
