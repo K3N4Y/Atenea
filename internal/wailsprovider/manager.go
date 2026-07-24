@@ -143,7 +143,7 @@ func Build(cfg Config, getenv func(string) string, credentials providerconfig.Cr
 	case KindLocal:
 		return llm.NewOpenAIProvider(localPlaceholderKey, cfg.BaseURL, cfg.Model, llm.WithoutOpenRouterReasoning())
 	case KindOpenRouter:
-		return llm.NewOpenAIProvider(OpenRouterAPIKey(getenv, credentials), cfg.BaseURL, cfg.Model)
+		return llm.NewOpenAIProvider(OpenRouterAPIKey(getenv, credentials), cfg.BaseURL, cfg.Model, llm.WithOpenRouterCompatibility())
 	default:
 		return demo
 	}

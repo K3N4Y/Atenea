@@ -221,8 +221,14 @@ func defaultProviderFactory(def Provider, model, apiKey string) (llm.Provider, e
 		return llm.NewAnthropicProvider(apiKey, def.BaseURL, model), nil
 	}
 	opts := []llm.Option{llm.WithoutOpenRouterReasoning()}
-	if def.OpenRouterReasoning {
-		opts = nil
+	switch def.ID {
+	case "openai":
+		opts = []llm.Option{llm.WithOpenAICompatibility()}
+	case "openrouter":
+		opts = []llm.Option{llm.WithOpenRouterCompatibility()}
+		if !def.OpenRouterReasoning {
+			opts = append(opts, llm.WithoutOpenRouterReasoning())
+		}
 	}
 	return llm.NewOpenAIProvider(apiKey, def.BaseURL, model, opts...), nil
 }

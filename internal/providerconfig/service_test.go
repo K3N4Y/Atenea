@@ -2,13 +2,67 @@ package providerconfig
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"atenea/internal/llm"
 )
+
+func TestDefaultProviderFactorySelectsExplicitCompatibilityProfile(t *testing.T) {
+	tests := []struct {
+		id            string
+		wantField     string
+		wantReasoning bool
+	}{
+		{id: "openai", wantField: "prompt_cache_key"},
+		{id: "openrouter", wantField: "session_id", wantReasoning: true},
+		{id: "custom"},
+		{id: "opencode"},
+		{id: "opencode-go"},
+	}
+	for _, test := range tests {
+		t.Run(test.id, func(t *testing.T) {
+			var body []byte
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ = io.ReadAll(r.Body)
+				w.Header().Set("Content-Type", "text/event-stream")
+				io.WriteString(w, "data: [DONE]\n\n")
+			}))
+			defer server.Close()
+
+			provider, err := defaultProviderFactory(Provider{ID: test.id, Type: OpenAICompatible, BaseURL: server.URL, OpenRouterReasoning: test.wantReasoning}, "model", "key")
+			if err != nil {
+				t.Fatal(err)
+			}
+			stream, err := provider.Stream(context.Background(), llm.Request{SessionKey: "opaque-key"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range stream {
+			}
+			var sent map[string]any
+			if err := json.Unmarshal(body, &sent); err != nil {
+				t.Fatal(err)
+			}
+			for _, field := range []string{"prompt_cache_key", "session_id"} {
+				_, exists := sent[field]
+				if (field == test.wantField) != exists {
+					t.Fatalf("field %q presence = %v, want %v; body=%s", field, exists, field == test.wantField, body)
+				}
+			}
+			_, reasoning := sent["reasoning"]
+			if reasoning != test.wantReasoning {
+				t.Fatalf("reasoning presence = %v, want %v; body=%s", reasoning, test.wantReasoning, body)
+			}
+		})
+	}
+}
 
 type inertProvider struct{}
 

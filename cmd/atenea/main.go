@@ -182,7 +182,7 @@ func environmentFallbackSnapshot() llm.ProviderSnapshot {
 		if model == "" {
 			model = defaultModel
 		}
-		return llm.ProviderSnapshot{ProviderID: "openrouter", ProviderName: "OpenRouter", BaseURL: openRouterBaseURL, Model: model, Provider: llm.NewOpenAIProvider(key, openRouterBaseURL, model)}
+		return llm.ProviderSnapshot{ProviderID: "openrouter", ProviderName: "OpenRouter", BaseURL: openRouterBaseURL, Model: model, Provider: llm.NewOpenAIProvider(key, openRouterBaseURL, model, llm.WithOpenRouterCompatibility())}
 	}
 	// OpenAI no entiende el campo `reasoning` de OpenRouter: se apaga con
 	// WithoutOpenRouterReasoning para no mandar una extension que rechazaria.
@@ -191,7 +191,7 @@ func environmentFallbackSnapshot() llm.ProviderSnapshot {
 		if model == "" {
 			model = openAIDefaultModel
 		}
-		return llm.ProviderSnapshot{ProviderID: "openai", ProviderName: "OpenAI", BaseURL: openAIBaseURL, Model: model, Provider: llm.NewOpenAIProvider(key, openAIBaseURL, model, llm.WithoutOpenRouterReasoning())}
+		return llm.ProviderSnapshot{ProviderID: "openai", ProviderName: "OpenAI", BaseURL: openAIBaseURL, Model: model, Provider: llm.NewOpenAIProvider(key, openAIBaseURL, model, llm.WithOpenAICompatibility())}
 	}
 	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
 		model := os.Getenv("ANTHROPIC_MODEL")
