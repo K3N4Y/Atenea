@@ -264,10 +264,11 @@ func toUsage(u *llm.Usage) *session.Usage {
 		return nil
 	}
 	return &session.Usage{
-		InputTokens:      u.InputTokens,
-		OutputTokens:     u.OutputTokens,
-		ReasoningTokens:  u.ReasoningTokens,
-		CacheReadTokens:  u.CacheReadTokens,
-		CacheWriteTokens: u.CacheWriteTokens,
+		InputTokens:          u.InputTokens,
+		OutputTokens:         u.OutputTokens,
+		ReasoningTokens:      u.ReasoningTokens,
+		CacheReadTokens:      u.CacheReadTokens,
+		CacheWriteTokens:     u.CacheWriteTokens,
+		CacheableInputTokens: u.CacheableInputTokens,
 	}
 }

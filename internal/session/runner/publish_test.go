@@ -227,11 +227,12 @@ func TestPublisher_StepEndedCarriesUsageTokens(t *testing.T) {
 	publishAll(t, p,
 		llm.Event{Kind: llm.StepStarted},
 		llm.Event{Kind: llm.StepEnded, Usage: &llm.Usage{
-			InputTokens:      10,
-			OutputTokens:     20,
-			ReasoningTokens:  5,
-			CacheReadTokens:  3,
-			CacheWriteTokens: 1,
+			InputTokens:          10,
+			OutputTokens:         20,
+			ReasoningTokens:      5,
+			CacheReadTokens:      3,
+			CacheWriteTokens:     1,
+			CacheableInputTokens: 14,
 		}},
 	)
 
@@ -250,11 +251,12 @@ func TestPublisher_StepEndedCarriesUsageTokens(t *testing.T) {
 		t.Fatalf("Step.Ended.Usage = nil, quiero los cinco tokens")
 	}
 	want := session.Usage{
-		InputTokens:      10,
-		OutputTokens:     20,
-		ReasoningTokens:  5,
-		CacheReadTokens:  3,
-		CacheWriteTokens: 1,
+		InputTokens:          10,
+		OutputTokens:         20,
+		ReasoningTokens:      5,
+		CacheReadTokens:      3,
+		CacheWriteTokens:     1,
+		CacheableInputTokens: 14,
 	}
 	if *ended.Usage != want {
 		t.Errorf("Step.Ended.Usage = %+v, quiero %+v", *ended.Usage, want)

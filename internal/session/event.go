@@ -69,9 +69,10 @@ const (
 // que session no depende de llm; el publisher copia los campos al cruzar la
 // frontera. Solo viene en eventos Step.Ended.
 type Usage struct {
-	InputTokens      int
-	OutputTokens     int
-	ReasoningTokens  int
-	CacheReadTokens  int
-	CacheWriteTokens int
+	InputTokens          int
+	OutputTokens         int
+	ReasoningTokens      int
+	CacheReadTokens      int
+	CacheWriteTokens     int
+	CacheableInputTokens int
 }
