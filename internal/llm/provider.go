@@ -103,4 +103,7 @@ type Usage struct {
 	ReasoningTokens  int
 	CacheReadTokens  int
 	CacheWriteTokens int
+	// CacheableInputTokens is the provider-normalized logical input used as the
+	// cache hit-rate denominator. It includes cached input exactly once.
+	CacheableInputTokens int
 }

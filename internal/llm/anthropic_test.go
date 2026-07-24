@@ -66,7 +66,7 @@ func TestAnthropicProvider_StreamMapsNativeMessagesRequestAndEvents(t *testing.T
 	if got[2].Text != "Hola" || got[8].CallID != "toolu_2" || got[8].ToolName != "read" || string(got[8].Input) != `{"path":"main.go"}` {
 		t.Fatalf("mapped events = %#v", got)
 	}
-	if want := (&Usage{InputTokens: 12, OutputTokens: 9, ReasoningTokens: 2, CacheReadTokens: 3, CacheWriteTokens: 4}); !reflect.DeepEqual(got[9].Usage, want) {
+	if want := (&Usage{InputTokens: 12, OutputTokens: 9, ReasoningTokens: 2, CacheReadTokens: 3, CacheWriteTokens: 4, CacheableInputTokens: 19}); !reflect.DeepEqual(got[9].Usage, want) {
 		t.Fatalf("usage = %#v, want %#v", got[9].Usage, want)
 	}
 

@@ -522,6 +522,9 @@ func TestOpenAIProvider_StreamMapsCachedPromptTokens(t *testing.T) {
 	if stepEnded.Usage.CacheReadTokens != 7 {
 		t.Errorf("StepEnded.Usage.CacheReadTokens: got %d, want 7", stepEnded.Usage.CacheReadTokens)
 	}
+	if stepEnded.Usage.CacheableInputTokens != 10 {
+		t.Errorf("StepEnded.Usage.CacheableInputTokens: got %d, want 10", stepEnded.Usage.CacheableInputTokens)
+	}
 }
 
 // TestOpenAIProvider_StreamEmitsStepFailedOnError exige que un fallo del stream

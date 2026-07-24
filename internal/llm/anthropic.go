@@ -108,7 +108,7 @@ func (p *AnthropicProvider) runStream(ctx context.Context, out chan Event, param
 		switch e := event.AsAny().(type) {
 		case anthropic.MessageStartEvent:
 			u := e.Message.Usage
-			usage = &Usage{InputTokens: int(u.InputTokens), OutputTokens: int(u.OutputTokens), CacheReadTokens: int(u.CacheReadInputTokens), CacheWriteTokens: int(u.CacheCreationInputTokens)}
+			usage = anthropicUsage(int(u.InputTokens), int(u.OutputTokens), 0, int(u.CacheReadInputTokens), int(u.CacheCreationInputTokens))
 		case anthropic.ContentBlockStartEvent:
 			switch b := e.ContentBlock.AsAny().(type) {
 			case anthropic.TextBlock:
@@ -182,6 +182,7 @@ func (p *AnthropicProvider) runStream(ctx context.Context, out chan Event, param
 			usage.ReasoningTokens = int(e.Usage.OutputTokensDetails.ThinkingTokens)
 			usage.CacheReadTokens = int(e.Usage.CacheReadInputTokens)
 			usage.CacheWriteTokens = int(e.Usage.CacheCreationInputTokens)
+			usage.CacheableInputTokens = usage.InputTokens + usage.CacheReadTokens + usage.CacheWriteTokens
 		}
 	}
 	if err := stream.Err(); err != nil {
@@ -195,6 +196,14 @@ func (p *AnthropicProvider) runStream(ctx context.Context, out chan Event, param
 		return
 	}
 	emit(ctx, out, Event{Kind: StepEnded, Usage: usage})
+}
+
+func anthropicUsage(input, output, reasoning, cacheRead, cacheWrite int) *Usage {
+	return &Usage{
+		InputTokens: input, OutputTokens: output, ReasoningTokens: reasoning,
+		CacheReadTokens: cacheRead, CacheWriteTokens: cacheWrite,
+		CacheableInputTokens: input + cacheRead + cacheWrite,
+	}
 }
 
 func isAnthropicContextOverflow(err error) bool {

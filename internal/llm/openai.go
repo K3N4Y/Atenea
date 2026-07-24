@@ -235,9 +235,10 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request) (<-chan Event,
 			// request entero (choices vacio).
 			if chunk.Usage.PromptTokens != 0 || chunk.Usage.CompletionTokens != 0 {
 				usage = &Usage{
-					InputTokens:     int(chunk.Usage.PromptTokens),
-					OutputTokens:    int(chunk.Usage.CompletionTokens),
-					CacheReadTokens: int(chunk.Usage.PromptTokensDetails.CachedTokens),
+					InputTokens:          int(chunk.Usage.PromptTokens),
+					OutputTokens:         int(chunk.Usage.CompletionTokens),
+					CacheReadTokens:      int(chunk.Usage.PromptTokensDetails.CachedTokens),
+					CacheableInputTokens: int(chunk.Usage.PromptTokens),
 				}
 			}
 
