@@ -45,11 +45,14 @@ keeping shared correctness rules private and local.
 adapter is in memory, but the contract belongs beside the session identifiers,
 delivery semantics, and runner-facing persistence interface it coordinates.
 
-`PermissionGate` correlates a session tool call with a user decision. It is not
-part of `Store`: pending approvals are intentionally ephemeral, and interrupted
-durable tool calls are reconciled by the runner after restart. Moving either
-contract would split the runner's session protocol without hiding additional
-complexity, so both remain in this module.
+Ask-before-run lives in its own module: `internal/permission` owns the
+`Policy` (Allow/Ask/Deny verdict per tool call) and the `Gate` that correlates
+a session tool call with a user decision. The gate is not part of `Store`:
+pending approvals are intentionally ephemeral, and interrupted durable tool
+calls are reconciled by the runner after restart. The runner consumes both as
+optional dependencies and keeps ownership of the durable event order
+(`Tool.Permission.Requested` before the outcome). Design and classification:
+[single permission gate](../specs/2026-07-23-single-permission-gate.md).
 
 ## Package seams
 

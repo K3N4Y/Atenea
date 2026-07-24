@@ -8,6 +8,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"atenea/internal/llm"
+	"atenea/internal/permission"
 	"atenea/internal/session"
 	"atenea/internal/tool"
 )
@@ -197,24 +198,29 @@ func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Ev
 		ev := ev // capture for the goroutine
 		g.Go(func() error {
 			call := tool.Call{ID: ev.CallID, Name: ev.ToolName, Input: ev.Input}
-			// Ask-before-run: if the tool is gated, ask for approval before
-			// settling. The request is persisted (the UI shows the prompt) and
-			// Ask blocks until the decision. Deny publishes Tool.Failed and does
-			// NOT run the tool.
-			if r.gate != nil && r.needsApproval != nil && r.needsApproval(call) {
-				if err := pub.ToolPermissionRequested(cleanupCtx, ev.CallID); err != nil {
-					return err
-				}
-				approved, askErr := r.gate.Ask(gctx, session.PermissionRequest{
-					SessionID: sessionID, CallID: ev.CallID, ToolName: ev.ToolName, Input: ev.Input,
-				})
-				if askErr != nil {
-					// ctx cancelled or other gate failure: leave the call unsettled;
-					// the turn close (FailUnresolvedTools) marks it Tool.Failed.
-					return nil
-				}
-				if !approved {
+			// Ask-before-run: the policy classifies the call. Allow settles
+			// directly; Ask persists the request (the UI shows the prompt) and
+			// blocks on the gate until the decision; Deny — from the policy or
+			// from the user — publishes Tool.Failed and does NOT run the tool.
+			if r.gate != nil && r.policy != nil {
+				switch r.policy.Decide(call) {
+				case permission.Deny:
 					return pub.ToolFailed(cleanupCtx, ev.CallID, errPermissionDenied)
+				case permission.Ask:
+					if err := pub.ToolPermissionRequested(cleanupCtx, ev.CallID); err != nil {
+						return err
+					}
+					approved, askErr := r.gate.Ask(gctx, permission.Request{
+						SessionID: sessionID, CallID: ev.CallID, ToolName: ev.ToolName, Input: ev.Input,
+					})
+					if askErr != nil {
+						// ctx cancelled or other gate failure: leave the call unsettled;
+						// the turn close (FailUnresolvedTools) marks it Tool.Failed.
+						return nil
+					}
+					if !approved {
+						return pub.ToolFailed(cleanupCtx, ev.CallID, errPermissionDenied)
+					}
 				}
 			}
 			res, err := settle(tool.WithSessionID(gctx, sessionID), call)

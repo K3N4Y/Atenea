@@ -12,6 +12,7 @@ import (
 
 	"atenea/internal/agent"
 	"atenea/internal/llm"
+	"atenea/internal/permission"
 	"atenea/internal/session"
 	"atenea/internal/wailssession"
 )
@@ -967,7 +968,7 @@ func TestApp_ResolveToolPermissionWiredToGate(t *testing.T) {
 
 	done := make(chan bool, 1)
 	go func() {
-		approved, err := app.gate.Ask(context.Background(), session.PermissionRequest{SessionID: "s1", CallID: "c1"})
+		approved, err := app.gate.Ask(context.Background(), permission.Request{SessionID: "s1", CallID: "c1"})
 		if err != nil {
 			t.Errorf("Ask unexpected error: %v", err)
 		}

@@ -9,6 +9,7 @@ import (
 
 	"atenea/internal/agent"
 	"atenea/internal/llm"
+	"atenea/internal/permission"
 	"atenea/internal/session"
 	"atenea/internal/session/runner"
 	"atenea/internal/tool"
@@ -46,16 +47,17 @@ type TaskTool struct {
 	// sem topa la concurrencia de subagentes (nil = sin tope).
 	sem chan struct{}
 
-	// gate y needsApproval propagan el ask-before-run del padre al runner hijo:
-	// antes de asentar una tool call para la que needsApproval devuelve true, el
-	// hijo pide aprobacion al gate (que bloquea hasta la decision del usuario).
-	// Ambos nil (default) = el hijo no gatea nada (compatibilidad con los tests
-	// que no cablean el gate). SE INYECTAN con SetPermissionGate desde app.go;
-	// SIN ellos un subagente "general" correria bash sin la confirmacion que el
-	// chat principal SI exige, evadiendo el gate. El gate es keyed por
-	// (sessionID, callID): el sessionID del hijo es su childID.
-	gate          session.PermissionGate
-	needsApproval func(call tool.Call) bool
+	// gate and policy propagate the parent's ask-before-run to the child
+	// runner: the policy classifies each of the child's tool calls
+	// (Allow/Ask/Deny) and the gate blocks the asking ones until the user's
+	// decision. Both nil (default) = the child gates nothing (compatibility
+	// with tests that do not wire the gate). INJECTED with SetPermissionGate
+	// from the wiring; WITHOUT them a "general" subagent would run gated tools
+	// (bash, write, edit, web_fetch) without the confirmation the main chat
+	// enforces, evading the gate. The gate is keyed by (sessionID, callID):
+	// the child's sessionID is its childID.
+	gate   permission.Gate
+	policy permission.Policy
 
 	// storeDecorator envuelve el store en memoria del runner hijo antes de correrlo.
 	// Recibe el sessionID del PADRE (el que esta atendiendo la UI) para que la
@@ -85,16 +87,17 @@ func NewTaskTool(defs []agent.Def, provider llm.Provider, children *tool.Registr
 // SetMaxDepth fija la profundidad maxima de anidamiento de subagentes.
 func (t *TaskTool) SetMaxDepth(n int) { t.maxDepth = n }
 
-// SetPermissionGate propaga el ask-before-run del padre al runner hijo: gate
-// resuelve la aprobacion del usuario y needsApproval decide que tool calls la
-// requieren (p.ej. solo "bash"). Si cualquiera es nil el hijo no gatea nada.
-// Mismo patron que runner.SetPermissionGate y que SetMaxDepth/SetMaxConcurrency
-// (config opcional via setter). Punto de entrada para app.go (paquete main); los
-// tests lo llaman directo. Es la pieza de seguridad: sin esta propagacion el
-// subagente correria bash sin la confirmacion que el chat principal exige.
-func (t *TaskTool) SetPermissionGate(gate session.PermissionGate, needsApproval func(call tool.Call) bool) {
+// SetPermissionGate propagates the parent's ask-before-run to the child
+// runner: policy classifies each tool call (Allow/Ask/Deny) and gate resolves
+// the user's decision for the calls that ask. If either is nil the child
+// gates nothing. Same pattern as runner.SetPermissionGate and
+// SetMaxDepth/SetMaxConcurrency (optional config via setter). Entry point for
+// the wiring; tests call it directly. This is the security piece: without
+// this propagation the subagent would run gated tools without the
+// confirmation the main chat enforces.
+func (t *TaskTool) SetPermissionGate(gate permission.Gate, policy permission.Policy) {
 	t.gate = gate
-	t.needsApproval = needsApproval
+	t.policy = policy
 }
 
 // SetStoreDecorator inyecta el decorador del store del runner hijo. El decorador
@@ -214,11 +217,12 @@ func (t *TaskTool) Execute(ctx context.Context, input json.RawMessage) (tool.Res
 
 	r := runner.NewRunner(store, inbox, t.provider, t.children, perms, t.nextID)
 	r.SetSystemPrompt(func(string) string { return def.Prompt })
-	// Propaga el ask-before-run del padre: si el subagente invoca una tool gateada
-	// (bash), el runner hijo pide aprobacion igual que el chat principal en vez de
-	// correrla a ciegas. Sin gate cableado queda nil y el hijo no gatea (default).
-	if t.gate != nil && t.needsApproval != nil {
-		r.SetPermissionGate(t.gate, t.needsApproval)
+	// Propagate the parent's ask-before-run: if the subagent invokes a gated
+	// tool, the child runner asks for approval exactly like the main chat
+	// instead of running it blindly. Without a wired gate both stay nil and
+	// the child gates nothing (default).
+	if t.gate != nil && t.policy != nil {
+		r.SetPermissionGate(t.gate, t.policy)
 	}
 
 	if err := inbox.Admit(ctx, childID, session.Prompt{Text: in.Prompt}, session.DeliveryQueue); err != nil {

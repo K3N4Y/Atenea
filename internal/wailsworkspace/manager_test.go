@@ -15,6 +15,7 @@ import (
 	"atenea/internal/command"
 	"atenea/internal/event"
 	"atenea/internal/llm"
+	"atenea/internal/permission"
 	"atenea/internal/session"
 	"atenea/internal/tool"
 )
@@ -48,7 +49,7 @@ func newTestManager(t *testing.T, root string, state func() ProviderState) (*Man
 	bus := event.NewBus(func(string, ...interface{}) {})
 	manager := New(Config{
 		Root: root, ProviderState: state, Store: store, Inbox: inbox,
-		Gate: session.NewMemoryPermissionGate(), Snapshots: tool.NewSessionSnapshots(),
+		Gate: permission.NewMemoryGate(), Snapshots: tool.NewSessionSnapshots(),
 		Bus: bus, Agent: service,
 	})
 	t.Cleanup(manager.Close)

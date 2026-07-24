@@ -13,6 +13,7 @@ import (
 	"atenea/internal/event"
 	"atenea/internal/llm"
 	"atenea/internal/mcpclient"
+	"atenea/internal/permission"
 	"atenea/internal/providerconfig"
 	"atenea/internal/session"
 	"atenea/internal/skill"
@@ -56,12 +57,12 @@ type App struct {
 	ctx       context.Context // ctx de Wails; lo fija startup. Solo lo usa la EmitFunc real.
 	inbox     session.Inbox
 	bus       *event.Bus
-	emit      event.EmitFunc                // la misma frontera que usa el bus; la tab Terminal empuja su salida por aca
-	gate      *session.MemoryPermissionGate // ask-before-run: the UI resolves via ResolveToolPermission
-	agent     *agent.Service                // ciclo headless compartido con la TUI
-	providers *wailsprovider.Manager        // provider/config atomicos; SetProvider publica snapshots completos
-	workspace *wailsworkspace.Manager       // root, wiring, glob y MCP publicados como un snapshot serializado
-	sessions  *wailssession.Manager         // historial durable, metadata inicial, titulos y borrado
+	emit      event.EmitFunc          // la misma frontera que usa el bus; la tab Terminal empuja su salida por aca
+	gate      *permission.MemoryGate  // ask-before-run: the UI resolves via ResolveToolPermission
+	agent     *agent.Service          // ciclo headless compartido con la TUI
+	providers *wailsprovider.Manager  // provider/config atomicos; SetProvider publica snapshots completos
+	workspace *wailsworkspace.Manager // root, wiring, glob y MCP publicados como un snapshot serializado
+	sessions  *wailssession.Manager   // historial durable, metadata inicial, titulos y borrado
 
 	term *terminal.Manager // las tabs Terminal: varias sesiones pty vivas por id
 }
@@ -100,10 +101,11 @@ func newAppWithStore(store session.Store, provider llm.Provider, emit event.Emit
 	// snapshot. El read-state es por sesion (no por carpeta): se crea una vez y
 	// sobrevive a los cambios de workspace.
 	snaps := tool.NewSessionSnapshots()
-	// Ask-before-run: bash is the only gated tool for now. The UI approves/denies
-	// each command via ResolveToolPermission. El gate no depende del root: se crea
-	// una vez y wailsworkspace lo recablea en cada runner.
-	a.gate = session.NewMemoryPermissionGate()
+	// Ask-before-run: the fixed policy (wiring.askPolicy) gates bash, write,
+	// edit and web_fetch. The UI approves/denies each call via
+	// ResolveToolPermission. The gate does not depend on the root: it is
+	// created once and wailsworkspace rewires it into every runner.
+	a.gate = permission.NewMemoryGate()
 	// La raiz inicial es el cwd del proceso; SetWorkspace la cambia en vivo.
 	root, err := os.Getwd()
 	if err != nil {

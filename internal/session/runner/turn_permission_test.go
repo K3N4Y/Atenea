@@ -8,34 +8,51 @@ import (
 	"testing"
 
 	"atenea/internal/llm"
+	"atenea/internal/permission"
 	"atenea/internal/session"
 	"atenea/internal/tool"
 )
 
-// fakeGate is a test PermissionGate: it records each request and returns a
+// fakeGate is a test permission.Gate: it records each request and returns a
 // fixed decision (approved) and an optional error, without blocking. The real
-// blocking is covered by the concrete broker (Step B); here it only matters
-// that the runner asks for permission and respects the response.
+// blocking is covered by the concrete broker (permission.MemoryGate); here it
+// only matters that the runner asks for permission and respects the response.
 type fakeGate struct {
 	mu       sync.Mutex
 	approved bool
 	err      error
-	asked    []session.PermissionRequest
+	asked    []permission.Request
 }
 
-func (g *fakeGate) Ask(ctx context.Context, req session.PermissionRequest) (bool, error) {
+func (g *fakeGate) Ask(ctx context.Context, req permission.Request) (bool, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.asked = append(g.asked, req)
 	return g.approved, g.err
 }
 
-func (g *fakeGate) calls() []session.PermissionRequest {
+func (g *fakeGate) calls() []permission.Request {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	out := make([]session.PermissionRequest, len(g.asked))
+	out := make([]permission.Request, len(g.asked))
 	copy(out, g.asked)
 	return out
+}
+
+// policyFunc adapts a function to permission.Policy for tests.
+type policyFunc func(call tool.Call) permission.Decision
+
+func (f policyFunc) Decide(call tool.Call) permission.Decision { return f(call) }
+
+// askFor builds a test policy that asks for the named tool and allows
+// everything else.
+func askFor(name string) policyFunc {
+	return func(c tool.Call) permission.Decision {
+		if c.Name == name {
+			return permission.Ask
+		}
+		return permission.Allow
+	}
 }
 
 // TestRunner_GatedToolDeniedPublishesFailedAndDoesNotExecute asserts the
@@ -59,7 +76,7 @@ func TestRunner_GatedToolDeniedPublishesFailedAndDoesNotExecute(t *testing.T) {
 
 	gate := &fakeGate{approved: false}
 	r.gate = gate
-	r.needsApproval = func(c tool.Call) bool { return c.Name == "counter" }
+	r.policy = askFor("counter")
 
 	cont, err := r.runTurn(ctx, "s1")
 	if err != nil {
@@ -136,7 +153,7 @@ func TestRunner_GatedToolApprovedSettlesAfterAsking(t *testing.T) {
 
 	gate := &fakeGate{approved: true}
 	r.gate = gate
-	r.needsApproval = func(c tool.Call) bool { return c.Name == "echo" }
+	r.policy = askFor("echo")
 
 	if _, err := r.runTurn(ctx, "s1"); err != nil {
 		t.Fatalf("runTurn unexpected error: %v", err)
@@ -165,10 +182,10 @@ func TestRunner_GatedToolApprovedSettlesAfterAsking(t *testing.T) {
 	}
 }
 
-// TestRunner_GateSkippedWhenNotNeedsApproval is the triangulation: with a gate
-// present but a needsApproval that returns false, the runner does NOT ask and
+// TestRunner_GateSkippedWhenPolicyAllows is the triangulation: with a gate
+// present but a policy that allows everything, the runner does NOT ask and
 // settles directly (M5 path intact), even though the gate would have denied.
-func TestRunner_GateSkippedWhenNotNeedsApproval(t *testing.T) {
+func TestRunner_GateSkippedWhenPolicyAllows(t *testing.T) {
 	ctx := context.Background()
 	store := newRecordingStore()
 	seedUser(t, store, "s1")
@@ -183,7 +200,7 @@ func TestRunner_GateSkippedWhenNotNeedsApproval(t *testing.T) {
 
 	gate := &fakeGate{approved: false} // would deny if asked
 	r.gate = gate
-	r.needsApproval = func(c tool.Call) bool { return false } // nothing gated
+	r.policy = policyFunc(func(c tool.Call) permission.Decision { return permission.Allow }) // nothing gated
 
 	if _, err := r.runTurn(ctx, "s1"); err != nil {
 		t.Fatalf("runTurn unexpected error: %v", err)
@@ -222,7 +239,7 @@ func TestRunner_GatedAndUngatedToolsConcurrent(t *testing.T) {
 
 	gate := &fakeGate{approved: true}
 	r.gate = gate
-	r.needsApproval = func(c tool.Call) bool { return c.Name == "echo" } // only echo is gated
+	r.policy = askFor("echo") // only echo is gated
 
 	if _, err := r.runTurn(ctx, "s1"); err != nil {
 		t.Fatalf("runTurn unexpected error: %v", err)
@@ -240,5 +257,59 @@ func TestRunner_GatedAndUngatedToolsConcurrent(t *testing.T) {
 	}
 	if got := gate.calls(); len(got) != 1 || got[0].CallID != "c1" {
 		t.Errorf("gate.Ask = %+v; want only c1", got)
+	}
+}
+
+// TestRunner_PolicyDeniedFailsWithoutAsking asserts the Deny verdict: the
+// runner publishes Tool.Failed with the permission-denied cause WITHOUT
+// consulting the gate, does not run the tool, and does not persist
+// Tool.Permission.Requested (there is nothing for the user to answer). No
+// shipped policy returns Deny yet; this pins the runner path a future
+// rule-based policy relies on.
+func TestRunner_PolicyDeniedFailsWithoutAsking(t *testing.T) {
+	ctx := context.Background()
+	store := newRecordingStore()
+	seedUser(t, store, "s1")
+
+	var calls int
+	fake := llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.ToolCall, CallID: "c1", ToolName: "counter", Input: json.RawMessage(`{}`)},
+		llm.Event{Kind: llm.StepEnded},
+	)
+	reg := tool.NewRegistry(tool.NewOutputStore(0), countingTool{calls: &calls})
+	r := NewRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"counter": true}, func() string { return "a1" })
+
+	gate := &fakeGate{approved: true} // would approve if asked: Deny must not ask
+	r.gate = gate
+	r.policy = policyFunc(func(c tool.Call) permission.Decision { return permission.Deny })
+
+	cont, err := r.runTurn(ctx, "s1")
+	if err != nil {
+		t.Fatalf("runTurn unexpected error: %v", err)
+	}
+	if !cont {
+		t.Errorf("cont = false, want true (a denied tool call still continues)")
+	}
+
+	if got := gate.calls(); len(got) != 0 {
+		t.Errorf("gate.Ask was called %d times; want 0 (Deny never asks)", len(got))
+	}
+	if calls != 0 {
+		t.Errorf("tool ran %d times despite the policy denial; want 0", calls)
+	}
+	log := store.snapshot()
+	if _, ok := seqOfKind(log, session.KindToolPermissionRequested, "c1"); ok {
+		t.Errorf("Tool.Permission.Requested persisted for a policy-denied call")
+	}
+	if _, ok := seqOfKind(log, session.KindToolFailed, "c1"); !ok {
+		t.Fatalf("no Tool.Failed of c1 persisted (policy denied)")
+	}
+	for _, ev := range log {
+		if ev.Kind == session.KindToolFailed && ev.CallID == "c1" {
+			if !strings.Contains(strings.ToLower(ev.Error), "deni") {
+				t.Errorf("Tool.Failed.Error = %q, want it to mention the denial", ev.Error)
+			}
+		}
 	}
 }

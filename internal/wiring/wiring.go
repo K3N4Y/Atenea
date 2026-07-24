@@ -17,6 +17,7 @@ import (
 	"atenea/internal/command"
 	"atenea/internal/event"
 	"atenea/internal/llm"
+	"atenea/internal/permission"
 	"atenea/internal/session"
 	"atenea/internal/session/prompt"
 	"atenea/internal/session/runner"
@@ -45,7 +46,7 @@ type Config struct {
 	Inbox session.Inbox
 	// Gate es el gate de ask-before-run que comparten el runner principal y
 	// los subagentes; el caller entrega por el la decision del usuario.
-	Gate session.PermissionGate
+	Gate permission.Gate
 	// Snaps es el read-state por sesion que comparten read/write/edit. El
 	// caller lo crea una sola vez para que sobreviva a los re-ensamblados.
 	Snaps *tool.SessionSnapshots
@@ -72,10 +73,13 @@ type Built struct {
 	Commands *command.Set
 }
 
-// needsApproval decide que tool calls exigen aprobacion del usuario
-// (ask-before-run). Unica fuente de verdad: la comparten el runner principal y
-// los subagentes, asi un hijo no evade el gate que el chat principal exige.
-func needsApproval(c tool.Call) bool { return c.Name == "bash" }
+// askPolicy is the fixed ask-before-run classification: shell (bash), local
+// filesystem mutations (write, edit) and outbound network (web_fetch) ask;
+// reads and internal tools — including MCP tools — are allowed. Single source
+// of truth shared by the main runner and the subagents, so a child cannot
+// evade the gate the main chat enforces. Rule-based policies replace this
+// value without touching the runner (see internal/permission).
+var askPolicy = permission.NewStaticPolicy("bash", "write", "edit", "web_fetch")
 
 // Build arma todo el cableado anclado a cfg.Root: las file/exec tools, el glob
 // del @-menu, las skills y sus slash-commands, el catalogo de subagentes y un
@@ -119,12 +123,13 @@ func Build(cfg Config) Built {
 	// La tool task levanta subagentes hijos. nextID propio (thread-safe) porque
 	// varios subagentes pueden correr en paralelo (cap de concurrencia interno).
 	taskTool := subagent.NewTaskTool(agentDefs, cfg.Provider, childRegistry, NewIDGen())
-	// Seguridad: propaga el ask-before-run al runner hijo con el MISMO gate y la
-	// MISMA needsApproval que el chat principal (solo "bash"). Sin esto el subagente
-	// "general" correria bash sin la confirmacion que el chat principal exige,
-	// evadiendo el gate. El gate es keyed por (sessionID, callID): el sessionID del
-	// hijo es su childID, asi la resolucion de permisos del hijo lo resuelve.
-	taskTool.SetPermissionGate(cfg.Gate, needsApproval)
+	// Security: propagate ask-before-run to the child runner with the SAME gate
+	// and the SAME policy as the main chat. Without this a "general" subagent
+	// would run gated tools (bash, write, edit, web_fetch) without the
+	// confirmation the main chat enforces, evading the gate. The gate is keyed
+	// by (sessionID, callID): the child's sessionID is its childID, so the
+	// child's permission resolution finds it.
+	taskTool.SetPermissionGate(cfg.Gate, askPolicy)
 	// Surfacing del permiso del subagente en la UI: decora el store del runner hijo
 	// con ChildPermissionStore sobre el MISMO bus, asi los eventos de permiso del hijo
 	// (Tool.Permission.Requested y su resolucion) se publican en el canal del PADRE
@@ -156,7 +161,7 @@ func Build(cfg Config) Built {
 		cfg.NextID)
 	r.SetCompactor(runner.NewContextCompactor(cfg.Store, cfg.Provider))
 	r.SetSystemPrompt(systemPromptBuilder(root, skillsBlock, cfg.Local))
-	r.SetPermissionGate(cfg.Gate, needsApproval)
+	r.SetPermissionGate(cfg.Gate, askPolicy)
 	// Plan-mode: investigacion de solo lectura mas present_plan (sin write/edit/bash/
 	// echo). El hook de modo decide por sesion; SetMode/SetPlanMode toman efecto solo
 	// cuando cfg.Mode reporta ModePlan (nil = siempre normal, el default del runner).

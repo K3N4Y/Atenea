@@ -8,6 +8,7 @@ import (
 
 	"atenea/internal/event"
 	"atenea/internal/llm"
+	"atenea/internal/permission"
 	"atenea/internal/session"
 	"atenea/internal/tool"
 )
@@ -60,7 +61,7 @@ func TestBuild_InstallsContextCompactor(t *testing.T) {
 		Provider: provider,
 		Store:    store,
 		Inbox:    session.NewMemoryInbox(),
-		Gate:     session.NewMemoryPermissionGate(),
+		Gate:     permission.NewMemoryGate(),
 		Snaps:    tool.NewSessionSnapshots(),
 		Bus:      event.NewBus(func(string, ...interface{}) {}),
 		NextID:   func() string { return "id" },
@@ -75,5 +76,33 @@ func TestBuild_InstallsContextCompactor(t *testing.T) {
 	}
 	if last := events[len(events)-1]; last.Kind != session.KindContextCompacted {
 		t.Fatalf("last event = %+v, want Context.Compacted", last)
+	}
+}
+
+// TestAskPolicy_GatesShellFSAndNetwork pins the agreed fixed classification:
+// shell (bash), local FS mutations (write, edit) and outbound network
+// (web_fetch) ask; reads and internal tools are allowed. This is the single
+// source of truth shared by the main runner and the subagents.
+func TestAskPolicy_GatesShellFSAndNetwork(t *testing.T) {
+	cases := []struct {
+		name string
+		want permission.Decision
+	}{
+		{"bash", permission.Ask},
+		{"write", permission.Ask},
+		{"edit", permission.Ask},
+		{"web_fetch", permission.Ask},
+		{"read", permission.Allow},
+		{"glob", permission.Allow},
+		{"grep", permission.Allow},
+		{"skill", permission.Allow},
+		{"todo_write", permission.Allow},
+		{"present_plan", permission.Allow},
+		{"task", permission.Allow},
+	}
+	for _, tc := range cases {
+		if got := askPolicy.Decide(tool.Call{Name: tc.name}); got != tc.want {
+			t.Errorf("askPolicy.Decide(%q) = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }

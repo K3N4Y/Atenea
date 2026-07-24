@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"atenea/internal/llm"
+	"atenea/internal/permission"
 	"atenea/internal/session"
 	"atenea/internal/tool"
 )
@@ -43,13 +44,14 @@ type Runner struct {
 	planSystem func(model string) string
 	planPerms  tool.Permissions
 
-	// gate and needsApproval implement ask-before-run: before settling a tool
-	// call for which needsApproval returns true, the runner asks the gate for
-	// approval (which blocks until the user's decision). Both nil (default) =
-	// no gating: every tool call is settled directly (M5 behavior). Set
-	// from app.go via SetPermissionGate; tests inject a fakeGate.
-	gate          session.PermissionGate
-	needsApproval func(call tool.Call) bool
+	// gate and policy implement ask-before-run: before settling a tool call
+	// the runner asks the policy for a verdict — Allow settles directly, Ask
+	// blocks on the gate until the user's decision, Deny fails the call
+	// without asking. Both nil (default) = no gating: every tool call is
+	// settled directly (M5 behavior). Set from the wiring via
+	// SetPermissionGate; tests inject a fakeGate and a fake policy.
+	gate   permission.Gate
+	policy permission.Policy
 
 	// logf registra a stderr los fallos de tool para visibilidad en desarrollo:
 	// hoy un fallo solo vive en el log durable y en el mensaje al modelo, asi que
@@ -103,13 +105,13 @@ func (r *Runner) SetSystemPrompt(build func(model string) string) {
 	r.system = build
 }
 
-// SetPermissionGate wires ask-before-run: gate resolves the user's approval and
-// needsApproval decides which tool calls require it (e.g. only "bash"). If
-// either is nil the runner gates nothing. Exported entry point for app.go
-// (package main); tests inject the fields directly.
-func (r *Runner) SetPermissionGate(gate session.PermissionGate, needsApproval func(call tool.Call) bool) {
+// SetPermissionGate wires ask-before-run: policy classifies each tool call
+// (Allow/Ask/Deny) and gate resolves the user's decision for the calls that
+// ask. If either is nil the runner gates nothing. Exported entry point for
+// the wiring (internal/wiring); tests inject the fields directly.
+func (r *Runner) SetPermissionGate(gate permission.Gate, policy permission.Policy) {
 	r.gate = gate
-	r.needsApproval = needsApproval
+	r.policy = policy
 }
 
 // SetMode injects the per-session Mode lookup. It receives the session id and

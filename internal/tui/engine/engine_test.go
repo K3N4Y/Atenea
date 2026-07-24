@@ -453,6 +453,19 @@ func resolveUntilStopped(e *Engine, sessionID, callID string, approved bool) (st
 	return func() { close(done); wg.Wait() }
 }
 
+// approveAllPermissions returns a collectUntilRunDone hook that approves every
+// ask-before-run request the run emits. The fixed policy gates bash, write,
+// edit and web_fetch; the tests using this hook exercise undo/checkpoint
+// semantics, not the gate, so the user's approval is assumed.
+func approveAllPermissions(t *testing.T, engine *Engine) func(session.SessionEvent) {
+	t.Helper()
+	return func(ev session.SessionEvent) {
+		if ev.Kind == session.KindToolPermissionRequested {
+			t.Cleanup(resolveUntilStopped(engine, ev.SessionID, ev.CallID, true))
+		}
+	}
+}
+
 func appendSessionEvent(t *testing.T, store session.Store, sessionID string, event session.SessionEvent) {
 	t.Helper()
 	if _, err := store.AppendEvent(context.Background(), sessionID, event); err != nil {
@@ -1219,6 +1232,9 @@ func TestEngine_ShutdownFinishesCheckpointBeforeSQLiteClose(t *testing.T) {
 	if _, err := e.SendPrompt("s1", "create file"); err != nil {
 		t.Fatal(err)
 	}
+	// The write is gated: approve it in the background so the run reaches the
+	// blocking turn.
+	t.Cleanup(resolveUntilStopped(e, "s1", "write-1", true))
 	select {
 	case <-provider.started:
 	case <-time.After(10 * time.Second):
@@ -1721,11 +1737,7 @@ func TestEngine_UndoRestoresDeletedAndRecreatedTrackedFile(t *testing.T) {
 	if _, err := engine.SendPrompt("s1", "cambia los archivos"); err != nil {
 		t.Fatal(err)
 	}
-	events, done := collectUntilRunDone(t, engine.Events(), 10*time.Second, func(ev session.SessionEvent) {
-		if ev.Kind == session.KindToolPermissionRequested && ev.CallID == "remove-tracked" {
-			t.Cleanup(resolveUntilStopped(engine, ev.SessionID, ev.CallID, true))
-		}
-	})
+	events, done := collectUntilRunDone(t, engine.Events(), 10*time.Second, approveAllPermissions(t, engine))
 	if done.Err != "" {
 		t.Fatalf("RunDoneMsg.Err = %q", done.Err)
 	}
@@ -2246,7 +2258,7 @@ func TestEngine_UndoRestoresPrePromptWorkspaceAndEffectiveConversation(t *testin
 	if _, err := engine.SendPrompt("s1", "cambia los archivos"); err != nil {
 		t.Fatal(err)
 	}
-	if _, done := collectUntilRunDone(t, engine.Events(), 10*time.Second, nil); done.Err != "" {
+	if _, done := collectUntilRunDone(t, engine.Events(), 10*time.Second, approveAllPermissions(t, engine)); done.Err != "" {
 		t.Fatalf("RunDoneMsg.Err = %q", done.Err)
 	}
 
@@ -2278,7 +2290,7 @@ func TestEngine_UndoFirstPromptPreservesSessionWorkspace(t *testing.T) {
 	if _, err := engine.SendPrompt("s1", "create file"); err != nil {
 		t.Fatal(err)
 	}
-	if _, done := collectUntilRunDone(t, engine.Events(), 10*time.Second, nil); done.Err != "" {
+	if _, done := collectUntilRunDone(t, engine.Events(), 10*time.Second, approveAllPermissions(t, engine)); done.Err != "" {
 		t.Fatalf("RunDoneMsg.Err = %q", done.Err)
 	}
 	if _, err := engine.Undo("s1"); err != nil {
@@ -2321,7 +2333,7 @@ func TestEngine_UndoRejectsCheckpointFromAnotherWorkspace(t *testing.T) {
 	if _, err := firstEngine.SendPrompt("s1", "create file"); err != nil {
 		t.Fatal(err)
 	}
-	if _, done := collectUntilRunDone(t, firstEngine.Events(), 10*time.Second, nil); done.Err != "" {
+	if _, done := collectUntilRunDone(t, firstEngine.Events(), 10*time.Second, approveAllPermissions(t, firstEngine)); done.Err != "" {
 		t.Fatalf("RunDoneMsg.Err = %q", done.Err)
 	}
 
@@ -2355,7 +2367,7 @@ func TestEngine_UndoTwiceRestoresEachPromptBoundary(t *testing.T) {
 		if _, err := engine.SendPrompt("s1", prompt); err != nil {
 			t.Fatal(err)
 		}
-		if _, done := collectUntilRunDone(t, engine.Events(), 10*time.Second, nil); done.Err != "" {
+		if _, done := collectUntilRunDone(t, engine.Events(), 10*time.Second, approveAllPermissions(t, engine)); done.Err != "" {
 			t.Fatal(done.Err)
 		}
 	}
@@ -2382,7 +2394,7 @@ func TestEngine_UndoRejectsWorkspaceDivergence(t *testing.T) {
 	if _, err := engine.SendPrompt("s1", "create file"); err != nil {
 		t.Fatal(err)
 	}
-	collectUntilRunDone(t, engine.Events(), 10*time.Second, nil)
+	collectUntilRunDone(t, engine.Events(), 10*time.Second, approveAllPermissions(t, engine))
 	if err := os.WriteFile(filepath.Join(root, "outside.txt"), []byte("user change\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -2404,7 +2416,7 @@ func TestEngine_UndoIgnoresIgnoredFileDivergence(t *testing.T) {
 	if _, err := engine.SendPrompt("s1", "create file"); err != nil {
 		t.Fatal(err)
 	}
-	collectUntilRunDone(t, engine.Events(), 10*time.Second, nil)
+	collectUntilRunDone(t, engine.Events(), 10*time.Second, approveAllPermissions(t, engine))
 	if err := os.WriteFile(filepath.Join(root, "ignored.txt"), []byte("preserve me\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -2422,6 +2434,9 @@ func TestEngine_UndoCancelsActiveRunBeforeRestore(t *testing.T) {
 	if _, err := engine.SendPrompt("s1", "create file"); err != nil {
 		t.Fatal(err)
 	}
+	// The write is gated: approve it in the background so the run reaches the
+	// blocking turn.
+	t.Cleanup(resolveUntilStopped(engine, "s1", "write-1", true))
 	select {
 	case <-provider.started:
 	case <-time.After(10 * time.Second):
@@ -2450,7 +2465,7 @@ func TestEngine_UndoPersistsAcrossSQLiteReopen(t *testing.T) {
 	if _, err := engine.SendPrompt("s1", "create file"); err != nil {
 		t.Fatal(err)
 	}
-	collectUntilRunDone(t, engine.Events(), 10*time.Second, nil)
+	collectUntilRunDone(t, engine.Events(), 10*time.Second, approveAllPermissions(t, engine))
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}

@@ -1,4 +1,4 @@
-package session
+package permission
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 // resolveUntil retries Resolve until it finds the pending request (Ask registers
 // on its own goroutine, so the first Resolve may arrive early). Fails the test
 // if it never appears. Isolates the only synchronization point of the broker.
-func resolveUntil(t *testing.T, gate *MemoryPermissionGate, sessionID, callID string, approved bool) {
+func resolveUntil(t *testing.T, gate *MemoryGate, sessionID, callID string, approved bool) {
 	t.Helper()
 	deadline := time.After(2 * time.Second)
 	for {
@@ -26,11 +26,11 @@ func resolveUntil(t *testing.T, gate *MemoryPermissionGate, sessionID, callID st
 	}
 }
 
-// TestMemoryPermissionGate_AskBlocksUntilApprove asserts the happy path: Ask
-// blocks until Resolve delivers a decision, and returns (true, nil) on approve.
-func TestMemoryPermissionGate_AskBlocksUntilApprove(t *testing.T) {
-	gate := NewMemoryPermissionGate()
-	req := PermissionRequest{SessionID: "s1", CallID: "c1", ToolName: "bash"}
+// TestMemoryGate_AskBlocksUntilApprove asserts the happy path: Ask blocks
+// until Resolve delivers a decision, and returns (true, nil) on approve.
+func TestMemoryGate_AskBlocksUntilApprove(t *testing.T) {
+	gate := NewMemoryGate()
+	req := Request{SessionID: "s1", CallID: "c1", ToolName: "bash"}
 
 	type result struct {
 		approved bool
@@ -57,10 +57,10 @@ func TestMemoryPermissionGate_AskBlocksUntilApprove(t *testing.T) {
 	}
 }
 
-// TestMemoryPermissionGate_AskDeny is the denial path: Resolve(false) makes Ask
-// return (false, nil).
-func TestMemoryPermissionGate_AskDeny(t *testing.T) {
-	gate := NewMemoryPermissionGate()
+// TestMemoryGate_AskDeny is the denial path: Resolve(false) makes Ask return
+// (false, nil).
+func TestMemoryGate_AskDeny(t *testing.T) {
+	gate := NewMemoryGate()
 
 	type result struct {
 		approved bool
@@ -68,7 +68,7 @@ func TestMemoryPermissionGate_AskDeny(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		approved, err := gate.Ask(context.Background(), PermissionRequest{SessionID: "s1", CallID: "c1"})
+		approved, err := gate.Ask(context.Background(), Request{SessionID: "s1", CallID: "c1"})
 		done <- result{approved, err}
 	}()
 
@@ -87,19 +87,19 @@ func TestMemoryPermissionGate_AskDeny(t *testing.T) {
 	}
 }
 
-// TestMemoryPermissionGate_ResolveUnknownReturnsFalse: resolving a request that
-// does not exist (callID with no pending Ask) returns false without panicking.
-func TestMemoryPermissionGate_ResolveUnknownReturnsFalse(t *testing.T) {
-	gate := NewMemoryPermissionGate()
+// TestMemoryGate_ResolveUnknownReturnsFalse: resolving a request that does not
+// exist (callID with no pending Ask) returns false without panicking.
+func TestMemoryGate_ResolveUnknownReturnsFalse(t *testing.T) {
+	gate := NewMemoryGate()
 	if gate.Resolve("s1", "unknown", true) {
 		t.Errorf("Resolve of a non-existent request returned true, want false")
 	}
 }
 
-// TestMemoryPermissionGate_CtxCancelUnblocksAsk: cancelling the ctx unblocks Ask
-// with an error (without Resolve). This is the path of the stop button mid-wait.
-func TestMemoryPermissionGate_CtxCancelUnblocksAsk(t *testing.T) {
-	gate := NewMemoryPermissionGate()
+// TestMemoryGate_CtxCancelUnblocksAsk: cancelling the ctx unblocks Ask with an
+// error (without Resolve). This is the path of the stop button mid-wait.
+func TestMemoryGate_CtxCancelUnblocksAsk(t *testing.T) {
+	gate := NewMemoryGate()
 	ctx, cancel := context.WithCancel(context.Background())
 
 	type result struct {
@@ -108,7 +108,7 @@ func TestMemoryPermissionGate_CtxCancelUnblocksAsk(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		approved, err := gate.Ask(ctx, PermissionRequest{SessionID: "s1", CallID: "c1"})
+		approved, err := gate.Ask(ctx, Request{SessionID: "s1", CallID: "c1"})
 		done <- result{approved, err}
 	}()
 
@@ -127,13 +127,13 @@ func TestMemoryPermissionGate_CtxCancelUnblocksAsk(t *testing.T) {
 	}
 }
 
-// TestMemoryPermissionGate_SecondResolveReturnsFalse: after resolving a request,
-// a second Resolve for the same callID returns false (no longer pending).
-func TestMemoryPermissionGate_SecondResolveReturnsFalse(t *testing.T) {
-	gate := NewMemoryPermissionGate()
+// TestMemoryGate_SecondResolveReturnsFalse: after resolving a request, a
+// second Resolve for the same callID returns false (no longer pending).
+func TestMemoryGate_SecondResolveReturnsFalse(t *testing.T) {
+	gate := NewMemoryGate()
 	done := make(chan struct{})
 	go func() {
-		gate.Ask(context.Background(), PermissionRequest{SessionID: "s1", CallID: "c1"})
+		gate.Ask(context.Background(), Request{SessionID: "s1", CallID: "c1"})
 		close(done)
 	}()
 
@@ -145,11 +145,11 @@ func TestMemoryPermissionGate_SecondResolveReturnsFalse(t *testing.T) {
 	}
 }
 
-// TestMemoryPermissionGate_ConcurrentDistinctCalls runs several Ask/Resolve for
-// distinct callIDs in parallel: each one receives its own decision. Run with
-// -race to verify the pending map has no races.
-func TestMemoryPermissionGate_ConcurrentDistinctCalls(t *testing.T) {
-	gate := NewMemoryPermissionGate()
+// TestMemoryGate_ConcurrentDistinctCalls runs several Ask/Resolve for distinct
+// callIDs in parallel: each one receives its own decision. Run with -race to
+// verify the pending map has no races.
+func TestMemoryGate_ConcurrentDistinctCalls(t *testing.T) {
+	gate := NewMemoryGate()
 	const n = 20
 
 	var wg sync.WaitGroup
@@ -160,7 +160,7 @@ func TestMemoryPermissionGate_ConcurrentDistinctCalls(t *testing.T) {
 		want := i%2 == 0
 		go func(idx int, id string, approve bool) {
 			defer wg.Done()
-			approved, err := gate.Ask(context.Background(), PermissionRequest{SessionID: "s1", CallID: id})
+			approved, err := gate.Ask(context.Background(), Request{SessionID: "s1", CallID: id})
 			if err != nil {
 				t.Errorf("Ask(%s) error: %v", id, err)
 			}

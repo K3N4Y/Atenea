@@ -21,6 +21,7 @@ import (
 	"atenea/internal/event"
 	"atenea/internal/llm"
 	"atenea/internal/mcpclient"
+	"atenea/internal/permission"
 	"atenea/internal/providerconfig"
 	"atenea/internal/session"
 	"atenea/internal/session/runner"
@@ -84,7 +85,7 @@ type ConnectService interface {
 type Engine struct {
 	events chan tea.Msg
 	inbox  session.Inbox
-	gate   *session.MemoryPermissionGate
+	gate   *permission.MemoryGate
 	agent  *agent.Service
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -135,7 +136,7 @@ func New(cfg Config) *Engine {
 		// Buffer generoso: amortigua rafagas de deltas mientras la TUI drena.
 		events:             make(chan tea.Msg, 256),
 		inbox:              session.NewMemoryInbox(),
-		gate:               session.NewMemoryPermissionGate(),
+		gate:               permission.NewMemoryGate(),
 		pendingCompactions: map[string]bool{},
 		compacting:         map[string]bool{},
 		ctx:                ctx,

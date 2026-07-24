@@ -14,6 +14,7 @@ import (
 	"atenea/internal/event"
 	"atenea/internal/llm"
 	"atenea/internal/mcpclient"
+	"atenea/internal/permission"
 	"atenea/internal/session"
 	"atenea/internal/tool"
 	"atenea/internal/wiring"
@@ -31,7 +32,7 @@ type Config struct {
 	ProviderState func() ProviderState
 	Store         session.Store
 	Inbox         session.Inbox
-	Gate          session.PermissionGate
+	Gate          permission.Gate
 	Snapshots     *tool.SessionSnapshots
 	Bus           *event.Bus
 	Agent         *agent.Service
@@ -47,7 +48,7 @@ type Manager struct {
 	providers   func() ProviderState
 	store       session.Store
 	inbox       session.Inbox
-	gate        session.PermissionGate
+	gate        permission.Gate
 	snaps       *tool.SessionSnapshots
 	bus         *event.Bus
 	agent       *agent.Service

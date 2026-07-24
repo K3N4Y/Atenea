@@ -16,6 +16,7 @@ import (
 
 	"atenea/internal/agent"
 	"atenea/internal/llm"
+	"atenea/internal/permission"
 	"atenea/internal/session"
 	"atenea/internal/tool"
 )
@@ -44,26 +45,26 @@ func (c *countingTool) ran() int {
 	return c.calls
 }
 
-// recordingGate registra cada PermissionRequest que recibe y responde con una
+// recordingGate registra cada permission.Request que recibe y responde con una
 // decision fija, sin bloquear. Captura el sessionID/callID/toolName con que el
 // runner hijo pide aprobacion.
 type recordingGate struct {
 	mu       sync.Mutex
 	approved bool
-	asked    []session.PermissionRequest
+	asked    []permission.Request
 }
 
-func (g *recordingGate) Ask(ctx context.Context, req session.PermissionRequest) (bool, error) {
+func (g *recordingGate) Ask(ctx context.Context, req permission.Request) (bool, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.asked = append(g.asked, req)
 	return g.approved, nil
 }
 
-func (g *recordingGate) calls() []session.PermissionRequest {
+func (g *recordingGate) calls() []permission.Request {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	out := make([]session.PermissionRequest, len(g.asked))
+	out := make([]permission.Request, len(g.asked))
 	copy(out, g.asked)
 	return out
 }
@@ -91,7 +92,7 @@ func TestTaskTool_PropagatesGateAndDenyDoesNotRunTool(t *testing.T) {
 	tt := NewTaskTool(defs, prov, children, idCounter())
 
 	gate := &recordingGate{approved: false} // niega
-	tt.SetPermissionGate(gate, func(c tool.Call) bool { return c.Name == "bash" })
+	tt.SetPermissionGate(gate, askBash{})
 
 	_, _ = tt.Execute(ctx, json.RawMessage(`{"subagent_type":"general","prompt":"borra todo"}`))
 
@@ -144,7 +145,7 @@ func TestTaskTool_PropagatedGateApprovalRunsTool(t *testing.T) {
 	tt := NewTaskTool(defs, prov, children, idCounter())
 
 	gate := &recordingGate{approved: true} // aprueba
-	tt.SetPermissionGate(gate, func(c tool.Call) bool { return c.Name == "bash" })
+	tt.SetPermissionGate(gate, askBash{})
 
 	res, err := tt.Execute(ctx, json.RawMessage(`{"subagent_type":"general","prompt":"lista"}`))
 	if err != nil {
@@ -229,7 +230,7 @@ func TestTaskTool_StoreDecoratorReceivesChildPermissionRequest(t *testing.T) {
 
 	tt := NewTaskTool(defs, prov, children, idCounter())
 	gate := &recordingGate{approved: false} // niega: el hijo no corre bash y cierra
-	tt.SetPermissionGate(gate, func(c tool.Call) bool { return c.Name == "bash" })
+	tt.SetPermissionGate(gate, askBash{})
 
 	var dec *recordingStore
 	var gotParent string
@@ -294,4 +295,14 @@ func TestTaskTool_NoGatePropagatedRunsToolUngated(t *testing.T) {
 	if got := bash.ran(); got != 1 {
 		t.Errorf("bash corrio %d veces; quiero 1 (sin gate corre directo)", got)
 	}
+}
+
+// askBash is a test permission.Policy that asks only for "bash".
+type askBash struct{}
+
+func (askBash) Decide(c tool.Call) permission.Decision {
+	if c.Name == "bash" {
+		return permission.Ask
+	}
+	return permission.Allow
 }
