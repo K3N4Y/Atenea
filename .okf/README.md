@@ -71,6 +71,7 @@ uses Markdown and begins with `updated_at` and `summary` YAML metadata.
 - [TUI file viewer](specs/2026-07-09-tui-file-viewer.md)
 - [TUI provider and model selector](specs/2026-07-10-tui-model-selector.md)
 - [/connect command and credential store](specs/2026-07-18-connect-command.md)
+- [Single permission gate for shell and local FS tools](specs/2026-07-23-single-permission-gate.md)
 - [TUI dark canvas](specs/2026-07-10-tui-dark-canvas.md)
 - [TUI inline model completion](specs/2026-07-10-tui-inline-model-completion.md)
 - [TUI manual context compaction](specs/2026-07-11-tui-manual-context-compaction.md)

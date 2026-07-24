@@ -3345,7 +3345,7 @@ func TestModel_PermissionPanelQueuesFIFOAndShowsOrigin(t *testing.T) {
 	m := NewModel(fake, "parent", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 72, Height: 20})
 	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "first", ToolName: "bash", Input: json.RawMessage(`{"command":"echo first"}`)})
-	m = apply(t, m, EventMsg{SessionID: "child-1", Kind: session.KindToolPermissionRequested, CallID: "second", ToolName: "write", Input: json.RawMessage(`{"path":"a.go"}`)})
+	m = apply(t, m, EventMsg{SessionID: "child-1", Kind: session.KindToolPermissionRequested, CallID: "second", ToolName: "mcp_deploy", Input: json.RawMessage(`{"target":"prod"}`)})
 
 	view := ansi.Strip(m.View())
 	if !strings.Contains(view, "Bash echo first") || strings.Contains(view, "1 of 2") || strings.Contains(view, "Requested by") {
@@ -3353,7 +3353,7 @@ func TestModel_PermissionPanelQueuesFIFOAndShowsOrigin(t *testing.T) {
 	}
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	view = ansi.Strip(m.View())
-	if strings.Contains(view, "1 of 1") || !strings.Contains(view, "Requested by subagent") || !strings.Contains(view, "a.go") {
+	if strings.Contains(view, "1 of 1") || !strings.Contains(view, "Requested by subagent") || !strings.Contains(view, "prod") {
 		t.Fatalf("View() = %q, resolving first permission must reveal child permission", view)
 	}
 	if got := fake.resolved[0]; got.callID != "first" || !got.approved {
@@ -8558,6 +8558,100 @@ func collectUntilRunDone(t *testing.T, ch <-chan tea.Msg, timeout time.Duration,
 			return events, m
 		default:
 			t.Fatalf("mensaje inesperado en el canal del engine: %T", m)
+		}
+	}
+}
+
+// TestModel_PermissionPanelWriteShowsPathAndContent: the write permission
+// reuses the compact bash-style panel — muted "Write" label, the target path
+// on the first body line, and the content to write below it. The user sees
+// what they authorize; none of the generic-panel metadata renders.
+func TestModel_PermissionPanelWriteShowsPathAndContent(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).WithWorkspace("main", "~/dev/atenea")
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = apply(t, m, EventMsg{
+		Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "write",
+		Input: json.RawMessage(`{"path":"notes/plan.txt","content":"line one\nline two\n"}`),
+	})
+
+	view := ansi.Strip(m.View())
+	for _, want := range []string{
+		"Permission required", "Write notes/plan.txt", "line one", "line two", "Deny", "Allow",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("View() = %q, want %q", view, want)
+		}
+	}
+	panel := ansi.Strip(m.permissionPanelView())
+	for _, unwanted := range []string{
+		"write request", "Requested by", "Working directory", "Allow once", `"content"`,
+	} {
+		if strings.Contains(panel, unwanted) {
+			t.Fatalf("permissionPanelView() = %q, write permission panel must hide %q", panel, unwanted)
+		}
+	}
+}
+
+// TestModel_PermissionPanelEditShowsPatch: the edit permission shows the
+// hashline patch verbatim on the compact panel — its [path#HASH] header names
+// the file and the hunks carry the change being authorized.
+func TestModel_PermissionPanelEditShowsPatch(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).WithWorkspace("main", "~/dev/atenea")
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = apply(t, m, EventMsg{
+		Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "edit",
+		Input: json.RawMessage(`{"patch":"[tracked.txt#abc123]\nSWAP 1.=1:\n+new line"}`),
+	})
+
+	view := ansi.Strip(m.View())
+	for _, want := range []string{
+		"Permission required", "Edit [tracked.txt#abc123]", "+new line", "Deny", "Allow",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("View() = %q, want %q", view, want)
+		}
+	}
+	if panel := ansi.Strip(m.permissionPanelView()); strings.Contains(panel, `"patch"`) {
+		t.Fatalf("permissionPanelView() = %q, edit permission panel must not dump raw JSON", panel)
+	}
+}
+
+// TestModel_PermissionPanelWebFetchShowsURL: the web_fetch permission shows
+// the URL being fetched on the compact panel.
+func TestModel_PermissionPanelWebFetchShowsURL(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).WithWorkspace("main", "~/dev/atenea")
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = apply(t, m, EventMsg{
+		Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "web_fetch",
+		Input: json.RawMessage(`{"url":"https://example.com/docs","prompt":"summarize"}`),
+	})
+
+	view := ansi.Strip(m.View())
+	for _, want := range []string{"Permission required", "WebFetch https://example.com/docs", "Deny", "Allow"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("View() = %q, want %q", view, want)
+		}
+	}
+}
+
+// TestModel_PermissionPanelGenericFallbackForUnknownTool: a gated tool
+// without a dedicated compact renderer (e.g. a future MCP tool) keeps the
+// detailed generic panel: tool label, origin, working directory, pretty-JSON
+// input and Deny / Allow once.
+func TestModel_PermissionPanelGenericFallbackForUnknownTool(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil).WithWorkspace("main", "~/dev/atenea")
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = apply(t, m, EventMsg{
+		Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "mcp_deploy",
+		Input: json.RawMessage(`{"target":"prod"}`),
+	})
+
+	view := ansi.Strip(m.View())
+	for _, want := range []string{
+		"Permission required", "mcp_deploy request", "Requested by main agent", "Allow once",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("View() = %q, want %q", view, want)
 		}
 	}
 }

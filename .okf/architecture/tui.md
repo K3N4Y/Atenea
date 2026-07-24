@@ -263,30 +263,39 @@ gate once, so line numbering — and therefore click targeting — stays in
 lockstep. The panel uses the existing two-cell composer inset and width, a
 `#303030` surface, and a `#3A3A3A` command surface.
 
-Bash permissions use a dedicated compact presentation modeled after the
-terminal-native permission prompt: a full-width olive-green `Permission
-required` title bar, a command surface containing only `Bash <command>`, and
-the `Deny` / `Allow` buttons. The selected button uses the same green surface
-with dark text; the gap between actions explicitly retains the `#303030` panel
-surface. The `Bash` label uses muted `#999999` text so the command remains the
-primary focus, and `Deny` remains selected by default. Request origin, working
-directory, keyboard help, the queue counter, and the `once` qualifier are not
-rendered for Bash. This is presentation-only: approval still applies to the
+Every gated tool with a dedicated renderer — `bash`, `write`, `edit`,
+`web_fetch` — uses the compact presentation modeled after the terminal-native
+permission prompt: a full-width olive-green `Permission required` title bar, a
+command surface opening with the muted tool label, and the `Deny` / `Allow`
+buttons. The selected button uses the same green surface with dark text; the
+gap between actions explicitly retains the `#303030` panel surface. The label
+uses muted `#999999` text so the body remains the primary focus, and `Deny`
+remains selected by default. Request origin, working directory, keyboard
+help, the queue counter, and the `once` qualifier are not rendered on the
+compact panel. This is presentation-only: approval still applies to the
 single pending execution.
 
-Other tools retain the detailed generic panel: ANSI-green title text, the
-`<tool> request` label, request origin, working directory, queue count, help,
-and `Deny` / `Allow once` actions with the `›` selection marker.
+The compact body shows the exact thing the user authorizes: `Bash <command>`;
+`Write <path>` followed by the content to be written; `Edit` followed by the
+hashline patch verbatim (its `[path#HASH]` header names the file, and the
+patch text is the faithful pre-execution representation of the change — the
+unified diff only exists after the tool runs); `WebFetch <url>`. When the
+dedicated field is missing or does not parse, the body falls back to
+pretty-JSON input.
+
+Tools without a dedicated renderer (e.g. a future gated MCP tool) keep the
+detailed generic panel: ANSI-green title text, the `<tool> request` label,
+request origin, working directory, queue count, help, and `Deny` /
+`Allow once` actions with the `›` selection marker.
 
 Permissions are processed FIFO. The detailed generic panel shows `1 of N` for
-multiple pending requests and omits the redundant `1 of 1`; the compact Bash
-panel intentionally omits the counter. The generic panel identifies a request
+multiple pending requests and omits the redundant `1 of 1`; the compact panel
+intentionally omits the counter. The generic panel identifies a request
 surfaced from a child session as `Requested by subagent`, and every panel
 resolves through the event's `SessionID` so a child gate is never answered on
-the parent session. Bash input renders the exact command; other tools fall back
-to pretty JSON. The command wraps to the available width and exposes up to four
-lines; `Up`/`Down` or the mouse wheel over the command scrolls longer input and
-`↓ more` marks hidden rows.
+the parent session. The compact body wraps to the available width and exposes
+up to four lines; `Up`/`Down` or the mouse wheel over the body scrolls longer
+input and `↓ more` marks hidden rows.
 
 `Deny` is selected by default. `Left`/`Right` or `Tab` selects an action,
 `Enter` confirms it, `Esc` denies immediately, and `y`/`n` remain silent direct

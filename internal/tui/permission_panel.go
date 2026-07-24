@@ -18,14 +18,14 @@ const (
 )
 
 var (
-	permissionPanelStyle     = lipgloss.NewStyle().Background(lipgloss.Color(theme.PermissionPanel))
-	permissionCommandStyle   = lipgloss.NewStyle().Background(lipgloss.Color(theme.PermissionCommand))
-	permissionAccentStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(theme.Success))
-	permissionSelectionStyle = lipgloss.NewStyle().Bold(true)
-	permissionTitleStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Canvas)).Background(lipgloss.Color(theme.PermissionActive))
-	permissionButtonStyle    = lipgloss.NewStyle().Background(lipgloss.Color(theme.PermissionCommand)).Padding(0, 1)
-	permissionActiveStyle    = permissionButtonStyle.Bold(true).Foreground(lipgloss.Color(theme.Canvas)).Background(lipgloss.Color(theme.PermissionActive))
-	permissionBashLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted)).Background(lipgloss.Color(theme.PermissionCommand))
+	permissionPanelStyle        = lipgloss.NewStyle().Background(lipgloss.Color(theme.PermissionPanel))
+	permissionCommandStyle      = lipgloss.NewStyle().Background(lipgloss.Color(theme.PermissionCommand))
+	permissionAccentStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(theme.Success))
+	permissionSelectionStyle    = lipgloss.NewStyle().Bold(true)
+	permissionTitleStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Canvas)).Background(lipgloss.Color(theme.PermissionActive))
+	permissionButtonStyle       = lipgloss.NewStyle().Background(lipgloss.Color(theme.PermissionCommand)).Padding(0, 1)
+	permissionActiveStyle       = permissionButtonStyle.Bold(true).Foreground(lipgloss.Color(theme.Canvas)).Background(lipgloss.Color(theme.PermissionActive))
+	permissionCompactLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted)).Background(lipgloss.Color(theme.PermissionCommand))
 )
 
 type permissionPanelLayout struct {
@@ -138,8 +138,8 @@ func (m Model) permissionPanelLines(permission entry, width, height int) ([]stri
 	if width <= 0 || height <= 0 {
 		return nil, permissionPanelMetadata{}
 	}
-	if strings.EqualFold(permission.tool, "bash") {
-		return m.bashPermissionPanelLines(permission, width, height)
+	if label, ok := compactPermissionLabel(permission.tool); ok {
+		return m.compactPermissionPanelLines(permission, label, width, height)
 	}
 	if height == 1 {
 		line := "› Deny    Allow once"
@@ -252,7 +252,24 @@ func (m Model) permissionPanelLines(permission entry, width, height int) ([]stri
 	return lines, metadata
 }
 
-func (m Model) bashPermissionPanelLines(permission entry, width, height int) ([]string, permissionPanelMetadata) {
+// compactPermissionLabel maps each gated tool with a dedicated compact
+// presentation to the label shown on its command surface. Tools without a
+// dedicated renderer fall back to the detailed generic panel.
+func compactPermissionLabel(tool string) (string, bool) {
+	switch {
+	case strings.EqualFold(tool, "bash"):
+		return "Bash", true
+	case strings.EqualFold(tool, "write"):
+		return "Write", true
+	case strings.EqualFold(tool, "edit"):
+		return "Edit", true
+	case strings.EqualFold(tool, "web_fetch"):
+		return "WebFetch", true
+	}
+	return "", false
+}
+
+func (m Model) compactPermissionPanelLines(permission entry, label string, width, height int) ([]string, permissionPanelMetadata) {
 	metadata := permissionPanelMetadata{commandStart: -1, commandEnd: -1}
 	if height == 1 {
 		denyStyle, allowStyle := permissionButtonStyle, permissionButtonStyle
@@ -282,7 +299,7 @@ func (m Model) bashPermissionPanelLines(permission entry, width, height int) ([]
 	}
 	commandSlots := height - len(plainLines) - fixedAfterCommand
 	if commandSlots > 0 {
-		commandLines := bashPermissionInputLines(permission, width)
+		commandLines := compactPermissionInputLines(permission, label, width)
 		visible := min(commandSlots, 4, len(commandLines))
 		maxScroll := max(len(commandLines)-visible, 0)
 		scroll := min(max(m.permissionScroll, 0), maxScroll)
@@ -316,7 +333,7 @@ func (m Model) bashPermissionPanelLines(permission entry, width, height int) ([]
 		line = ansi.Truncate(sanitizeTerminalText(line), width, "")
 		switch lineKinds[index] {
 		case 1:
-			lines[index] = renderBashPermissionCommandLine(line, width)
+			lines[index] = renderCompactPermissionCommandLine(line, label, width)
 		case 2:
 			denyStyle, allowStyle := permissionButtonStyle, permissionButtonStyle
 			if m.permissionChoice == permissionDeny {
@@ -335,22 +352,28 @@ func (m Model) bashPermissionPanelLines(permission entry, width, height int) ([]
 	return lines, metadata
 }
 
-func renderBashPermissionCommandLine(line string, width int) string {
-	const prefix = " Bash "
+// renderCompactPermissionCommandLine styles a command-surface row: the first
+// row carries the muted tool label so the body remains the primary focus;
+// continuation rows (indented by the wrap) render plain.
+func renderCompactPermissionCommandLine(line, label string, width int) string {
+	prefix := " " + label + " "
 	if !strings.HasPrefix(line, prefix) {
 		return permissionCommandStyle.Width(width).Render(line)
 	}
 	rest := strings.TrimPrefix(line, prefix)
 	styled := permissionCommandStyle.Render(" ") +
-		permissionBashLabelStyle.Render("Bash") +
+		permissionCompactLabelStyle.Render(label) +
 		permissionCommandStyle.Render(" "+rest)
 	remaining := max(width-ansi.StringWidth(styled), 0)
 	return styled + permissionCommandStyle.Render(strings.Repeat(" ", remaining))
 }
 
-func bashPermissionInputLines(permission entry, width int) []string {
-	const prefix = " Bash "
-	text := sanitizeTerminalText(permissionInputText(permission))
+// compactPermissionInputLines lays out the compact panel body: the tool label
+// prefixes the first line and continuation lines align under it, wrapped to
+// the surface width (the caller scrolls them).
+func compactPermissionInputLines(permission entry, label string, width int) []string {
+	prefix := " " + label + " "
+	text := sanitizeTerminalText(compactPermissionInputText(permission))
 	if text == "" {
 		text = "No input provided"
 	}
@@ -391,8 +414,15 @@ func permissionInputLines(permission entry, width int) []string {
 	return lines
 }
 
-func permissionInputText(permission entry) string {
-	if strings.EqualFold(permission.tool, "bash") {
+// compactPermissionInputText extracts the compact panel body: the exact thing
+// the user authorizes. bash: the command; write: the target path followed by
+// the content to write; edit: the hashline patch (its [path#HASH] header
+// names the file, and the patch text is the faithful pre-execution
+// representation of the change); web_fetch: the URL. Falls back to the
+// pretty-JSON input when the expected field is missing or does not parse.
+func compactPermissionInputText(permission entry) string {
+	switch {
+	case strings.EqualFold(permission.tool, "bash"):
 		var input struct {
 			Command string `json:"command"`
 			Cmd     string `json:"cmd"`
@@ -405,7 +435,35 @@ func permissionInputText(permission entry) string {
 				return input.Cmd
 			}
 		}
+	case strings.EqualFold(permission.tool, "write"):
+		var input struct {
+			Path    string `json:"path"`
+			Content string `json:"content"`
+		}
+		if json.Unmarshal([]byte(permission.input), &input) == nil && input.Path != "" {
+			return strings.TrimRight(input.Path+"\n"+input.Content, "\n")
+		}
+	case strings.EqualFold(permission.tool, "edit"):
+		var input struct {
+			Patch string `json:"patch"`
+		}
+		if json.Unmarshal([]byte(permission.input), &input) == nil && input.Patch != "" {
+			return input.Patch
+		}
+	case strings.EqualFold(permission.tool, "web_fetch"):
+		var input struct {
+			URL string `json:"url"`
+		}
+		if json.Unmarshal([]byte(permission.input), &input) == nil && input.URL != "" {
+			return input.URL
+		}
 	}
+	return permissionInputText(permission)
+}
+
+// permissionInputText renders the raw tool input as pretty JSON: the generic
+// panel body and the compact fallback when a dedicated field is missing.
+func permissionInputText(permission entry) string {
 	var value any
 	if json.Unmarshal([]byte(permission.input), &value) == nil {
 		if formatted, err := json.MarshalIndent(value, "", "  "); err == nil {

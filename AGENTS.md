@@ -13,6 +13,7 @@ makes sure you find the real problem so your fix will actually solve it.
 if something clearly look off, even if it is not directly related to what you are doing, try to get it fixed along.
 - apply that same high standard to engineering excellence: lint, test failure, and test flakiness.
 if you see one, even if it is no caused by what you are working on right now, still get it fixed.
+-Avoid excessive or redundant comments; code should be self-explanatory through clear naming and structure. comment only non-obvious log (why, not what).
 
 
 ## Stack
