@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-22
+updated_at: 2026-07-23
 summary: OpenCode Zen and Go integration through Atenea's OpenAI-compatible provider.
 ---
 
@@ -49,6 +49,15 @@ own configuration format, not the raw HTTP request.
   that requires another protocol.
 - The existing OpenAI-compatible stream mapping, tool-call handling, and
   provider snapshot behavior apply unchanged.
+- Compatibility capabilities are selected explicitly by provider ID, never by
+  inspecting the base URL. Official OpenAI maps the runner's opaque session
+  identity to `prompt_cache_key`; OpenRouter maps it to `session_id` and keeps
+  its reasoning extension. OpenCode Zen, OpenCode Go, custom compatible
+  providers, and local endpoints receive none of those provider-specific
+  fields.
+- Normal runner turns reuse one opaque identity for the durable session,
+  including tool continuations. Auxiliary requests such as context compaction
+  do not claim conversation affinity.
 
 ## Runtime provider snapshots
 

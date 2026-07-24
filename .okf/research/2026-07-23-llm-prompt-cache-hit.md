@@ -13,27 +13,27 @@ the Atenea codebase on **2026-07-23**.
 Atenea does **not** currently provide complete prompt-cache support across its
 providers:
 
-- **Native Anthropic:** no cache is requested. The adapter reads Anthropic's
-  cache usage counters, but never sets the supported top-level or block-level
-  `cache_control`; therefore normal Atenea requests do not establish an
-  Anthropic prompt cache.
-- **OpenAI:** eligible requests can already obtain OpenAI's automatic prefix
+- **Native Anthropic:** normal requests now set top-level ephemeral
+  `cache_control` and the adapter reports Anthropic's cache read/write usage
+  counters.
+- **OpenAI:** eligible requests can obtain OpenAI's automatic prefix
   cache without code changes. Atenea preserves the useful prefix order
-  (system, history, newest turn) and stable tool definitions, but neither sends
-  `prompt_cache_key`/an explicit breakpoint nor copies `cached_tokens` from the
-  response. Hits may happen, but Atenea cannot report them.
+  (system, history, newest turn) and stable tool definitions. Atenea now
+  supplies a stable opaque per-session `prompt_cache_key`; it does not add an
+  explicit breakpoint. The adapter reports automatic
+  cache hits from `usage.prompt_tokens_details.cached_tokens`.
 - **OpenRouter:** underlying supported models may cache automatically and
-  OpenRouter applies provider-sticky routing. Atenea does not send the optional
-  `session_id`, so it depends on OpenRouter deriving a conversation from the
-  opening messages. It also drops cached-token telemetry.
+  OpenRouter applies provider-sticky routing. Atenea sends an opaque stable
+  `session_id` for normal session turns. Standard OpenAI-compatible cached-token telemetry is
+  preserved when the selected upstream returns it.
 - **OpenCode Zen/Go:** Atenea's curated models use Zen's
   `/chat/completions` compatibility route. Zen publishes per-model cached-read
   prices, but its public Zen page does not define a single cache-control or
   cache-hit contract for these heterogeneous models. Atenea sends no cache
-  extension and does not observe cache reads, so cache behavior must not be
-  assumed. The Zen page now maps OpenAI models to `/responses` and Anthropic
-  models to `/messages`; those are not the routes/models Atenea's current Zen
-  catalog uses. [Zen documentation][zen]
+  extension; standard cached-token telemetry is preserved when returned, but
+  cache behavior must not be assumed. The Zen page now maps OpenAI models to
+  `/responses` and Anthropic models to `/messages`; those are not the
+  routes/models Atenea's current Zen catalog uses. [Zen documentation][zen]
 
 The highest-value implementation is: activate top-level automatic caching in
 the native Anthropic adapter, preserve and expose provider cache metrics, then
@@ -57,10 +57,10 @@ There are nevertheless avoidable invalidators:
 - Tool ordering and JSON serialization must remain deterministic. Atenea's
   registry currently materializes a stable list, but this should be protected
   by an end-to-end request-body regression test.
-- Cache telemetry exists in `llm.Usage` and persistence, but the OpenAI adapter
-  fills only input/output tokens. The Anthropic adapter fills cache reads and
-  writes correctly from `cache_read_input_tokens` and
-  `cache_creation_input_tokens`.
+- Cache telemetry exists in `llm.Usage` and persistence. The OpenAI-compatible
+  adapter fills cache reads from `prompt_tokens_details.cached_tokens`; the
+  Anthropic adapter fills cache reads and writes from
+  `cache_read_input_tokens` and `cache_creation_input_tokens`.
 
 ## Anthropic: exact requirements
 
@@ -133,14 +133,14 @@ retention up to 24 hours. [OpenAI prompt caching][openai-cache]
 Chat Completions reports reads in
 `usage.prompt_tokens_details.cached_tokens` and newer cache writes in
 `cache_write_tokens`. Atenea pins an official SDK whose generated usage type
-already exposes `CachedTokens`, but `internal/llm/openai.go` currently ignores
-it. [OpenAI Go SDK usage type][openai-sdk-usage]
+already exposes `CachedTokens`, which Atenea maps into
+`Usage.CacheReadTokens`. [OpenAI Go SDK usage type][openai-sdk-usage]
 
 ### Recommendation for Atenea
 
 Keep system instructions, tool schemas, and history byte-stable; add a stable,
-non-secret per-session `prompt_cache_key`; and map `cached_tokens` (plus cache
-writes when supported by the pinned SDK/API response) into `llm.Usage`. Do not
+non-secret per-session `prompt_cache_key`; and map cache writes when supported
+by the pinned SDK/API response. Do not
 use a single global cache key. Add explicit breakpoints only for model/API
 combinations verified to accept them, because Atenea also uses the same adapter
 for generic OpenAI-compatible servers.
@@ -155,10 +155,10 @@ first system/developer message and first non-system message; callers can send
 `session_id` for explicit control. Manual `provider.order` disables sticky
 routing. [OpenRouter prompt caching][openrouter-cache]
 
-Atenea's append-only opening messages are compatible with the derived key, but
-a stable opaque Atenea session ID would be more robust and would avoid accidental
-cross-session grouping when two chats begin identically. This extension must be
-enabled only for OpenRouter, not all OpenAI-compatible endpoints. Cache support,
+Atenea's append-only opening messages are compatible with the derived key, and
+normal runner turns now provide a stable opaque identity as `session_id`,
+avoiding accidental cross-session grouping when two chats begin identically.
+The extension is enabled only for OpenRouter, not all OpenAI-compatible endpoints. Cache support,
 threshold, TTL, and pricing still belong to the chosen upstream model/provider;
 OpenRouter is a router, not one uniform cache implementation.
 
@@ -190,7 +190,7 @@ Chat-Completions-only catalog.
    read/write usage mapping.
 3. Map OpenAI-compatible `cached_tokens` into `Usage.CacheReadTokens`; safely
    map writes only when the response field exists.
-4. Thread a stable session cache/routing identity through `llm.Request`, using
+4. **Implemented:** thread a stable session cache/routing identity through `llm.Request`, using
    it as OpenAI `prompt_cache_key` and OpenRouter `session_id`. Keep provider
    extensions scoped by provider capability rather than base adapter defaults.
 5. Add observability: cache read tokens, write tokens, eligible input tokens,
