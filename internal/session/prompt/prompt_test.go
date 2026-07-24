@@ -84,10 +84,9 @@ func TestBuild_OmitsEmptySkills(t *testing.T) {
 	}
 }
 
-// TRIANGULATE: con instructions y skills presentes, ambos aparecen y el bloque de
-// skills va DESPUES de las instrucciones (orden estable: base, env, instructions,
-// skills). Tumba una implementacion que los intercale o ignore uno.
-func TestBuild_SkillsAfterInstructions(t *testing.T) {
+// Con todos los bloques presentes, Build deja el contenido estable primero y el
+// entorno dinamico al final para maximizar el prefijo reutilizable por el cache.
+func TestBuild_PutsStableContentBeforeEnv(t *testing.T) {
 	env := Env{
 		WorkingDir:   "/r",
 		WorktreeRoot: "/r",
@@ -98,11 +97,38 @@ func TestBuild_SkillsAfterInstructions(t *testing.T) {
 	instructions := "Instructions from: /r/AGENTS.md\nreglas"
 	skills := "<available_skills></available_skills>"
 	got := Build("claude-x", env, instructions, skills)
-	if !strings.Contains(got, instructions) || !strings.Contains(got, skills) {
-		t.Fatalf("Build debe incluir instructions y skills; got:\n%s", got)
+	want := anthropicPrompt + "\n\n" + instructions + "\n\n" + skills + "\n\n" + renderEnv(env)
+	if got != want {
+		t.Fatalf("Build debe ordenar base, instructions, skills y env.\nquiero:\n%s\ngot:\n%s", want, got)
 	}
-	if strings.Index(got, instructions) > strings.Index(got, skills) {
-		t.Fatalf("el bloque de skills debe ir despues de las instrucciones; got:\n%s", got)
+}
+
+// Cambiar unicamente la fecha modifica el entorno, no el prefijo estatico que
+// los proveedores pueden reutilizar entre solicitudes.
+func TestBuild_DateChangePreservesStablePrefix(t *testing.T) {
+	env := Env{
+		WorkingDir:   "/r",
+		WorktreeRoot: "/r",
+		IsGitRepo:    true,
+		Platform:     "linux",
+		Date:         "Mon Jun 22 2026",
+	}
+	instructions := "Instructions from: /r/AGENTS.md\nreglas"
+	skills := "<available_skills></available_skills>"
+	first := Build("claude-x", env, instructions, skills)
+	env.Date = "Tue Jun 23 2026"
+	second := Build("claude-x", env, instructions, skills)
+
+	firstPrefix, firstEnv, firstFound := strings.Cut(first, "\n\n<env>")
+	secondPrefix, secondEnv, secondFound := strings.Cut(second, "\n\n<env>")
+	if !firstFound || !secondFound {
+		t.Fatalf("Build debe contener un bloque <env> separado; firstFound=%t secondFound=%t", firstFound, secondFound)
+	}
+	if firstPrefix != secondPrefix {
+		t.Fatalf("cambiar Date altero el prefijo estatico.\nprimero:\n%s\nsegundo:\n%s", firstPrefix, secondPrefix)
+	}
+	if firstEnv == secondEnv {
+		t.Fatal("cambiar Date debe alterar el bloque <env>")
 	}
 }
 
@@ -263,9 +289,8 @@ func TestLoadInstructions_NoneFoundReturnsEmpty(t *testing.T) {
 	}
 }
 
-// BuildPlan agrega el contrato de modo plan despues de la salida normal de
-// Build. RED: BuildPlan y plan.txt aun no existen.
-func TestBuildPlan_AppendsPlanContractToBase(t *testing.T) {
+// BuildPlan coloca el contrato estable de plan antes del entorno dinamico.
+func TestBuildPlan_PutsPlanInstructionsBeforeEnv(t *testing.T) {
 	env := Env{
 		WorkingDir:   "/home/u/dev/atenea",
 		WorktreeRoot: "/home/u/dev/atenea",
@@ -273,13 +298,12 @@ func TestBuildPlan_AppendsPlanContractToBase(t *testing.T) {
 		Platform:     "linux",
 		Date:         "Mon Jun 22 2026",
 	}
-	got := BuildPlan("claude-opus-4-8", env, "", "")
-
-	if !strings.Contains(got, Build("claude-opus-4-8", env, "", "")) {
-		t.Fatalf("BuildPlan no contiene la salida normal de Build; got:\n%s", got)
-	}
-	if !strings.Contains(got, "present_plan") {
-		t.Fatalf("BuildPlan no menciona la herramienta present_plan; got:\n%s", got)
+	instructions := "Instructions from: /r/AGENTS.md\nreglas"
+	skills := "<available_skills></available_skills>"
+	got := BuildPlan("claude-opus-4-8", env, instructions, skills)
+	want := anthropicPrompt + "\n\n" + instructions + "\n\n" + skills + "\n\n" + planInstructions + "\n\n" + renderEnv(env)
+	if got != want {
+		t.Fatalf("BuildPlan debe ordenar base, instructions, skills, plan y env.\nquiero:\n%s\ngot:\n%s", want, got)
 	}
 }
 
@@ -367,15 +391,25 @@ func TestBuildLocal_UsesToolCallingPromptNotCodeGenPattern(t *testing.T) {
 	}
 }
 
-// TestBuildLocalPlan_AppendsPlanInstructions: el modo plan sobre un provider local
-// usa el prompt local mas el contrato de plan, igual que BuildPlan sobre el default.
-func TestBuildLocalPlan_AppendsPlanInstructions(t *testing.T) {
-	got := BuildLocalPlan(localEnv(), "", "")
-	if !strings.Contains(got, BuildLocal(localEnv(), "", "")) {
-		t.Fatalf("BuildLocalPlan no contiene el BuildLocal base")
+// BuildLocal comparte el orden cache-friendly y omite instrucciones vacias sin
+// dejar separadores entre la base y el siguiente bloque estable.
+func TestBuildLocal_PutsNonEmptyStableBlocksBeforeEnv(t *testing.T) {
+	env := localEnv()
+	skills := "<available_skills></available_skills>"
+	got := BuildLocal(env, "", skills)
+	want := localPrompt + "\n\n" + skills + "\n\n" + renderEnv(env)
+	if got != want {
+		t.Fatalf("BuildLocal debe omitir instructions vacio y ordenar base, skills y env.\nquiero:\n%s\ngot:\n%s", want, got)
 	}
-	if !strings.Contains(got, planInstructions) {
-		t.Fatalf("BuildLocalPlan no anexa las instrucciones de plan")
+}
+
+// El modo plan local conserva el mismo contrato y omite bloques estables vacios.
+func TestBuildLocalPlan_PutsPlanInstructionsBeforeEnv(t *testing.T) {
+	env := localEnv()
+	got := BuildLocalPlan(env, "", "")
+	want := localPrompt + "\n\n" + planInstructions + "\n\n" + renderEnv(env)
+	if got != want {
+		t.Fatalf("BuildLocalPlan debe ordenar base, plan y env.\nquiero:\n%s\ngot:\n%s", want, got)
 	}
 }
 

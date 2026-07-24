@@ -49,46 +49,46 @@ func Select(modelID string) string {
 	return defaultPrompt
 }
 
-// Build concatena el prompt base (elegido por familia de modelo), el bloque <env>,
-// las instrucciones del repo y el bloque de skills disponibles. instructions y skills
-// se omiten si vienen vacios. El separador entre piezas es "\n\n". El bloque de skills
-// (metadatos de las skills, ver internal/skill.Format) va al final, como en opencode.
+// Build concatena el prompt base (elegido por familia de modelo), las instrucciones
+// del repo, las skills disponibles y el bloque <env>. El contenido estable precede
+// al entorno dinamico para maximizar el prefijo reutilizable por el cache.
 func Build(modelID string, env Env, instructions, skills string) string {
-	return assemble(Select(modelID), env, instructions, skills)
+	return assemble(Select(modelID), env, instructions, skills, "")
 }
 
 // BuildLocal arma el prompt de un endpoint local (LM Studio, Ollama) sobre el prompt
 // base local en vez de elegir por familia de modelo: los ids locales son arbitrarios,
-// asi que la familia no sirve para enrutar. Mismo bloque <env>+instrucciones+skills
-// que Build.
+// asi que la familia no sirve para enrutar. Conserva el mismo orden que Build.
 func BuildLocal(env Env, instructions, skills string) string {
-	return assemble(localPrompt, env, instructions, skills)
+	return assemble(localPrompt, env, instructions, skills, "")
 }
 
-// assemble concatena el prompt base con el bloque <env>, las instrucciones del repo y
-// el bloque de skills, omitiendo los dos ultimos si vienen vacios. Lo comparten Build
-// (base por familia) y BuildLocal (base local).
-func assemble(base string, env Env, instructions, skills string) string {
-	parts := []string{base, renderEnv(env)}
+// assemble concatena el contenido estable y deja el bloque <env> al final. Omite
+// instrucciones, skills o instrucciones de modo cuando vienen vacias.
+func assemble(base string, env Env, instructions, skills, modeInstructions string) string {
+	parts := []string{base}
 	if instructions != "" {
 		parts = append(parts, instructions)
 	}
 	if skills != "" {
 		parts = append(parts, skills)
 	}
+	if modeInstructions != "" {
+		parts = append(parts, modeInstructions)
+	}
+	parts = append(parts, renderEnv(env))
 	return strings.Join(parts, "\n\n")
 }
 
-// BuildPlan devuelve la salida normal de Build mas el bloque de instrucciones
-// del modo plan, separado por "\n\n".
+// BuildPlan agrega las instrucciones estables del modo plan antes del bloque <env>.
 func BuildPlan(modelID string, env Env, instructions, skills string) string {
-	return Build(modelID, env, instructions, skills) + "\n\n" + planInstructions
+	return assemble(Select(modelID), env, instructions, skills, planInstructions)
 }
 
 // BuildLocalPlan es a BuildLocal lo que BuildPlan a Build: el prompt local mas el
 // contrato del modo plan.
 func BuildLocalPlan(env Env, instructions, skills string) string {
-	return BuildLocal(env, instructions, skills) + "\n\n" + planInstructions
+	return assemble(localPrompt, env, instructions, skills, planInstructions)
 }
 
 // renderEnv arma el bloque <env> literal con dos espacios de indentacion.

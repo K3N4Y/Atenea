@@ -47,6 +47,11 @@ supports them.
 prompt, the complete projected message history, and materialized tools. New
 conversation content is appended. This is fundamentally cache-friendly because
 all providers require an exact reusable **prefix**, not merely similar text.
+Within the system prompt, Atenea orders the model-family base, repository
+instructions, available skills, and mode instructions before the runtime
+`<env>` block. This preserves the largest possible static prefix when runtime
+values such as the date change; normal, local, and plan prompts share this
+ordering.
 
 There are nevertheless avoidable invalidators:
 

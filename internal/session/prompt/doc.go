@@ -1,3 +1,3 @@
 // Package prompt arma el system prompt final: elige un prompt base por modelo,
-// le prepende un bloque <env> de runtime y carga las instrucciones del repo.
+// agrega instrucciones estables y deja el bloque <env> de runtime al final.
 package prompt
