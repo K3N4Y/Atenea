@@ -103,6 +103,39 @@ func TestAnthropicProvider_StreamMapsNativeMessagesRequestAndEvents(t *testing.T
 	}
 }
 
+func TestAnthropicProvider_StreamEnablesFiveMinutePromptCaching(t *testing.T) {
+	requestBodies := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		requestBodies <- body
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "event: message\ndata: {\"type\":\"message_stop\"}\n\n")
+	}))
+	defer server.Close()
+
+	out, err := NewAnthropicProvider("key", server.URL, "claude-test").Stream(context.Background(), Request{
+		Messages: []Message{{Role: "user", Text: "hello"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drain(out)
+
+	var body struct {
+		CacheControl map[string]any `json:"cache_control"`
+	}
+	if err := json.Unmarshal(<-requestBodies, &body); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{"type": "ephemeral"}
+	if !reflect.DeepEqual(body.CacheControl, want) {
+		t.Fatalf("cache_control = %#v, want %#v", body.CacheControl, want)
+	}
+}
+
 func TestAnthropicProvider_StreamReportsAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

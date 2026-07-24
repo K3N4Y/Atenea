@@ -71,10 +71,11 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req Request) (<-chan Eve
 		maxTokens = defaultAnthropicMaxOutputTokens
 	}
 	params := anthropic.MessageNewParams{
-		Model:     anthropic.Model(model),
-		MaxTokens: int64(maxTokens),
-		Messages:  messages,
-		Tools:     tools,
+		Model:        anthropic.Model(model),
+		MaxTokens:    int64(maxTokens),
+		Messages:     messages,
+		Tools:        tools,
+		CacheControl: anthropic.NewCacheControlEphemeralParam(),
 	}
 	if req.System != "" {
 		params.System = []anthropic.TextBlockParam{{Text: req.System}}

@@ -205,16 +205,17 @@ not current behavior.
 
 ## Prompt caching
 
-The render order is `tools -> system -> messages`. Keep the stable first
-(agent prompt + context baseline), the volatile last. A breakpoint in
-the last block of system caches tools + system together.
+Every normal `AnthropicProvider.Stream` request enables Anthropic's top-level
+automatic prompt caching:
 
 ```go
-System: []anthropic.TextBlockParam{{
-    Text:         systemPromptEstable,
-    CacheControl: anthropic.NewCacheControlEphemeralParam(),
-}},
+CacheControl: anthropic.NewCacheControlEphemeralParam(),
 ```
+
+The ephemeral marker uses Anthropic's default five-minute TTL and moves the
+breakpoint to the last cacheable block as the conversation grows. The render
+order is `tools -> system -> messages`; keep stable content first (agent prompt
+and context baseline) and volatile content last.
 
 - The loop already helps: the request is rebuilt from a durable state each turn, so
  with a frozen system prompt the prefix remains byte-identical.
