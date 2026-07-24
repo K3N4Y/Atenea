@@ -31,6 +31,12 @@ func (p *compactionProvider) callCount() int {
 	return len(p.requests)
 }
 
+func (p *compactionProvider) capturedRequest(index int) llm.Request {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.requests[index]
+}
+
 func validCompactionSummaryEvents() []llm.Event {
 	return []llm.Event{
 		{Kind: llm.TextDelta, Text: `{"current_goal":"continue current work","constraints_and_instructions":[],"decisions":[],"completed_work":[],"files_and_changes":[],"relevant_tool_results":[],"failures_and_attempts":[],"pending_and_next_step":[],"facts_not_to_reinterpret":[]}`},
@@ -73,6 +79,9 @@ func TestRunner_CompactNowCommitsCheckpointAndPreservesCurrentActivity(t *testin
 
 	if got := provider.callCount(); got != 1 {
 		t.Fatalf("provider calls = %d, want 1", got)
+	}
+	if got := provider.capturedRequest(0).SessionKey; got != "" {
+		t.Fatalf("compaction SessionKey = %q, want empty auxiliary affinity", got)
 	}
 	events, err := store.Events(context.Background(), "s1", 0)
 	if err != nil {

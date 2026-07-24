@@ -2,6 +2,8 @@ package runner
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 
@@ -117,7 +119,7 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string) (bool, er
 	if providerSnapshot.Model != "" {
 		model = providerSnapshot.Model
 	}
-	req := llm.Request{Model: model, Messages: toLLMMessages(msgs), Tools: mat.Definitions}
+	req := llm.Request{Model: model, SessionKey: sessionKey(sessionID), Messages: toLLMMessages(msgs), Tools: mat.Definitions}
 	if sys != nil {
 		req.System = sys(model)
 	}
@@ -153,6 +155,11 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string) (bool, er
 	usageRequest.MaxOutputTokens = 0
 	pub := NewPublisher(r.store, sessionID, r.nextID(), llm.EstimateRequestTokens(usageRequest))
 	return r.consume(ctx, sessionID, in, pub, mat.Settle)
+}
+
+func sessionKey(sessionID string) string {
+	digest := sha256.Sum256([]byte(sessionID))
+	return "atenea-" + base64.RawURLEncoding.EncodeToString(digest[:])
 }
 
 // consume drena el stream del turno. Publica cada evento como SessionEvent durable

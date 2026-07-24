@@ -32,9 +32,10 @@ func idCounter() func() string {
 // Stream reproduce turns[i] (o un guion vacio si se agotaron) delegando en un
 // FakeProvider fresco, y cuenta las llamadas.
 type scriptedProvider struct {
-	turns [][]llm.Event
-	calls int
-	mu    sync.Mutex
+	turns    [][]llm.Event
+	requests []llm.Request
+	calls    int
+	mu       sync.Mutex
 }
 
 // var _ llm.Provider = (*scriptedProvider)(nil) asegura que cumple la interface.
@@ -47,8 +48,50 @@ func (p *scriptedProvider) Stream(ctx context.Context, req llm.Request) (<-chan 
 		script = p.turns[p.calls]
 	}
 	p.calls++
+	p.requests = append(p.requests, req)
 	p.mu.Unlock()
 	return llm.NewFakeProvider(script...).Stream(ctx, req)
+}
+
+func (p *scriptedProvider) capturedRequests() []llm.Request {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]llm.Request(nil), p.requests...)
+}
+
+func TestRunner_ProvidesStableOpaqueSessionKey(t *testing.T) {
+	ctx := context.Background()
+	store := session.NewMemoryStore()
+	inbox := session.NewMemoryInbox()
+	provider := &scriptedProvider{turns: [][]llm.Event{
+		{{Kind: llm.StepStarted}, {Kind: llm.ToolCall, CallID: "call-1", ToolName: "echo", Input: json.RawMessage(`{"text":"continue"}`)}, {Kind: llm.StepEnded}},
+		{{Kind: llm.StepEnded}},
+		{{Kind: llm.StepEnded}},
+	}}
+	runner := NewRunner(store, inbox, provider, tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}), tool.Permissions{"echo": true}, idCounter())
+
+	for _, sessionID := range []string{"session-alpha", "session-beta"} {
+		if err := inbox.Admit(ctx, sessionID, session.Prompt{Text: "continue"}, session.DeliveryQueue); err != nil {
+			t.Fatal(err)
+		}
+		if err := runner.Run(ctx, sessionID, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	requests := provider.capturedRequests()
+	if len(requests) != 3 {
+		t.Fatalf("requests = %d, want 3", len(requests))
+	}
+	if requests[0].SessionKey == "" || requests[0].SessionKey == "session-alpha" {
+		t.Fatalf("first SessionKey = %q, want non-empty opaque identity", requests[0].SessionKey)
+	}
+	if requests[1].SessionKey != requests[0].SessionKey {
+		t.Fatalf("same session keys differ: %q != %q", requests[1].SessionKey, requests[0].SessionKey)
+	}
+	if requests[2].SessionKey == requests[0].SessionKey {
+		t.Fatalf("different sessions share SessionKey %q", requests[0].SessionKey)
+	}
 }
 
 func (p *scriptedProvider) callCount() int {
