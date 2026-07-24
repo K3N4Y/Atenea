@@ -306,7 +306,7 @@ func TestOpenAIProvider_StreamRequestsReasoning(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p := NewOpenAIProvider("test-key", server.URL, "test-model")
+	p := NewOpenAIProvider("test-key", server.URL, "test-model", WithOpenRouterCompatibility())
 
 	out, err := p.Stream(context.Background(), Request{})
 	if err != nil {
@@ -371,6 +371,68 @@ func TestOpenAIProvider_WithoutOpenRouterReasoning_OmitsReasoning(t *testing.T) 
 	}
 }
 
+func TestOpenAIProvider_OpenAICompatibilitySendsOnlyPromptCacheKey(t *testing.T) {
+	var body []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	provider := NewOpenAIProvider("key", server.URL, "model", WithOpenAICompatibility())
+	stream, err := provider.Stream(context.Background(), Request{SessionKey: "opaque-session-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drain(stream)
+
+	var sent map[string]any
+	if err := json.Unmarshal(body, &sent); err != nil {
+		t.Fatal(err)
+	}
+	if sent["prompt_cache_key"] != "opaque-session-key" {
+		t.Fatalf("prompt_cache_key = %#v, want opaque-session-key", sent["prompt_cache_key"])
+	}
+	for _, field := range []string{"session_id", "reasoning"} {
+		if _, exists := sent[field]; exists {
+			t.Fatalf("OpenAI request unexpectedly contains %q: %s", field, body)
+		}
+	}
+}
+
+func TestOpenAIProvider_OpenRouterCompatibilitySendsSessionIDAndReasoning(t *testing.T) {
+	var body []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	provider := NewOpenAIProvider("key", server.URL, "model", WithOpenRouterCompatibility())
+	stream, err := provider.Stream(context.Background(), Request{SessionKey: "opaque-session-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drain(stream)
+
+	var sent map[string]any
+	if err := json.Unmarshal(body, &sent); err != nil {
+		t.Fatal(err)
+	}
+	if sent["session_id"] != "opaque-session-key" {
+		t.Fatalf("session_id = %#v, want opaque-session-key", sent["session_id"])
+	}
+	if _, exists := sent["prompt_cache_key"]; exists {
+		t.Fatalf("OpenRouter request unexpectedly contains prompt_cache_key: %s", body)
+	}
+	reasoning, ok := sent["reasoning"].(map[string]any)
+	if !ok || reasoning["enabled"] != true {
+		t.Fatalf("reasoning = %#v, want enabled", sent["reasoning"])
+	}
+}
+
 // TestOpenAIProvider_StreamBracketsTextTurn exige el bracketing COMPLETO de un
 // turno de texto: StepStarted abre el turno antes de cualquier delta; el primer
 // delta.content abre el bloque con TextStarted; cada delta no vacio emite un
@@ -424,6 +486,41 @@ func TestOpenAIProvider_StreamBracketsTextTurn(t *testing.T) {
 	}
 	if stepEnded.Usage.OutputTokens != 5 {
 		t.Fatalf("StepEnded.Usage.OutputTokens: got %d, want %d", stepEnded.Usage.OutputTokens, 5)
+	}
+}
+
+func TestOpenAIProvider_StreamMapsCachedPromptTokens(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":null}]}\n\n")
+		io.WriteString(w, "data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		io.WriteString(w, "data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":1,\"total_tokens\":11,\"prompt_tokens_details\":{\"cached_tokens\":7}}}\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	p := NewOpenAIProvider("test-key", server.URL, "test-model")
+	out, err := p.Stream(context.Background(), Request{})
+	if err != nil {
+		t.Fatalf("Stream devolvio error: %v", err)
+	}
+
+	got := drain(out)
+	stepEnded := got[len(got)-1]
+	if stepEnded.Kind != StepEnded {
+		t.Fatalf("ultimo evento: got %v, want %v; eventos: %#v", stepEnded.Kind, StepEnded, got)
+	}
+	if stepEnded.Usage == nil {
+		t.Fatal("StepEnded.Usage es nil; se esperaba el usage del chunk final")
+	}
+	if stepEnded.Usage.InputTokens != 10 {
+		t.Errorf("StepEnded.Usage.InputTokens: got %d, want 10", stepEnded.Usage.InputTokens)
+	}
+	if stepEnded.Usage.OutputTokens != 1 {
+		t.Errorf("StepEnded.Usage.OutputTokens: got %d, want 1", stepEnded.Usage.OutputTokens)
+	}
+	if stepEnded.Usage.CacheReadTokens != 7 {
+		t.Errorf("StepEnded.Usage.CacheReadTokens: got %d, want 7", stepEnded.Usage.CacheReadTokens)
 	}
 }
 

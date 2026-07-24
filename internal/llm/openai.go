@@ -38,11 +38,18 @@ type OpenAIProvider struct {
 	model  string
 	label  string
 	// reasoning controla la inyeccion del campo top-level `reasoning` (extension de
-	// OpenRouter) en el request. Default true (OpenRouter); los endpoints locales
-	// OpenAI-compatible (LM Studio, Ollama) no entienden ese campo, asi que se apaga
-	// con WithoutOpenRouterReasoning.
+	// OpenRouter). Los perfiles neutrales y OpenAI lo omiten.
 	reasoning bool
+	profile   compatibilityProfile
 }
+
+type compatibilityProfile uint8
+
+const (
+	compatibilityNeutral compatibilityProfile = iota
+	compatibilityOpenAI
+	compatibilityOpenRouter
+)
 
 var _ Provider = (*OpenAIProvider)(nil)
 
@@ -55,6 +62,23 @@ type Option func(*OpenAIProvider)
 // Ollama), que rechaza o ignora esa extension propia de OpenRouter.
 func WithoutOpenRouterReasoning() Option {
 	return func(p *OpenAIProvider) { p.reasoning = false }
+}
+
+// WithOpenAICompatibility enables only fields supported by the official OpenAI
+// API. Conversation affinity is mapped to prompt_cache_key.
+func WithOpenAICompatibility() Option {
+	return func(p *OpenAIProvider) {
+		p.profile = compatibilityOpenAI
+		p.reasoning = false
+	}
+}
+
+// WithOpenRouterCompatibility enables OpenRouter's routing and reasoning fields.
+func WithOpenRouterCompatibility() Option {
+	return func(p *OpenAIProvider) {
+		p.profile = compatibilityOpenRouter
+		p.reasoning = true
+	}
 }
 
 // toolAccum acumula los fragmentos de una tool call del stream: el id y el nombre
@@ -82,7 +106,7 @@ func newOpenAIProviderWithTimeout(apiKey, baseURL, model string, timeout time.Du
 		option.WithBaseURL(baseURL),
 		option.WithRequestTimeout(timeout),
 	)
-	p := &OpenAIProvider{client: client, model: model, label: providerLabel(baseURL), reasoning: true}
+	p := &OpenAIProvider{client: client, model: model, label: providerLabel(baseURL)}
 	for _, opt := range opts {
 		opt(p)
 	}
@@ -165,10 +189,18 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request) (<-chan Event,
 	// Pide razonamiento a OpenRouter: campo top-level `reasoning` (no tipado por el
 	// SDK) que habilita el delta.reasoning del modelo. Se omite en locales
 	// (WithoutOpenRouterReasoning) porque no entienden esa extension.
+	extraFields := map[string]any{}
 	if p.reasoning {
-		params.SetExtraFields(map[string]any{
-			"reasoning": map[string]any{"enabled": true},
-		})
+		extraFields["reasoning"] = map[string]any{"enabled": true}
+	}
+	if req.SessionKey != "" && p.profile == compatibilityOpenAI {
+		extraFields["prompt_cache_key"] = req.SessionKey
+	}
+	if req.SessionKey != "" && p.profile == compatibilityOpenRouter {
+		extraFields["session_id"] = req.SessionKey
+	}
+	if len(extraFields) > 0 {
+		params.SetExtraFields(extraFields)
 	}
 
 	go func() {
@@ -203,8 +235,9 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request) (<-chan Event,
 			// request entero (choices vacio).
 			if chunk.Usage.PromptTokens != 0 || chunk.Usage.CompletionTokens != 0 {
 				usage = &Usage{
-					InputTokens:  int(chunk.Usage.PromptTokens),
-					OutputTokens: int(chunk.Usage.CompletionTokens),
+					InputTokens:     int(chunk.Usage.PromptTokens),
+					OutputTokens:    int(chunk.Usage.CompletionTokens),
+					CacheReadTokens: int(chunk.Usage.PromptTokensDetails.CachedTokens),
 				}
 			}
 
