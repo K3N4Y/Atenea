@@ -24,7 +24,7 @@ import (
 // menuLimit acota cuantos items muestra el popup de autocompletado. It grows
 // with the builtin set (/new, /compact, /model, /mcp, /connect) so builtins
 // never crowd skill commands out of the popup.
-const menuLimit = 7
+const menuLimit = 8
 
 // menuItem es una fila del popup, agnostica de la fuente: el menu "/" la
 // puebla con "/<name>" y la descripcion de la skill en estilo tenue; el
@@ -358,6 +358,7 @@ func (c composer) refreshMenu(commands []command.Command, listFiles func() ([]st
 		includeModel := strings.HasPrefix("model", query)
 		includeMcp := strings.HasPrefix("mcp", query)
 		includeConnect := strings.HasPrefix("connect", query)
+		developmentItems := developmentBuiltinCommands(query)
 		if includeNew {
 			c.menuItems = append(c.menuItems, menuItem{label: "/new", builtin: true})
 		}
@@ -374,6 +375,7 @@ func (c composer) refreshMenu(commands []command.Command, listFiles func() ([]st
 		if includeConnect {
 			reserved++
 		}
+		reserved += len(developmentItems)
 		for _, cmd := range filterCommands(commands, q.query, menuLimit-reserved) {
 			c.menuItems = append(c.menuItems, menuItem{label: "/" + cmd.Name, description: cmd.Description, builtin: cmd.Name == "resume"})
 		}
@@ -428,6 +430,7 @@ func (c composer) refreshMenu(commands []command.Command, listFiles func() ([]st
 				c.menuItems = append(c.menuItems, item)
 			}
 		}
+		c.menuItems = append(c.menuItems, developmentItems...)
 	} else if q := detectMention(text, caret); q.active {
 		c.modelSearch = false
 		var cmd tea.Cmd

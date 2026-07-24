@@ -1810,6 +1810,7 @@ func (m Model) tokenUsageLabel() string {
 		}
 	}
 	label := "↑ " + input + " ↓ " + output
+	label += m.cacheStatsUsageLabel()
 	if window, ok := llm.ContextWindow(m.model); ok {
 		label += " ctx " + input + "/" + formatTokenCount(window)
 	}

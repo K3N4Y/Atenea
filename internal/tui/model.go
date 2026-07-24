@@ -288,6 +288,7 @@ type Model struct {
 	// embedded composer (menuItems, files, …).
 	commands  []command.Command
 	listFiles func() ([]string, error)
+	cacheStatsState
 
 	resumePicker resumePicker
 	resumeGen    uint64
@@ -1492,6 +1493,9 @@ func (m Model) submitPrompt() (Model, tea.Cmd) {
 		return m, nil
 	}
 	trimmed := strings.TrimSpace(text)
+	if next, handled := m.handleCacheStatsCommand(trimmed); handled {
+		return next, nil
+	}
 	if strings.HasPrefix(trimmed, "/undo") {
 		if trimmed != "/undo" {
 			return m.appendError("usage: /undo"), nil

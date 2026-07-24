@@ -341,7 +341,7 @@ func (c composer) handleKey(msg tea.KeyMsg, commands []command.Command, listFile
 			// A builtin selection completes the command onto the input and submits
 			// it through the root; every other selection completes inline.
 			selected := c.menuItems[c.menuSelected]
-			if selected.builtin && (selected.label == "/new" || selected.label == "/compact" || selected.label == "/resume" || selected.label == "/model" || selected.label == "/mcp" || selected.label == "/connect") {
+			if selected.builtin && (selected.label == "/new" || selected.label == "/compact" || selected.label == "/resume" || selected.label == "/model" || selected.label == "/mcp" || selected.label == "/connect" || isDevelopmentBuiltinSelection(selected.label)) {
 				c.input.SetValue(selected.label)
 				c.input.SetCursor(len([]rune(selected.label)))
 				c = c.closeMenu()
