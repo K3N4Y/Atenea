@@ -5,8 +5,8 @@ import (
 	"sync"
 	"testing"
 
-	"atenea/internal/llm"
-	"atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/session"
 )
 
 // summaryFor busca el resumen de sessionID en ListSessions; falla si no esta.

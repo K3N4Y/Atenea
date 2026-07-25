@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"atenea/internal/llm"
-	"atenea/internal/providerconfig"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/providerconfig"
 )
 
 func TestManager_SetPublishesCompleteSnapshot(t *testing.T) {

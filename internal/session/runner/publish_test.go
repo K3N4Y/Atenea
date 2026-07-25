@@ -8,8 +8,8 @@ import (
 	"reflect"
 	"testing"
 
-	"atenea/internal/llm"
-	"atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/session"
 )
 
 // recordingAppender es un spy de eventAppender: captura cada SessionEvent que el

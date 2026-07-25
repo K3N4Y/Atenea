@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"atenea/internal/llm"
-	"atenea/internal/workspacegit"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/workspacegit"
 )
 
 func runGit(root string, args ...string) (string, error) {

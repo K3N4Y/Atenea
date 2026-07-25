@@ -16,7 +16,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"atenea/internal/mcpclient"
+	"github.com/K3N4Y/atenea/internal/mcpclient"
 )
 
 // mcpAgent is the engine surface the picker needs. Connect/Disconnect block

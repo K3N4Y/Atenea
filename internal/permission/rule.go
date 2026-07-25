@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/tool"
 )
 
 // Rule is the shape of the tool calls a session grant covers: the tool it

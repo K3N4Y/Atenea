@@ -46,8 +46,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
-	"atenea/internal/command"
-	"atenea/internal/providerconfig"
+	"github.com/K3N4Y/atenea/internal/command"
+	"github.com/K3N4Y/atenea/internal/providerconfig"
 )
 
 const composerMaxLines = 5

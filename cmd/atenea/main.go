@@ -17,13 +17,13 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"atenea/internal/checkpoint"
-	"atenea/internal/dotenv"
-	"atenea/internal/llm"
-	"atenea/internal/providerconfig"
-	"atenea/internal/session"
-	"atenea/internal/tui"
-	"atenea/internal/tui/engine"
+	"github.com/K3N4Y/atenea/internal/checkpoint"
+	"github.com/K3N4Y/atenea/internal/dotenv"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/providerconfig"
+	"github.com/K3N4Y/atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/tui"
+	"github.com/K3N4Y/atenea/internal/tui/engine"
 )
 
 const (

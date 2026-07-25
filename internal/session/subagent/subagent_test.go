@@ -18,10 +18,10 @@ import (
 	"testing"
 	"time"
 
-	"atenea/internal/agent"
-	"atenea/internal/llm"
-	"atenea/internal/session/runner"
-	"atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/agent"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/session/runner"
+	"github.com/K3N4Y/atenea/internal/tool"
 )
 
 // scriptedProvider devuelve un guion DISTINTO por turno: el loop del runner llama

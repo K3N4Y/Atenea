@@ -7,7 +7,7 @@ import (
 	"os"
 	"sync"
 
-	"atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/llm"
 )
 
 type Active struct {

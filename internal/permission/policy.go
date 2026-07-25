@@ -1,6 +1,6 @@
 package permission
 
-import "atenea/internal/tool"
+import "github.com/K3N4Y/atenea/internal/tool"
 
 // Decision is the policy verdict for a tool call.
 type Decision int

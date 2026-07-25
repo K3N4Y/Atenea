@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/session"
 )
 
 // MaxSteps corta loops improductivos de modelo/tool/continuacion: 25 pasos por

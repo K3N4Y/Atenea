@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/session"
 )
 
 // TestChildPermissionStore_SurfacesPermissionEventsOnParentChannel describe el

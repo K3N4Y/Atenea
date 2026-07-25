@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/session"
 )
 
 func TestTurnCapturesInitialCwdAndTitlesOnlyFirstCurrentRun(t *testing.T) {

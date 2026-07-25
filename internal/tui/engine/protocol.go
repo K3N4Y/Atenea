@@ -1,6 +1,6 @@
 package engine
 
-import "atenea/internal/session"
+import "github.com/K3N4Y/atenea/internal/session"
 
 // This file defines the protocol between the Engine (producer) and the Bubble
 // Tea Model (consumer): the durable events and lifecycle messages that flow

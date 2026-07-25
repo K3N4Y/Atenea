@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"atenea/internal/tool/hashline"
+	"github.com/K3N4Y/atenea/internal/tool/hashline"
 )
 
 // EditTool aplica un patch hashline a un archivo bajo Root. El patch ancla

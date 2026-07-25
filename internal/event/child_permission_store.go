@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/session"
 )
 
 // ChildPermissionStore decora el store en memoria del runner hijo de un subagente

@@ -7,7 +7,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 
-	"atenea/internal/dotenv"
+	"github.com/K3N4Y/atenea/internal/dotenv"
 )
 
 //go:embed all:frontend/dist

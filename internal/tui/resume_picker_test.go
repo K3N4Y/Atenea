@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/session"
 )
 
 func TestNewResumePicker_OpensFocusedAndLoading(t *testing.T) {

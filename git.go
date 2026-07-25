@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"atenea/internal/llm"
-	"atenea/internal/wailsprovider"
-	"atenea/internal/workspacegit"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/wailsprovider"
+	"github.com/K3N4Y/atenea/internal/workspacegit"
 )
 
 type GitChange = workspacegit.Change

@@ -13,8 +13,8 @@ import (
 	"strings"
 	"sync"
 
-	"atenea/internal/llm"
-	"atenea/internal/providerconfig"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/providerconfig"
 )
 
 const (

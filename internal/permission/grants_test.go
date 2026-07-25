@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/tool"
 )
 
 func bashCall(command string) tool.Call {

@@ -17,8 +17,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"atenea/internal/command"
-	"atenea/internal/providerconfig"
+	"github.com/K3N4Y/atenea/internal/command"
+	"github.com/K3N4Y/atenea/internal/providerconfig"
 )
 
 // menuLimit acota cuantos items muestra el popup de autocompletado. It grows

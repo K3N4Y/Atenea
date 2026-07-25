@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"atenea/internal/llm"
-	"atenea/internal/providerconfig"
-	"atenea/internal/wailsprovider"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/providerconfig"
+	"github.com/K3N4Y/atenea/internal/wailsprovider"
 )
 
 // TestApp_LocalProviderUsesLocalSystemPrompt: al elegir un provider local, el turno

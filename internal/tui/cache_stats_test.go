@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/session"
 )
 
 func TestModel_CacheStatsCommandTogglesLocallyWithoutSendingPrompt(t *testing.T) {

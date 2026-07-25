@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"atenea/internal/skill"
+	"github.com/K3N4Y/atenea/internal/skill"
 )
 
 // SkillTool implementa el disclosure progresivo de skills al estilo opencode: el

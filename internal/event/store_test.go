@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/session"
 )
 
 // fakeEmit registra cada emision (canal y payload) de forma segura ante

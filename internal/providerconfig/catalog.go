@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/llm"
 )
 
 type ProviderModels struct {

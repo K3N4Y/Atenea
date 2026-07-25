@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"atenea/internal/tool/hashline"
+	"github.com/K3N4Y/atenea/internal/tool/hashline"
 )
 
 // FileReader lee el contenido de un archivo por su ruta. Es la unica dependencia

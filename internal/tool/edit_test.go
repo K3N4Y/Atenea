@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"atenea/internal/tool/hashline"
+	"github.com/K3N4Y/atenea/internal/tool/hashline"
 )
 
 // fakeEditFS es un hashline.Filesystem respaldado por mapas en memoria: lee de

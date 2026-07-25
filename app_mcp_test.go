@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"atenea/internal/llm"
-	"atenea/internal/mcpclient"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/mcpclient"
 )
 
 // TestApp_MCPConfigLifecycle covers the Wails surface over the shared MCP

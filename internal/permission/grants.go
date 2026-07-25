@@ -3,7 +3,7 @@ package permission
 import (
 	"sync"
 
-	"atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/tool"
 )
 
 // SessionGrants layers session-scoped approvals over a base policy: a call the

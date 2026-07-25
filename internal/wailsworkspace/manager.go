@@ -9,15 +9,15 @@ import (
 	"os"
 	"sync"
 
-	"atenea/internal/agent"
-	"atenea/internal/command"
-	"atenea/internal/event"
-	"atenea/internal/llm"
-	"atenea/internal/mcpclient"
-	"atenea/internal/permission"
-	"atenea/internal/session"
-	"atenea/internal/tool"
-	"atenea/internal/wiring"
+	"github.com/K3N4Y/atenea/internal/agent"
+	"github.com/K3N4Y/atenea/internal/command"
+	"github.com/K3N4Y/atenea/internal/event"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/mcpclient"
+	"github.com/K3N4Y/atenea/internal/permission"
+	"github.com/K3N4Y/atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/wiring"
 )
 
 // ProviderState is the provider snapshot consumed by one wiring build.

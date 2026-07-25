@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/llm"
 
 	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 )

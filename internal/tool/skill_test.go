@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"atenea/internal/skill"
+	"github.com/K3N4Y/atenea/internal/skill"
 )
 
 // newSkillOnDisk crea <root>/<name>/SKILL.md y devuelve la Info correspondiente

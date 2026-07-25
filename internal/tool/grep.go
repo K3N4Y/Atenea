@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"atenea/internal/tool/hashline"
+	"github.com/K3N4Y/atenea/internal/tool/hashline"
 )
 
 const defaultGrepMaxMatches = 100

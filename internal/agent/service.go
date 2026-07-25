@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"sync"
 
-	"atenea/internal/command"
-	"atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/command"
+	"github.com/K3N4Y/atenea/internal/session"
 )
 
 const AcceptPlanPrompt = "El plan fue aprobado. Implementalo ahora paso a paso siguiendo el plan."

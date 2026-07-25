@@ -8,9 +8,9 @@ import (
 	"sync"
 	"testing"
 
-	"atenea/internal/llm"
-	"atenea/internal/session"
-	"atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/tool"
 )
 
 // idCounter devuelve un generador de IDs incremental ("m1","m2",...): el runner lo

@@ -20,11 +20,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
-	"atenea/internal/command"
-	"atenea/internal/permission"
-	"atenea/internal/providerconfig"
-	"atenea/internal/session"
-	"atenea/internal/tui/engine"
+	"github.com/K3N4Y/atenea/internal/command"
+	"github.com/K3N4Y/atenea/internal/permission"
+	"github.com/K3N4Y/atenea/internal/providerconfig"
+	"github.com/K3N4Y/atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/tui/engine"
 )
 
 type UndoDoneMsg struct {

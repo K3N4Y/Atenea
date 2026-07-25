@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"atenea/internal/event"
-	"atenea/internal/llm"
-	"atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/event"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/session"
 )
 
 const (

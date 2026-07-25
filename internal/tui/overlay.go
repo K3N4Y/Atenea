@@ -16,7 +16,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"atenea/internal/tui/theme"
+	"github.com/K3N4Y/atenea/internal/tui/theme"
 )
 
 // overlayList is the navigation core every picker embeds: a cursor over a

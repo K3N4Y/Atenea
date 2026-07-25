@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"atenea/internal/skill"
+	"github.com/K3N4Y/atenea/internal/skill"
 )
 
 // TestExpand_SubstituyeArguments: $ARGUMENTS se reemplaza por los args; el

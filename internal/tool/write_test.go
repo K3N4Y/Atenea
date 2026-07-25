@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"atenea/internal/tool/hashline"
+	"github.com/K3N4Y/atenea/internal/tool/hashline"
 )
 
 // fakeWriteFS respalda el FileWriter del write con mapas en memoria: registra cada

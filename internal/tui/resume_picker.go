@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/session"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"golang.org/x/text/cases"

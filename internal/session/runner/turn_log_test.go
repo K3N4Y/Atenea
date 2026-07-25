@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"atenea/internal/llm"
-	"atenea/internal/session"
-	"atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/tool"
 )
 
 // failingTool falla siempre en Execute. Sirve para ejercitar el camino de fallo

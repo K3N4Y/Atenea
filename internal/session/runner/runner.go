@@ -5,10 +5,10 @@ import (
 	"errors"
 	"log"
 
-	"atenea/internal/llm"
-	"atenea/internal/permission"
-	"atenea/internal/session"
-	"atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/permission"
+	"github.com/K3N4Y/atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/tool"
 )
 
 // Runner ensambla el turno: lee el historial del Store, materializa tools del

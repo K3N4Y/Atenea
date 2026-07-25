@@ -13,7 +13,7 @@ import (
 	"strings"
 	"unicode"
 
-	"atenea/internal/skill"
+	"github.com/K3N4Y/atenea/internal/skill"
 )
 
 // argumentsPlaceholder es el marcador que Expand sustituye por los args que el

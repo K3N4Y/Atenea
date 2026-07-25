@@ -12,7 +12,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"atenea/internal/providerconfig"
+	"github.com/K3N4Y/atenea/internal/providerconfig"
 )
 
 // connectAgent is the engine surface the panel needs. ConnectProvider blocks

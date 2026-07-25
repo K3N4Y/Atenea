@@ -9,8 +9,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"atenea/internal/llm"
-	"atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/session"
 )
 
 func TestModel_TopBarRefreshesBranchAfterSuccessfulTool(t *testing.T) {

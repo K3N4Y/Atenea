@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"atenea/internal/tool/hashline"
+	"github.com/K3N4Y/atenea/internal/tool/hashline"
 )
 
 // fakeFS es un FileReader respaldado por un mapa de ruta absoluta a bytes, para

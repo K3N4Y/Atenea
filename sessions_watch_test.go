@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/session"
 )
 
 // sawChannel informa si el emit fake registro alguna emision en channel.

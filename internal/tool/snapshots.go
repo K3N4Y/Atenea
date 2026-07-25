@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"atenea/internal/tool/hashline"
+	"github.com/K3N4Y/atenea/internal/tool/hashline"
 )
 
 type sessionIDKey struct{}

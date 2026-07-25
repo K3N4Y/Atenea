@@ -7,8 +7,8 @@ import (
 	"sync"
 	"testing"
 
-	"atenea/internal/command"
-	"atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/command"
+	"github.com/K3N4Y/atenea/internal/session"
 )
 
 // writeSkillMD escribe un SKILL.md minimo (frontmatter name+description) en

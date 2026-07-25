@@ -1,6 +1,6 @@
 package tui
 
-import "atenea/internal/tui/engine"
+import "github.com/K3N4Y/atenea/internal/tui/engine"
 
 // The engine owns the protocol it produces (see engine/protocol.go). These
 // aliases re-export those types under the tui package so the Model, its

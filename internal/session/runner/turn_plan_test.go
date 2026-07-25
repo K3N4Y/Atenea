@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	"atenea/internal/llm"
-	"atenea/internal/session"
-	"atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/tool"
 )
 
 // plannerTool es un stub minimo (sin efectos) para anunciar una def "planner" en

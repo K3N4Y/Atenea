@@ -15,18 +15,18 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"atenea/internal/agent"
-	"atenea/internal/checkpoint"
-	"atenea/internal/command"
-	"atenea/internal/event"
-	"atenea/internal/llm"
-	"atenea/internal/mcpclient"
-	"atenea/internal/permission"
-	"atenea/internal/providerconfig"
-	"atenea/internal/session"
-	"atenea/internal/session/runner"
-	"atenea/internal/tool"
-	"atenea/internal/wiring"
+	"github.com/K3N4Y/atenea/internal/agent"
+	"github.com/K3N4Y/atenea/internal/checkpoint"
+	"github.com/K3N4Y/atenea/internal/command"
+	"github.com/K3N4Y/atenea/internal/event"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/mcpclient"
+	"github.com/K3N4Y/atenea/internal/permission"
+	"github.com/K3N4Y/atenea/internal/providerconfig"
+	"github.com/K3N4Y/atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/session/runner"
+	"github.com/K3N4Y/atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/wiring"
 )
 
 // Config describe el ensamblado del agente headless: la raiz del

@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"atenea/internal/agent"
-	"atenea/internal/llm"
-	"atenea/internal/permission"
-	"atenea/internal/session"
-	"atenea/internal/wailssession"
+	"github.com/K3N4Y/atenea/internal/agent"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/permission"
+	"github.com/K3N4Y/atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/wailssession"
 )
 
 // recordingEmit registra cada emision (canal, payload[0]) de forma segura ante

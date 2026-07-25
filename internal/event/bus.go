@@ -1,6 +1,6 @@
 package event
 
-import "atenea/internal/session"
+import "github.com/K3N4Y/atenea/internal/session"
 
 // EmitFunc es la frontera con Wails. En produccion envuelve runtime.EventsEmit;
 // en tests es un fake que registra. Su forma copia la de runtime.EventsEmit

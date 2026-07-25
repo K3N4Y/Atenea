@@ -9,10 +9,10 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"atenea/internal/llm"
-	"atenea/internal/permission"
-	"atenea/internal/session"
-	"atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/permission"
+	"github.com/K3N4Y/atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/tool"
 )
 
 // errRebuildTurn y errContinueAfterCompaction son senales de control internas del

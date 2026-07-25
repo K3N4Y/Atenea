@@ -7,8 +7,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"atenea/internal/command"
-	"atenea/internal/providerconfig"
+	"github.com/K3N4Y/atenea/internal/command"
+	"github.com/K3N4Y/atenea/internal/providerconfig"
 )
 
 // The tests below exercise the composer sub-model directly (value-in /

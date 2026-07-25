@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/llm"
 )
 
 // connectableProviderIDs is the set of providers /connect supports. Growing it

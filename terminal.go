@@ -6,7 +6,7 @@ import (
 	"os"
 	"runtime"
 
-	"atenea/internal/terminal"
+	"github.com/K3N4Y/atenea/internal/terminal"
 )
 
 // shutdown (OnShutdown de Wails) mata todos los shells vivos al cerrar la app,

@@ -6,8 +6,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"atenea/internal/llm"
-	"atenea/internal/tui/theme"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/tui/theme"
 )
 
 // branchGlyph es el glifo powerline de rama que precede el nombre de la rama

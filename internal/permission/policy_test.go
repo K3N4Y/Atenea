@@ -3,7 +3,7 @@ package permission
 import (
 	"testing"
 
-	"atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/tool"
 )
 
 // TestDecision_ZeroValueIsAsk pins the fail-safe invariant: an unclassified

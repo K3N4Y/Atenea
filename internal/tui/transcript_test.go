@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/session"
 )
 
 // These tests exercise the Transcript module directly through its own

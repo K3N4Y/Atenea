@@ -10,8 +10,8 @@ import (
 	"sync"
 	"testing"
 
-	"atenea/internal/llm"
-	"atenea/internal/tool/repair"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/tool/repair"
 )
 
 // spyTool es una tool de prueba que cuenta sus ejecuciones por puntero (Tool se

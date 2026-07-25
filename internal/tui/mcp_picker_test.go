@@ -8,7 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
-	"atenea/internal/mcpclient"
+	"github.com/K3N4Y/atenea/internal/mcpclient"
 )
 
 // fakeMCPAgent extends fakeAgent with the mcpAgent surface: it flips the

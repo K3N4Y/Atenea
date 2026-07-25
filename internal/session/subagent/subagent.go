@@ -7,12 +7,12 @@ import (
 	"sort"
 	"strings"
 
-	"atenea/internal/agent"
-	"atenea/internal/llm"
-	"atenea/internal/permission"
-	"atenea/internal/session"
-	"atenea/internal/session/runner"
-	"atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/agent"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/permission"
+	"github.com/K3N4Y/atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/session/runner"
+	"github.com/K3N4Y/atenea/internal/tool"
 )
 
 // defaultMaxDepth limita la recursion de subagentes: con 2 se permite

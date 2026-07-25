@@ -7,10 +7,10 @@ import (
 	"sync"
 	"testing"
 
-	"atenea/internal/llm"
-	"atenea/internal/permission"
-	"atenea/internal/session"
-	"atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/permission"
+	"github.com/K3N4Y/atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/tool"
 )
 
 // fakeGate is a test permission.Gate: it records each request and returns a

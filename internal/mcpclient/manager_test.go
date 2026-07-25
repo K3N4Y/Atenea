@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/tool"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )

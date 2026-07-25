@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"atenea/internal/tool/hashline"
+	"github.com/K3N4Y/atenea/internal/tool/hashline"
 )
 
 // FileWriter es lo que el write necesita del FS: crear los directorios padre y

@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/llm"
 )
 
 // recordingProvider es un llm.Provider de test que captura el ultimo Request y

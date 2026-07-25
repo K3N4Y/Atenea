@@ -8,8 +8,8 @@ import (
 	"io"
 	"strings"
 
-	"atenea/internal/llm"
-	"atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/session"
 )
 
 const summaryMaxOutputTokens = 4096

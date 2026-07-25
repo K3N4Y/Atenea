@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/llm"
 )
 
 func TestDefaultProviderFactorySelectsExplicitCompatibilityProfile(t *testing.T) {

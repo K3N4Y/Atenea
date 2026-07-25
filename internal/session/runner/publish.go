@@ -5,8 +5,8 @@ import (
 	"strings"
 	"sync"
 
-	"atenea/internal/llm"
-	"atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/session"
 )
 
 // eventAppender es lo unico que el Publisher necesita del Store: agregar eventos

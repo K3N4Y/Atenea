@@ -17,9 +17,9 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 
-	"atenea/internal/llm"
-	"atenea/internal/session"
-	"atenea/internal/tui/theme"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/tui/theme"
 )
 
 // composerBoxBorderWidth es el ancho que los dos bordes laterales de la caja

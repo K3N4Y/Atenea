@@ -5,7 +5,7 @@ import (
 	"errors"
 	"sync"
 
-	"atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/session"
 )
 
 // EmittingStore decora un session.Store: tras un AppendEvent exitoso reenvia el

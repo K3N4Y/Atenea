@@ -21,7 +21,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/session"
 )
 
 // Transcript is the conversation log and the pure state derived from it. Model

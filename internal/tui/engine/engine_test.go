@@ -16,13 +16,13 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"atenea/internal/agent"
-	"atenea/internal/checkpoint"
-	"atenea/internal/llm"
-	"atenea/internal/permission"
-	"atenea/internal/providerconfig"
-	"atenea/internal/session"
-	"atenea/internal/tool/hashline"
+	"github.com/K3N4Y/atenea/internal/agent"
+	"github.com/K3N4Y/atenea/internal/checkpoint"
+	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/permission"
+	"github.com/K3N4Y/atenea/internal/providerconfig"
+	"github.com/K3N4Y/atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/tool/hashline"
 )
 
 type promptHistoryStore struct {
