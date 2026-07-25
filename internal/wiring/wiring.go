@@ -47,6 +47,11 @@ type Config struct {
 	// Gate es el gate de ask-before-run que comparten el runner principal y
 	// los subagentes; el caller entrega por el la decision del usuario.
 	Gate permission.Gate
+	// Grants is the caller-owned store of session-scoped approvals layered over
+	// askPolicy (see NewSessionGrants). It outlives the build so a rewire does
+	// not drop the user's grants; nil = no session grants, every gated call
+	// asks.
+	Grants *permission.SessionGrants
 	// Snaps es el read-state por sesion que comparten read/write/edit. El
 	// caller lo crea una sola vez para que sobreviva a los re-ensamblados.
 	Snaps *tool.SessionSnapshots
@@ -77,9 +82,18 @@ type Built struct {
 // filesystem mutations (write, edit) and outbound network (web_fetch) ask;
 // reads and internal tools — including MCP tools — are allowed. Single source
 // of truth shared by the main runner and the subagents, so a child cannot
-// evade the gate the main chat enforces. Rule-based policies replace this
+// evade the gate the main chat enforces. Rule-based policies layer over this
 // value without touching the runner (see internal/permission).
 var askPolicy = permission.NewStaticPolicy("bash", "write", "edit", "web_fetch")
+
+// NewSessionGrants builds the session-grant store layered over askPolicy: the
+// UI adds to it when the user answers "allow this for the rest of the session".
+// The caller owns it and passes it in Config.Grants so it survives a rewire
+// (MCP connect, workspace change) instead of being dropped mid-session; a UI
+// without that affordance passes nil and gates exactly as before.
+func NewSessionGrants() *permission.SessionGrants {
+	return permission.NewSessionGrants(askPolicy)
+}
 
 // Build arma todo el cableado anclado a cfg.Root: las file/exec tools, el glob
 // del @-menu, las skills y sus slash-commands, el catalogo de subagentes y un
@@ -87,6 +101,12 @@ var askPolicy = permission.NewStaticPolicy("bash", "write", "edit", "web_fetch")
 // devuelve las piezas para que el caller haga su propio swap.
 func Build(cfg Config) Built {
 	root := cfg.Root
+	// The effective ask-before-run policy: the fixed classification, plus the
+	// user's session grants when the caller keeps a store for them.
+	policy := permission.Policy(askPolicy)
+	if cfg.Grants != nil {
+		policy = cfg.Grants
+	}
 	// El @-menu de archivos del composer lista el workspace via este glob.
 	// Comparte la raiz con las file tools; reusa el searcher de ripgrep ya
 	// probado (respeta .gitignore, excluye .git).
@@ -128,8 +148,10 @@ func Build(cfg Config) Built {
 	// would run gated tools (bash, write, edit, web_fetch) without the
 	// confirmation the main chat enforces, evading the gate. The gate is keyed
 	// by (sessionID, callID): the child's sessionID is its childID, so the
-	// child's permission resolution finds it.
-	taskTool.SetPermissionGate(cfg.Gate, askPolicy)
+	// child's permission resolution finds it. Session grants are keyed by
+	// session too, so a subagent does not inherit the chat's grants: it asks on
+	// its own behalf, and a grant answered on its prompt covers only that child.
+	taskTool.SetPermissionGate(cfg.Gate, policy)
 	// Surfacing del permiso del subagente en la UI: decora el store del runner hijo
 	// con ChildPermissionStore sobre el MISMO bus, asi los eventos de permiso del hijo
 	// (Tool.Permission.Requested y su resolucion) se publican en el canal del PADRE
@@ -161,7 +183,7 @@ func Build(cfg Config) Built {
 		cfg.NextID)
 	r.SetCompactor(runner.NewContextCompactor(cfg.Store, cfg.Provider))
 	r.SetSystemPrompt(systemPromptBuilder(root, skillsBlock, cfg.Local))
-	r.SetPermissionGate(cfg.Gate, askPolicy)
+	r.SetPermissionGate(cfg.Gate, policy)
 	// Plan-mode: investigacion de solo lectura mas present_plan (sin write/edit/bash/
 	// echo). El hook de modo decide por sesion; SetMode/SetPlanMode toman efecto solo
 	// cuando cfg.Mode reporta ModePlan (nil = siempre normal, el default del runner).
