@@ -63,7 +63,7 @@ of them delete code.
 | Public API | **Missing** — 0 importable packages; module path now fetchable (R1.1 done) | `go.mod:1`, `go list ./...` |
 | Branding/paths | **Weak** — `atenea` literal in 6+ path builders, no XDG | §3.6 |
 | MCP as plugin substrate | **Partial** — first-class in the registry, but stdio-only, allow-by-default, invisible to subagents | §3.8 |
-| Contributor docs | **Weak** — no LICENSE/CONTRIBUTING; `AGENTS.md` points at two files that do not exist | §3.9 |
+| Contributor docs | **Weak** — no CONTRIBUTING; `AGENTS.md` points at two files that do not exist; LICENSE now present (R1.2 done) | §3.9 |
 
 ## 3. Findings
 
@@ -302,7 +302,7 @@ Gaps that keep it from being a plugin substrate:
 ### 3.9 Contribution-facing gaps
 
 - **No LICENSE.** Hard blocker for outside contributions and any extension
-  ecosystem.
+  ecosystem. `[done 2026-07-24]` — MIT (R1.2).
 - **No CONTRIBUTING.md, no SECURITY.md.**
 - **`AGENTS.md` points at two things that do not exist**: `CONTEXT.md` at the
   repo root and `.okf/architecture/adr/`. An agent or human following the stated
@@ -340,6 +340,9 @@ Ordered by leverage. R1–R3 are the ones that actually unlock third parties.
    change.
 2. Add `LICENSE` (Apache-2.0 if a plugin ecosystem is the goal — the patent grant
    matters to corporate contributors; MIT if simplicity wins).
+   `[done 2026-07-24]` — MIT chosen: simplicity over the patent grant, and
+   consistent with an MCP-only third-party boundary (R8) where extensions run
+   out-of-process rather than linking against this code.
 3. Move **contract types only** out of `internal/`, keeping implementations
    private:
    - `agentcore/tool` — `Tool`, `Call`, `Result`, capability interfaces (R2)
