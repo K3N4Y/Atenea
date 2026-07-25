@@ -183,3 +183,47 @@ func TestMemoryGate_ConcurrentDistinctCalls(t *testing.T) {
 func callIDFor(i int) string {
 	return "c" + string(rune('a'+i%26)) + string(rune('0'+i/26))
 }
+
+// TestMemoryGate_PendingExposesTheWaitingRequest: the resolver derives a
+// session grant from the request the gate is blocking on, so Pending must
+// return exactly what the runner submitted — and nothing once the request is
+// settled.
+func TestMemoryGate_PendingExposesTheWaitingRequest(t *testing.T) {
+	gate := NewMemoryGate()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if _, err := gate.Ask(context.Background(), Request{
+			SessionID: "s1", CallID: "c1", ToolName: "bash", Input: []byte(`{"command":"go test ./..."}`),
+		}); err != nil {
+			t.Errorf("Ask error: %v", err)
+		}
+	}()
+
+	deadline := time.After(2 * time.Second)
+	var request Request
+	for {
+		var ok bool
+		if request, ok = gate.Pending("s1", "c1"); ok {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("Pending never saw the registered request")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	if request.ToolName != "bash" || string(request.Input) != `{"command":"go test ./..."}` {
+		t.Fatalf("Pending() = %+v, want the submitted bash call", request)
+	}
+	if _, ok := gate.Pending("s1", "other"); ok {
+		t.Error("Pending(unknown callID) = true, want false")
+	}
+
+	resolveUntil(t, gate, "s1", "c1", true)
+	<-done
+	if _, ok := gate.Pending("s1", "c1"); ok {
+		t.Error("Pending() after Resolve = true, want false: a settled request is gone")
+	}
+}

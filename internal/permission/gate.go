@@ -16,6 +16,25 @@ type Request struct {
 	Input     []byte // raw JSON input of the tool call (informational for the UI)
 }
 
+// Verdict is the user's answer to a Request. It is the UI's vocabulary, not
+// the policy's: the gate only cares whether the call may run, and the resolver
+// turns AllowedSession into a SessionGrants entry so calls of the same shape
+// stop asking for the rest of the session.
+type Verdict int
+
+const (
+	// Denied fails the call. Zero value: an unanswered request denies.
+	Denied Verdict = iota
+	// AllowedOnce runs this call and nothing more.
+	AllowedOnce
+	// AllowedSession runs this call and grants its shape (see Rule) for the
+	// rest of the session.
+	AllowedSession
+)
+
+// Approved reports whether the verdict lets the call run.
+func (v Verdict) Approved() bool { return v != Denied }
+
 // Gate is the ask-before-run boundary: Ask blocks until the user approves or
 // denies the tool call (or the ctx is cancelled). The runner consumes it as
 // an optional dependency (nil = never asks); the concrete implementation is
@@ -35,12 +54,20 @@ type Gate interface {
 // Run.
 type MemoryGate struct {
 	mu      sync.Mutex
-	pending map[string]chan bool // key(SessionID,CallID) -> decision channel (cap 1)
+	pending map[string]pendingRequest // key(SessionID,CallID) -> waiting request
+}
+
+// pendingRequest is a request blocked in Ask: the request itself, so the
+// resolver can derive a session grant from what the runner actually submitted,
+// and the cap-1 channel Resolve delivers the decision on.
+type pendingRequest struct {
+	request  Request
+	decision chan bool
 }
 
 // NewMemoryGate creates an empty broker.
 func NewMemoryGate() *MemoryGate {
-	return &MemoryGate{pending: make(map[string]chan bool)}
+	return &MemoryGate{pending: make(map[string]pendingRequest)}
 }
 
 // permKey combines sessionID and callID into a collision-free key (the NUL
@@ -58,7 +85,7 @@ func (g *MemoryGate) Ask(ctx context.Context, req Request) (bool, error) {
 	ch := make(chan bool, 1)
 
 	g.mu.Lock()
-	g.pending[key] = ch
+	g.pending[key] = pendingRequest{request: req, decision: ch}
 	g.mu.Unlock()
 
 	select {
@@ -89,11 +116,25 @@ func (g *MemoryGate) Resolve(sessionID, callID string, approved bool) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	key := permKey(sessionID, callID)
-	ch, ok := g.pending[key]
+	waiting, ok := g.pending[key]
 	if !ok {
 		return false
 	}
 	delete(g.pending, key)
-	ch <- approved // cap 1 and single sender: never blocks
+	waiting.decision <- approved // cap 1 and single sender: never blocks
 	return true
+}
+
+// Pending returns the request blocked on a decision for (sessionID, callID).
+// The resolver derives a session grant from it instead of from what the UI
+// happens to hold, so the grant is always the shape of the call the gate is
+// actually blocking.
+func (g *MemoryGate) Pending(sessionID, callID string) (Request, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	waiting, ok := g.pending[permKey(sessionID, callID)]
+	if !ok {
+		return Request{}, false
+	}
+	return waiting.request, true
 }
