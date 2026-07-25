@@ -86,6 +86,10 @@ type Engine struct {
 	events chan tea.Msg
 	inbox  session.Inbox
 	gate   *permission.MemoryGate
+	// grants holds the "allow this for the rest of the session" answers. It is
+	// created once (like gate) so a rewire does not drop the user's grants, and
+	// the policy the runner consults reads it on every gated call.
+	grants *permission.SessionGrants
 	agent  *agent.Service
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -137,6 +141,7 @@ func New(cfg Config) *Engine {
 		events:             make(chan tea.Msg, 256),
 		inbox:              session.NewMemoryInbox(),
 		gate:               permission.NewMemoryGate(),
+		grants:             wiring.NewSessionGrants(),
 		pendingCompactions: map[string]bool{},
 		compacting:         map[string]bool{},
 		ctx:                ctx,
@@ -168,6 +173,7 @@ func New(cfg Config) *Engine {
 		Store:    e.store,
 		Inbox:    e.inbox,
 		Gate:     e.gate,
+		Grants:   e.grants,
 		Snaps:    tool.NewSessionSnapshots(),
 		Bus:      bus,
 		Local:    cfg.Local,
@@ -703,9 +709,19 @@ func (e *Engine) AcceptPlan(sessionID string) (RunHandle, error) {
 	return RunHandle{SessionID: sessionID, RunID: run.ID}, err
 }
 
-// ResolvePermission resuelve una solicitud de permiso pendiente (ask-before-run).
-func (e *Engine) ResolvePermission(sessionID, callID string, approved bool) {
-	e.gate.Resolve(sessionID, callID, approved)
+// ResolvePermission settles a pending ask-before-run request with the user's
+// verdict. AllowedSession also records the grant — derived from the request the
+// gate is blocking on, not from what the UI holds — BEFORE releasing the call,
+// so the policy already sees it when the next call of the same shape arrives.
+func (e *Engine) ResolvePermission(sessionID, callID string, verdict permission.Verdict) {
+	if verdict == permission.AllowedSession {
+		if request, ok := e.gate.Pending(sessionID, callID); ok {
+			if rule, grantable := permission.RuleFor(request.ToolName, request.Input); grantable {
+				e.grants.Grant(sessionID, rule)
+			}
+		}
+	}
+	e.gate.Resolve(sessionID, callID, verdict.Approved())
 }
 
 // Stop interrumpe la corrida en curso de la sesion. No-op si no corre.

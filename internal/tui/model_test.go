@@ -20,6 +20,7 @@ import (
 
 	"atenea/internal/command"
 	"atenea/internal/llm"
+	"atenea/internal/permission"
 	"atenea/internal/providerconfig"
 	"atenea/internal/session"
 	"atenea/internal/tui/engine"
@@ -27,13 +28,10 @@ import (
 
 // fakeAgent implementa Agent y registra las llamadas para asertar sobre ellas.
 type fakeAgent struct {
-	sent         []struct{ sessionID, text string }
-	planSent     []struct{ sessionID, text string }
-	newSessionID string
-	resolved     []struct {
-		sessionID, callID string
-		approved          bool
-	}
+	sent           []struct{ sessionID, text string }
+	planSent       []struct{ sessionID, text string }
+	newSessionID   string
+	resolved       []resolvedPermission
 	stopped        []string
 	accepted       []string
 	models         []providerconfig.ProviderModels
@@ -106,11 +104,17 @@ func (f *fakeAgent) AcceptPlan(sessionID string) (RunHandle, error) {
 	return f.nextRun(sessionID), nil
 }
 
-func (f *fakeAgent) ResolvePermission(sessionID, callID string, approved bool) {
-	f.resolved = append(f.resolved, struct {
-		sessionID, callID string
-		approved          bool
-	}{sessionID, callID, approved})
+// resolvedPermission is one recorded ResolvePermission call. approved() keeps
+// the assertions that only care whether the call ran readable.
+type resolvedPermission struct {
+	sessionID, callID string
+	verdict           permission.Verdict
+}
+
+func (r resolvedPermission) approved() bool { return r.verdict.Approved() }
+
+func (f *fakeAgent) ResolvePermission(sessionID, callID string, verdict permission.Verdict) {
+	f.resolved = append(f.resolved, resolvedPermission{sessionID, callID, verdict})
 }
 
 func (f *fakeAgent) Stop(sessionID string) {
@@ -2403,7 +2407,7 @@ func TestModel_RunningToolHiddenWhilePermissionPending(t *testing.T) {
 	if !strings.Contains(transcript, "● bash") || strings.Contains(transcript, "? bash") {
 		t.Fatalf("renderTranscript() = %q, approving must reveal the running header and drop the ask", transcript)
 	}
-	if len(fake.resolved) != 1 || fake.resolved[0].callID != "c1" || !fake.resolved[0].approved {
+	if len(fake.resolved) != 1 || fake.resolved[0].callID != "c1" || !fake.resolved[0].approved() {
 		t.Fatalf("resolved = %+v, want c1 approved", fake.resolved)
 	}
 }
@@ -3202,8 +3206,8 @@ func TestModel_PermissionKeysResolveViaAgent(t *testing.T) {
 	if len(fake.resolved) != 1 {
 		t.Fatalf("ResolvePermission fue llamado %d veces, 'y' debe resolver exactamente una vez", len(fake.resolved))
 	}
-	if got := fake.resolved[0]; got.sessionID != "s1" || got.callID != "c1" || !got.approved {
-		t.Fatalf("ResolvePermission(%q, %q, %v), se esperaba ResolvePermission(%q, %q, true)", got.sessionID, got.callID, got.approved, "s1", "c1")
+	if got := fake.resolved[0]; got.sessionID != "s1" || got.callID != "c1" || !got.approved() {
+		t.Fatalf("ResolvePermission(%q, %q, %v), se esperaba ResolvePermission(%q, %q, true)", got.sessionID, got.callID, got.approved(), "s1", "c1")
 	}
 	if got := m.input.Value(); got != "" {
 		t.Fatalf("input.Value() = %q, la runa 'y' NO debe entrar al input mientras hay permiso pendiente", got)
@@ -3238,8 +3242,8 @@ func TestModel_PermissionKeysResolveViaAgent(t *testing.T) {
 	if len(fake2.resolved) != 1 {
 		t.Fatalf("ResolvePermission fue llamado %d veces, 'n' debe resolver exactamente una vez", len(fake2.resolved))
 	}
-	if got := fake2.resolved[0]; got.sessionID != "s1" || got.callID != "c2" || got.approved {
-		t.Fatalf("ResolvePermission(%q, %q, %v), se esperaba ResolvePermission(%q, %q, false)", got.sessionID, got.callID, got.approved, "s1", "c2")
+	if got := fake2.resolved[0]; got.sessionID != "s1" || got.callID != "c2" || got.approved() {
+		t.Fatalf("ResolvePermission(%q, %q, %v), se esperaba ResolvePermission(%q, %q, false)", got.sessionID, got.callID, got.approved(), "s1", "c2")
 	}
 	if got := ansi.Strip(m2.View()); !strings.Contains(got, "Denied by user") || strings.Contains(got, "Permission required") {
 		t.Fatalf("View() = %q, denegar debe cerrar el panel y dejar un estado neutral en el transcript", got)
@@ -3338,6 +3342,14 @@ func TestModel_BashPermissionPanelUsesGreenBackgroundForActiveAction(t *testing.
 	if backgroundIndex, denyIndex := strings.Index(actionLine, activeBackground), strings.Index(actionLine, "Deny"); backgroundIndex < 0 || backgroundIndex < denyIndex {
 		t.Fatalf("action line = %q, Right must move the green active background to Allow", actionLine)
 	}
+
+	// `ls` is grantable, so a third action follows Allow and takes the highlight
+	// in its turn.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRight})
+	actionLine = lineWith(t, m.permissionPanelView(), "this session")
+	if backgroundIndex, sessionIndex := strings.Index(actionLine, activeBackground), strings.Index(actionLine, "Allow ls this session"); backgroundIndex < 0 || sessionIndex < 0 || backgroundIndex > sessionIndex {
+		t.Fatalf("action line = %q, Right must move the green active background to the session grant", actionLine)
+	}
 }
 
 func TestModel_PermissionPanelQueuesFIFOAndShowsOrigin(t *testing.T) {
@@ -3356,7 +3368,7 @@ func TestModel_PermissionPanelQueuesFIFOAndShowsOrigin(t *testing.T) {
 	if strings.Contains(view, "1 of 1") || !strings.Contains(view, "Requested by subagent") || !strings.Contains(view, "prod") {
 		t.Fatalf("View() = %q, resolving first permission must reveal child permission", view)
 	}
-	if got := fake.resolved[0]; got.callID != "first" || !got.approved {
+	if got := fake.resolved[0]; got.callID != "first" || !got.approved() {
 		t.Fatalf("first resolution = %+v, want first approved", got)
 	}
 }
@@ -3369,14 +3381,14 @@ func TestModel_PermissionPanelKeyboardNavigationAndEscape(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"echo ok"}`)})
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if len(fake.resolved) != 1 || fake.resolved[0].approved {
+	if len(fake.resolved) != 1 || fake.resolved[0].approved() {
 		t.Fatalf("resolved = %+v, Enter must deny the default action", fake.resolved)
 	}
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c2", ToolName: "bash", Input: json.RawMessage(`{"command":"echo ok"}`)})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRight})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if len(fake.resolved) != 2 || !fake.resolved[1].approved {
+	if len(fake.resolved) != 2 || !fake.resolved[1].approved() {
 		t.Fatalf("resolved = %+v, Right then Enter must approve", fake.resolved)
 	}
 	if got := m.input.Value(); got != "preserved draft" {
@@ -3385,7 +3397,7 @@ func TestModel_PermissionPanelKeyboardNavigationAndEscape(t *testing.T) {
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c3", ToolName: "bash", Input: json.RawMessage(`{"command":"echo no"}`)})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
-	if len(fake.resolved) != 3 || fake.resolved[2].approved {
+	if len(fake.resolved) != 3 || fake.resolved[2].approved() {
 		t.Fatalf("resolved = %+v, Esc must deny immediately", fake.resolved)
 	}
 }
@@ -3426,12 +3438,13 @@ func TestModel_DeniedPermissionStaysNeutralAfterToolFailed(t *testing.T) {
 
 func TestModel_PermissionPanelMouseActions(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		choice   permissionChoice
-		approved bool
+		name    string
+		choice  permissionChoice
+		verdict permission.Verdict
 	}{
-		{name: "deny", choice: permissionDeny, approved: false},
-		{name: "allow once", choice: permissionAllowOnce, approved: true},
+		{name: "deny", choice: permissionDeny, verdict: permission.Denied},
+		{name: "allow once", choice: permissionAllowOnce, verdict: permission.AllowedOnce},
+		{name: "allow session", choice: permissionAllowSession, verdict: permission.AllowedSession},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fake := &fakeAgent{}
@@ -3444,10 +3457,101 @@ func TestModel_PermissionPanelMouseActions(t *testing.T) {
 			}
 			x, y := layout.actionPoint(tc.choice)
 			m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: x, Y: y + topBarHeight})
-			if len(fake.resolved) != 1 || fake.resolved[0].approved != tc.approved {
-				t.Fatalf("resolved = %+v, click approved want %v", fake.resolved, tc.approved)
+			if len(fake.resolved) != 1 || fake.resolved[0].verdict != tc.verdict {
+				t.Fatalf("resolved = %+v, click verdict want %v", fake.resolved, tc.verdict)
 			}
 		})
+	}
+}
+
+// TestModel_PermissionPanelOffersSessionGrantForBash: the panel names the exact
+// prefix it grants, so the user sees the scope before accepting it.
+func TestModel_PermissionPanelOffersSessionGrantForBash(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"go test ./..."}`)})
+
+	panel := ansi.Strip(m.permissionPanelView())
+	if !strings.Contains(panel, "Allow go test this session") {
+		t.Fatalf("permissionPanelView() = %q, want the session grant naming the granted prefix", panel)
+	}
+}
+
+// TestModel_PermissionPanelSessionGrantKeys: 'a' grants the rule for the
+// session, and ←/→ reach the third action so Enter confirms it.
+func TestModel_PermissionPanelSessionGrantKeys(t *testing.T) {
+	request := EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "write", Input: json.RawMessage(`{"path":"a.go","content":"x"}`)}
+
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = apply(t, m, request)
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	if len(fake.resolved) != 1 || fake.resolved[0].verdict != permission.AllowedSession {
+		t.Fatalf("resolved = %+v, 'a' must grant the rule for the session", fake.resolved)
+	}
+
+	arrows := &fakeAgent{}
+	m2 := NewModel(arrows, "s1", nil)
+	m2 = apply(t, m2, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m2 = apply(t, m2, request)
+	m2 = apply(t, m2, tea.KeyMsg{Type: tea.KeyRight})
+	m2 = apply(t, m2, tea.KeyMsg{Type: tea.KeyRight})
+	m2 = apply(t, m2, tea.KeyMsg{Type: tea.KeyRight}) // stops at the last action
+	m2 = apply(t, m2, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(arrows.resolved) != 1 || arrows.resolved[0].verdict != permission.AllowedSession {
+		t.Fatalf("resolved = %+v, ←/→ must reach the session grant and Enter must confirm it", arrows.resolved)
+	}
+}
+
+// TestModel_PermissionPanelWithholdsSessionGrantWhenNotExpressible: web_fetch
+// has no rule (a blanket pass on outbound network cannot be summarized), so the
+// panel offers two actions and 'a' is a no-op.
+func TestModel_PermissionPanelWithholdsSessionGrantWhenNotExpressible(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "web_fetch", Input: json.RawMessage(`{"url":"https://example.com","prompt":"lee"}`)})
+
+	if panel := ansi.Strip(m.permissionPanelView()); strings.Contains(panel, "this session") {
+		t.Fatalf("permissionPanelView() = %q, web_fetch must not offer a session grant", panel)
+	}
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	if len(fake.resolved) != 0 {
+		t.Fatalf("resolved = %+v, 'a' must be a no-op with no grant available", fake.resolved)
+	}
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRight})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRight})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(fake.resolved) != 1 || fake.resolved[0].verdict != permission.AllowedOnce {
+		t.Fatalf("resolved = %+v, the selection must not move past the last offered action", fake.resolved)
+	}
+}
+
+// TestModel_PermissionPanelWithholdsSessionGrantOnNarrowTerminal: a truncated
+// action reads as a bug, so a narrow panel withholds it instead of half-drawing
+// it — and the selection cannot point at what is not drawn.
+func TestModel_PermissionPanelWithholdsSessionGrantOnNarrowTerminal(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 34, Height: 20})
+	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"go test ./..."}`)})
+
+	if panel := ansi.Strip(m.permissionPanelView()); strings.Contains(panel, "this session") {
+		t.Fatalf("permissionPanelView() = %q, a narrow panel must not offer the grant half-drawn", panel)
+	}
+	layout, ok := m.permissionPanelLayout()
+	if !ok {
+		t.Fatal("permissionPanelLayout() = false")
+	}
+	if len(layout.actions) != 2 {
+		t.Fatalf("layout.actions = %+v, want 2 actions", layout.actions)
+	}
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRight})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRight})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(fake.resolved) != 1 || fake.resolved[0].verdict != permission.AllowedOnce {
+		t.Fatalf("resolved = %+v, want AllowedOnce", fake.resolved)
 	}
 }
 
@@ -3499,8 +3603,8 @@ func TestModel_PermissionResolvesWithEventSessionID(t *testing.T) {
 	if len(fake.resolved) != 1 {
 		t.Fatalf("ResolvePermission fue llamado %d veces, 'y' debe resolver exactamente una vez", len(fake.resolved))
 	}
-	if got := fake.resolved[0]; got.sessionID != "child-1" || got.callID != "c9" || !got.approved {
-		t.Fatalf("ResolvePermission(%q, %q, %v), se esperaba ResolvePermission(%q, %q, true): el permiso del subagente se resuelve con el SessionID del evento", got.sessionID, got.callID, got.approved, "child-1", "c9")
+	if got := fake.resolved[0]; got.sessionID != "child-1" || got.callID != "c9" || !got.approved() {
+		t.Fatalf("ResolvePermission(%q, %q, %v), se esperaba ResolvePermission(%q, %q, true): el permiso del subagente se resuelve con el SessionID del evento", got.sessionID, got.callID, got.approved(), "child-1", "c9")
 	}
 }
 

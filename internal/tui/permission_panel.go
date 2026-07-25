@@ -9,12 +9,20 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"atenea/internal/permission"
 	"atenea/internal/tui/theme"
 )
 
 const (
 	permissionPanelMaxHeight     = 9
 	permissionPanelFallbackWidth = 48
+	// permissionActionGap are the columns between two actions of the row.
+	permissionActionGap = 4
+	// permissionButtonPadding are the columns each compact button adds around
+	// its label (permissionButtonStyle's Padding(0, 1)). The detailed panel
+	// spends the same two columns on the "› " marker of the selected action, so
+	// one measure fits both rows.
+	permissionButtonPadding = 2
 )
 
 var (
@@ -28,26 +36,137 @@ var (
 	permissionCompactLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted)).Background(lipgloss.Color(theme.PermissionCommand))
 )
 
+// permissionActionRange is the horizontal click target of one action of the
+// row, in columns relative to the panel's left edge.
+type permissionActionRange struct {
+	start int
+	end   int
+}
+
 type permissionPanelLayout struct {
-	x            int
-	y            int
-	width        int
-	height       int
-	actionY      int
-	denyStart    int
-	denyEnd      int
-	allowStart   int
-	allowEnd     int
+	x       int
+	y       int
+	width   int
+	height  int
+	actionY int
+	// actions are the click targets of the row in choice order, so the offered
+	// actions and the selectable choices are the same list.
+	actions      []permissionActionRange
 	commandStart int
 	commandEnd   int
 }
 
 func (layout permissionPanelLayout) actionPoint(choice permissionChoice) (int, int) {
-	start, end := layout.denyStart, layout.denyEnd
-	if choice == permissionAllowOnce {
-		start, end = layout.allowStart, layout.allowEnd
+	if choice < 0 || int(choice) >= len(layout.actions) {
+		return layout.x, layout.y + layout.actionY
 	}
-	return layout.x + start + max((end-start)/2, 0), layout.y + layout.actionY
+	action := layout.actions[choice]
+	return layout.x + action.start + max((action.end-action.start)/2, 0), layout.y + layout.actionY
+}
+
+// permissionRule derives the grant that approving the pending request for the
+// whole session would create, and whether the request is grantable at all.
+func permissionRule(request entry) (permission.Rule, bool) {
+	return permission.RuleFor(request.tool, []byte(request.input))
+}
+
+// permissionActionLabels lists the actions the panel offers for the request, in
+// choice order. The "allow once" wording follows the renderer that will draw it
+// (the compact panel says just "Allow"). The session grant comes last and only
+// when the request is grantable AND the row fits the panel: a truncated action
+// reads as a bug, so on a narrow terminal the option is withheld rather than
+// half-drawn.
+func permissionActionLabels(request entry, width int) []string {
+	allow := "Allow once"
+	if _, compact := compactPermissionLabel(request.tool); compact {
+		allow = "Allow"
+	}
+	labels := []string{"Deny", allow}
+	rule, grantable := permissionRule(request)
+	if !grantable {
+		return labels
+	}
+	withSession := []string{labels[0], labels[1], "Allow " + rule.Label() + " this session"}
+	if permissionActionRowWidth(withSession) > width {
+		return labels
+	}
+	return withSession
+}
+
+// permissionActionRowWidth is the columns the row of actions occupies.
+func permissionActionRowWidth(labels []string) int {
+	total := permissionActionGap * max(len(labels)-1, 0)
+	for _, label := range labels {
+		total += ansi.StringWidth(label) + permissionButtonPadding
+	}
+	return total
+}
+
+// permissionActionRanges places the actions across the row. padded selects the
+// compact panel's geometry, where every button reserves its padding; the
+// detailed panel only spends those columns on the selected action, so it passes
+// the selection instead.
+func permissionActionRanges(labels []string, selected permissionChoice, padded bool) []permissionActionRange {
+	ranges := make([]permissionActionRange, len(labels))
+	offset := 0
+	for index, label := range labels {
+		width := ansi.StringWidth(label)
+		if padded || permissionChoice(index) == selected {
+			width += permissionButtonPadding
+		}
+		ranges[index] = permissionActionRange{start: offset, end: offset + width}
+		offset += width + permissionActionGap
+	}
+	return ranges
+}
+
+// clampActionRanges keeps the click targets inside the panel: a row truncated
+// by a narrow terminal must not answer clicks on columns it does not draw.
+func clampActionRanges(ranges []permissionActionRange, width int) []permissionActionRange {
+	clamped := make([]permissionActionRange, len(ranges))
+	for index, action := range ranges {
+		clamped[index] = permissionActionRange{start: min(action.start, width), end: min(action.end, width)}
+	}
+	return clamped
+}
+
+// permissionPanelBox is the panel's horizontal geometry: the chat column it
+// lives in, its outer margin and the inner width the renderers lay out against.
+// Before the first WindowSizeMsg there is no known size and it falls back to a
+// fixed panel width, so the panel still renders — and the action row is
+// measured against the very width it will be drawn at.
+func (m Model) permissionPanelBox() (contentWidth, margin, panelWidth int) {
+	l := m.baseLayout()
+	if !m.ready || l.chatContentWidth <= 0 {
+		contentWidth = permissionPanelFallbackWidth
+		margin = min(composerOuterMargin, contentWidth/2)
+		return contentWidth, margin, max(contentWidth-2*margin, 0)
+	}
+	return l.chatContentWidth, l.chatMargin, l.chatInnerWidth
+}
+
+// permissionActions are the actions offered for the request at the panel's
+// current width. The keyboard and the mouse select over this same list.
+func (m Model) permissionActions(request entry) []string {
+	_, _, panelWidth := m.permissionPanelBox()
+	return permissionActionLabels(request, panelWidth)
+}
+
+// permissionChoiceCount is how many actions the panel offers for the request.
+func (m Model) permissionChoiceCount(request entry) permissionChoice {
+	return permissionChoice(len(m.permissionActions(request)))
+}
+
+// permissionSelection is the selected action clamped to the offered ones.
+func (m Model) permissionSelection(request entry) permissionChoice {
+	return clampPermissionChoice(m.permissionChoice, m.permissionChoiceCount(request))
+}
+
+// clampPermissionChoice keeps a choice inside the offered actions: a selection
+// carried over from a wider panel or a grantable request must never point past
+// the row.
+func clampPermissionChoice(choice, count permissionChoice) permissionChoice {
+	return min(max(choice, permissionDeny), count-1)
 }
 
 func (m Model) permissionPanelHeight() int {
@@ -73,9 +192,7 @@ func (m Model) permissionPanelLayout() (permissionPanelLayout, bool) {
 	if !ok {
 		return permissionPanelLayout{}, false
 	}
-	l := m.baseLayout()
-	margin := l.chatMargin
-	panelWidth := l.chatInnerWidth
+	_, margin, panelWidth := m.permissionPanelBox()
 	height := m.permissionPanelHeight()
 	lines, metadata := m.permissionPanelLines(permission, panelWidth, height)
 	if len(lines) == 0 {
@@ -90,8 +207,7 @@ func (m Model) permissionPanelLayout() (permissionPanelLayout, bool) {
 	}
 	return permissionPanelLayout{
 		x: x, y: y, width: panelWidth, height: len(lines),
-		actionY: metadata.actionY, denyStart: metadata.denyStart, denyEnd: metadata.denyEnd,
-		allowStart: metadata.allowStart, allowEnd: metadata.allowEnd,
+		actionY: metadata.actionY, actions: metadata.actions,
 		commandStart: metadata.commandStart, commandEnd: metadata.commandEnd,
 	}, true
 }
@@ -101,17 +217,7 @@ func (m Model) permissionPanelView() string {
 	if !ok {
 		return ""
 	}
-	l := m.baseLayout()
-	width := l.chatContentWidth
-	margin := l.chatMargin
-	panelWidth := l.chatInnerWidth
-	if !m.ready || width <= 0 {
-		// No known size: fall back to a fixed panel width, full-bleed (no margin),
-		// so the panel still renders before the first WindowSizeMsg.
-		width = permissionPanelFallbackWidth
-		margin = min(composerOuterMargin, width/2)
-		panelWidth = max(width-2*margin, 0)
-	}
+	width, margin, panelWidth := m.permissionPanelBox()
 	lines, _ := m.permissionPanelLines(permission, panelWidth, m.permissionPanelHeight())
 	if len(lines) == 0 {
 		return ""
@@ -126,10 +232,7 @@ func (m Model) permissionPanelView() string {
 
 type permissionPanelMetadata struct {
 	actionY      int
-	denyStart    int
-	denyEnd      int
-	allowStart   int
-	allowEnd     int
+	actions      []permissionActionRange
 	commandStart int
 	commandEnd   int
 }
@@ -141,15 +244,13 @@ func (m Model) permissionPanelLines(permission entry, width, height int) ([]stri
 	if label, ok := compactPermissionLabel(permission.tool); ok {
 		return m.compactPermissionPanelLines(permission, label, width, height)
 	}
+	labels := permissionActionLabels(permission, width)
+	selected := clampPermissionChoice(m.permissionChoice, permissionChoice(len(labels)))
 	if height == 1 {
-		line := "› Deny    Allow once"
-		if m.permissionChoice == permissionAllowOnce {
-			line = "Deny    › Allow once"
-		}
-		line = ansi.Truncate(line, width, "")
+		line := ansi.Truncate(permissionActionRowPlain(labels, selected), width, "")
 		return []string{permissionPanelStyle.Width(width).Render(permissionSelectionStyle.Render(line))}, permissionPanelMetadata{
-			actionY: 0, denyStart: 0, denyEnd: min(len("› Deny"), width),
-			allowStart: min(len("› Deny    "), width), allowEnd: min(len("› Deny    Allow once"), width),
+			actionY:      0,
+			actions:      clampActionRanges(permissionActionRanges(labels, selected, false), width),
 			commandStart: -1, commandEnd: -1,
 		}
 	}
@@ -206,19 +307,9 @@ func (m Model) permissionPanelLines(permission entry, width, height int) ([]stri
 		}
 	}
 
-	deny := "› Deny"
-	allow := "Allow once"
-	if m.permissionChoice == permissionAllowOnce {
-		deny = "Deny"
-		allow = "› Allow once"
-	}
-	actions := deny + "    " + allow
 	metadata.actionY = len(plainLines)
-	metadata.denyStart = 0
-	metadata.denyEnd = len(deny)
-	metadata.allowStart = len(deny) + 4
-	metadata.allowEnd = metadata.allowStart + len(allow)
-	plainLines = append(plainLines, actions)
+	metadata.actions = clampActionRanges(permissionActionRanges(labels, selected, false), width)
+	plainLines = append(plainLines, permissionActionRowPlain(labels, selected))
 	lineKinds = append(lineKinds, 2)
 	if showHelp && len(plainLines) < height {
 		plainLines = append(plainLines, "←/→ select · ↑/↓ scroll · enter confirm · esc deny")
@@ -233,12 +324,7 @@ func (m Model) permissionPanelLines(permission entry, width, height int) ([]stri
 		case 1:
 			lines[index] = permissionCommandStyle.Width(width).Render(line)
 		case 2:
-			styled := line
-			if m.permissionChoice == permissionDeny {
-				styled = permissionSelectionStyle.Render(deny) + "    " + allow
-			} else {
-				styled = deny + "    " + permissionSelectionStyle.Render(allow)
-			}
+			styled := ansi.Truncate(permissionActionRowStyled(labels, selected), width, "")
 			lines[index] = permissionPanelStyle.Width(width).Render(styled)
 		default:
 			if index == 0 {
@@ -250,6 +336,47 @@ func (m Model) permissionPanelLines(permission entry, width, height int) ([]stri
 		}
 	}
 	return lines, metadata
+}
+
+// permissionActionRowPlain renders the detailed panel's action row without
+// styling: the selected action carries the "› " marker.
+func permissionActionRowPlain(labels []string, selected permissionChoice) string {
+	parts := make([]string, len(labels))
+	for index, label := range labels {
+		if permissionChoice(index) == selected {
+			label = "› " + label
+		}
+		parts[index] = label
+	}
+	return strings.Join(parts, strings.Repeat(" ", permissionActionGap))
+}
+
+// permissionActionRowStyled is the same row with the selected action in bold.
+func permissionActionRowStyled(labels []string, selected permissionChoice) string {
+	parts := make([]string, len(labels))
+	for index, label := range labels {
+		if permissionChoice(index) == selected {
+			parts[index] = permissionSelectionStyle.Render("› " + label)
+			continue
+		}
+		parts[index] = label
+	}
+	return strings.Join(parts, strings.Repeat(" ", permissionActionGap))
+}
+
+// compactPermissionActionRow renders the compact panel's action row: one button
+// per action, the selected one on the active background.
+func compactPermissionActionRow(labels []string, selected permissionChoice, width int) string {
+	parts := make([]string, len(labels))
+	for index, label := range labels {
+		style := permissionButtonStyle
+		if permissionChoice(index) == selected {
+			style = permissionActiveStyle
+		}
+		parts[index] = style.Render(label)
+	}
+	gap := permissionPanelStyle.Render(strings.Repeat(" ", permissionActionGap))
+	return ansi.Truncate(strings.Join(parts, gap), width, "")
 }
 
 // compactPermissionLabel maps each gated tool with a dedicated compact
@@ -271,19 +398,12 @@ func compactPermissionLabel(tool string) (string, bool) {
 
 func (m Model) compactPermissionPanelLines(permission entry, label string, width, height int) ([]string, permissionPanelMetadata) {
 	metadata := permissionPanelMetadata{commandStart: -1, commandEnd: -1}
+	labels := permissionActionLabels(permission, width)
+	selected := clampPermissionChoice(m.permissionChoice, permissionChoice(len(labels)))
+	metadata.actions = clampActionRanges(permissionActionRanges(labels, selected, true), width)
 	if height == 1 {
-		denyStyle, allowStyle := permissionButtonStyle, permissionButtonStyle
-		if m.permissionChoice == permissionDeny {
-			denyStyle = permissionActiveStyle
-		} else {
-			allowStyle = permissionActiveStyle
-		}
-		line := denyStyle.Render("Deny") + permissionPanelStyle.Render("    ") + allowStyle.Render("Allow")
 		metadata.actionY = 0
-		metadata.denyEnd = min(len(" Deny "), width)
-		metadata.allowStart = min(len(" Deny     "), width)
-		metadata.allowEnd = min(len(" Deny     Allow "), width)
-		return []string{permissionPanelStyle.Width(width).Render(line)}, metadata
+		return []string{permissionPanelStyle.Width(width).Render(compactPermissionActionRow(labels, selected, width))}, metadata
 	}
 
 	plainLines := []string{"Permission required"}
@@ -319,13 +439,8 @@ func (m Model) compactPermissionPanelLines(permission entry, label string, width
 		lineKinds = append(lineKinds, 3)
 	}
 
-	deny := "Deny"
-	allow := "Allow"
 	metadata.actionY = len(plainLines)
-	metadata.denyEnd = len(" Deny ")
-	metadata.allowStart = len(" Deny ") + 4
-	metadata.allowEnd = metadata.allowStart + len(" Allow ")
-	plainLines = append(plainLines, deny+"    "+allow)
+	plainLines = append(plainLines, strings.Join(labels, strings.Repeat(" ", permissionActionGap)))
 	lineKinds = append(lineKinds, 2)
 
 	lines := make([]string, len(plainLines))
@@ -335,14 +450,7 @@ func (m Model) compactPermissionPanelLines(permission entry, label string, width
 		case 1:
 			lines[index] = renderCompactPermissionCommandLine(line, label, width)
 		case 2:
-			denyStyle, allowStyle := permissionButtonStyle, permissionButtonStyle
-			if m.permissionChoice == permissionDeny {
-				denyStyle = permissionActiveStyle
-			} else {
-				allowStyle = permissionActiveStyle
-			}
-			styled := denyStyle.Render(deny) + permissionPanelStyle.Render("    ") + allowStyle.Render(allow)
-			lines[index] = permissionPanelStyle.Width(width).Render(styled)
+			lines[index] = permissionPanelStyle.Width(width).Render(compactPermissionActionRow(labels, selected, width))
 		case 3:
 			lines[index] = permissionPanelStyle.Width(width).Render("")
 		default:
@@ -504,12 +612,10 @@ func (m Model) handlePermissionMouse(msg tea.MouseMsg, permission entry) (Model,
 		return m, true
 	}
 	x := msg.X - layout.x
-	switch {
-	case x >= layout.denyStart && x < layout.denyEnd:
-		return m.resolvePermission(permission, false), true
-	case x >= layout.allowStart && x < layout.allowEnd:
-		return m.resolvePermission(permission, true), true
-	default:
-		return m, true
+	for index, action := range layout.actions {
+		if action.start < action.end && x >= action.start && x < action.end {
+			return m.resolvePermission(permission, permissionVerdict(permissionChoice(index))), true
+		}
 	}
+	return m, true
 }

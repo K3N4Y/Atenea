@@ -19,6 +19,7 @@ import (
 	"atenea/internal/agent"
 	"atenea/internal/checkpoint"
 	"atenea/internal/llm"
+	"atenea/internal/permission"
 	"atenea/internal/providerconfig"
 	"atenea/internal/session"
 	"atenea/internal/tool/hashline"
@@ -435,14 +436,14 @@ func nextMsg(t *testing.T, ch <-chan tea.Msg, timeout time.Duration) tea.Msg {
 // que una entrega unica podria adelantarse al registro y perderse (el gate
 // descarta decisiones sin Ask pendiente). Reintentar es inocuo: la entrega
 // efectiva retira la solicitud del gate y los reintentos posteriores son no-op.
-func resolveUntilStopped(e *Engine, sessionID, callID string, approved bool) (stop func()) {
+func resolveUntilStopped(e *Engine, sessionID, callID string, verdict permission.Verdict) (stop func()) {
 	done := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		for {
-			e.ResolvePermission(sessionID, callID, approved)
+			e.ResolvePermission(sessionID, callID, verdict)
 			select {
 			case <-done:
 				return
@@ -461,7 +462,7 @@ func approveAllPermissions(t *testing.T, engine *Engine) func(session.SessionEve
 	t.Helper()
 	return func(ev session.SessionEvent) {
 		if ev.Kind == session.KindToolPermissionRequested {
-			t.Cleanup(resolveUntilStopped(engine, ev.SessionID, ev.CallID, true))
+			t.Cleanup(resolveUntilStopped(engine, ev.SessionID, ev.CallID, permission.AllowedOnce))
 		}
 	}
 }
@@ -1099,7 +1100,7 @@ func TestEngine_SendPromptContinuesWhenHistoryPersistenceFails(t *testing.T) {
 	}
 	_, done := collectUntilRunDone(t, engine.Events(), 3*time.Second, nil)
 	if done.Err != "" {
-		t.Fatalf("RunDoneMsg.Err = %q, se esperaba corrida limpia", done.Err)
+		t.Fatalf("RunDoneMsg.Err = %q, want a clean run", done.Err)
 	}
 }
 
@@ -1124,6 +1125,41 @@ func gatedBashTurns(command string) [][]llm.Event {
 			{Kind: llm.StepEnded},
 		},
 	}
+}
+
+// gatedBashPairTurns scripts two consecutive turns, each with one gated bash
+// call, so what the user answered on the first (c1) can be observed on the
+// second (c2).
+func gatedBashPairTurns(first, second string) [][]llm.Event {
+	bashCall := func(callID, command string) llm.Event {
+		input, err := json.Marshal(map[string]string{"command": command})
+		if err != nil {
+			panic(err) // un map[string]string siempre marshalea
+		}
+		return llm.Event{Kind: llm.ToolCall, CallID: callID, ToolName: "bash", Input: input}
+	}
+	return [][]llm.Event{
+		{{Kind: llm.StepStarted}, bashCall("c1", first), {Kind: llm.StepEnded}},
+		{{Kind: llm.StepStarted}, bashCall("c2", second), {Kind: llm.StepEnded}},
+		{
+			{Kind: llm.StepStarted},
+			{Kind: llm.TextStarted},
+			{Kind: llm.TextDelta, Text: "listo"},
+			{Kind: llm.TextEnded},
+			{Kind: llm.StepEnded},
+		},
+	}
+}
+
+// countEvents counts the events of a kind, whatever their CallID.
+func countEvents(events []session.SessionEvent, kind session.EventKind) int {
+	count := 0
+	for _, ev := range events {
+		if ev.Kind == kind {
+			count++
+		}
+	}
+	return count
 }
 
 // collectUntilRunDone consume el canal del engine en el goroutine del test:
@@ -1234,7 +1270,7 @@ func TestEngine_ShutdownFinishesCheckpointBeforeSQLiteClose(t *testing.T) {
 	}
 	// The write is gated: approve it in the background so the run reaches the
 	// blocking turn.
-	t.Cleanup(resolveUntilStopped(e, "s1", "write-1", true))
+	t.Cleanup(resolveUntilStopped(e, "s1", "write-1", permission.AllowedOnce))
 	select {
 	case <-provider.started:
 	case <-time.After(10 * time.Second):
@@ -1555,7 +1591,7 @@ func TestEngine_SendPromptExpandsSlashCommand(t *testing.T) {
 		}
 		events, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil)
 		if done.Err != "" {
-			t.Fatalf("RunDoneMsg.Err = %q, se esperaba corrida limpia", done.Err)
+			t.Fatalf("RunDoneMsg.Err = %q, want a clean run", done.Err)
 		}
 		prompt := ""
 		for _, ev := range events {
@@ -1780,7 +1816,7 @@ func TestEngine_GatedBashApprovedRunsAndSettles(t *testing.T) {
 	// Al ver la solicitud de permiso, el usuario APRUEBA la tool.
 	events, done := collectUntilRunDone(t, e.Events(), 10*time.Second, func(ev session.SessionEvent) {
 		if ev.Kind == session.KindToolPermissionRequested && ev.CallID == "c1" {
-			t.Cleanup(resolveUntilStopped(e, ev.SessionID, "c1", true))
+			t.Cleanup(resolveUntilStopped(e, ev.SessionID, "c1", permission.AllowedOnce))
 		}
 	})
 
@@ -1809,7 +1845,7 @@ func TestEngine_GatedBashDeniedFailsWithoutRunning(t *testing.T) {
 	// Al ver la solicitud de permiso, el usuario DENIEGA la tool.
 	events, done := collectUntilRunDone(t, e.Events(), 10*time.Second, func(ev session.SessionEvent) {
 		if ev.Kind == session.KindToolPermissionRequested && ev.CallID == "c1" {
-			t.Cleanup(resolveUntilStopped(e, ev.SessionID, "c1", false))
+			t.Cleanup(resolveUntilStopped(e, ev.SessionID, "c1", permission.Denied))
 		}
 	})
 
@@ -1830,6 +1866,70 @@ func TestEngine_GatedBashDeniedFailsWithoutRunning(t *testing.T) {
 	// no debe existir tras el fin de la corrida.
 	if _, err := os.Stat(forbidden); !os.IsNotExist(err) {
 		t.Errorf("os.Stat(%q) = %v, el archivo no debe existir: la tool denegada no debe ejecutar el comando", forbidden, err)
+	}
+}
+
+// TestEngine_AllowSessionStopsAskingForTheSameCommandPrefix is the end-to-end
+// contract of a session grant: the user answers "allow `echo` this session" on
+// the first command and the next command of the same shape runs without asking
+// at all — no second permission request reaches the UI, and none is recorded in
+// the session's history.
+func TestEngine_AllowSessionStopsAskingForTheSameCommandPrefix(t *testing.T) {
+	provider := newTurnProvider(gatedBashPairTurns("echo -n uno", "echo -n dos")...)
+	e := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
+
+	if _, err := e.SendPrompt("s1", "run the commands"); err != nil {
+		t.Fatalf("SendPrompt = %v, want nil", err)
+	}
+	events, done := collectUntilRunDone(t, e.Events(), 10*time.Second, func(ev session.SessionEvent) {
+		if ev.Kind == session.KindToolPermissionRequested && ev.CallID == "c1" {
+			t.Cleanup(resolveUntilStopped(e, ev.SessionID, "c1", permission.AllowedSession))
+		}
+	})
+
+	if got := countEvents(events, session.KindToolPermissionRequested); got != 1 {
+		t.Errorf("%s = %d times, want 1: the session grant must avoid the second question", session.KindToolPermissionRequested, got)
+	}
+	for callID, want := range map[string]string{"c1": "uno", "c2": "dos"} {
+		success := lastEvent(events, session.KindToolSuccess, callID)
+		if success == nil {
+			t.Fatalf("no %s arrived for %s among %d events", session.KindToolSuccess, callID, len(events))
+		}
+		if !strings.Contains(success.Text, want) {
+			t.Errorf("Tool.Success of %s with Text = %q, must contain %q", callID, success.Text, want)
+		}
+	}
+	if done.Err != "" {
+		t.Errorf("RunDoneMsg.Err = %q, want a clean run", done.Err)
+	}
+}
+
+// TestEngine_AllowSessionDoesNotCoverADifferentCommand: the grant is the shape
+// the user saw, not a blanket pass on bash. A command with another prefix asks
+// again.
+func TestEngine_AllowSessionDoesNotCoverADifferentCommand(t *testing.T) {
+	provider := newTurnProvider(gatedBashPairTurns("echo -n uno", "printf dos")...)
+	e := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
+
+	if _, err := e.SendPrompt("s1", "run the commands"); err != nil {
+		t.Fatalf("SendPrompt = %v, want nil", err)
+	}
+	events, done := collectUntilRunDone(t, e.Events(), 10*time.Second, func(ev session.SessionEvent) {
+		if ev.Kind != session.KindToolPermissionRequested {
+			return
+		}
+		verdict := permission.AllowedSession
+		if ev.CallID == "c2" {
+			verdict = permission.AllowedOnce
+		}
+		t.Cleanup(resolveUntilStopped(e, ev.SessionID, ev.CallID, verdict))
+	})
+
+	if got := countEvents(events, session.KindToolPermissionRequested); got != 2 {
+		t.Errorf("%s = %d times, want 2: `printf dos` is not covered by the `echo` grant", session.KindToolPermissionRequested, got)
+	}
+	if done.Err != "" {
+		t.Errorf("RunDoneMsg.Err = %q, want a clean run", done.Err)
 	}
 }
 
@@ -2077,7 +2177,7 @@ func TestEngine_CapturesSessionCwdOnFirstPrompt(t *testing.T) {
 		t.Fatalf("SendPrompt(s1, hola) = %v, se esperaba nil", err)
 	}
 	if _, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil); done.Err != "" {
-		t.Fatalf("RunDoneMsg.Err = %q, se esperaba corrida limpia", done.Err)
+		t.Fatalf("RunDoneMsg.Err = %q, want a clean run", done.Err)
 	}
 
 	// (a) El primer evento durable del log (Seq 1) es el Session.Cwd con la raiz.
@@ -2207,7 +2307,7 @@ func TestEngine_SendPromptNewWithArgumentsRemainsRegularPrompt(t *testing.T) {
 	}
 	_, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil)
 	if done.Err != "" {
-		t.Fatalf("RunDoneMsg.Err = %q, se esperaba corrida limpia", done.Err)
+		t.Fatalf("RunDoneMsg.Err = %q, want a clean run", done.Err)
 	}
 
 	sessions, err := store.Sessions(context.Background())
@@ -2436,7 +2536,7 @@ func TestEngine_UndoCancelsActiveRunBeforeRestore(t *testing.T) {
 	}
 	// The write is gated: approve it in the background so the run reaches the
 	// blocking turn.
-	t.Cleanup(resolveUntilStopped(engine, "s1", "write-1", true))
+	t.Cleanup(resolveUntilStopped(engine, "s1", "write-1", permission.AllowedOnce))
 	select {
 	case <-provider.started:
 	case <-time.After(10 * time.Second):

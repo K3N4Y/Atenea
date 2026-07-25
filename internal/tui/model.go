@@ -21,6 +21,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"atenea/internal/command"
+	"atenea/internal/permission"
 	"atenea/internal/providerconfig"
 	"atenea/internal/session"
 	"atenea/internal/tui/engine"
@@ -87,7 +88,10 @@ type Agent interface {
 	Undo(sessionID string) (UndoResult, error)
 	ListResumeSessions(currentSessionID string) ([]session.SessionSummary, error)
 	ResumeSessionByID(currentSessionID, targetSessionID string) (ResumeResult, error)
-	ResolvePermission(sessionID, callID string, approved bool)
+	// ResolvePermission settles the pending ask-before-run request with the
+	// user's verdict: deny, allow once, or allow this shape for the rest of the
+	// session (the engine records the grant).
+	ResolvePermission(sessionID, callID string, verdict permission.Verdict)
 	Stop(sessionID string)
 }
 
@@ -140,11 +144,16 @@ const (
 	toolDenied                    // permiso denegado por el usuario; no es fallo del sistema
 )
 
+// permissionChoice is the action selected in the permission panel. The third
+// one exists only when the request is grantable (see permissionRule): web_fetch
+// and compound shell commands cannot be summarized by a rule, so there the
+// panel offers two.
 type permissionChoice int
 
 const (
 	permissionDeny permissionChoice = iota
 	permissionAllowOnce
+	permissionAllowSession
 )
 
 // entry es un bloque de la conversacion.
@@ -1399,21 +1408,24 @@ func pathParent(nodePath string) string {
 	return ""
 }
 
-// resolvePermissionKey atiende el teclado en modo aprobacion: 'y' aprueba y
-// 'n' deniega la solicitud pendiente. El resto del teclado (runas, Enter,
-// Esc) es no-op: no alimenta el input ni envia prompts mientras se espera la
-// decision. Resuelve con el SessionID que trajo el evento de permiso (puede
-// ser una sesion hija de un subagente); sin SessionID usa la sesion del Model.
+// handlePermissionKey handles the keyboard while a request is pending: ←/→ and
+// Tab move the selection over the offered actions, 'y' allows once, 'n' denies
+// and 'a' grants the rule for the rest of the session (a no-op when the request
+// is not grantable). Every other key is a no-op: nothing reaches the input and
+// no prompt is sent while the decision is awaited. It resolves with the
+// SessionID the permission event carried (which may be a subagent's child
+// session); without one it uses the Model's session.
 func (m Model) handlePermissionKey(msg tea.KeyMsg, perm entry) Model {
+	choices := m.permissionChoiceCount(perm)
 	switch msg.Type {
 	case tea.KeyLeft:
-		m.permissionChoice = permissionDeny
+		m.permissionChoice = max(m.permissionSelection(perm)-1, permissionDeny)
 		return m
 	case tea.KeyRight:
-		m.permissionChoice = permissionAllowOnce
+		m.permissionChoice = min(m.permissionSelection(perm)+1, choices-1)
 		return m
 	case tea.KeyTab:
-		m.permissionChoice = permissionChoice(1 - int(m.permissionChoice))
+		m.permissionChoice = (m.permissionSelection(perm) + 1) % choices
 		return m
 	case tea.KeyUp:
 		m.permissionScroll = max(m.permissionScroll-1, 0)
@@ -1422,21 +1434,37 @@ func (m Model) handlePermissionKey(msg tea.KeyMsg, perm entry) Model {
 		m.permissionScroll++
 		return m
 	case tea.KeyEsc:
-		return m.resolvePermission(perm, false)
+		return m.resolvePermission(perm, permission.Denied)
 	case tea.KeyEnter:
-		return m.resolvePermission(perm, m.permissionChoice == permissionAllowOnce)
+		return m.resolvePermission(perm, permissionVerdict(m.permissionSelection(perm)))
 	case tea.KeyRunes:
 		switch strings.ToLower(string(msg.Runes)) {
 		case "y":
-			return m.resolvePermission(perm, true)
+			return m.resolvePermission(perm, permission.AllowedOnce)
 		case "n":
-			return m.resolvePermission(perm, false)
+			return m.resolvePermission(perm, permission.Denied)
+		case "a":
+			if choices > permissionAllowSession {
+				return m.resolvePermission(perm, permission.AllowedSession)
+			}
 		}
 	}
 	return m
 }
 
-func (m Model) resolvePermission(perm entry, approved bool) Model {
+// permissionVerdict translates the selected action into the verdict the engine
+// understands.
+func permissionVerdict(choice permissionChoice) permission.Verdict {
+	switch choice {
+	case permissionAllowOnce:
+		return permission.AllowedOnce
+	case permissionAllowSession:
+		return permission.AllowedSession
+	}
+	return permission.Denied
+}
+
+func (m Model) resolvePermission(perm entry, verdict permission.Verdict) Model {
 	if m.agent == nil {
 		return m
 	}
@@ -1444,8 +1472,8 @@ func (m Model) resolvePermission(perm entry, approved bool) Model {
 	if sessionID == "" {
 		sessionID = m.sessionID
 	}
-	m.agent.ResolvePermission(sessionID, perm.callID, approved)
-	m = m.applyPermissionDecision(perm, approved)
+	m.agent.ResolvePermission(sessionID, perm.callID, verdict)
+	m = m.applyPermissionDecision(perm, verdict.Approved())
 	m.permissionChoice = permissionDeny
 	m.permissionScroll = 0
 	return m.resizeViewport()
