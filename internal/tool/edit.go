@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/K3N4Y/atenea/agentcore/permission"
 	"github.com/K3N4Y/atenea/internal/tool/hashline"
 )
 
@@ -38,6 +39,16 @@ func (*EditTool) Name() string { return "edit" }
 var editDescription string
 
 func (*EditTool) Description() string { return editDescription }
+
+// Effects: an edit rewrites an existing file in place.
+func (*EditTool) Effects() Effects { return WritesFiles }
+
+// GrantRule grants the tool itself, like write: the user authorizes editing
+// files in this workspace for the rest of the session. The patch of this one call
+// cannot narrow that — the next edit patches another file.
+func (et *EditTool) GrantRule(Call) (permission.Rule, bool) {
+	return permission.Rule{Tool: et.Name()}, true
+}
 
 func (*EditTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"patch":{"type":"string"}},"required":["patch"]}`)

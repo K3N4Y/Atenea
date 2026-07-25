@@ -163,6 +163,25 @@ func (*TaskTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"subagent_type":{"type":"string"},"prompt":{"type":"string"}},"required":["subagent_type","prompt"]}`)
 }
 
+// Effects: none of its own. A task runs no command and writes no file itself —
+// it starts a child runner whose every tool call goes through the SAME gate and
+// the SAME policy as the main chat (see SetPermissionGate), so the child's
+// effects are asked about on the child's behalf, as they happen and with the
+// real command on screen. Declaring the union here instead would ask one vague
+// question up front and answer for calls nobody has seen yet.
+func (*TaskTool) Effects() tool.Effects { return tool.NoEffects }
+
+// Present: a task reads as the kind of subagent it started, since that is what
+// distinguishes two delegations at a glance. The output is the child's report,
+// written to be read, so it stays visible.
+func (*TaskTool) Present(call tool.Call, _ tool.Result) tool.Presentation {
+	var in struct {
+		Type string `json:"subagent_type"`
+	}
+	json.Unmarshal(call.Input, &in)
+	return tool.Presentation{Label: "SubAgent", Subject: in.Type}
+}
+
 // Execute parsea {subagent_type, prompt}, busca la def, levanta el subagente hijo
 // (un runner con MemoryStore en memoria) con la entrada como prompt en cola y
 // devuelve su reporte final (el ultimo texto del asistente del hijo).

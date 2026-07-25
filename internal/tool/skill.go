@@ -39,6 +39,10 @@ var skillDescription string
 
 func (*SkillTool) Description() string { return skillDescription }
 
+// Effects: none. Loading a skill body reads a file from the catalog discovered at
+// assembly time; the model picks a name from that catalog, not a path.
+func (*SkillTool) Effects() Effects { return NoEffects }
+
 func (*SkillTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"El nombre de una skill listada en el system prompt."}},"required":["name"]}`)
 }

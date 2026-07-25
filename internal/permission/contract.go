@@ -17,12 +17,13 @@ import contract "github.com/K3N4Y/atenea/agentcore/permission"
 // becomes a cycle.
 
 type (
-	Decision = contract.Decision
-	Policy   = contract.Policy
-	Gate     = contract.Gate
-	Request  = contract.Request
-	Verdict  = contract.Verdict
-	Rule     = contract.Rule
+	Decision  = contract.Decision
+	Policy    = contract.Policy
+	Gate      = contract.Gate
+	Request   = contract.Request
+	Verdict   = contract.Verdict
+	Rule      = contract.Rule
+	Grantable = contract.Grantable
 )
 
 const (

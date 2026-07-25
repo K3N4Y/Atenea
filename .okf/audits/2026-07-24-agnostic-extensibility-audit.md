@@ -31,10 +31,12 @@ What blocks integrations is not the loop, it is the perimeter:
 3. **There is no programmatic surface.** `cmd/atenea/main.go:53-62` is the whole
    CLI: one string comparison for `--version`, otherwise the TUI. No headless
    mode, no JSON event stream, no stdin. Every integrator's first ask is missing.
-4. **Extension identity is spread across name-keyed switches.** A tool's
-   permission class, session-grant shape, UI rendering and workspace-mutation
-   flag are decided by `switch`/lookup on the tool's *name* in 6+ files, so a
-   plugin-contributed tool can never be first-class.
+4. ~~**Extension identity is spread across name-keyed switches.**~~
+   `[done 2026-07-24]` A tool's permission class, session-grant shape, UI
+   rendering and workspace-mutation flag used to be decided by `switch`/lookup on
+   the tool's *name* in 6+ files. R2 replaced all six with optional capability
+   interfaces the tool implements, so a plugin-contributed tool is first-class in
+   everything except a rich presentation, which MCP has no way to carry yet.
 
 The good news: the fixes are mostly *consolidations*, not new machinery. Several
 of them delete code.
@@ -49,8 +51,8 @@ of them delete code.
 | Compaction strategy | **Good** — `Compactor` interface, injected | `runner/runner.go:67-75` |
 | TUI ↔ engine | **Good** — one-way protocol + compile-time assertions | `internal/tui/engine/protocol.go`, `internal/tui/engine_protocol.go:33-38` |
 | Shared turn lifecycle | **Good** — UI-independent `agent.Service` already extracted | `internal/agent/service.go`, `.okf/specs/2026-07-13-headless-agent-service-design.md` |
-| Permission policy | **Partial** — `Policy` is an interface and already decorated once (`SessionGrants`), but the base classification is a package `var` | `internal/wiring/wiring.go:87` |
-| Tool interface | **Partial** — clean 4-method contract, but tools cannot declare permission/UI/grant semantics | `internal/tool/registry.go:19-24` |
+| Permission policy | **Good** — derived from what each tool declares, not from a name list; decorated by session grants (R2) | `internal/permission/policy.go`, `internal/wiring/wiring.go` |
+| Tool interface | **Good** — 4-method contract plus optional capabilities for effects, grants and presentation (R2) | `agentcore/tool`, `agentcore/permission/grantable.go` |
 | Tool registration | **Partial** — fixed constructor list; `cfg.MCPTools` is the only open slot | `wiring.go:138-142,167-175` |
 | LLM `Provider` | **Partial** — genuinely neutral domain model, but no registry and no capabilities | `internal/llm/provider.go:14-16` |
 | Provider identity | **Weak** — closed 2-value type enum, 7 files to add a wire format | see §3.2 |
@@ -60,9 +62,9 @@ of them delete code.
 | Prompt assembly | **Missing** — fixed string concatenation | `internal/session/prompt/prompt.go:68-81` |
 | Composition root | **Weak** — two outer roots, duplicated provider bootstrap and demo provider | `app.go:76-152` vs `cmd/atenea/main.go:64-130` |
 | CLI / headless | **Missing** | `cmd/atenea/main.go:53-62` |
-| Public API | **Partial** — 5 importable contract packages under `agentcore/` plus 2 contract test kits, boundary enforced by test; implementations still private, no stability promise yet (R1.3, R1.4 done) | `agentcore/`, `agentcore/boundary_test.go`, `agentcore/{tool/tooltest,llm/llmtest}` |
+| Public API | **Partial** — 5 importable contract packages under `agentcore/` plus 2 contract test kits, boundary enforced by test; the tool capability interfaces landed with R2; implementations still private, no stability promise yet (R1.3, R1.4, R2 done) | `agentcore/`, `agentcore/boundary_test.go`, `agentcore/{tool/tooltest,llm/llmtest}` |
 | Branding/paths | **Weak** — `atenea` literal in 6+ path builders, no XDG | §3.6 |
-| MCP as plugin substrate | **Partial** — first-class in the registry, but stdio-only, allow-by-default, invisible to subagents | §3.8 |
+| MCP as plugin substrate | **Partial** — first-class in the registry and now gated ask-by-default with a session grant (R2), but stdio-only and invisible to subagents | §3.8 |
 | Contributor docs | **Weak** — no CONTRIBUTING; `AGENTS.md` points at two files that do not exist; LICENSE now present (R1.2 done) | §3.9 |
 
 ## 3. Findings
@@ -144,6 +146,12 @@ Cost to add one new wire format today: **7 files**, two of them `main` packages
 `cmd/atenea/main.go`, plus `wailsprovider` for parity).
 
 ### 3.3 Tools cannot describe themselves, so core describes them by name
+
+> `[done 2026-07-24]` Resolved by R2: the table below is history. A tool declares
+> its `Effects`, its `GrantRule` and its `Presentation`, and every row is now
+> derived from those answers. The inverted security default is gone with it — an
+> undeclared tool asks — and session grants reach every tool, MCP included. See
+> [Tool capabilities](../architecture/tool-capabilities.md).
 
 `tool.Tool` (`internal/tool/registry.go:19-24`) is a clean 4-method contract, and
 `Registry.Permissions()` derives the permission set from what was registered
@@ -297,8 +305,12 @@ Gaps that keep it from being a plugin substrate:
 - **stdio only.** `ServerConfig` (`manager.go:30-36`) has no transport
   discriminator, so a remote server cannot even be expressed
   (`.okf/architecture/mcp.md:85-88` confirms this is deferred).
-- **Allow-by-default** (see §3.3) with no per-server or per-tool policy in the
-  config schema.
+- ~~**Allow-by-default**~~ `[done 2026-07-24]` R2 flipped it: an MCP tool declares
+  nothing about its effects, and silence is gated, so a connected server no longer
+  gets unattended execution. Each of its tools is grantable for the session as a
+  whole, which is what the panel shows. What remains is the *config schema*: no
+  per-server declared sensitivity and no persisted "trust this server" allowlist —
+  see R8.2.
 - **Never auto-connects** (`.okf/architecture/mcp.md:11-12`) — every session
   starts with zero servers until the user acts.
 - **Invisible to subagents**: `cfg.MCPTools` is appended only to the main
@@ -413,6 +425,53 @@ they do not reach into the turn loop. Cheap to do, and it is a precondition for
 everything else.
 
 ### R2 — Let tools describe themselves (highest leverage)
+
+> `[done 2026-07-24]` The six name-keyed switches are gone. A tool now declares
+> what its calls affect, what granting one authorizes and how one should read,
+> and the host derives the ask policy, the grant, the workspace refresh and both
+> UI surfaces from those answers. The extension default flipped to ask: an MCP
+> tool is silent about its effects, and silence is gated. Documented in
+> [Tool capabilities](../architecture/tool-capabilities.md). Six decisions worth
+> recording:
+> - **`Sensitivity` became `Effects`, a set of flags rather than an ordered
+>   scale.** The scale does not survive the code: the git summary needs
+>   `{write, edit, bash}` but not `web_fetch`, so `>= MutatesWorkspace` would be
+>   a lie, and `todo_write`, `task` and `present_plan` would have to declare
+>   themselves `ReadOnly`, which they are not. Flags answer both questions
+>   honestly, and the vocabulary is narrow on purpose — a flag exists only where
+>   the host has a distinct reaction to it, so reading files and mutating the
+>   agent's own state are both `NoEffects`.
+> - **The tool declares, the policy decides.** The flags carry no "gated" bit;
+>   `permission.EffectsPolicy` owns the effects-to-decision mapping. A tool knows
+>   what it does, only the host knows how cautious this deployment wants to be —
+>   and because the rule is "any declared effect asks" rather than an allowlist of
+>   gated flags, adding a flag later can only leave the host more careful.
+> - **"Said nothing" and "declared NoEffects" must never be flattened.** Every
+>   resolver returns `(value, answered bool)` for exactly this reason: collapsing
+>   the two is how an allow-by-default gets reintroduced by accident.
+> - **An unregistered tool name is `Allow`.** It cannot run either way — `Settle`
+>   refuses it before executing anything — so the decision only picks which
+>   failure is seen. Asking would prompt for a call that can never happen; denying
+>   would tell the model its call was refused when it actually named a tool that
+>   does not exist, which it can fix.
+> - **`SessionGrants` split into a store and a decorator.** Deciding whether a
+>   grant covers a call means asking the tool that would settle it, which comes
+>   from the registry of the moment, while the grants belong to the whole sitting.
+>   The store is caller-owned and survives a rewire; `GrantedPolicy` is rebuilt
+>   with every registry.
+> - **`Presentation` is data, so no `agentcore/ui` was needed.** A tool returns
+>   label, subject, body and kind; the host owns every pixel and sanitizes every
+>   string, since all of them are text the model wrote. `Body != ""` is what picks
+>   the compact permission panel, so a tool that cannot state its call as text
+>   degrades to the honest panel instead of a wrong one.
+>
+> Two parts of this recommendation were deliberately left out. The plan-mode tool
+> set stays a literal in `internal/wiring`: it is not derivable from `Effects`
+> (`todo_write` declares `NoEffects` and is deliberately absent from plan mode),
+> so it is an explicit policy that R4.2 promotes to a config field. And the
+> per-server MCP sensitivity declaration plus its persisted allowlist stay with
+> R8.2, where this audit already puts them — the flip is livable without them
+> because every gated tool is now grantable for the session.
 
 Extend `tool.Tool` with **optional** interfaces discovered by type assertion —
 the idiom the codebase already uses for `session.CompactionStore`/`UndoStore`:
@@ -663,8 +722,8 @@ right shape. Consolidate the plumbing:
 *Outcome: the repo becomes legally and technically contributable.*
 
 **Phase 1 — agnostic core (weeks).** R2 tool capability interfaces and removal of
-the six name-keyed switches. R3 provider registry + capabilities + data-driven
-catalog + delete `wailsprovider`.
+the six name-keyed switches (landed 2026-07-24). R3 provider registry +
+capabilities + data-driven catalog + delete `wailsprovider`.
 *Outcome: tools and providers become additive instead of invasive; the extension
 security default flips to ask.*
 

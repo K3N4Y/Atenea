@@ -9,9 +9,16 @@
 // JSON rather than matching strings, tolerates garbage, returns on a cancelled
 // context and is safe to call concurrently.
 //
-// What it deliberately does not check is what the tool DOES. That is the tool's
-// own test's job, and it is the half a host does not need to trust. This kit
-// answers a narrower question: is this tool safe to put in a registry.
+// It also checks the optional capability interfaces — Declaring, Grantable,
+// Presenter — for any tool that implements them, and skips them for any tool that
+// does not. Not implementing them is legal and merely means the host has to be
+// careful; implementing one badly is not, because the host acts on a claim it
+// cannot verify.
+//
+// What it deliberately does not check is what the tool DOES, including whether
+// what it declares about itself is true. That is the tool's own test's job, and it
+// is the half a host does not need to trust. This kit answers a narrower question:
+// is this tool safe to put in a registry.
 //
 // Run it under -race. The concurrency check only means something there.
 package tooltest
@@ -28,6 +35,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/K3N4Y/atenea/agentcore/permission"
 	"github.com/K3N4Y/atenea/agentcore/tool"
 )
 
@@ -88,6 +96,9 @@ var checks = []check{
 	{"ExecuteSurvivesMalformedInput", checkExecuteSurvivesMalformedInput},
 	{"ExecuteReturnsOnCancelledContext", checkExecuteReturnsOnCancelledContext},
 	{"ExecuteIsSafeForConcurrentUse", checkExecuteIsSafeForConcurrentUse},
+	{"EffectsAreStable", checkEffectsAreStable},
+	{"GrantRuleIsPureAndNamesTheTool", checkGrantRuleIsPureAndNamesTheTool},
+	{"PresentationIsPureAndSurvivesAnyInput", checkPresentationIsPureAndSurvivesAnyInput},
 }
 
 // executeTimeout bounds every Execute the kit performs. It is generous on
@@ -313,4 +324,118 @@ func reserialize(input json.RawMessage) (json.RawMessage, error) {
 		return nil, err
 	}
 	return json.MarshalIndent(value, "", "  ")
+}
+
+// The checks below cover the optional capability interfaces. Each one is skipped
+// when the tool does not implement the interface it is about — not implementing
+// them is legal, and it is what "the host has to be careful with this tool" means.
+// What is not legal is implementing one badly, because the host then acts on a
+// claim it cannot verify: a grant that names the wrong tool waves through calls
+// the user never saw, and a presentation that changes between two draws makes the
+// UI flicker or lie about what is about to run.
+
+func checkEffectsAreStable(r reporter, next fresh) {
+	r.Helper()
+	subject := next()
+
+	declared, ok := subject.Tool.(tool.Declaring)
+	if !ok {
+		return // says nothing about its effects; the host will ask before running it
+	}
+	effects := declared.Effects()
+	if again := declared.Effects(); again != effects {
+		r.Errorf("Effects() is not stable: got %s, then %s. The classification is read once per call and cached nowhere, so a tool that changes its answer is gated inconsistently", effects, again)
+	}
+}
+
+func checkGrantRuleIsPureAndNamesTheTool(r reporter, next fresh) {
+	r.Helper()
+	subject := next()
+
+	grantable, ok := subject.Tool.(permission.Grantable)
+	if !ok {
+		return // not grantable; every call asks again, which is safe
+	}
+	name := subject.Tool.Name()
+	// The declared input plus the inputs a model eventually sends. A rule derived
+	// from a malformed input is fine as long as deriving it does not panic — the
+	// derivation runs on the UI's goroutine when the user answers a prompt.
+	inputs := append([]json.RawMessage{subject.Input}, malformedInputs...)
+	for _, input := range inputs {
+		call := tool.Call{ID: "call-1", Name: name, Input: input}
+		rule, granted := grantRule(r, grantable, call)
+		if !granted {
+			continue // refusing to summarize an input is the conservative answer
+		}
+		if rule.Tool != name {
+			r.Errorf("GrantRule(%s) returned a rule for tool %q, but this tool is named %q.\nA grant is matched by tool name: one naming another tool either never applies or, worse, waves through that tool's calls",
+				declared(input), rule.Tool, name)
+		}
+		again, grantedAgain := grantRule(r, grantable, call)
+		if !grantedAgain || again != rule {
+			r.Errorf("GrantRule(%s) is not pure: got %+v, then %+v (granted %v, then %v).\nThe same derivation decides what the user was offered AND whether a later call is covered by it, so an unstable answer grants something nobody agreed to",
+				declared(input), rule, again, granted, grantedAgain)
+		}
+	}
+}
+
+func checkPresentationIsPureAndSurvivesAnyInput(r reporter, next fresh) {
+	r.Helper()
+	subject := next()
+
+	presenter, ok := subject.Tool.(tool.Presenter)
+	if !ok {
+		return // the host falls back to the tool's name and a generic summary
+	}
+	name := subject.Tool.Name()
+	inputs := append([]json.RawMessage{subject.Input}, malformedInputs...)
+	for _, input := range inputs {
+		call := tool.Call{ID: "call-1", Name: name, Input: input}
+		// The zero Result is a call that has not settled — which is most of the
+		// time a presentation is drawn, since the UI renders it while the model is
+		// still streaming the input.
+		p, ok := present(r, presenter, call, tool.Result{})
+		if !ok {
+			continue
+		}
+		if p.Kind != tool.Activity {
+			r.Errorf("Present(%s, unsettled) returned Kind %d, want Activity: there is no Result to draw from yet, and a host asked for a file card with no diff has nothing to render",
+				declared(input), p.Kind)
+		}
+		again, okAgain := present(r, presenter, call, tool.Result{})
+		if okAgain && again != p {
+			r.Errorf("Present(%s) is not pure: got %+v, then %+v.\nIt is called again on every redraw, so an unstable answer makes the same call read differently from one frame to the next",
+				declared(input), p, again)
+		}
+	}
+}
+
+// grantRule derives a rule under a recovered panic: the derivation runs while the
+// user answers a permission prompt, on the goroutine drawing the UI, so a panic
+// there takes the interface down with it.
+func grantRule(r reporter, subject permission.Grantable, call tool.Call) (rule permission.Rule, granted bool) {
+	r.Helper()
+	defer func() {
+		if p := recover(); p != nil {
+			r.Errorf("GrantRule panicked on input %s: %v\nIt is called from the UI while the user answers a permission prompt. Return false instead.\n%s",
+				declared(call.Input), p, debug.Stack())
+			rule, granted = permission.Rule{}, false
+		}
+	}()
+	rule, granted = subject.GrantRule(call)
+	return rule, granted
+}
+
+// present builds a presentation under a recovered panic, for the same reason: it
+// runs on the goroutine that draws the transcript.
+func present(r reporter, subject tool.Presenter, call tool.Call, result tool.Result) (p tool.Presentation, ok bool) {
+	r.Helper()
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			r.Errorf("Present panicked on input %s: %v\nIt is called from the UI on every redraw. Return a bare presentation instead.\n%s",
+				declared(call.Input), recovered, debug.Stack())
+			p, ok = tool.Presentation{}, false
+		}
+	}()
+	return subject.Present(call, result), true
 }

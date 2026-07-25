@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/K3N4Y/atenea/internal/permission"
+	"github.com/K3N4Y/atenea/internal/tool"
 	"github.com/K3N4Y/atenea/internal/tui/theme"
 )
 
@@ -65,9 +66,12 @@ func (layout permissionPanelLayout) actionPoint(choice permissionChoice) (int, i
 }
 
 // permissionRule derives the grant that approving the pending request for the
-// whole session would create, and whether the request is grantable at all.
-func permissionRule(request entry) (permission.Rule, bool) {
-	return permission.RuleFor(request.tool, []byte(request.input))
+// whole session would create, and whether the request is grantable at all. The
+// answer comes from the tool that would settle the call, so a tool atenea does not
+// ship can offer the session grant too.
+func (m Model) permissionRule(request entry) (permission.Rule, bool) {
+	call := tool.Call{Name: request.tool, Input: []byte(request.input)}
+	return permission.RuleFor(m.tools(), call)
 }
 
 // permissionActionLabels lists the actions the panel offers for the request, in
@@ -76,13 +80,13 @@ func permissionRule(request entry) (permission.Rule, bool) {
 // when the request is grantable AND the row fits the panel: a truncated action
 // reads as a bug, so on a narrow terminal the option is withheld rather than
 // half-drawn.
-func permissionActionLabels(request entry, width int) []string {
+func (m Model) permissionActionLabels(request entry, width int) []string {
 	allow := "Allow once"
-	if _, compact := compactPermissionLabel(request.tool); compact {
+	if m.presentationOf(request).Body != "" {
 		allow = "Allow"
 	}
 	labels := []string{"Deny", allow}
-	rule, grantable := permissionRule(request)
+	rule, grantable := m.permissionRule(request)
 	if !grantable {
 		return labels
 	}
@@ -149,7 +153,7 @@ func (m Model) permissionPanelBox() (contentWidth, margin, panelWidth int) {
 // current width. The keyboard and the mouse select over this same list.
 func (m Model) permissionActions(request entry) []string {
 	_, _, panelWidth := m.permissionPanelBox()
-	return permissionActionLabels(request, panelWidth)
+	return m.permissionActionLabels(request, panelWidth)
 }
 
 // permissionChoiceCount is how many actions the panel offers for the request.
@@ -241,10 +245,16 @@ func (m Model) permissionPanelLines(permission entry, width, height int) ([]stri
 	if width <= 0 || height <= 0 {
 		return nil, permissionPanelMetadata{}
 	}
-	if label, ok := compactPermissionLabel(permission.tool); ok {
-		return m.compactPermissionPanelLines(permission, label, width, height)
+	// A tool that can state its call as text gets the compact panel, whose body IS
+	// that text — the exact thing being authorized. One that cannot falls through to
+	// the detailed panel, which shows the raw input instead. The distinction is the
+	// tool's answer, not a list of names kept here, so an MCP tool that cannot
+	// summarize itself degrades to the honest panel rather than to a wrong one.
+	p := m.presentationOf(permission)
+	if p.Body != "" {
+		return m.compactPermissionPanelLines(permission, activityLabel(p, permission), p.Body, width, height)
 	}
-	labels := permissionActionLabels(permission, width)
+	labels := m.permissionActionLabels(permission, width)
 	selected := clampPermissionChoice(m.permissionChoice, permissionChoice(len(labels)))
 	if height == 1 {
 		line := ansi.Truncate(permissionActionRowPlain(labels, selected), width, "")
@@ -259,7 +269,7 @@ func (m Model) permissionPanelLines(permission entry, width, height int) ([]stri
 	if count > 1 {
 		title += fmt.Sprintf(" · 1 of %d", count)
 	}
-	toolLabel := permissionToolLabel(permission.tool)
+	toolLabel := permissionToolLabel(activityLabel(p, permission))
 	origin := "Requested by main agent"
 	if permission.sessionID != "" && permission.sessionID != m.sessionID {
 		origin = "Requested by subagent"
@@ -379,26 +389,9 @@ func compactPermissionActionRow(labels []string, selected permissionChoice, widt
 	return ansi.Truncate(strings.Join(parts, gap), width, "")
 }
 
-// compactPermissionLabel maps each gated tool with a dedicated compact
-// presentation to the label shown on its command surface. Tools without a
-// dedicated renderer fall back to the detailed generic panel.
-func compactPermissionLabel(tool string) (string, bool) {
-	switch {
-	case strings.EqualFold(tool, "bash"):
-		return "Bash", true
-	case strings.EqualFold(tool, "write"):
-		return "Write", true
-	case strings.EqualFold(tool, "edit"):
-		return "Edit", true
-	case strings.EqualFold(tool, "web_fetch"):
-		return "WebFetch", true
-	}
-	return "", false
-}
-
-func (m Model) compactPermissionPanelLines(permission entry, label string, width, height int) ([]string, permissionPanelMetadata) {
+func (m Model) compactPermissionPanelLines(permission entry, label, body string, width, height int) ([]string, permissionPanelMetadata) {
 	metadata := permissionPanelMetadata{commandStart: -1, commandEnd: -1}
-	labels := permissionActionLabels(permission, width)
+	labels := m.permissionActionLabels(permission, width)
 	selected := clampPermissionChoice(m.permissionChoice, permissionChoice(len(labels)))
 	metadata.actions = clampActionRanges(permissionActionRanges(labels, selected, true), width)
 	if height == 1 {
@@ -419,7 +412,7 @@ func (m Model) compactPermissionPanelLines(permission entry, label string, width
 	}
 	commandSlots := height - len(plainLines) - fixedAfterCommand
 	if commandSlots > 0 {
-		commandLines := compactPermissionInputLines(permission, label, width)
+		commandLines := compactPermissionInputLines(permission, label, body, width)
 		visible := min(commandSlots, 4, len(commandLines))
 		maxScroll := max(len(commandLines)-visible, 0)
 		scroll := min(max(m.permissionScroll, 0), maxScroll)
@@ -479,9 +472,9 @@ func renderCompactPermissionCommandLine(line, label string, width int) string {
 // compactPermissionInputLines lays out the compact panel body: the tool label
 // prefixes the first line and continuation lines align under it, wrapped to
 // the surface width (the caller scrolls them).
-func compactPermissionInputLines(permission entry, label string, width int) []string {
+func compactPermissionInputLines(permission entry, label, body string, width int) []string {
 	prefix := " " + label + " "
-	text := sanitizeTerminalText(compactPermissionInputText(permission))
+	text := sanitizeTerminalText(body)
 	if text == "" {
 		text = "No input provided"
 	}
@@ -499,14 +492,14 @@ func compactPermissionInputLines(permission entry, label string, width int) []st
 	return lines
 }
 
-func permissionToolLabel(tool string) string {
-	if strings.EqualFold(tool, "bash") {
-		return "Bash command"
-	}
-	if tool == "" {
+// permissionToolLabel titles the detailed panel's request line. It is only reached
+// by a tool that could not state its call as text, so the title says which tool is
+// asking and the body below shows its raw input.
+func permissionToolLabel(label string) string {
+	if label == "" {
 		return "Tool request"
 	}
-	return sanitizeTerminalText(tool) + " request"
+	return sanitizeTerminalText(label) + " request"
 }
 
 func permissionInputLines(permission entry, width int) []string {
@@ -520,53 +513,6 @@ func permissionInputLines(permission entry, width int) []string {
 		return []string{"No input provided"}
 	}
 	return lines
-}
-
-// compactPermissionInputText extracts the compact panel body: the exact thing
-// the user authorizes. bash: the command; write: the target path followed by
-// the content to write; edit: the hashline patch (its [path#HASH] header
-// names the file, and the patch text is the faithful pre-execution
-// representation of the change); web_fetch: the URL. Falls back to the
-// pretty-JSON input when the expected field is missing or does not parse.
-func compactPermissionInputText(permission entry) string {
-	switch {
-	case strings.EqualFold(permission.tool, "bash"):
-		var input struct {
-			Command string `json:"command"`
-			Cmd     string `json:"cmd"`
-		}
-		if json.Unmarshal([]byte(permission.input), &input) == nil {
-			if input.Command != "" {
-				return input.Command
-			}
-			if input.Cmd != "" {
-				return input.Cmd
-			}
-		}
-	case strings.EqualFold(permission.tool, "write"):
-		var input struct {
-			Path    string `json:"path"`
-			Content string `json:"content"`
-		}
-		if json.Unmarshal([]byte(permission.input), &input) == nil && input.Path != "" {
-			return strings.TrimRight(input.Path+"\n"+input.Content, "\n")
-		}
-	case strings.EqualFold(permission.tool, "edit"):
-		var input struct {
-			Patch string `json:"patch"`
-		}
-		if json.Unmarshal([]byte(permission.input), &input) == nil && input.Patch != "" {
-			return input.Patch
-		}
-	case strings.EqualFold(permission.tool, "web_fetch"):
-		var input struct {
-			URL string `json:"url"`
-		}
-		if json.Unmarshal([]byte(permission.input), &input) == nil && input.URL != "" {
-			return input.URL
-		}
-	}
-	return permissionInputText(permission)
 }
 
 // permissionInputText renders the raw tool input as pretty JSON: the generic

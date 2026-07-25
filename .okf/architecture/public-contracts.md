@@ -27,10 +27,10 @@ audit](../audits/2026-07-24-agnostic-extensibility-audit.md) §4 R1.
 
 | Package | Contract | Implemented or consumed by |
 |---|---|---|
-| `agentcore/tool` | `Tool`, `Call`, `Result` | anyone shipping a tool |
+| `agentcore/tool` | `Tool`, `Call`, `Result`; the optional capabilities `Declaring`/`Effects` and `Presenter`/`Presentation`/`PresentationKind`, with their resolvers `EffectsOf` and `PresentationOf` | anyone shipping a tool |
 | `agentcore/llm` | `Provider`, `Request`, `Message`, `ToolCallPart`, `ToolDef`, `Event`, `EventKind`, `Usage` | anyone shipping a model adapter |
 | `agentcore/session` | `SessionEvent`, `EventKind`, `Seq`, `Role`, `Message`, `ToolCall`, `Usage`, `ContextEpoch`, `CompactionCheckpoint`, `StructuredSummary`, `CompactionReason`, `PromptCheckpoint` | anyone reading or emitting the durable event stream |
-| `agentcore/permission` | `Policy`, `Gate`, `Decision`, `Verdict`, `Request`, `Rule` | anyone replacing the ask-before-run behavior |
+| `agentcore/permission` | `Policy`, `Gate`, `Decision`, `Verdict`, `Request`, `Rule`; the optional capability `Grantable` with its resolver `GrantRuleFor` | anyone replacing the ask-before-run behavior, or shipping a tool that can be granted for a session |
 
 `agentcore` itself is a documentation-only package: no code, just the rule and
 the test that enforces it.
@@ -47,12 +47,19 @@ Two additions beyond the audit's literal list, both for coherence: `Policy` and
 `Gate` are published alongside `Decision` and `Verdict`, because the vocabulary
 is useless without the interfaces that speak it.
 
+The optional capability interfaces arrived with R2 and are what make a tool
+first-class rather than merely runnable. What each one is for, why `Effects` is a
+set of flags rather than an ordered scale, and how the host resolves them is in
+[Tool capabilities](tool-capabilities.md).
+
 ## What stayed private, and why
 
-- **The registry** (`internal/tool`): `Registry`, `Materialized`, `SettleFunc`,
-  `Permissions`, `OutputStore`, `UnknownToolError`. How a host materializes and
-  settles calls is not a third party's business. `SettleFunc` becomes public when
-  the middleware chain (R6) makes it one.
+- **The registry** (`internal/tool`): `Registry`, `Catalog`, `Materialized`,
+  `SettleFunc`, `Permissions`, `OutputStore`, `UnknownToolError`. How a host
+  materializes and settles calls is not a third party's business, and `Catalog` is
+  a host-side seam (a UI resolving a name to the tool that would settle it), not
+  something an extension implements. `SettleFunc` becomes public when the
+  middleware chain (R6) makes it one.
 - **The adapters and the catalog** (`internal/llm`): `OpenAIProvider`,
   `AnthropicProvider`, `SwitchableProvider`, `FakeProvider`, `ProviderSnapshot`,
   the context-window table, `ListModels`. `Capabilities` (R3) is the contract
@@ -62,11 +69,13 @@ is useless without the interfaces that speak it.
   `ValidateCompactionCheckpoint`, `DecodeStructuredSummary`. The *shape* of the
   log is a contract; how it is persisted and validated is not.
 - **The classification and the grant derivation** (`internal/permission`):
-  `StaticPolicy`, `SessionGrants`, `MemoryGate`, `RuleFor` and the bash prefix
-  logic. Which tools ask, and how a bash command reduces to a grantable prefix,
-  are decisions of this product. `Rule.Matches` came off the type for this
-  reason: the shape of a grant is a contract, deriving and matching it against a
-  specific tool's input is not.
+  `EffectsPolicy`, `SessionGrants`, `GrantedPolicy`, `MemoryGate` and `RuleFor`.
+  Which effects are worth interrupting the user for is a decision of this
+  deployment, not of the contract — a tool says what it does, the host decides how
+  cautious to be about it. The bash prefix derivation moved with R2 to
+  `internal/tool/bash.go`, where the semantics it encodes actually live.
+  `Rule.Matches` came off the type for the same reason: the shape of a grant is a
+  contract, deriving and re-matching it against a specific tool's input is not.
 
 ## How the split is wired
 
@@ -130,6 +139,14 @@ What they check, and why each clause is in there:
 | survives malformed input | the model will send `{`, `null` and `[]` eventually |
 | returns on a cancelled context | a cancelled context is how a user interruption arrives |
 | safe for concurrent use | the turn settles tools in parallel goroutines |
+| `Effects()` stable *(if declared)* | the classification is read per call and cached nowhere, so a tool that changes its answer is gated inconsistently |
+| `GrantRule` pure and naming its own tool *(if grantable)* | a grant is matched by tool name, so one naming another tool either never applies or waves through that tool's calls; and the same derivation decides what the user was offered AND whether a later call is covered by it |
+| `Present` pure, `Activity` for an unsettled call, no panic *(if a presenter)* | it runs on the goroutine drawing the UI, on every redraw, while the model is still streaming the input — and a host asked for a file card with no diff has nothing to render |
+
+The three capability clauses are skipped for a tool that does not implement the
+interface they are about. Not implementing one is legal and simply means the host
+has to be careful; implementing one badly is not, because the host then acts on a
+claim it cannot verify.
 
 | `llmtest` | Because |
 |---|---|
@@ -203,13 +220,13 @@ cannot have.
 mirrors `llm.Usage` and the producer copies the fields when crossing. The durable
 contract does not depend on the provider contract.
 
-**Note for R2** (tool capability interfaces): `Gated`, `Grantable` and
-`Presenter` belong in `agentcore/permission` (and a future `agentcore/ui`), not
-in `agentcore/tool`. `Grantable` returns a `permission.Rule` while
-`permission.Policy` takes a `tool.Call`, so defining those interfaces in
-`agentcore/tool` would create an import cycle. Go's convention — the consumer
-defines the interface — avoids it: a tool implements interfaces declared where
-they are consumed, and the dependency stays `permission -> tool`.
+R2 kept that direction. `Declaring` and `Presenter` went into `agentcore/tool`,
+since they mention only types that package already owns; `Grantable` went into
+`agentcore/permission`, because it returns a `permission.Rule` while
+`permission.Policy` takes a `tool.Call` and declaring it tool-side would be a
+cycle. Go's convention — the consumer declares the interface — is what resolves
+it: a tool implements an interface declared where it is consumed. No
+`agentcore/ui` was needed, because `Presentation` is data rather than rendering.
 
 ## What this does not yet give a third party
 
@@ -217,7 +234,8 @@ R1.3 makes the contracts importable and R1.4 makes them checkable. Neither, by
 itself, makes the module usable:
 
 - **No stability promise or version tag.** Nothing under `agentcore/` is v1 yet;
-  R2, R3 and R5 will each add to these packages, and the additive shape of the
-  types is what keeps that from breaking a consumer.
+  R3 and R5 will each add to these packages, and the additive shape of the types is
+  what keeps that from breaking a consumer. R2 was the first such addition and it
+  broke nothing: every new type is optional, discovered by type assertion.
 - **No headless entrypoint** to drive the loop with (audit R4.3). The Go contracts
   are for extending atenea, not for driving it; driving it is the CLI's job.

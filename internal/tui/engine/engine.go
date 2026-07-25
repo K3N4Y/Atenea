@@ -94,11 +94,14 @@ type Engine struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	// runner y glob son las piezas mutables del ensamblado: rewire (al conectar
-	// o desconectar un MCP) las reemplaza, asi que se leen bajo mu. glob alimenta
-	// el @-menu de archivos del composer (espejo de App.ListProjectFiles).
+	// runner, glob y tools son las piezas mutables del ensamblado: rewire (al
+	// conectar o desconectar un MCP) las reemplaza, asi que se leen bajo mu. glob
+	// alimenta el @-menu de archivos del composer (espejo de
+	// App.ListProjectFiles); tools es el catalogo que la TUI consulta sobre una
+	// tool que solo conoce por nombre.
 	runner *runner.Runner
 	glob   *tool.GlobTool
+	tools  tool.Catalog
 
 	// wiring es la config base del ensamblado; rewire la reusa con las MCPTools
 	// vigentes. mcp es el manager de servidores MCP locales (stdio) del engine;
@@ -196,6 +199,7 @@ func (e *Engine) rewire() {
 	e.mu.Lock()
 	e.runner = built.Runner
 	e.glob = built.Glob
+	e.tools = built.Tools
 	e.mu.Unlock()
 	e.agent.Configure(built.Runner, built.Commands)
 	e.lifecycleMu.Unlock()
@@ -335,6 +339,18 @@ func (e *Engine) currentGlob() *tool.GlobTool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.glob
+}
+
+// ToolCatalog exposes the registry the runner settles calls against, so the
+// presentation layer can ask a tool about itself — what a finished call may have
+// changed, what granting one would authorize, how to render one — instead of
+// deciding by name. Read under mu because a rewire replaces it; the value itself
+// is immutable, so the caller may keep it for the length of one operation but
+// should ask again for the next.
+func (e *Engine) ToolCatalog() tool.Catalog {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.tools
 }
 
 func (e *Engine) currentRunner() *runner.Runner {
@@ -716,7 +732,8 @@ func (e *Engine) AcceptPlan(sessionID string) (RunHandle, error) {
 func (e *Engine) ResolvePermission(sessionID, callID string, verdict permission.Verdict) {
 	if verdict == permission.AllowedSession {
 		if request, ok := e.gate.Pending(sessionID, callID); ok {
-			if rule, grantable := permission.RuleFor(request.ToolName, request.Input); grantable {
+			call := tool.Call{ID: callID, Name: request.ToolName, Input: request.Input}
+			if rule, grantable := permission.RuleFor(e.ToolCatalog(), call); grantable {
 				e.grants.Grant(sessionID, rule)
 			}
 		}

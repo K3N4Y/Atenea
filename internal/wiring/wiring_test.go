@@ -2,6 +2,7 @@ package wiring
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -79,11 +80,48 @@ func TestBuild_InstallsContextCompactor(t *testing.T) {
 	}
 }
 
-// TestAskPolicy_GatesShellFSAndNetwork pins the agreed fixed classification:
-// shell (bash), local FS mutations (write, edit) and outbound network
-// (web_fetch) ask; reads and internal tools are allowed. This is the single
-// source of truth shared by the main runner and the subagents.
-func TestAskPolicy_GatesShellFSAndNetwork(t *testing.T) {
+// buildForTest assembles the real wiring over an empty workspace, with the MCP
+// tools the case wants to see in the registry.
+func buildForTest(t *testing.T, mcpTools ...tool.Tool) Built {
+	t.Helper()
+	return Build(Config{
+		Root:     t.TempDir(),
+		Provider: llm.NewFakeProvider(llm.Event{Kind: llm.StepEnded}),
+		Store:    session.NewMemoryStore(),
+		Inbox:    session.NewMemoryInbox(),
+		Gate:     permission.NewMemoryGate(),
+		Snaps:    tool.NewSessionSnapshots(),
+		Bus:      event.NewBus(func(string, ...interface{}) {}),
+		NextID:   func() string { return "id" },
+		MCPTools: mcpTools,
+	})
+}
+
+// TestBuild_EveryShippedToolDeclaresItsEffects is the invariant that keeps the
+// classification honest as tools are added. A tool that forgets to declare gets
+// gated — which is safe but wrong for a read-only tool, and the failure would show
+// up as an unexplained permission prompt rather than as a test failure. So the
+// registration itself is checked.
+func TestBuild_EveryShippedToolDeclaresItsEffects(t *testing.T) {
+	built := buildForTest(t)
+	for _, name := range built.Tools.Names() {
+		registered, ok := built.Tools.Lookup(name)
+		if !ok {
+			t.Fatalf("tool %q is announced but not registered", name)
+		}
+		if _, declared := tool.EffectsOf(registered); !declared {
+			t.Errorf("tool %q does not implement tool.Declaring: add an Effects() method beside its Schema()", name)
+		}
+	}
+}
+
+// TestBuild_PolicyGatesShellFSAndNetwork pins the classification the assembled
+// agent runs with. It is derived from what each tool declares rather than from a
+// list kept in this package, so the assertion is over the real registry: shell
+// (bash), local FS mutations (write, edit) and outbound network (web_fetch) ask;
+// reads and the tools that never leave the session are allowed.
+func TestBuild_PolicyGatesShellFSAndNetwork(t *testing.T) {
+	policy := buildForTest(t).Policy
 	cases := []struct {
 		name string
 		want permission.Decision
@@ -101,8 +139,33 @@ func TestAskPolicy_GatesShellFSAndNetwork(t *testing.T) {
 		{"task", permission.Allow},
 	}
 	for _, tc := range cases {
-		if got := askPolicy.Decide("s1", tool.Call{Name: tc.name}); got != tc.want {
-			t.Errorf("askPolicy.Decide(%q) = %v, want %v", tc.name, got, tc.want)
+		if got := policy.Decide("s1", tool.Call{Name: tc.name}); got != tc.want {
+			t.Errorf("policy.Decide(%q) = %v, want %v", tc.name, got, tc.want)
 		}
 	}
+}
+
+// TestBuild_PolicyAsksForMCPTools is the security default of the extension
+// boundary, asserted end to end: an MCP server's tool says nothing about what it
+// affects, so it is asked about instead of run unattended. Before the
+// effects-derived policy any connected server got unattended execution.
+func TestBuild_PolicyAsksForMCPTools(t *testing.T) {
+	remote := undeclaredTool{name: "mcp_github_create_issue"}
+	built := buildForTest(t, remote)
+	if got := built.Policy.Decide("s1", tool.Call{Name: remote.name}); got != permission.Ask {
+		t.Errorf("policy.Decide(%q) = %v, want Ask", remote.name, got)
+	}
+}
+
+// undeclaredTool stands in for an MCP server's tool: registered, and silent about
+// what its calls affect. It deliberately does not implement tool.Declaring.
+type undeclaredTool struct{ name string }
+
+func (u undeclaredTool) Name() string        { return u.name }
+func (u undeclaredTool) Description() string { return u.name + " (remote)" }
+func (u undeclaredTool) Schema() json.RawMessage {
+	return json.RawMessage(`{"type":"object"}`)
+}
+func (u undeclaredTool) Execute(context.Context, json.RawMessage) (tool.Result, error) {
+	return tool.Result{}, nil
 }

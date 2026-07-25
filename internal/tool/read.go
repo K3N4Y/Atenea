@@ -55,6 +55,10 @@ var readDescription string
 
 func (*ReadTool) Description() string { return readDescription }
 
+// Effects: none. Reading is not an effect — the file is left as it was, and the
+// snapshot the read records is the agent's own state.
+func (*ReadTool) Effects() Effects { return NoEffects }
+
 func (*ReadTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}`)
 }

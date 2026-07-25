@@ -88,6 +88,11 @@ var webFetchDescription string
 
 func (*WebFetchTool) Description() string { return webFetchDescription }
 
+// Effects: the call fetches a URL the model chose. It writes nothing and runs
+// nothing, so the network is the whole of it — which is why a workspace refresh
+// does not follow a fetch, but a question does precede one.
+func (*WebFetchTool) Effects() Effects { return ReachesNetwork }
+
 func (*WebFetchTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"url":{"type":"string","description":"URL http(s) a traer."},"prompt":{"type":"string","description":"Que extraer o responder a partir del contenido de la pagina."}},"required":["url","prompt"]}`)
 }

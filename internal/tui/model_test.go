@@ -23,8 +23,17 @@ import (
 	"github.com/K3N4Y/atenea/internal/permission"
 	"github.com/K3N4Y/atenea/internal/providerconfig"
 	"github.com/K3N4Y/atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/session/subagent"
+	"github.com/K3N4Y/atenea/internal/tool"
 	"github.com/K3N4Y/atenea/internal/tui/engine"
 )
+
+// renderEntry renders the entry the way the transcript does: through a Model, so
+// the block is presented by the tool that would have settled the call instead of
+// by a hand-written presentation that could disagree with it.
+func renderEntry(e entry, width int) string {
+	return e.render(width, NewModel(&fakeAgent{}, "s1", nil).presentationOf(e))
+}
 
 // fakeAgent implementa Agent y registra las llamadas para asertar sobre ellas.
 type fakeAgent struct {
@@ -51,6 +60,7 @@ type fakeAgent struct {
 	planErr        error
 	acceptErr      error
 	nextRunID      uint64
+	tools          tool.Catalog
 }
 
 func (f *fakeAgent) ModelCatalog() []providerconfig.ProviderModels {
@@ -119,6 +129,30 @@ func (f *fakeAgent) ResolvePermission(sessionID, callID string, verdict permissi
 
 func (f *fakeAgent) Stop(sessionID string) {
 	f.stopped = append(f.stopped, sessionID)
+}
+
+func (f *fakeAgent) ToolCatalog() tool.Catalog {
+	if f.tools == nil {
+		f.tools = shippedToolCatalog()
+	}
+	return f.tools
+}
+
+// shippedToolCatalog is the registry the engine hands the Model, built from the
+// same constructors internal/wiring registers. The tools are real so the transcript
+// and the permission panel are asserted against the labels, subjects and bodies
+// that actually ship — a stand-in would agree with the tests by construction and
+// prove nothing. Nothing here is executed, so the dependencies the tools would
+// need at run time stay nil and the root never has to exist.
+func shippedToolCatalog() tool.Catalog {
+	const root = "/nonexistent"
+	return tool.NewRegistry(tool.NewOutputStore(1024),
+		tool.NewReadTool(root, nil), tool.NewWriteTool(root, nil),
+		tool.NewEditTool(root, nil, nil), tool.NewGlobTool(root),
+		tool.NewGrepTool(root, nil), tool.NewBashTool(root),
+		tool.NewPresentPlanTool(root), tool.NewSkillTool(nil),
+		subagent.NewTaskTool(nil, nil, nil, nil), tool.NewWebFetchTool(nil),
+		tool.TodoWriteTool{})
 }
 
 func (f *fakeAgent) Undo(sessionID string) (UndoResult, error) {
@@ -1449,7 +1483,7 @@ func TestEntry_UserMessageMatchesReferenceWithoutTimestamp(t *testing.T) {
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	t.Cleanup(func() { lipgloss.SetColorProfile(previousProfile) })
 
-	view := entry{kind: entryUser, text: "quien eres y que eres capaz de hacer?"}.render(80)
+	view := renderEntry(entry{kind: entryUser, text: "quien eres y que eres capaz de hacer?"}, 80)
 	plain := ansi.Strip(view)
 	lines := strings.Split(plain, "\n")
 
@@ -1709,7 +1743,7 @@ func TestEntryAssistant_RenderRendersRevealedMarkdownWhileLive(t *testing.T) {
 		revealed: len([]rune("**Hola**")),
 	}
 
-	rendered := ansi.Strip(entry.render(80))
+	rendered := ansi.Strip(renderEntry(entry, 80))
 	if strings.Contains(rendered, "**Hola**") {
 		t.Fatalf("render(80) = %q, no debe contener el marcador markdown crudo mientras el assistant sigue en vivo", rendered)
 	}
@@ -1729,7 +1763,7 @@ func TestEntryAssistant_RenderRendersRevealedListWhileLiveAndCompleteListWhenSet
 		revealed: len([]rune("- item visible\n")),
 	}
 
-	live := ansi.Strip(entry.render(80))
+	live := ansi.Strip(renderEntry(entry, 80))
 	if !strings.Contains(live, "•") || !strings.Contains(live, "item visible") {
 		t.Fatalf("render(80) vivo = %q, debe rendir el item revelado como lista Markdown", live)
 	}
@@ -1739,7 +1773,7 @@ func TestEntryAssistant_RenderRendersRevealedListWhileLiveAndCompleteListWhenSet
 
 	entry.live = false
 	entry.revealed = len([]rune(entry.text))
-	settled := ansi.Strip(entry.render(80))
+	settled := ansi.Strip(renderEntry(entry, 80))
 	for _, want := range []string{"•", "item visible", "item pendiente"} {
 		if !strings.Contains(settled, want) {
 			t.Fatalf("render(80) asentado = %q, debe contener %q", settled, want)
@@ -2001,37 +2035,37 @@ func TestModel_RendersUserMessages(t *testing.T) {
 }
 
 func TestModel_RendersToolCallLifecycle(t *testing.T) {
-	m := NewModel(nil, "s1", nil)
+	m := NewModel(&fakeAgent{}, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"ls"}`)})
-	if got := m.View(); !strings.Contains(got, "● bash     ls") {
-		t.Fatalf("View() = %q, Tool.Called debe mostrar el ToolName con el resumen del Input y el marcador de ejecucion %q", got, "● bash     ls")
+	if got := m.View(); !strings.Contains(got, "● Bash     ls") {
+		t.Fatalf("View() = %q, Tool.Called debe mostrar el ToolName con el resumen del Input y el marcador de ejecucion %q", got, "● Bash     ls")
 	}
 
 	m = apply(t, m, EventMsg{
 		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash", Text: "archivo.txt",
 		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "archivo.txt", ToolCallID: "c1"},
 	})
-	if got := m.View(); !strings.Contains(got, "✓ bash     ls") {
-		t.Fatalf("View() = %q, Tool.Success debe asentar la tool como %q", got, "✓ bash     ls")
+	if got := m.View(); !strings.Contains(got, "✓ Bash     ls") {
+		t.Fatalf("View() = %q, Tool.Success debe asentar la tool como %q", got, "✓ Bash     ls")
 	}
 	if got := m.View(); strings.Contains(got, "●") {
 		t.Fatalf("View() = %q, la tool asentada no debe seguir mostrandose como en ejecucion", got)
 	}
 
-	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "edit", Input: json.RawMessage(`{"path":"a.go"}`)})
-	if got := m.View(); !strings.Contains(got, "● edit     a.go") {
-		t.Fatalf("View() = %q, el segundo tool call debe mostrarse en ejecucion con el resumen del Input %q", got, "● edit     a.go")
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "edit", Input: json.RawMessage(`{"patch":"[a.go#ab12]\n"}`)})
+	if got := m.View(); !strings.Contains(got, "● Edit     a.go") {
+		t.Fatalf("View() = %q, el segundo tool call debe mostrarse en ejecucion con el archivo del patch %q", got, "● Edit     a.go")
 	}
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "c2", ToolName: "edit", Error: "permiso denegado"})
 	got := m.View()
-	for _, want := range []string{"✗ edit     a.go", "│ error: permiso denegado"} {
+	for _, want := range []string{"✗ Edit     a.go", "│ error: permiso denegado"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("View() = %q, Tool.Failed debe mostrar %q: el header con el resumen del Input y el Error como linea de rail", got, want)
 		}
 	}
-	if !strings.Contains(got, "✓ bash     ls") {
+	if !strings.Contains(got, "✓ Bash     ls") {
 		t.Fatalf("View() = %q, el fallo de c2 no debe tocar el estado ok de c1", got)
 	}
 	if strings.Contains(got, "●") {
@@ -2044,7 +2078,7 @@ func TestModel_RendersToolCallLifecycle(t *testing.T) {
 // subagent runs, the spinner tick animates the run marker with the live
 // spinner frame instead of the static one. Success settles it as `✓`.
 func TestModel_RendersTaskToolAsSubAgentWithSpinner(t *testing.T) {
-	m := NewModel(nil, "s1", nil)
+	m := NewModel(&fakeAgent{}, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "task", Input: json.RawMessage(`{"subagent_type":"explore","prompt":"find the config loader"}`)})
 	view := ansi.Strip(m.View())
@@ -2076,17 +2110,17 @@ func TestModel_RendersTaskToolAsSubAgentWithSpinner(t *testing.T) {
 }
 
 // Contrato del render de la tool "skill": usa la gramatica de actividad con
-// el nombre de la skill como resumen (`● skill    <nombre>`), donde el nombre
+// el nombre de la skill como resumen (`● Skill    <nombre>`), donde el nombre
 // es el campo "name" del Input JSON, sin filtrar el Input crudo al header. En
 // exito el header va SIN preview del output: el cuerpo del SKILL.md que viaja
 // en ev.Text es para el modelo, no para el transcript.
 func TestModel_RendersSkillToolAsSkillLine(t *testing.T) {
-	m := NewModel(nil, "s1", nil)
+	m := NewModel(&fakeAgent{}, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "skill", Input: json.RawMessage(`{"name":"code-review"}`)})
 	view := m.View()
-	if !strings.Contains(view, "● skill    code-review") {
-		t.Fatalf("View() = %q, la tool skill en ejecucion debe rendirse como linea dedicada %q (nombre = campo name del Input)", view, "● skill    code-review")
+	if !strings.Contains(view, "● Skill    code-review") {
+		t.Fatalf("View() = %q, la tool skill en ejecucion debe rendirse como linea dedicada %q (nombre = campo name del Input)", view, "● Skill    code-review")
 	}
 	if strings.Contains(view, `{"name"`) {
 		t.Fatalf("View() = %q, NO debe filtrar el Input crudo al header: la linea dedicada lleva el nombre pelado como resumen", view)
@@ -2098,8 +2132,8 @@ func TestModel_RendersSkillToolAsSkillLine(t *testing.T) {
 		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: body, ToolCallID: "c1"},
 	})
 	view = m.View()
-	if !strings.Contains(view, "✓ skill    code-review") {
-		t.Fatalf("View() = %q, la tool skill exitosa debe asentarse como %q", view, "✓ skill    code-review")
+	if !strings.Contains(view, "✓ Skill    code-review") {
+		t.Fatalf("View() = %q, la tool skill exitosa debe asentarse como %q", view, "✓ Skill    code-review")
 	}
 	if strings.Contains(view, "skill_content") {
 		t.Fatalf("View() = %q, NO debe contener %q: en exito la linea de skill va sin preview del output, el cuerpo del SKILL.md es para el modelo y no para el transcript", view, "skill_content")
@@ -2112,13 +2146,13 @@ func TestModel_SkillToolFailureShowsError(t *testing.T) {
 	// El fallo de la skill (p.ej. nombre inexistente) se asienta en la misma
 	// linea dedicada con el marcador ✗ y el error como linea de rail, igual
 	// que el resto de tools.
-	m := NewModel(nil, "s1", nil)
+	m := NewModel(&fakeAgent{}, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "skill", Input: json.RawMessage(`{"name":"inexistente"}`)})
 	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "c1", ToolName: "skill", Error: `skill "inexistente" no encontrada`})
 
 	view := m.View()
-	for _, want := range []string{"✗ skill    inexistente", `│ error: skill "inexistente" no encontrada`} {
+	for _, want := range []string{"✗ Skill    inexistente", `│ error: skill "inexistente" no encontrada`} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("View() = %q, la skill fallida debe asentarse como %q: la linea dedicada tambien cubre el estado de error, no solo running/ok", view, want)
 		}
@@ -2131,20 +2165,20 @@ func TestModel_SkillToolFailureShowsError(t *testing.T) {
 func TestModel_SkillToolWithoutNameRendersBareHeader(t *testing.T) {
 	// TRIANGULATE: una implementacion pobre asume que el Input de la skill es
 	// JSON valido (panic o basura en el header al parsearlo) cuando no puede
-	// extraer el nombre. Con Input no parseable el header queda "● skill"
+	// extraer el nombre. Con Input no parseable el header queda "● Skill"
 	// pelado: sin resumen, sin espacios colgantes de la alineacion y sin
 	// filtrar el input crudo al transcript.
-	m := NewModel(nil, "s1", nil)
+	m := NewModel(&fakeAgent{}, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "skill", Input: json.RawMessage(`no-es-json`)})
 
 	view := m.View()
-	if !strings.Contains(view, "● skill") {
-		t.Fatalf("View() = %q, con Input no parseable la skill debe rendirse con el header pelado %q", view, "● skill")
+	if !strings.Contains(view, "● Skill") {
+		t.Fatalf("View() = %q, con Input no parseable la skill debe rendirse con el header pelado %q", view, "● Skill")
 	}
-	skillLine := lineWith(t, view, "● skill")
-	if got := strings.TrimRight(skillLine, " "); got != "  ● skill" {
-		t.Fatalf("linea de la skill = %q, el header pelado no lleva resumen: queda %q sin heredar nada del Input", skillLine, "  ● skill")
+	skillLine := lineWith(t, view, "● Skill")
+	if got := strings.TrimRight(skillLine, " "); got != "  ● Skill" {
+		t.Fatalf("linea de la skill = %q, el header pelado no lleva resumen: queda %q sin heredar nada del Input", skillLine, "  ● Skill")
 	}
 	if strings.Contains(view, "no-es-json") {
 		t.Fatalf("View() = %q, NO debe filtrar el Input crudo %q al transcript", view, "no-es-json")
@@ -2152,7 +2186,7 @@ func TestModel_SkillToolWithoutNameRendersBareHeader(t *testing.T) {
 }
 
 func TestModel_ReadToolShowsOnlyStatusAndFileName(t *testing.T) {
-	m := NewModel(nil, "s1", nil)
+	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "read", Input: json.RawMessage(`{"path":"internal/tui/view.go:20-40"}`)})
 
 	view := ansi.Strip(m.View())
@@ -2186,7 +2220,7 @@ func TestModel_ReadToolShowsOnlyStatusAndFileName(t *testing.T) {
 // final `│ … +N lines`. Con 3 lineas de output caben todas: no debe aparecer
 // ninguna marca de truncado.
 func TestModel_ToolSuccessShowsOutputPreview(t *testing.T) {
-	m := NewModel(nil, "s1", nil)
+	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"ls -la"}`)})
@@ -2196,8 +2230,8 @@ func TestModel_ToolSuccessShowsOutputPreview(t *testing.T) {
 	})
 
 	view := m.View()
-	if !strings.Contains(view, "✓ bash     ls -la") {
-		t.Fatalf("View() = %q, el header debe llevar el resumen del Input %q: con un solo campo string el resumen es su valor", view, "✓ bash     ls -la")
+	if !strings.Contains(view, "✓ Bash     ls -la") {
+		t.Fatalf("View() = %q, el header debe llevar el resumen del Input %q: con un solo campo string el resumen es su valor", view, "✓ Bash     ls -la")
 	}
 	for _, want := range []string{"│ uno", "│ dos", "│ tres"} {
 		if !strings.Contains(view, want) {
@@ -2215,7 +2249,7 @@ func TestModel_ToolSuccessShowsOutputPreview(t *testing.T) {
 // with its real file line. The output preview ("ok") is dropped: the diff IS
 // the result worth reviewing.
 func TestModel_ToolSuccessShowsEditDiff(t *testing.T) {
-	m := NewModel(nil, "s1", nil)
+	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "edit", Input: json.RawMessage(`{"path":"a.go"}`)})
@@ -2236,7 +2270,7 @@ func TestModel_ToolSuccessShowsEditDiff(t *testing.T) {
 		t.Fatalf("View() sin ANSI = %q, el bloque de quitadas debe ir antes que el de agregadas", plain)
 	}
 	// La tarjeta se inseta como el resto del contenido: la fila abre con el
-	// margen (activityInset) y el rail ▌ en la misma columna que "✓ read".
+	// margen (activityInset) y el rail ▌ en la misma columna que "✓ Read".
 	if row := lineWith(t, plain, "1 - viejo"); !strings.HasPrefix(row, activityInset+"▌") {
 		t.Fatalf("fila del diff = %q, debe abrir con el margen %q y el rail ▌", row, activityInset)
 	}
@@ -2253,7 +2287,7 @@ func TestModel_ToolSuccessShowsEditDiff(t *testing.T) {
 // green block the whole new slice (context + added), each numbered with its
 // side's real file line.
 func TestModel_EditDiffShowsContextInBothBlocks(t *testing.T) {
-	m := NewModel(nil, "s1", nil)
+	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "edit", Input: json.RawMessage(`{"path":"main.go"}`)})
@@ -2281,7 +2315,7 @@ func TestModel_EditDiffShowsContextInBothBlocks(t *testing.T) {
 // TRIANGULATE: tumba un preview del output sin tope, que volcaria las 6 lineas
 // enteras al transcript en vez de cortar en 4 y resumir el resto en la marca.
 func TestModel_ToolOutputPreviewTruncatesLongOutput(t *testing.T) {
-	m := NewModel(nil, "s1", nil)
+	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"cat f"}`)})
@@ -2306,17 +2340,22 @@ func TestModel_ToolOutputPreviewTruncatesLongOutput(t *testing.T) {
 	}
 }
 
+// El resumen generico del Input es el fallback para una tool que NO dice como
+// presentarse (tool.Presenter): las de un servidor MCP, y cualquiera que este
+// build no conozca. Por eso el sujeto se prueba con una tool ajena al registry.
+//
 // TRIANGULATE: tumba un resumen del Input que vuelque el input entero sin
 // truncar, o que con varios campos elija un campo suelto en vez del JSON
 // compacto completo.
 func TestModel_ToolInputSummaryCompactsMultiField(t *testing.T) {
-	m := NewModel(nil, "s1", nil)
+	const remote = "mcp_editor_patch"
+	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 200, Height: 24})
 
 	// Dos campos: el resumen es el JSON compacto, no el valor de un campo suelto.
-	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "edit", Input: json.RawMessage(`{"path":"a.go","texto":"x"}`)})
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: remote, Input: json.RawMessage(`{"path":"a.go","texto":"x"}`)})
 	view := m.View()
-	if want := `● edit     {"path":"a.go","texto":"x"}`; !strings.Contains(view, want) {
+	if want := `● ` + remote + ` {"path":"a.go","texto":"x"}`; !strings.Contains(view, want) {
 		t.Fatalf("View() = %q, el header debe contener %q: con varios campos el resumen es el JSON compacto", view, want)
 	}
 
@@ -2334,7 +2373,7 @@ func TestModel_ToolInputSummaryCompactsMultiField(t *testing.T) {
 }
 
 func TestModel_ShowsPendingPermissionAndClearsOnOutcome(t *testing.T) {
-	m := NewModel(nil, "s1", nil)
+	m := NewModel(&fakeAgent{}, "s1", nil)
 
 	// Orden real del runner: Tool.Called y despues Tool.Permission.Requested
 	// mientras bloquea en el gate (ask-before-run).
@@ -2342,8 +2381,8 @@ func TestModel_ShowsPendingPermissionAndClearsOnOutcome(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"rm -rf /tmp/x"}`)})
 
 	view := m.View()
-	permLine := lineWith(t, view, "? bash")
-	for _, want := range []string{"? bash", "rm -rf /tmp/x"} {
+	permLine := lineWith(t, view, "? Bash")
+	for _, want := range []string{"? Bash", "rm -rf /tmp/x"} {
 		if !strings.Contains(permLine, want) {
 			t.Fatalf("solicitud pendiente = %q, debe contener %q (marcador ?, ToolName y resumen del Input)", permLine, want)
 		}
@@ -2395,16 +2434,16 @@ func TestModel_RunningToolHiddenWhilePermissionPending(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"ls"}`)})
 
 	transcript := ansi.Strip(m.renderTranscript())
-	if strings.Contains(transcript, "● bash") {
+	if strings.Contains(transcript, "● Bash") {
 		t.Fatalf("renderTranscript() = %q, the running header must be hidden while its permission is pending", transcript)
 	}
-	if !strings.Contains(transcript, "? bash") {
+	if !strings.Contains(transcript, "? Bash") {
 		t.Fatalf("renderTranscript() = %q, the pending permission ask must stay visible", transcript)
 	}
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	transcript = ansi.Strip(m.renderTranscript())
-	if !strings.Contains(transcript, "● bash") || strings.Contains(transcript, "? bash") {
+	if !strings.Contains(transcript, "● Bash") || strings.Contains(transcript, "? Bash") {
 		t.Fatalf("renderTranscript() = %q, approving must reveal the running header and drop the ask", transcript)
 	}
 	if len(fake.resolved) != 1 || fake.resolved[0].callID != "c1" || !fake.resolved[0].approved() {
@@ -2446,15 +2485,15 @@ func TestModel_ShowsStepFailedError(t *testing.T) {
 // un marcador de estado con dos columnas de margen (`●` corriendo, `✓` exito,
 // `✗` fallo),
 // el nombre de la tool alineado a 8 columnas (`%-8s`) y el resumen del Input
-// (`  ● bash     ls`); el detalle va debajo como lineas de rail con el mismo
+// (`  ● Bash     ls`); el detalle va debajo como lineas de rail con el mismo
 // margen (`  │ 18 matches`, `  │ error: exit 1`). El formato viejo `[tool] ...`
 // desaparece del transcript.
 func TestModel_RendersActivityMarkersThroughToolLifecycle(t *testing.T) {
-	m := NewModel(nil, "s1", nil)
+	m := NewModel(&fakeAgent{}, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"ls"}`)})
 	plain := ansi.Strip(m.View())
-	if want := "  ● bash     ls"; !strings.Contains(plain, want) {
+	if want := "  ● Bash     ls"; !strings.Contains(plain, want) {
 		t.Fatalf("View() sin ANSI = %q, la tool en ejecucion debe rendirse como %q: dos columnas de margen, marcador ●, nombre alineado a 8 columnas y resumen del Input", plain, want)
 	}
 
@@ -2463,7 +2502,7 @@ func TestModel_RendersActivityMarkersThroughToolLifecycle(t *testing.T) {
 		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "18 matches", ToolCallID: "c1"},
 	})
 	plain = ansi.Strip(m.View())
-	if want := "  ✓ bash     ls"; !strings.Contains(plain, want) {
+	if want := "  ✓ Bash     ls"; !strings.Contains(plain, want) {
 		t.Fatalf("View() sin ANSI = %q, la tool exitosa debe asentarse como %q: el marcador ✓ reemplaza al ● en la misma columna", plain, want)
 	}
 	railLine := lineWith(t, plain, "18 matches")
@@ -2474,7 +2513,7 @@ func TestModel_RendersActivityMarkersThroughToolLifecycle(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "bash", Input: json.RawMessage(`{"command":"false"}`)})
 	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "c2", ToolName: "bash", Error: "exit 1"})
 	plain = ansi.Strip(m.View())
-	if want := "  ✗ bash     false"; !strings.Contains(plain, want) {
+	if want := "  ✗ Bash     false"; !strings.Contains(plain, want) {
 		t.Fatalf("View() sin ANSI = %q, la tool fallida debe asentarse como %q: marcador ✗ con la misma columna de nombre", plain, want)
 	}
 	failLine := lineWith(t, plain, "error: exit 1")
@@ -2492,7 +2531,7 @@ func TestModel_RendersActivityMarkersThroughToolLifecycle(t *testing.T) {
 // ("\n\n") y rompe el grupo: dos tools consecutivas quedan en lineas
 // fisicamente contiguas y la narrativa va rodeada de lineas en blanco.
 func TestModel_GroupsAdjacentActivityEntriesWithoutBlankLine(t *testing.T) {
-	m := NewModel(nil, "s1", nil)
+	m := NewModel(&fakeAgent{}, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"ls"}`)})
 	m = apply(t, m, EventMsg{
@@ -2508,7 +2547,7 @@ func TestModel_GroupsAdjacentActivityEntriesWithoutBlankLine(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c3", ToolName: "bash", Input: json.RawMessage(`{"command":"pwd"}`)})
 
 	plain := ansi.Strip(m.View())
-	if want := "  ✓ bash     ls\n  ● grep     foo"; !strings.Contains(plain, want) {
+	if want := "  ✓ Bash     ls\n  ● Grep     foo"; !strings.Contains(plain, want) {
 		t.Fatalf("View() sin ANSI = %q, debe contener %q: dos entradas de actividad adyacentes se agrupan en lineas fisicamente contiguas, sin linea en blanco entre si", plain, want)
 	}
 
@@ -2523,12 +2562,12 @@ func TestModel_GroupsAdjacentActivityEntriesWithoutBlankLine(t *testing.T) {
 	}
 }
 
-// The "+N -M" stat rides on the hunk header bar (not on a "✓ edit" line): it
+// The "+N -M" stat rides on the hunk header bar (not on a "✓ Edit" line): it
 // counts the +/- content lines of that hunk, excluding the +++/--- file
 // headers. The changed lines render as numbered rows in the before/after
 // blocks, no longer with the "│ " rail of the old unified preview.
 func TestModel_EditSuccessShowsDiffStatInHeader(t *testing.T) {
-	m := NewModel(nil, "s1", nil)
+	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "edit", Input: json.RawMessage(`{"path":"main.go"}`)})
@@ -2545,8 +2584,8 @@ func TestModel_EditSuccessShowsDiffStatInHeader(t *testing.T) {
 			t.Fatalf("linea del hunk = %q, debe contener %q: el stat +N -M va en la barra del hunk", hunk, want)
 		}
 	}
-	if strings.Contains(plain, "✓ edit") {
-		t.Fatalf("View() sin ANSI = %q, NO debe contener %q: la tarjeta reemplaza la linea de actividad", plain, "✓ edit")
+	if strings.Contains(plain, "✓ Edit") {
+		t.Fatalf("View() sin ANSI = %q, NO debe contener %q: la tarjeta reemplaza la linea de actividad", plain, "✓ Edit")
 	}
 	// Las lineas cambiadas van como filas numeradas en los bloques, sin el rail viejo.
 	for _, want := range []string{"1 - vieja", "1 + nueva", "2 + extra"} {
@@ -2562,7 +2601,7 @@ func TestModel_EditSuccessShowsDiffStatInHeader(t *testing.T) {
 // A pure insertion (no removed lines) omits the red "antes" block entirely:
 // there is no old slice to show, so only the green "después" block renders.
 func TestModel_EditDiffOmitsEmptyRemovedBlock(t *testing.T) {
-	m := NewModel(nil, "s1", nil)
+	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "edit", Input: json.RawMessage(`{"path":"main.go"}`)})
@@ -2588,7 +2627,7 @@ func TestModel_EditDiffOmitsEmptyRemovedBlock(t *testing.T) {
 // band, numbered, with NO hunk bar, NO "+N -M" stat, and NO +/- marker. A write
 // always creates a brand-new file, so there is never a removed side to show.
 func TestModel_ToolSuccessShowsWriteCard(t *testing.T) {
-	m := NewModel(nil, "s1", nil)
+	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "write", Input: json.RawMessage(`{"path":"nuevo.go","content":"package main"}`)})
@@ -2606,8 +2645,8 @@ func TestModel_ToolSuccessShowsWriteCard(t *testing.T) {
 		}
 	}
 	// La tarjeta reemplaza la linea de actividad.
-	if strings.Contains(plain, "✓ write") {
-		t.Fatalf("View() sin ANSI = %q, NO debe contener %q: la tarjeta reemplaza la linea de actividad", plain, "✓ write")
+	if strings.Contains(plain, "✓ Write") {
+		t.Fatalf("View() sin ANSI = %q, NO debe contener %q: la tarjeta reemplaza la linea de actividad", plain, "✓ Write")
 	}
 	// Sin barra de hunk, sin stat +N -M y sin marcador + / - en las filas.
 	for _, banned := range []string{"@@", "+2 -0", "1 + package main", " - "} {
@@ -2625,7 +2664,7 @@ func TestModel_ToolSuccessShowsWriteCard(t *testing.T) {
 // "… +N lines" tail, matching the edit card, so a big new file never floods
 // the transcript.
 func TestModel_WriteCardTruncatesLongFile(t *testing.T) {
-	m := NewModel(nil, "s1", nil)
+	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	// 60 lineas: con la barra de ruta son 61 filas, mas que el tope de 40.
@@ -2661,7 +2700,7 @@ func TestModel_WriteCardTruncatesLongFile(t *testing.T) {
 // An empty-file write yields an empty diff, so it keeps the generic activity
 // line instead of an empty card: there is nothing to show on the band.
 func TestModel_WriteWithoutDiffShowsActivityLine(t *testing.T) {
-	m := NewModel(nil, "s1", nil)
+	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "write", Input: json.RawMessage(`{"path":"vacio.go","content":""}`)})
@@ -2671,7 +2710,7 @@ func TestModel_WriteWithoutDiffShowsActivityLine(t *testing.T) {
 	})
 
 	plain := ansi.Strip(m.View())
-	if !strings.Contains(plain, "✓ write") {
+	if !strings.Contains(plain, "✓ Write") {
 		t.Fatalf("View() sin ANSI = %q, un write sin diff conserva la linea de actividad", plain)
 	}
 }
@@ -2680,13 +2719,16 @@ func TestModel_WriteWithoutDiffShowsActivityLine(t *testing.T) {
 // columna de alineacion (8) o que padee de mas: con un nombre mas largo que la
 // columna, el nombre queda entero y el resumen a UN espacio del nombre.
 func TestModel_ActivityHeaderKeepsLongToolNameReadable(t *testing.T) {
-	m := NewModel(nil, "s1", nil)
+	// Un nombre mas largo que la columna solo aparece en una tool que no dice
+	// como presentarse: las propias traen label corto (Bash, Edit, SubAgent).
+	const remote = "mcp_planner_present_plan"
+	m := NewModel(&fakeAgent{}, "s1", nil)
 
-	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "present_plan", Input: json.RawMessage(`{"plan":"migrar el runner"}`)})
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: remote, Input: json.RawMessage(`{"plan":"migrar el runner"}`)})
 
 	plain := ansi.Strip(m.View())
-	line := lineWith(t, plain, "present_plan")
-	if want := "  ● present_plan migrar el runner"; line != want {
+	line := lineWith(t, plain, remote)
+	if want := "  ● " + remote + " migrar el runner"; line != want {
 		t.Fatalf("header = %q, want exactamente %q: un nombre mas largo que la columna de 8 no se trunca y el resumen queda a UN espacio del nombre", line, want)
 	}
 }
@@ -2695,7 +2737,7 @@ func TestModel_ActivityHeaderKeepsLongToolNameReadable(t *testing.T) {
 // cuando no hay resumen (sin Input o con Input `{}`): la linea es exactamente
 // el marcador y el nombre, sin espacios colgantes.
 func TestModel_ActivityHeaderWithoutSummaryHasNoTrailingSpaces(t *testing.T) {
-	m := NewModel(nil, "s1", nil)
+	m := NewModel(&fakeAgent{}, "s1", nil)
 
 	// Sin Input y con Input `{}`: en ambos el resumen queda vacio y el header
 	// debe recortar los espacios de la alineacion del nombre.
@@ -2703,11 +2745,11 @@ func TestModel_ActivityHeaderWithoutSummaryHasNoTrailingSpaces(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "grep", Input: json.RawMessage(`{}`)})
 
 	plain := ansi.Strip(m.View())
-	if line := lineWith(t, plain, "● bash"); line != "  ● bash" {
-		t.Fatalf("header sin Input = %q, want exactamente %q: sin resumen no quedan espacios colgantes de la alineacion", line, "  ● bash")
+	if line := lineWith(t, plain, "● Bash"); line != "  ● Bash" {
+		t.Fatalf("header sin Input = %q, want exactamente %q: sin resumen no quedan espacios colgantes de la alineacion", line, "  ● Bash")
 	}
-	if line := lineWith(t, plain, "● grep"); line != "  ● grep" {
-		t.Fatalf("header con Input {} = %q, want exactamente %q: el objeto vacio no produce resumen ni espacios colgantes", line, "  ● grep")
+	if line := lineWith(t, plain, "● Grep"); line != "  ● Grep" {
+		t.Fatalf("header con Input {} = %q, want exactamente %q: el objeto vacio no produce resumen ni espacios colgantes", line, "  ● Grep")
 	}
 }
 
@@ -2746,11 +2788,11 @@ func TestEntry_DiffStatIgnoresFileHeadersAndEmptyDiff(t *testing.T) {
 	}
 }
 
-// TRIANGULATE: tumba un header que pegue el stat siempre (`✓ bash     ls  +0 -0`)
+// TRIANGULATE: tumba un header que pegue el stat siempre (`✓ Bash     ls  +0 -0`)
 // en vez de solo cuando hay diff: una tool exitosa SIN diff lleva el header
 // pelado y su output como lineas de rail.
 func TestModel_SuccessWithoutDiffShowsNoStat(t *testing.T) {
-	m := NewModel(nil, "s1", nil)
+	m := NewModel(&fakeAgent{}, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"ls"}`)})
 	m = apply(t, m, EventMsg{
@@ -2759,8 +2801,8 @@ func TestModel_SuccessWithoutDiffShowsNoStat(t *testing.T) {
 	})
 
 	plain := ansi.Strip(m.View())
-	header := lineWith(t, plain, "✓ bash")
-	if want := "  ✓ bash     ls"; header != want {
+	header := lineWith(t, plain, "✓ Bash")
+	if want := "  ✓ Bash     ls"; header != want {
 		t.Fatalf("header = %q, want exactamente %q: el exito sin diff no agrega nada tras el resumen", header, want)
 	}
 	for _, banned := range []string{"+0 -0", " +"} {
@@ -2780,7 +2822,7 @@ func TestModel_SuccessWithoutDiffShowsNoStat(t *testing.T) {
 // actividad y se unen al grupo sin lineas en blanco; la narrativa del assistant
 // que sigue conserva su parrafo propio.
 func TestModel_PermissionAndErrorJoinActivityGroup(t *testing.T) {
-	m := NewModel(nil, "s1", nil)
+	m := NewModel(&fakeAgent{}, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"ls"}`)})
 	m = apply(t, m, EventMsg{
@@ -2798,14 +2840,14 @@ func TestModel_PermissionAndErrorJoinActivityGroup(t *testing.T) {
 	m = drainReveal(t, m)
 
 	plain := ansi.Strip(m.View())
-	// El header "● write" en ejecucion queda oculto mientras su permiso sigue
-	// pendiente: solo la linea naranja "? write" del permiso representa la
+	// El header "● Write" en ejecucion queda oculto mientras su permiso sigue
+	// pendiente: solo la linea naranja "? Write" del permiso representa la
 	// llamada gateada, sin duplicarla en dos filas contiguas.
-	want := "  ✓ bash     ls\n  ? write    b.go\n  ✗ error    boom"
+	want := "  ✓ Bash     ls\n  ? Write    b.go\n  ✗ error    boom"
 	if !strings.Contains(plain, want) {
 		t.Fatalf("View() sin ANSI = %q, debe contener %q: la tool exitosa, el permiso pendiente y el error de step quedan fisicamente contiguos, sin lineas en blanco entre si", plain, want)
 	}
-	if strings.Contains(plain, "● write") {
+	if strings.Contains(plain, "● Write") {
 		t.Fatalf("View() sin ANSI = %q, el header en ejecucion no debe duplicar la llamada mientras su permiso sigue pendiente", plain)
 	}
 
@@ -3431,7 +3473,7 @@ func TestModel_DeniedPermissionStaysNeutralAfterToolFailed(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "c1", ToolName: "bash", Error: "tool denied by the user"})
 
 	plain := ansi.Strip(m.View())
-	if !strings.Contains(plain, "– bash") || !strings.Contains(plain, "Denied by user") || strings.Contains(plain, "error: tool denied") {
+	if !strings.Contains(plain, "– Bash") || !strings.Contains(plain, "Denied by user") || strings.Contains(plain, "error: tool denied") {
 		t.Fatalf("View() = %q, denied tool must remain neutral after durable Tool.Failed", plain)
 	}
 }
@@ -3475,6 +3517,48 @@ func TestModel_PermissionPanelOffersSessionGrantForBash(t *testing.T) {
 	if !strings.Contains(panel, "Allow go test this session") {
 		t.Fatalf("permissionPanelView() = %q, want the session grant naming the granted prefix", panel)
 	}
+}
+
+// TestModel_PermissionPanelOffersSessionGrantForMCPTools: a tool atenea does not
+// ship asks like any other and can be granted for the session as a whole, which is
+// exactly what the panel showed. Before tools could describe themselves, only
+// bash, write and edit were grantable, so an MCP tool re-asked forever with no way
+// to say "this one is fine".
+func TestModel_PermissionPanelOffersSessionGrantForMCPTools(t *testing.T) {
+	const remote = "mcp_github_create_issue"
+	fake := &fakeAgent{tools: catalogWithRemoteTool(remote)}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: remote, Input: json.RawMessage(`{"title":"bug"}`)})
+
+	panel := ansi.Strip(m.permissionPanelView())
+	if want := "Allow " + remote + " this session"; !strings.Contains(panel, want) {
+		t.Fatalf("permissionPanelView() = %q, want %q", panel, want)
+	}
+	// The remote tool cannot state its call as text, so it gets the detailed panel
+	// with the raw input rather than a compact surface implying otherwise.
+	if !strings.Contains(panel, remote+" request") || !strings.Contains(panel, `"title"`) {
+		t.Fatalf("permissionPanelView() = %q, want the detailed panel titled by the tool and showing its raw input", panel)
+	}
+}
+
+// catalogWithRemoteTool is a registry holding one tool from an MCP server: silent
+// about its effects — so it asks — and grantable as a whole.
+func catalogWithRemoteTool(name string) tool.Catalog {
+	return tool.NewRegistry(tool.NewOutputStore(1024),
+		tool.NewBashTool("/nonexistent"), remoteTool{name: name})
+}
+
+type remoteTool struct{ name string }
+
+func (r remoteTool) Name() string            { return r.name }
+func (r remoteTool) Description() string     { return r.name + " (remote)" }
+func (r remoteTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (r remoteTool) Execute(context.Context, json.RawMessage) (tool.Result, error) {
+	return tool.Result{}, nil
+}
+func (r remoteTool) GrantRule(tool.Call) (permission.Rule, bool) {
+	return permission.Rule{Tool: r.name}, true
 }
 
 // TestModel_PermissionPanelSessionGrantKeys: 'a' grants the rule for the
@@ -3863,7 +3947,7 @@ func TestModel_ViewportFollowsTailOnNewEvents(t *testing.T) {
 }
 
 func TestModel_PgUpScrollsHistoryBack(t *testing.T) {
-	m := NewModel(nil, "s1", nil)
+	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 12})
 
 	// Muchas mas entradas de las que caben: la vista arranca siguiendo la cola.
@@ -3932,7 +4016,7 @@ var (
 )
 
 func TestModel_MouseWheelScrollsHistory(t *testing.T) {
-	m := NewModel(nil, "s1", nil)
+	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 12})
 
 	// Muchas mas entradas de las que caben: la vista arranca siguiendo la cola.
@@ -5111,7 +5195,7 @@ func TestModel_PresentPlanOffersAcceptAndYExecutes(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindToolSuccess, CallID: "p1"})
 
 	view := m.View()
-	planLine := lineWith(t, view, "? plan")
+	planLine := lineWith(t, view, "? Plan")
 	if !strings.Contains(planLine, "(y ejecutar / n seguir en plan)") {
 		t.Fatalf("oferta de aprobacion = %q, debe contener %q", planLine, "(y ejecutar / n seguir en plan)")
 	}
@@ -5125,7 +5209,7 @@ func TestModel_PresentPlanOffersAcceptAndYExecutes(t *testing.T) {
 	if got := fake.accepted[0]; got != "s1" {
 		t.Fatalf("AcceptPlan(%q), se esperaba AcceptPlan(%q)", got, "s1")
 	}
-	if got := m.View(); strings.Contains(got, "? plan") {
+	if got := m.View(); strings.Contains(got, "? Plan") {
 		t.Fatalf("View() = %q, aceptar el plan debe retirar la oferta de aprobacion", got)
 	}
 	if len(fake.sent) != 0 {
@@ -5150,7 +5234,7 @@ func TestModel_PlanApprovalNRejectsAndStaysInPlanMode(t *testing.T) {
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
 
-	if got := m.View(); strings.Contains(got, "? plan") {
+	if got := m.View(); strings.Contains(got, "? Plan") {
 		t.Fatalf("View() = %q, 'n' debe retirar la oferta de aprobacion del plan", got)
 	}
 	if len(fake.accepted) != 0 {
@@ -5221,7 +5305,7 @@ func TestModel_PresentPlanFailedDoesNotOfferApproval(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "p1", ToolName: "present_plan"})
 	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "p1", Error: "plan invalido"})
 
-	if got := m.View(); strings.Contains(got, "? plan") {
+	if got := m.View(); strings.Contains(got, "? Plan") {
 		t.Fatalf("View() = %q, un present_plan fallido NO debe ofrecer la aprobacion del plan", got)
 	}
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
@@ -6935,7 +7019,7 @@ func TestModel_ClickExpandsSettledThinking(t *testing.T) {
 // entryLines siguiera emitiendo el separador entre actividades, su numeracion
 // divergeria de la del viewport y el clic caeria en la linea equivocada.
 func TestModel_ClickTargetingStaysAlignedWithCompactGroups(t *testing.T) {
-	m := NewModel(nil, "s1", nil)
+	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 20})
 
 	// Grupo compacto: dos tools asentadas contiguas (sin linea en blanco).

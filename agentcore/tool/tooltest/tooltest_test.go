@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/K3N4Y/atenea/agentcore/permission"
 	"github.com/K3N4Y/atenea/agentcore/tool"
 )
 
@@ -254,6 +255,24 @@ func TestChecks_CatchAViolatingTool(t *testing.T) {
 			func() Subject {
 				return Subject{Tool: &panicsWhenConcurrent{}, Input: json.RawMessage(`{"text":"hola"}`)}
 			}},
+		{"effects that change between calls", "EffectsAreStable",
+			func() Subject { return Subject{Tool: &unstableEffects{}} }},
+		{"a grant naming another tool", "GrantRuleIsPureAndNamesTheTool",
+			func() Subject { return Subject{Tool: grantsAnotherTool{}, Input: json.RawMessage(`{"text":"hola"}`)} }},
+		{"a grant that changes between calls", "GrantRuleIsPureAndNamesTheTool",
+			func() Subject { return Subject{Tool: &unstableGrant{}, Input: json.RawMessage(`{"text":"hola"}`)} }},
+		{"a GrantRule that panics on what the model sent", "GrantRuleIsPureAndNamesTheTool",
+			func() Subject { return Subject{Tool: panicsWhenGranting{}, Input: json.RawMessage(`{"text":"hola"}`)} }},
+		{"a file card asked for by an unsettled call", "PresentationIsPureAndSurvivesAnyInput",
+			func() Subject { return Subject{Tool: cardWithoutADiff{}, Input: json.RawMessage(`{"text":"hola"}`)} }},
+		{"a presentation that changes between redraws", "PresentationIsPureAndSurvivesAnyInput",
+			func() Subject {
+				return Subject{Tool: &unstablePresentation{}, Input: json.RawMessage(`{"text":"hola"}`)}
+			}},
+		{"a Present that panics on what the model sent", "PresentationIsPureAndSurvivesAnyInput",
+			func() Subject {
+				return Subject{Tool: panicsWhenPresenting{}, Input: json.RawMessage(`{"text":"hola"}`)}
+			}},
 	}
 
 	for _, c := range cases {
@@ -269,6 +288,90 @@ func TestChecks_CatchAViolatingTool(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The optional capability interfaces. compliant implements none of them, which is
+// legal, so each violator adds one badly.
+
+// unstableEffects reports different effects on consecutive calls, so the same tool
+// is gated one way and waved through the next.
+type unstableEffects struct {
+	compliant
+	calls int
+}
+
+func (u *unstableEffects) Effects() tool.Effects {
+	u.calls++
+	if u.calls%2 == 0 {
+		return tool.NoEffects
+	}
+	return tool.RunsCommands
+}
+
+// grantsAnotherTool derives a rule naming a tool that is not itself: approving one
+// of its calls would silently authorize somebody else's.
+type grantsAnotherTool struct{ compliant }
+
+func (grantsAnotherTool) GrantRule(tool.Call) (permission.Rule, bool) {
+	return permission.Rule{Tool: "bash"}, true
+}
+
+// unstableGrant derives a different prefix every time, so what the panel offered
+// is not what a later call is checked against.
+type unstableGrant struct {
+	compliant
+	calls int
+}
+
+func (u *unstableGrant) GrantRule(tool.Call) (permission.Rule, bool) {
+	u.calls++
+	return permission.Rule{Tool: "echo", Prefix: fmt.Sprintf("prefix-%d", u.calls)}, true
+}
+
+// panicsWhenGranting dereferences the input without checking it, on the goroutine
+// that is drawing the permission prompt.
+type panicsWhenGranting struct{ compliant }
+
+func (panicsWhenGranting) GrantRule(call tool.Call) (permission.Rule, bool) {
+	var in *struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(call.Input, &in); err != nil {
+		panic("unparseable input: " + err.Error())
+	}
+	return permission.Rule{Tool: "echo", Prefix: in.Text}, true
+}
+
+// cardWithoutADiff asks for a file card from a call that has not settled, leaving
+// the host to render a diff that does not exist.
+type cardWithoutADiff struct{ compliant }
+
+func (cardWithoutADiff) Present(tool.Call, tool.Result) tool.Presentation {
+	return tool.Presentation{Kind: tool.FileChange, Label: "Echo"}
+}
+
+// unstablePresentation reads differently on every redraw.
+type unstablePresentation struct {
+	compliant
+	calls int
+}
+
+func (u *unstablePresentation) Present(tool.Call, tool.Result) tool.Presentation {
+	u.calls++
+	return tool.Presentation{Label: fmt.Sprintf("Echo %d", u.calls)}
+}
+
+// panicsWhenPresenting takes the UI down with the model's malformed input.
+type panicsWhenPresenting struct{ compliant }
+
+func (panicsWhenPresenting) Present(call tool.Call, _ tool.Result) tool.Presentation {
+	var in *struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(call.Input, &in); err != nil {
+		panic("unparseable input: " + err.Error())
+	}
+	return tool.Presentation{Label: "Echo", Subject: in.Text}
 }
 
 func checkByName(t *testing.T, name string) func(reporter, fresh) {

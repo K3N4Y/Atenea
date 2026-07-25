@@ -26,7 +26,7 @@ func TestModel_TopBarRefreshesBranchAfterSuccessfulTool(t *testing.T) {
 	git("init", "-b", "main")
 	git("-c", "user.name=Atenea Test", "-c", "user.email=atenea@example.test", "commit", "--allow-empty", "-m", "initial")
 
-	m := NewModel(nil, "s1", nil).WithWorkspaceRoot("main", root, root)
+	m := NewModel(&fakeAgent{}, "s1", nil).WithWorkspaceRoot("main", root, root)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 20})
 	git("checkout", "-b", "feature/live-branch")
 
@@ -68,7 +68,7 @@ func TestModel_TopBarRefreshesBranchFromHomeAbbreviatedWorkspace(t *testing.T) {
 	git("init", "-b", "main")
 	git("-c", "user.name=Atenea Test", "-c", "user.email=atenea@example.test", "commit", "--allow-empty", "-m", "initial")
 
-	m := NewModel(nil, "s1", nil).WithWorkspaceRoot("main", "~/workspace", root)
+	m := NewModel(&fakeAgent{}, "s1", nil).WithWorkspaceRoot("main", "~/workspace", root)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 20})
 	git("checkout", "-b", "feature/home-path")
 	updated, cmd := m.update(EventMsg{Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash"})

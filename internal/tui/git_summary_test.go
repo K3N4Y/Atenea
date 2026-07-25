@@ -179,7 +179,7 @@ func TestModel_ToolMutationRequestsWorkspaceSummaryRefresh(t *testing.T) {
 		t.Fatalf("git init: %v\n%s", err, output)
 	}
 
-	m := NewModel(nil, "s1", nil).WithWorkspaceRoot("main", root, root)
+	m := NewModel(&fakeAgent{}, "s1", nil).WithWorkspaceRoot("main", root, root)
 	_, refreshCmd := m.Update(EventMsg{
 		Kind:     session.KindToolSuccess,
 		ToolName: "edit",
@@ -192,6 +192,45 @@ func TestModel_ToolMutationRequestsWorkspaceSummaryRefresh(t *testing.T) {
 	}
 	if !commandProducesWorkspaceRefresh(refreshCmd) {
 		t.Fatal("Update(Tool.Success edit) did not produce workspaceRefreshedMsg")
+	}
+}
+
+// TestModel_ToolEffectsDecideTheWorkspaceRefresh: which calls invalidate the git
+// summary is derived from what each tool declares (tool.Effects), not from a list
+// of names in the UI. A read never changes the tree, so it must not cost a git
+// read; a fetch reaches the network without touching files, so neither does it.
+// A tool this build does not know is refreshed on, because a stale diff stat is
+// worse than a redundant git call.
+func TestModel_ToolEffectsDecideTheWorkspaceRefresh(t *testing.T) {
+	root := t.TempDir()
+	cmd := exec.Command("git", "init", "-b", "main")
+	cmd.Dir = root
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, output)
+	}
+
+	cases := []struct {
+		tool  string
+		input string
+		want  bool
+		why   string
+	}{
+		{"bash", `{"command":"go build ./..."}`, true, "a command can do anything, including writing files"},
+		{"write", `{"path":"a.go","content":"x"}`, true, "a write creates a file"},
+		{"read", `{"path":"a.go"}`, false, "reading leaves the tree as it was"},
+		{"glob", `{"pattern":"*.go"}`, false, "listing paths changes nothing"},
+		{"web_fetch", `{"url":"https://example.com","prompt":"x"}`, false, "the network is not the workspace"},
+		{"mcp_unknown_tool", `{}`, true, "an undeclared tool could have done anything"},
+	}
+	for _, tc := range cases {
+		m := NewModel(&fakeAgent{}, "s1", nil).WithWorkspaceRoot("main", root, root)
+		_, refreshCmd := m.Update(EventMsg{
+			Kind: session.KindToolSuccess, ToolName: tc.tool, CallID: "c1",
+			Input: json.RawMessage(tc.input),
+		})
+		if got := commandProducesWorkspaceRefresh(refreshCmd); got != tc.want {
+			t.Errorf("Tool.Success(%s) refreshed the workspace = %v, want %v: %s", tc.tool, got, tc.want, tc.why)
+		}
 	}
 }
 

@@ -24,7 +24,7 @@ func TestEntryRender_RemovesUntrustedTerminalControlsBeforeStyling(t *testing.T)
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got, want := test.malicious.render(80), test.clean.render(80); got != want {
+			if got, want := renderEntry(test.malicious, 80), renderEntry(test.clean, 80); got != want {
 				t.Fatalf("render with terminal controls = %q, want sanitized render %q", got, want)
 			}
 		})
@@ -61,7 +61,7 @@ func TestToolRender_RemovesUntrustedTerminalControlsBeforeStyling(t *testing.T) 
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got, want := test.malicious.render(80), test.clean.render(80); got != want {
+			if got, want := renderEntry(test.malicious, 80), renderEntry(test.clean, 80); got != want {
 				t.Fatalf("render with terminal controls = %q, want sanitized render %q", got, want)
 			}
 		})

@@ -41,6 +41,11 @@ var grepDescription string
 
 func (*GrepTool) Description() string { return grepDescription }
 
+// Effects: none. The search runs ripgrep, but on a fixed command line this tool
+// builds itself: the model chooses the pattern, never the program. RunsCommands
+// is for a call that executes what it was handed.
+func (*GrepTool) Effects() Effects { return NoEffects }
+
 func (*GrepTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"pattern":{"type":"string","description":"Patron regex para buscar en el contenido de archivos."},"path":{"type":"string","description":"Archivo o directorio relativo al workspace donde buscar. Default: '.'."},"include":{"type":"string","description":"Glob de archivos a incluir, por ejemplo '*.go' o '*.{ts,tsx}'."}},"required":["pattern"]}`)
 }

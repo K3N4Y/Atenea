@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"path"
 	"reflect"
 	"strconv"
 	"strings"
@@ -19,6 +18,7 @@ import (
 
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/tool"
 	"github.com/K3N4Y/atenea/internal/tui/theme"
 )
 
@@ -183,7 +183,7 @@ var (
 // los envuelven. width es el ancho util del viewport (0 = sin envolver): solo
 // lo usa el render markdown del assistant, el resto de bloques deja
 // el envolvimiento a syncViewport.
-func (e entry) render(width int) string {
+func (e entry) render(width int, p tool.Presentation) string {
 	switch e.kind {
 	case entryUser:
 		style := userMessageStyle
@@ -207,13 +207,14 @@ func (e entry) render(width int) string {
 	case entryReasoning:
 		return e.renderThinking(width)
 	case entryTool:
-		return e.renderTool(width)
+		return e.renderTool(p, width)
 	case entryPermission:
-		return permissionStyle.Render(activityHeader(activityAskMarker, e.tool, summarizeToolInput(e.input)))
+		return permissionStyle.Render(activityHeader(activityAskMarker, activityLabel(p, e), displaySubject(p.Subject)))
 	case entryPlanApproval:
 		// Misma gramatica de actividad que el permiso (marcador de pregunta y
-		// "plan" como nombre), con el gesto que lo resuelve como sufijo.
-		return permissionStyle.Render(activityHeader(activityAskMarker, "plan", "presentado") + " (y ejecutar / n seguir en plan)")
+		// "Plan" como nombre, el mismo label que present_plan declara), con el
+		// gesto que lo resuelve como sufijo.
+		return permissionStyle.Render(activityHeader(activityAskMarker, "Plan", "presentado") + " (y ejecutar / n seguir en plan)")
 	case entryError:
 		if !isProviderError(e.text) {
 			return errorStyle.Render(activityHeader(activityFailMarker, "error", e.text))
@@ -315,66 +316,56 @@ func formatThinkingDuration(d time.Duration) string {
 	return d.Round(time.Second).String()
 }
 
-// renderTool rinde el bloque de una tool call como entrada de actividad
-// (renderActivity): el resumen del Input dice QUE corrio la tool de un
-// vistazo; sin resumen el header queda en marcador y nombre pelados. La tool
-// "skill" comparte la misma gramatica pero con el nombre de la skill como
-// resumen (`● skill    demo`, el campo "name" del Input JSON; sin nombre
-// parseable el header queda pelado) y en exito SIN detalle: el cuerpo del
-// SKILL.md que viaja en el output es para el modelo, no para el transcript.
-func (e entry) renderTool(width int) string {
-	// A successful edit renders as the rich diff card (file path + per-hunk
-	// before/after blocks) instead of the generic activity line. The other
-	// states (running, failed, denied) keep the minimal activity line: there is
-	// no diff to show yet. An unparseable diff falls back to renderActivity.
-	if e.tool == "edit" && e.status == toolOK && e.diff != "" {
-		if card := renderEditDiff(e.diff, width); card != "" {
+// renderTool rinde el bloque de una tool call segun lo que la tool dice de si
+// misma (tool.Presentation): el label la nombra, el subject dice QUE corrio de un
+// vistazo (`● Bash  ls`, `● Skill  demo`) y sin subject el header queda en
+// marcador y nombre pelados. La forma la decide el Kind, no el nombre de la tool:
+// una tool que atenea no trae se rinde igual de bien que una propia.
+func (e entry) renderTool(p tool.Presentation, width int) string {
+	// A settled call that changed a file renders as the rich card instead of the
+	// generic activity line: per-hunk before/after for a change, a single neutral
+	// gray for a brand-new file. Every other state (running, failed, denied) keeps
+	// the minimal line — there is no diff to show yet — and an unparseable diff
+	// falls back to it too.
+	if e.status == toolOK && e.diff != "" {
+		card := ""
+		switch p.Kind {
+		case tool.FileChange:
+			card = renderEditDiff(e.diff, width)
+		case tool.FileCreation:
+			card = renderWriteCard(e.diff, width)
+		}
+		if card != "" {
 			return card
 		}
 	}
-	// A successful write is a brand-new file, so it renders as a diff card
-	// sibling to the edit card but in a single neutral gray: the file-path bar
-	// and the written lines, no before/after. An empty file yields no diff and
-	// an unparseable diff both fall back to the generic activity line.
-	if e.tool == "write" && e.status == toolOK && e.diff != "" {
-		if card := renderWriteCard(e.diff, width); card != "" {
-			return card
-		}
-	}
-	if e.tool == "read" {
-		label := "Reading"
-		if e.status != toolRunning {
-			label = "Read"
-		}
-		return e.renderActivity(label, readFileName(e.input), false)
-	}
-	if e.tool == "skill" {
-		return e.renderActivity("skill", skillName(e.input), false)
-	}
-	if e.tool == "task" {
-		// Subagent launches read as `SubAgent <type>` (the subagent_type of
-		// the Input) instead of the raw JSON; success keeps the output
-		// preview, which is the subagent's report.
-		return e.renderActivity("SubAgent", subagentType(e.input), true)
-	}
-	return e.renderActivity(e.tool, summarizeToolInput(e.input), true)
+	return e.renderActivity(activityLabel(p, e), displaySubject(p.Subject), !p.HidesOutput)
 }
 
-func readFileName(raw string) string {
-	var input struct {
-		Path string `json:"path"`
+// activityLabel is the name to draw for the call in this state: the progressive
+// form while it is in flight ("Reading"), the plain one once it settled ("Read"),
+// and the raw tool name when the presentation offered neither.
+func activityLabel(p tool.Presentation, e entry) string {
+	if e.status == toolRunning && p.Running != "" {
+		return p.Running
 	}
-	if json.Unmarshal([]byte(raw), &input) != nil || input.Path == "" {
+	if p.Label != "" {
+		return p.Label
+	}
+	return e.tool
+}
+
+// displaySubject prepares a subject for a header line. Whatever the tool returned
+// is raw text the model wrote, so it is sanitized, flattened to a single line and
+// truncated to the width the header reserves — one place, so every tool's subject
+// is bounded the same way.
+func displaySubject(subject string) string {
+	if subject == "" {
 		return ""
 	}
-	displayPath := input.Path
-	if i := strings.LastIndex(displayPath, ":"); i >= 0 {
-		selector := displayPath[i+1:]
-		if selector != "" && strings.Trim(selector, "0123456789-") == "" {
-			displayPath = displayPath[:i]
-		}
-	}
-	return sanitizeTerminalText(path.Base(strings.ReplaceAll(displayPath, "\\", "/")))
+	subject = sanitizeTerminalText(subject)
+	subject = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(subject)
+	return ansi.Truncate(subject, toolInputSummaryWidth, "…")
 }
 
 // renderActivity es el render comun de las entradas de actividad de tool: el
@@ -438,38 +429,14 @@ func diffStat(diff string) (added, removed int) {
 	return added, removed
 }
 
-// subagentType extracts the "subagent_type" field from the task tool Input
-// JSON; invalid JSON or a missing field yields "" and the header stays bare.
-func subagentType(raw string) string {
-	var input struct {
-		Type string `json:"subagent_type"`
-	}
-	if err := json.Unmarshal([]byte(raw), &input); err != nil {
-		return ""
-	}
-	return sanitizeTerminalText(input.Type)
-}
-
-// skillName extrae el campo "name" del Input JSON de la tool skill; con JSON
-// invalido o sin campo devuelve "" y el header de la skill queda pelado.
-func skillName(raw string) string {
-	var input struct {
-		Name string `json:"name"`
-	}
-	if err := json.Unmarshal([]byte(raw), &input); err != nil {
-		return ""
-	}
-	return sanitizeTerminalText(input.Name)
-}
-
-// summarizeToolInput resume el JSON del Input de la tool para el header del
-// transcript. Con un objeto de EXACTAMENTE un campo con valor string, el
-// resumen es ese valor pelado (el caso comun: `{"command":"ls -la"}` se lee
-// mejor como `ls -la` que como JSON); en cualquier otro caso es el JSON
-// compacto. Sin Input, con JSON invalido o con objeto vacio devuelve "" y el
-// header queda en marcador y nombre pelados. Los saltos de linea colapsan a
-// espacio y el resultado se trunca a toolInputSummaryWidth celdas: el resumen
-// es una pista de una linea, no el input completo.
+// summarizeToolInput resume el JSON del Input de una tool que NO dice como
+// presentarse (tool.Presenter): es el subject por defecto. Con un objeto de
+// EXACTAMENTE un campo con valor string, el resumen es ese valor pelado (el caso
+// comun: `{"command":"ls -la"}` se lee mejor como `ls -la` que como JSON); en
+// cualquier otro caso es el JSON compacto. Sin Input, con JSON invalido o con
+// objeto vacio devuelve "" y el header queda en marcador y nombre pelados. El
+// saneado, el aplanado y el truncado los aplica displaySubject, igual que a
+// cualquier otro subject.
 func summarizeToolInput(raw string) string {
 	if raw == "" {
 		return ""
@@ -478,25 +445,19 @@ func summarizeToolInput(raw string) string {
 	if err := json.Unmarshal([]byte(raw), &fields); err != nil || len(fields) == 0 {
 		return ""
 	}
-	summary := ""
 	if len(fields) == 1 {
 		for _, v := range fields {
 			var s string
-			if err := json.Unmarshal(v, &s); err == nil {
-				summary = s
+			if err := json.Unmarshal(v, &s); err == nil && s != "" {
+				return s
 			}
 		}
 	}
-	if summary == "" {
-		var buf bytes.Buffer
-		if err := json.Compact(&buf, []byte(raw)); err != nil {
-			return ""
-		}
-		summary = buf.String()
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, []byte(raw)); err != nil {
+		return ""
 	}
-	summary = sanitizeTerminalText(summary)
-	summary = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(summary)
-	return ansi.Truncate(summary, toolInputSummaryWidth, "…")
+	return buf.String()
 }
 
 // renderCappedLines es el esqueleto comun de los previews de detalle de una
@@ -1186,7 +1147,7 @@ func (m Model) renderTranscript() string {
 				b.WriteString("\n\n")
 			}
 		}
-		b.WriteString(ve.entry.render(width))
+		b.WriteString(ve.entry.render(width, m.presentationOf(ve.entry)))
 	}
 	return b.String()
 }
@@ -1328,7 +1289,7 @@ func (m Model) entryLines() []entryLine {
 		// hardWrapOverflow (same as syncViewport) may split a long line into
 		// several physical ones; each is its own entryLine so row N of this list
 		// is the absolute row N of the viewport and click mapping does not shift.
-		block := hardWrapOverflow(ve.entry.render(width), width)
+		block := hardWrapOverflow(ve.entry.render(width, m.presentationOf(ve.entry)), width)
 		for _, l := range strings.Split(block, "\n") {
 			out = append(out, entryLine{idx: ve.idx, line: l})
 		}

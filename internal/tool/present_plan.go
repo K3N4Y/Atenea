@@ -31,6 +31,11 @@ var presentPlanDescription string
 
 func (*PresentPlanTool) Description() string { return presentPlanDescription }
 
+// Effects: none. The plan file is the agent's own state — its path is derived
+// from Root and the session, never from the input — and plan mode exists so the
+// user reviews it before anything is carried out.
+func (*PresentPlanTool) Effects() Effects { return NoEffects }
+
 func (*PresentPlanTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"title":{"type":"string","description":"Titulo corto del plan."},"plan":{"type":"string","description":"El plan final completo en Markdown."}},"required":["plan"]}`)
 }

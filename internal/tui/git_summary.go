@@ -16,15 +16,6 @@ type gitSummary struct {
 	Deletions int
 }
 
-func toolMayModifyWorkspace(name string) bool {
-	switch name {
-	case "bash", "edit", "write":
-		return true
-	default:
-		return false
-	}
-}
-
 func gitBranch(root string) (string, error) {
 	output, err := runWorkspaceGit(root, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {

@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/K3N4Y/atenea/agentcore/permission"
 	"github.com/K3N4Y/atenea/internal/tool"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -302,6 +303,24 @@ func listTools(ctx context.Context, session *mcp.ClientSession) ([]*mcp.Tool, er
 func (t *mcpTool) Name() string            { return t.name }
 func (t *mcpTool) Description() string     { return t.description }
 func (t *mcpTool) Schema() json.RawMessage { return t.schema }
+
+// mcpTool deliberately does NOT implement tool.Declaring. MCP carries no
+// statement of what a tool affects, and this side of the wire cannot find out:
+// the same protocol serves a docs lookup and a production deploy. Silence is the
+// honest answer, and it is also the safe one — an undeclared tool is asked about
+// (see permission.EffectsPolicy), so a server the user just connected does not
+// get unattended execution. If MCP or .mcp.json grows a way to declare effects,
+// this is the method that reads it.
+
+// GrantRule grants the tool as a whole, which is exactly what the panel showed:
+// this tool, from this server. Narrowing it would mean interpreting the
+// arguments, and their meaning lives in the server rather than here — one
+// server's "path" is the next one's database key. Without a grant an MCP tool
+// would have to be approved call by call forever, with no way to say "this one is
+// fine".
+func (t *mcpTool) GrantRule(tool.Call) (permission.Rule, bool) {
+	return permission.Rule{Tool: t.name}, true
+}
 
 func (t *mcpTool) Execute(ctx context.Context, input json.RawMessage) (tool.Result, error) {
 	var arguments map[string]any

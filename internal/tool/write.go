@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/K3N4Y/atenea/agentcore/permission"
 	"github.com/K3N4Y/atenea/internal/tool/hashline"
 )
 
@@ -68,6 +69,18 @@ func (*WriteTool) Name() string { return "write" }
 var writeDescription string
 
 func (*WriteTool) Description() string { return writeDescription }
+
+// Effects: the tool exists to put a file on disk under the workspace root.
+func (*WriteTool) Effects() Effects { return WritesFiles }
+
+// GrantRule grants the tool itself. What approving a write for the session
+// authorizes is "create files under this workspace", which is exactly the subject
+// the permission panel names — there is no narrower honest shape, since the next
+// write will name a different path and a path prefix is not what the user was
+// shown.
+func (wt *WriteTool) GrantRule(Call) (permission.Rule, bool) {
+	return permission.Rule{Tool: wt.Name()}, true
+}
 
 func (*WriteTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}`)

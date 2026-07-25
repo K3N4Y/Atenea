@@ -12,7 +12,31 @@ import contract "github.com/K3N4Y/atenea/agentcore/tool"
 // implementation detail belongs here and nowhere else.
 
 type (
-	Tool   = contract.Tool
-	Call   = contract.Call
-	Result = contract.Result
+	Tool             = contract.Tool
+	Call             = contract.Call
+	Result           = contract.Result
+	Effects          = contract.Effects
+	Declaring        = contract.Declaring
+	Presentation     = contract.Presentation
+	PresentationKind = contract.PresentationKind
+	Presenter        = contract.Presenter
+)
+
+const (
+	NoEffects      = contract.NoEffects
+	WritesFiles    = contract.WritesFiles
+	RunsCommands   = contract.RunsCommands
+	ReachesNetwork = contract.ReachesNetwork
+
+	Activity     = contract.Activity
+	FileChange   = contract.FileChange
+	FileCreation = contract.FileCreation
+)
+
+// EffectsOf and PresentationOf resolve the optional capability interfaces. They
+// are the one place "the tool said nothing" is told apart from "the tool said
+// nothing of substance"; see the contract for why a host must not flatten them.
+var (
+	EffectsOf      = contract.EffectsOf
+	PresentationOf = contract.PresentationOf
 )

@@ -22,6 +22,10 @@ var todoDescription string
 func (TodoWriteTool) Name() string        { return "todo_write" }
 func (TodoWriteTool) Description() string { return todoDescription }
 
+// Effects: none. The checklist never leaves the session: it travels in the call
+// input and the UI paints it, nothing is written and nothing is run.
+func (TodoWriteTool) Effects() Effects { return NoEffects }
+
 func (TodoWriteTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"todos":{"type":"array","items":{"type":"object","properties":{"content":{"type":"string","description":"Tarea, en imperativo y corta."},"status":{"type":"string","enum":["pending","in_progress","completed"]}},"required":["content","status"]}}},"required":["todos"]}`)
 }

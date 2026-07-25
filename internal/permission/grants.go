@@ -1,15 +1,22 @@
 package permission
 
 import (
+	"slices"
 	"sync"
 
 	"github.com/K3N4Y/atenea/internal/tool"
 )
 
-// SessionGrants layers session-scoped approvals over a base policy: a call the
-// base would ask for is allowed without asking once a grant the user gave in
-// that same session covers it ("allow `go test` this session", "allow write
-// this session").
+// SessionGrants is the store of the user's "allow this for the rest of the
+// session" answers ("allow `go test` this session", "allow write this session").
+// It only records them; GrantedPolicy is what turns them into decisions.
+//
+// The split follows their lifetimes. Grants belong to the sitting, so the caller
+// owns this store and keeps it across a rewire (an MCP connect, a workspace
+// change) instead of dropping the user's answers mid-session. The policy that
+// reads them is rebuilt with every registry, because deciding whether a grant
+// covers a call means asking the tool that would settle it, and that tool comes
+// from the registry of the moment.
 //
 // Grants live in the process only. Reopening a session asks again, so a grant
 // never outlives the sitting that justified it and nothing on disk has to be
@@ -20,32 +27,13 @@ import (
 // Safe for concurrent use: the runner decides the tool calls of a turn from
 // several goroutines while the UI adds grants.
 type SessionGrants struct {
-	base  Policy
 	mu    sync.RWMutex
 	rules map[string][]Rule // sessionID -> grants given in that session
 }
 
-// NewSessionGrants wraps base with an empty grant store.
-func NewSessionGrants(base Policy) *SessionGrants {
-	return &SessionGrants{base: base, rules: make(map[string][]Rule)}
-}
-
-// Decide defers to the base policy and upgrades Ask to Allow when a grant of
-// this session covers the call. Allow and Deny pass through untouched: a grant
-// can only skip a question, never overrule a denial.
-func (g *SessionGrants) Decide(sessionID string, call tool.Call) Decision {
-	decision := g.base.Decide(sessionID, call)
-	if decision != Ask {
-		return decision
-	}
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-	for _, rule := range g.rules[sessionID] {
-		if matches(rule, call) {
-			return Allow
-		}
-	}
-	return Ask
+// NewSessionGrants builds an empty grant store.
+func NewSessionGrants() *SessionGrants {
+	return &SessionGrants{rules: make(map[string][]Rule)}
 }
 
 // Grant records a rule for the rest of the session. A zero rule (the call was
@@ -63,4 +51,51 @@ func (g *SessionGrants) Grant(sessionID string, rule Rule) {
 		}
 	}
 	g.rules[sessionID] = append(g.rules[sessionID], rule)
+}
+
+// rulesFor returns a copy of what the session has granted. The copy is what
+// makes the caller's loop safe: the store keeps taking grants while a decision
+// is being made.
+func (g *SessionGrants) rulesFor(sessionID string) []Rule {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return slices.Clone(g.rules[sessionID])
+}
+
+// GrantedPolicy layers a session's grants over a base policy: a call the base
+// would ask about is allowed without asking once a grant of that same session
+// covers it.
+//
+// It is built per registry, alongside the base classification, because covers
+// asks the tool to re-derive what the call would grant (see RuleFor).
+type GrantedPolicy struct {
+	base    Policy
+	grants  *SessionGrants
+	catalog tool.Catalog
+}
+
+// NewGrantedPolicy wraps base so the grants recorded in the store can skip its
+// questions. A nil store yields the base untouched, which is how a UI without
+// the "allow for the session" affordance gates exactly as it would without one.
+func NewGrantedPolicy(base Policy, grants *SessionGrants, catalog tool.Catalog) Policy {
+	if grants == nil {
+		return base
+	}
+	return GrantedPolicy{base: base, grants: grants, catalog: catalog}
+}
+
+// Decide defers to the base policy and upgrades Ask to Allow when a grant of
+// this session covers the call. Allow and Deny pass through untouched: a grant
+// can only skip a question, never overrule a denial.
+func (p GrantedPolicy) Decide(sessionID string, call tool.Call) Decision {
+	decision := p.base.Decide(sessionID, call)
+	if decision != Ask {
+		return decision
+	}
+	for _, rule := range p.grants.rulesFor(sessionID) {
+		if covers(rule, p.catalog, call) {
+			return Allow
+		}
+	}
+	return Ask
 }

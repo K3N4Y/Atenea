@@ -61,6 +61,9 @@ var globDescription string
 
 func (*GlobTool) Description() string { return globDescription }
 
+// Effects: none. Listing paths leaves the workspace as it was.
+func (*GlobTool) Effects() Effects { return NoEffects }
+
 func (*GlobTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"pattern":{"type":"string","description":"Patron glob para encontrar archivos, con semantica de ripgrep (por ejemplo \"*.go\", \"**/*.go\" o \"internal/**/*.go\")."},"path":{"type":"string","description":"Directorio relativo al workspace donde buscar. Default: \".\"."},"limit":{"type":"integer","minimum":1,"description":"Maximo de resultados a devolver."}},"required":["pattern"]}`)
 }

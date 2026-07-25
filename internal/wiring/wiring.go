@@ -48,9 +48,9 @@ type Config struct {
 	// los subagentes; el caller entrega por el la decision del usuario.
 	Gate permission.Gate
 	// Grants is the caller-owned store of session-scoped approvals layered over
-	// askPolicy (see NewSessionGrants). It outlives the build so a rewire does
-	// not drop the user's grants; nil = no session grants, every gated call
-	// asks.
+	// the classification (see permission.GrantedPolicy). It outlives the build so
+	// a rewire does not drop the user's grants; nil = no session grants, every
+	// gated call asks.
 	Grants *permission.SessionGrants
 	// Snaps es el read-state por sesion que comparten read/write/edit. El
 	// caller lo crea una sola vez para que sobreviva a los re-ensamblados.
@@ -76,23 +76,26 @@ type Built struct {
 	Runner   *runner.Runner
 	Glob     *tool.GlobTool
 	Commands *command.Set
+	// Tools is the catalog the UI asks about a tool it only knows by name: what a
+	// finished call may have changed, what granting one would authorize, how one
+	// should be presented. It is the same registry the runner settles against, so
+	// the answers a user sees are the ones the agent acted on. Rebuilt with every
+	// Build, hence published here for the caller to swap alongside the runner.
+	Tools tool.Catalog
+	// Policy is the ask-before-run classification the assembled agent enforces,
+	// derived from Tools and shared by the main runner and the subagents. Published
+	// so what the agent gates stays answerable from outside the assembly instead of
+	// only from a turn.
+	Policy permission.Policy
 }
 
-// askPolicy is the fixed ask-before-run classification: shell (bash), local
-// filesystem mutations (write, edit) and outbound network (web_fetch) ask;
-// reads and internal tools — including MCP tools — are allowed. Single source
-// of truth shared by the main runner and the subagents, so a child cannot
-// evade the gate the main chat enforces. Rule-based policies layer over this
-// value without touching the runner (see internal/permission).
-var askPolicy = permission.NewStaticPolicy("bash", "write", "edit", "web_fetch")
-
-// NewSessionGrants builds the session-grant store layered over askPolicy: the
-// UI adds to it when the user answers "allow this for the rest of the session".
-// The caller owns it and passes it in Config.Grants so it survives a rewire
-// (MCP connect, workspace change) instead of being dropped mid-session; a UI
-// without that affordance passes nil and gates exactly as before.
+// NewSessionGrants builds the session-grant store: the UI adds to it when the
+// user answers "allow this for the rest of the session". The caller owns it and
+// passes it in Config.Grants so it survives a rewire (MCP connect, workspace
+// change) instead of being dropped mid-session; a UI without that affordance
+// passes nil and gates exactly as before.
 func NewSessionGrants() *permission.SessionGrants {
-	return permission.NewSessionGrants(askPolicy)
+	return permission.NewSessionGrants()
 }
 
 // Build arma todo el cableado anclado a cfg.Root: las file/exec tools, el glob
@@ -101,12 +104,6 @@ func NewSessionGrants() *permission.SessionGrants {
 // devuelve las piezas para que el caller haga su propio swap.
 func Build(cfg Config) Built {
 	root := cfg.Root
-	// The effective ask-before-run policy: the fixed classification, plus the
-	// user's session grants when the caller keeps a store for them.
-	policy := permission.Policy(askPolicy)
-	if cfg.Grants != nil {
-		policy = cfg.Grants
-	}
 	// El @-menu de archivos del composer lista el workspace via este glob.
 	// Comparte la raiz con las file tools; reusa el searcher de ripgrep ya
 	// probado (respeta .gitignore, excluye .git).
@@ -140,18 +137,16 @@ func Build(cfg Config) Built {
 		tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, cfg.Snaps),
 		tool.NewGlobTool(root), tool.NewGrepToolWithSnapshotProvider(root, cfg.Snaps),
 		tool.NewBashTool(root))
+	// A def that names a tool the child registry does not have used to lose it
+	// silently: the name never became a permission and the subagent ran with fewer
+	// tools than its author wrote down. Now it is reported, once, against the
+	// registry that actually bounds a subagent.
+	for _, problem := range agent.Validate(agentDefs, childRegistry) {
+		log.Printf("atenea: %v", problem)
+	}
 	// La tool task levanta subagentes hijos. nextID propio (thread-safe) porque
 	// varios subagentes pueden correr en paralelo (cap de concurrencia interno).
 	taskTool := subagent.NewTaskTool(agentDefs, cfg.Provider, childRegistry, NewIDGen())
-	// Security: propagate ask-before-run to the child runner with the SAME gate
-	// and the SAME policy as the main chat. Without this a "general" subagent
-	// would run gated tools (bash, write, edit, web_fetch) without the
-	// confirmation the main chat enforces, evading the gate. The gate is keyed
-	// by (sessionID, callID): the child's sessionID is its childID, so the
-	// child's permission resolution finds it. Session grants are keyed by
-	// session too, so a subagent does not inherit the chat's grants: it asks on
-	// its own behalf, and a grant answered on its prompt covers only that child.
-	taskTool.SetPermissionGate(cfg.Gate, policy)
 	// Surfacing del permiso del subagente en la UI: decora el store del runner hijo
 	// con ChildPermissionStore sobre el MISMO bus, asi los eventos de permiso del hijo
 	// (Tool.Permission.Requested y su resolucion) se publican en el canal del PADRE
@@ -173,6 +168,25 @@ func Build(cfg Config) Built {
 	}
 	registryTools = append(registryTools, cfg.MCPTools...)
 	registry := tool.NewRegistry(tool.NewOutputStore(outputLimit), registryTools...)
+	// The effective ask-before-run policy, derived from the registry instead of
+	// from a list of names kept here: each tool is classified by the effects it
+	// declares about itself (permission.EffectsPolicy), with the user's session
+	// grants layered on top when the caller keeps a store for them. It is built
+	// here, after the registry, because a classification is only as good as the
+	// catalog it reads and that catalog changes with every rewire — an MCP server
+	// that just connected contributes tools this policy has to be able to see.
+	policy := permission.NewGrantedPolicy(permission.NewEffectsPolicy(registry), cfg.Grants, registry)
+	// Security: propagate ask-before-run to the child runner with the SAME gate
+	// and the SAME policy as the main chat. Without this a "general" subagent
+	// would run gated tools (bash, write, edit, web_fetch) without the
+	// confirmation the main chat enforces, evading the gate. The policy reads the
+	// main registry, whose tool names are a superset of the child's, so parent and
+	// child classify the same call identically. The gate is keyed by (sessionID,
+	// callID): the child's sessionID is its childID, so the child's permission
+	// resolution finds it. Session grants are keyed by session too, so a subagent
+	// does not inherit the chat's grants: it asks on its own behalf, and a grant
+	// answered on its prompt covers only that child.
+	taskTool.SetPermissionGate(cfg.Gate, policy)
 	permissions := registry.Permissions()
 	// present_plan is executable by the shared registry but is mode-only: normal
 	// mode must not advertise it. Every ordinary and dynamic MCP tool derives
@@ -191,7 +205,7 @@ func Build(cfg Config) Built {
 	r.SetPlanMode(planSystemPromptBuilder(root, skillsBlock, cfg.Local),
 		tool.Permissions{"read": true, "glob": true, "grep": true, "present_plan": true, "skill": true})
 
-	return Built{Runner: r, Glob: glob, Commands: commands}
+	return Built{Runner: r, Glob: glob, Commands: commands, Tools: registry, Policy: policy}
 }
 
 // skillDirs devuelve los directorios donde se buscan skills: primero los del

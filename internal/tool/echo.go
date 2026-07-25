@@ -20,6 +20,9 @@ var echoDescription string
 func (Echo) Name() string        { return "echo" }
 func (Echo) Description() string { return echoDescription }
 
+// Effects: none. It echoes its input back.
+func (Echo) Effects() Effects { return NoEffects }
+
 func (Echo) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}`)
 }

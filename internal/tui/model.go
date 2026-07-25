@@ -24,6 +24,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/permission"
 	"github.com/K3N4Y/atenea/internal/providerconfig"
 	"github.com/K3N4Y/atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/tool"
 	"github.com/K3N4Y/atenea/internal/tui/engine"
 )
 
@@ -104,6 +105,46 @@ type modelAgent interface {
 
 type retryAgent interface {
 	RetryPrompt(sessionID string) (RunHandle, error)
+}
+
+// catalogAgent is the optional surface an Agent implements to expose the tool
+// catalog. It is what lets the presentation layer ask a tool about itself from a
+// durable event, which carries a name and nothing else: what the call may have
+// changed, what granting it would authorize, how it should be drawn.
+type catalogAgent interface {
+	ToolCatalog() tool.Catalog
+}
+
+// tools is the catalog to ask about a tool the UI only knows by name, or nil when
+// the agent does not expose one (the fakes in the tests). It is resolved on every
+// use rather than kept in the Model: a rewire replaces the registry, and a copy
+// held across one would answer for tools that are no longer there.
+//
+// Every caller has to handle nil, which is the same discipline the catalog itself
+// demands for a name it does not know — see tool.Catalog.
+func (m Model) tools() tool.Catalog {
+	agent, ok := m.agent.(catalogAgent)
+	if !ok {
+		return nil
+	}
+	return agent.ToolCatalog()
+}
+
+// presentationOf is how the entry's tool call should read: what the tool says
+// about it, or — for a tool that says nothing, or one that is no longer registered
+// — its own name plus a generic summary of the raw input, which is what the
+// transcript showed for every tool before any of them could speak.
+//
+// Entries that are not about a tool call get the zero value; render ignores it.
+func (m Model) presentationOf(e entry) tool.Presentation {
+	if e.kind != entryTool && e.kind != entryPermission {
+		return tool.Presentation{}
+	}
+	call := tool.Call{ID: e.callID, Name: e.tool, Input: []byte(e.input)}
+	if p, ok := tool.PresentationFor(m.tools(), call, tool.Result{Diff: e.diff}); ok {
+		return p
+	}
+	return tool.Presentation{Label: e.tool, Subject: summarizeToolInput(e.input)}
 }
 
 // entryKind distingue los tipos de bloque de la conversacion.
@@ -608,7 +649,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if ev.Kind == session.KindToolSuccess && ev.Diff != "" {
 			m, treeCmd = m.reloadTree(m.treeOpen)
 		}
-		if ev.Kind == session.KindToolSuccess && toolMayModifyWorkspace(ev.ToolName) {
+		if ev.Kind == session.KindToolSuccess && tool.MayChangeFiles(m.tools(), ev.ToolName) {
 			m, workspaceCmd = m.requestWorkspaceRefresh()
 		}
 		pump := waitForEvent(m.events)
