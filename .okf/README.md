@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-21
+updated_at: 2026-07-24
 summary: Navigation index for Atenea project documentation in the OKF convention.
 ---
 
@@ -99,3 +99,4 @@ uses Markdown and begins with `updated_at` and `summary` YAML metadata.
 ## Audits
 
 - [Project state audit](audits/project-state-audit.md)
+- [Agnosticism and extensibility audit](audits/2026-07-24-agnostic-extensibility-audit.md)
