@@ -6,8 +6,11 @@
 // main runner and the subagents, so a child cannot evade the gate the main
 // chat enforces.
 //
-// Policy is a real seam: StaticPolicy (classification by tool name) is the
-// whole shipped policy today, and richer implementations — persisted
-// allow/deny rules, "always allow", permission modes — plug in later without
-// touching the runner or the UI.
+// Policy is a real seam. StaticPolicy is the base classification by tool name;
+// SessionGrants layers the user's "allow this for the rest of the session"
+// answers over it (a bash command prefix, or a whole filesystem-mutating
+// tool), so a granted call is allowed without ever reaching the Gate and
+// without leaving a permission request in the session's history. Richer
+// implementations — persisted allow/deny rules, permission modes — plug in the
+// same way, without touching the runner or the UI.
 package permission
