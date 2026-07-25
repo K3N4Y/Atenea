@@ -262,6 +262,11 @@ Decisions:
 
 ## 5. The Store Shared Contract (`store_contract_test.go`)
 
+> Moved 2026-07-24 (audit R1.4): the contract is now
+> `sessiontest.StoreContract` in `internal/session/sessiontest`, so the decorators
+> in `internal/event` run the same one. `store_contract_test.go` is the caller.
+> The shape below is unchanged.
+
 The "Done when" of the roadmap is "M1..M8 tests remain green with store
 real". The clean way to guarantee this is **a single set of behavioral tests
 that runs against any `Store`**, instead of duplicating those of `MemoryStore`.

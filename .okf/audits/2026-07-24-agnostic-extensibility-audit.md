@@ -44,7 +44,7 @@ of them delete code.
 | Seam | State | Evidence |
 |---|---|---|
 | Agent loop deps | **Good** — all interfaces, injected | `internal/session/runner/runner.go:20-98` |
-| Store | **Good** — interface + shared contract test reused by both impls | `internal/session/store.go:50-93`, `store_contract_test.go:640,673,690` |
+| Store | **Good** — interface + shared contract kit reused by both impls and by the two decorators (R1.4) | `internal/session/store.go:50-93`, `internal/session/sessiontest`, `internal/event/contract_test.go` |
 | Optional store capabilities | **Good** — runtime type assertion, degrades | `session.CompactionStore`, `session.UndoStore` |
 | Compaction strategy | **Good** — `Compactor` interface, injected | `runner/runner.go:67-75` |
 | TUI ↔ engine | **Good** — one-way protocol + compile-time assertions | `internal/tui/engine/protocol.go`, `internal/tui/engine_protocol.go:33-38` |
@@ -60,7 +60,7 @@ of them delete code.
 | Prompt assembly | **Missing** — fixed string concatenation | `internal/session/prompt/prompt.go:68-81` |
 | Composition root | **Weak** — two outer roots, duplicated provider bootstrap and demo provider | `app.go:76-152` vs `cmd/atenea/main.go:64-130` |
 | CLI / headless | **Missing** | `cmd/atenea/main.go:53-62` |
-| Public API | **Partial** — 5 importable contract packages under `agentcore/`, boundary enforced by test; implementations still private (R1.3 done, kits R1.4 pending) | `agentcore/`, `agentcore/boundary_test.go` |
+| Public API | **Partial** — 5 importable contract packages under `agentcore/` plus 2 contract test kits, boundary enforced by test; implementations still private, no stability promise yet (R1.3, R1.4 done) | `agentcore/`, `agentcore/boundary_test.go`, `agentcore/{tool/tooltest,llm/llmtest}` |
 | Branding/paths | **Weak** — `atenea` literal in 6+ path builders, no XDG | §3.6 |
 | MCP as plugin substrate | **Partial** — first-class in the registry, but stdio-only, allow-by-default, invisible to subagents | §3.8 |
 | Contributor docs | **Weak** — no CONTRIBUTING; `AGENTS.md` points at two files that do not exist; LICENSE now present (R1.2 done) | §3.9 |
@@ -75,9 +75,11 @@ of them delete code.
 > no longer zero: a third party can implement a tool, a provider, a policy or a
 > gate, and read the durable event stream. Everything that runs the agent stays
 > under `internal/` on purpose — see
-> [Published contracts](../architecture/public-contracts.md). What remains of
-> this finding is the missing contract test kits (R1.4) and the absence of any
-> stability promise on the new packages.
+> [Published contracts](../architecture/public-contracts.md). The contracts are
+> now checkable as well as importable: `tooltest.Contract` and `llmtest.Contract`
+> ship next to them (R1.4), so a tool or an adapter written elsewhere can be
+> accepted on evidence rather than on a reading. What remains of this finding is
+> the absence of any stability promise on the new packages.
 
 `go.mod:1` is `module atenea`. Even if packages were moved out of `internal/`,
 `go get`/import is impossible: there is no resolvable path. Combined with 100% of
@@ -376,6 +378,35 @@ Ordered by leverage. R1–R3 are the ones that actually unlock third parties.
    `llmtest.Contract(t, provider)`, and export the existing store contract
    (`store_contract_test.go` already proves the pattern works). This is how you
    accept outside providers and tools without reviewing them line by line.
+   `[done 2026-07-24]` — `agentcore/tool/tooltest` and `agentcore/llm/llmtest`
+   ship next to the contracts they check; the store contract moved to
+   `internal/session/sessiontest`. Both public kits take a *factory* (each check
+   executes for real and must not see another's side effects) plus the happy-path
+   input or request, since only the implementer knows what their tool accepts or
+   which model their adapter serves. Documented in
+   [Published contracts](../architecture/public-contracts.md#contract-test-kits).
+   Four decisions worth recording:
+   - Checks report through a two-method `reporter` instead of `*testing.T`, which
+     is what lets each kit's own test feed it broken implementations and assert
+     that the right check fires. Both kits are tested against a compliant
+     implementation and against one violation per clause.
+   - The store kit stayed private: `Store` is not published and cannot be injected
+     from outside, so a public kit for it would advertise a seam that does not
+     exist. The move still paid — the contract was an unexported function inside
+     `package session`, so the two decorators in `internal/event` (the store the
+     runner actually talks to) could not run it. Now they do, and they pass.
+   - The kits made two prose promises explicit in the contracts they check: a tool
+     must not panic or hang on any input (`agentcore/tool/tool.go`), and a turn is
+     bracketed — `StepStarted` first, exactly one `StepEnded`/`StepFailed` last,
+     because the host materializes the assistant's message when the turn closes
+     (`agentcore/llm/provider.go`).
+   - First run against the shipped adapters found a real violation: the OpenAI
+     adapter emitted `StepFailed` with `Text` only and no `Err`, leaving a host
+     nothing to classify with `errors.As` — the reason §3.2's `ContextOverflowError`
+     path could never work outside Anthropic. Fixed in `internal/llm/openai.go`.
+     Everything else — 11 builtins, the MCP tools, the subagent `task` tool, the
+     two adapters on both their happy path and a failed turn, `SwitchableProvider`,
+     the four stores — passed unchanged, including under `-race`.
 
 Rationale: contracts public, loop private. Third parties implement interfaces;
 they do not reach into the turn loop. Cheap to do, and it is a precondition for
@@ -638,7 +669,8 @@ catalog + delete `wailsprovider`.
 security default flips to ask.*
 
 **Phase 2 — integration surface.** R4 single host + headless `run` with NDJSON.
-R1 public contract packages (landed early, 2026-07-24) + contract test kits.
+R1 public contract packages and contract test kits (both landed early,
+2026-07-24).
 *Outcome: anything can drive atenea — CI, editors, other agents — and outside
 contributions of tools/providers become reviewable.*
 

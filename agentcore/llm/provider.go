@@ -11,9 +11,18 @@ import (
 // interrupts the turn (the shape a user interruption takes) and must close the
 // channel too: no receiver is ever left hanging.
 //
+// The turn is bracketed: it opens with StepStarted and closes with exactly one
+// StepEnded or StepFailed, the last event of the stream. That is not decoration —
+// a host materializes the assistant's message when the turn closes, so a stream
+// that simply stops loses the turn from the history. An interrupted turn is the
+// one exception: cancelling means closing the channel, whatever was in flight.
+//
 // A host may call Stream concurrently for different sessions — a main turn and
 // the subagents it spawned — so an implementation must be safe for concurrent
 // use.
+//
+// The llmtest kit checks all of this, plus the bracketing of the blocks inside
+// the turn, against an implementation.
 type Provider interface {
 	Stream(ctx context.Context, req Request) (<-chan Event, error)
 }

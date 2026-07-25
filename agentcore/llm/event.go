@@ -33,16 +33,21 @@ const (
 // Event is one event of a turn stream. Kind decides which fields are relevant;
 // the rest stay zero. Input is the raw JSON of a tool input: a consumer parses
 // it with json.Unmarshal, never by string matching, because the same model
-// escapes the same JSON differently between turns. Usage comes only in
-// StepEnded.
+// escapes the same JSON differently between turns. On ToolCall it is the COMPLETE
+// input (empty for a tool with no arguments); on ToolInputDelta it is the raw
+// fragment, which on its own is not valid JSON. Usage comes only in StepEnded.
+//
+// StepFailed carries the cause in Err and only its display form in Text: a host
+// classifies the failure with errors.As — a context overflow is compacted and
+// retried, anything else surfaces — and it cannot classify a string.
 type Event struct {
 	Kind     EventKind
 	CallID   string          // ToolCall / ToolInput*
 	ToolName string          // ToolCall
 	Input    json.RawMessage // ToolCall / ToolInputDelta: raw input JSON
-	Text     string          // TextDelta / ReasoningDelta
+	Text     string          // TextDelta / ReasoningDelta; the human-readable reason on StepRetrying / StepFailed
 	Usage    *Usage          // StepEnded only
-	Err      error
+	Err      error           // StepFailed: the cause, for the host to classify
 	// ProviderExecuted marks a ToolCall the provider ran itself: the host does
 	// NOT settle it locally, it only persists it.
 	ProviderExecuted bool

@@ -19,6 +19,12 @@ import (
 // failed; returning a Result with output describing the problem means the model
 // gets a chance to correct itself. Prefer the second for anything the model can
 // fix.
+//
+// Whatever the input, Execute has to come back: a host settles it in a goroutine
+// of the turn, so a panic takes the whole agent down and a call that never
+// returns hangs the session. Honor the context — a cancelled one is how a user
+// interruption arrives — and turn a malformed input into an error, never a panic.
+// The tooltest kit checks all of this against an implementation.
 type Tool interface {
 	Name() string
 	Description() string

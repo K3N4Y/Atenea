@@ -1,11 +1,11 @@
 ---
 updated_at: 2026-07-24
-summary: The agentcore/ boundary — which types atenea publishes as contracts, which stay private under internal/, and the rules that keep the split honest.
+summary: The agentcore/ boundary — which types atenea publishes as contracts, which stay private under internal/, the test kits that make them checkable, and the rules that keep the split honest.
 ---
 
 # Published contracts (`agentcore/`)
 
-> Status: implemented 2026-07-24 (audit recommendation R1.3).
+> Status: implemented 2026-07-24 (audit recommendations R1.3 and R1.4).
 > Module path: `github.com/K3N4Y/atenea`.
 
 ## The rule
@@ -34,6 +34,14 @@ audit](../audits/2026-07-24-agnostic-extensibility-audit.md) §4 R1.
 
 `agentcore` itself is a documentation-only package: no code, just the rule and
 the test that enforces it.
+
+Each of the two contracts a third party *implements* ships with its test kit:
+
+| Kit | Runs the contract of | Applied to |
+|---|---|---|
+| `agentcore/tool/tooltest` | `tool.Tool` | every builtin, the MCP tools, the subagent `task` tool |
+| `agentcore/llm/llmtest` | `llm.Provider` | `FakeProvider`, `SwitchableProvider`, the OpenAI and Anthropic adapters (happy path and failed turn) |
+| `internal/session/sessiontest` | `session.Store` (private) | `MemoryStore`, `SQLiteStore` (`:memory:` and file), `EmittingStore`, `ChildPermissionStore` |
 
 Two additions beyond the audit's literal list, both for coherence: `Policy` and
 `Gate` are published alongside `Decision` and `Verdict`, because the vocabulary
@@ -85,6 +93,81 @@ an alias in the matching `internal/` package. A new implementation detail belong
 in `internal/` and nowhere else. `contract.go` is what keeps that decision
 visible instead of implicit.
 
+## Contract test kits
+
+> Status: implemented 2026-07-24 (audit recommendation R1.4).
+
+A published interface is a promise, and most of what it promises cannot be
+expressed in a type. `tool.Tool` compiles whether or not `Execute` panics on a
+malformed input; `llm.Provider` compiles whether or not `Stream` ever closes its
+channel. The kits are that unwritable half, made runnable:
+
+```go
+tooltest.Contract(t, func(t *testing.T) tooltest.Subject {
+    return tooltest.Subject{Tool: myTool, Input: json.RawMessage(`{"path":"foo.go"}`)}
+})
+
+llmtest.Contract(t, func(t *testing.T) llmtest.Subject {
+    return llmtest.Subject{Provider: myAdapter, Request: req}
+})
+```
+
+Both take a **factory**, not a value: several checks execute for real and must not
+observe each other's side effects, so each gets its own subject (and with it its
+own `t.TempDir`, its own stub server). Both take the happy-path input or request
+with the subject, because only the implementer knows what their tool accepts or
+which model their adapter serves.
+
+What they check, and why each clause is in there:
+
+| `tooltest` | Because |
+|---|---|
+| name stable, `[A-Za-z0-9_-]+`, ≤128 bytes | the registry indexes by it and the provider rejects the whole tool list over one bad name |
+| description stable and not blank | it is the whole of what the model knows about the tool |
+| schema a stable `{"type":"object"}` | it travels to the provider as raw JSON Schema |
+| accepts its declared input | a tool that rejects its own happy path |
+| accepts that input re-serialized | the same model spaces and escapes the same JSON differently between turns, so an input read by matching bytes breaks on turn two |
+| survives malformed input | the model will send `{`, `null` and `[]` eventually |
+| returns on a cancelled context | a cancelled context is how a user interruption arrives |
+| safe for concurrent use | the turn settles tools in parallel goroutines |
+
+| `llmtest` | Because |
+|---|---|
+| the channel closes | a consumer drains with `for ev := range out`; a channel left open is a hung session and a leaked goroutine |
+| the turn opens with `StepStarted` and closes with exactly one terminal event, last | the host materializes the assistant's message when the turn closes, so a stream that just stops loses the turn from the history |
+| `StepFailed` carries `Err` | the host classifies with `errors.As`; it cannot classify a string |
+| `Usage` only on `StepEnded` | the turn's tokens are accounted once |
+| text, reasoning and per-call tool inputs are bracketed | a delta with no open block, or a block never closed, leaves a UI waiting |
+| `ToolCall` carries an id, a name and the complete input | a call without them is unanswerable |
+| cancellation closes the channel | interrupting a turn must not leak the goroutine behind it |
+| safe for concurrent use | a main turn and its subagents share one provider |
+
+Neither kit says anything about what the tool *does* or whether the model answered
+*well*. That is the implementation's own test, and it is the half a host does not
+need to trust.
+
+Three decisions worth recording:
+
+- **The checks report through a two-method `reporter`, not `*testing.T`.** That is
+  what lets each kit's own test feed it deliberately broken implementations and
+  assert that the right check complains. A contract kit that silently passes
+  everything is worse than no kit, so both kits are tested against a compliant
+  implementation (nothing may be reported) and against one violation per clause
+  (the check that owns it must fire).
+- **The kits are meaningful under `-race`.** The concurrency clause is a race
+  detector clause; without the flag it only proves nothing panicked.
+- **The store kit stays under `internal/`.** `session.Store` is not published (the
+  shape of the log is a contract, the persistence is not), and there is no way to
+  inject a Store from outside, so publishing a kit for one would advertise a seam
+  that does not exist. What the move bought is real anyway: the contract used to be
+  an unexported function inside `package session`, which meant the two decorators
+  in `internal/event` — the store the runner actually talks to — could not run it.
+  Now they do.
+
+The kits already earned their keep: the first run of `llmtest` against the shipped
+adapters found that the OpenAI adapter emitted `StepFailed` with only `Text` and
+no `Err`, so a host had nothing to classify (fixed in `internal/llm/openai.go`).
+
 ## Invariants, enforced by test
 
 `agentcore/boundary_test.go` parses the imports of every Go file under
@@ -106,8 +189,15 @@ toolchain call, no build tags).
 agentcore/permission ──> agentcore/tool
 agentcore/session       agentcore/llm      (both standalone)
 
+agentcore/tool/tooltest ──> agentcore/tool      (a kit depends on its contract,
+agentcore/llm/llmtest   ──> agentcore/llm        never the reverse)
+
 internal/*  ──> agentcore/*                (never the reverse)
 ```
+
+The kits live under `agentcore/` and are walked by the same boundary test, which
+they satisfy: `testing` is standard library, so a kit needs nothing a contract
+cannot have.
 
 `agentcore/session` deliberately does not import `agentcore/llm`: `session.Usage`
 mirrors `llm.Usage` and the producer copies the fields when crossing. The durable
@@ -123,10 +213,9 @@ they are consumed, and the dependency stays `permission -> tool`.
 
 ## What this does not yet give a third party
 
-R1.3 makes the contracts importable. It does not, by itself, make the module
-usable:
+R1.3 makes the contracts importable and R1.4 makes them checkable. Neither, by
+itself, makes the module usable:
 
-- **No contract test kits** (`tooltest.Contract`, `llmtest.Contract`) — audit R1.4.
 - **No stability promise or version tag.** Nothing under `agentcore/` is v1 yet;
   R2, R3 and R5 will each add to these packages, and the additive shape of the
   types is what keeps that from breaking a consumer.

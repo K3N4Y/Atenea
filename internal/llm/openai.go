@@ -347,7 +347,10 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request) (<-chan Event,
 		}
 
 		if err := stream.Err(); err != nil {
-			emit(ctx, out, Event{Kind: StepFailed, Text: fmt.Sprintf("%s (%s): %v", p.label, model, err)})
+			// Err carries the cause and Text only shows it: a host classifies the
+			// failure through errors.As (a context overflow is compacted and
+			// retried, anything else surfaces), and it cannot classify a string.
+			emit(ctx, out, Event{Kind: StepFailed, Err: err, Text: fmt.Sprintf("%s (%s): %v", p.label, model, err)})
 			return
 		}
 

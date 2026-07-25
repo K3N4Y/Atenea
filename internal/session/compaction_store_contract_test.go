@@ -647,6 +647,38 @@ func TestSQLiteStore_CompactionContract(t *testing.T) {
 	})
 }
 
+// TestMemoryStore_CommitCompactionRefreshesLastActivity keeps a compaction from
+// looking like inactivity: committing one is activity on the session, so the
+// summary a session list sorts by has to move forward with it.
+func TestMemoryStore_CommitCompactionRefreshesLastActivity(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore()
+
+	appendCompactionMessage(t, store, ctx, "s1", Message{ID: "u1", Role: RoleUser, Text: "first"})
+	coveredThroughSeq := appendCompactionMessage(t, store, ctx, "s1", Message{ID: "a1", Role: RoleAssistant, Text: "done"})
+	preservedFromSeq := appendCompactionMessage(t, store, ctx, "s1", Message{ID: "u2", Role: RoleUser, Text: "current"})
+	checkpoint := compactionCheckpoint(compactionEpoch(t, store, ctx, "s1"), coveredThroughSeq, preservedFromSeq, preservedFromSeq)
+
+	lowerBound := time.UnixMilli(time.Now().UTC().UnixMilli()).UTC()
+	if _, err := store.CommitCompaction(ctx, "s1", checkpoint); err != nil {
+		t.Fatalf("CommitCompaction: %v", err)
+	}
+
+	summaries, err := store.Sessions(ctx)
+	if err != nil {
+		t.Fatalf("Sessions: %v", err)
+	}
+	if len(summaries) != 1 {
+		t.Fatalf("Sessions: got %+v, want one summary", summaries)
+	}
+	if summaries[0].LastActivity.Before(lowerBound) {
+		t.Fatalf("CommitCompaction LastActivity %v is before lower bound %v", summaries[0].LastActivity, lowerBound)
+	}
+	if summaries[0].LastActivity.Location() != time.UTC {
+		t.Fatalf("CommitCompaction LastActivity %v is not UTC", summaries[0].LastActivity)
+	}
+}
+
 func TestMemoryStore_CommitCompactionChecksCancellationAfterLock(t *testing.T) {
 	store := NewMemoryStore()
 	ctx := context.Background()

@@ -63,6 +63,11 @@ wails build         # production build
 - Tests next to the code: `foo.go` -> `foo_test.go`, same package or `_test`.
 - Name tests by behavior: `TestRunner_StopsAtStepLimit`.
 - Concurrent code (goroutines, channels, `errgroup`) is tested with `-race`.
+- A new tool, model provider or session store runs its contract kit
+  (`tooltest.Contract`, `llmtest.Contract`, `sessiontest.StoreContract`) on top
+  of its own tests: the kit covers what every implementation owes the host, the
+  tests cover what this one does. See
+  [Published contracts](.okf/architecture/public-contracts.md#contract-test-kits).
 - The Wails boundary (`runtime.EventsEmit`) lives in `internal/event`; test
   the runner against a fake `EventBus`, not against Wails.
 - Documentation lives in `.okf/`, uses Markdown files, and is written in

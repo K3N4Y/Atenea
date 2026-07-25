@@ -18,6 +18,27 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// sessionSummaryProjection is a SessionSummary without its timestamp, so a
+// comparison can be made against a literal: LastActivity is asserted on its own
+// terms (non-zero, UTC, moving forward) rather than pinned to a value.
+type sessionSummaryProjection struct {
+	ID    string
+	Title string
+	Cwd   string
+}
+
+func projectSessionSummaries(summaries []SessionSummary) []sessionSummaryProjection {
+	projected := make([]sessionSummaryProjection, 0, len(summaries))
+	for _, summary := range summaries {
+		projected = append(projected, sessionSummaryProjection{
+			ID:    summary.ID,
+			Title: summary.Title,
+			Cwd:   summary.Cwd,
+		})
+	}
+	return projected
+}
+
 // TestSQLiteStore_ReopenResumesLog verifica la propiedad que solo el store
 // durable sobre archivo puede expresar: tras cerrar y reabrir la base en la
 // misma ruta, el log se reanuda. Los mensajes se reconstruyen en orden y el

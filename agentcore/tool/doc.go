@@ -8,4 +8,8 @@
 // What is NOT here is intentional: the registry, the output capping, the input
 // repair pass and the tools atenea ships are private under internal/tool. A
 // third party implements this interface; it does not reach into the turn loop.
+//
+// The contract has an executable half: tooltest.Contract runs it against an
+// implementation. Every tool atenea ships goes through it, including the ones it
+// discovers over MCP.
 package tool

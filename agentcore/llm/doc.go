@@ -10,4 +10,8 @@
 // the model catalog and the provider wiring are private under internal/. This
 // package is the surface third parties implement, so it is the surface that has
 // to stay stable.
+//
+// The contract has an executable half: llmtest.Contract runs it against an
+// implementation. The adapters atenea ships go through it, on their happy path
+// and on a failed turn.
 package llm
