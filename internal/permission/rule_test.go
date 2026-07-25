@@ -115,15 +115,15 @@ func TestRuleFor_FilesystemToolsGrantTheWholeTool(t *testing.T) {
 	}
 }
 
-// TestRule_MatchesOnlyTheGrantedShape: a bash grant re-derives the prefix of
+// TestMatches_OnlyTheGrantedShape: a bash grant re-derives the prefix of
 // every incoming command, so a command the user could not have granted can
 // never be waved through by an existing grant either.
-func TestRule_MatchesOnlyTheGrantedShape(t *testing.T) {
+func TestMatches_OnlyTheGrantedShape(t *testing.T) {
 	goTest := Rule{Tool: "bash", Prefix: "go test"}
 	matching := []string{"go test ./...", "go test -run TestX ./internal", "go   test"}
 	for _, command := range matching {
-		if !goTest.Matches(tool.Call{Name: "bash", Input: bashInput(command)}) {
-			t.Errorf("Rule{go test}.Matches(%q) = false, want true", command)
+		if !matches(goTest, tool.Call{Name: "bash", Input: bashInput(command)}) {
+			t.Errorf("matches(Rule{go test}, %q) = false, want true", command)
 		}
 	}
 	notMatching := []string{
@@ -133,22 +133,22 @@ func TestRule_MatchesOnlyTheGrantedShape(t *testing.T) {
 		"gotest ./...",
 	}
 	for _, command := range notMatching {
-		if goTest.Matches(tool.Call{Name: "bash", Input: bashInput(command)}) {
-			t.Errorf("Rule{go test}.Matches(%q) = true, want false", command)
+		if matches(goTest, tool.Call{Name: "bash", Input: bashInput(command)}) {
+			t.Errorf("matches(Rule{go test}, %q) = true, want false", command)
 		}
 	}
-	if goTest.Matches(tool.Call{Name: "write", Input: []byte(`{"path":"a.txt"}`)}) {
+	if matches(goTest, tool.Call{Name: "write", Input: []byte(`{"path":"a.txt"}`)}) {
 		t.Error("a bash rule must not match a write call")
 	}
 
 	write := Rule{Tool: "write"}
-	if !write.Matches(tool.Call{Name: "write", Input: []byte(`{"path":"b.txt","content":"x"}`)}) {
-		t.Error("Rule{write}.Matches(any write) = false, want true")
+	if !matches(write, tool.Call{Name: "write", Input: []byte(`{"path":"b.txt","content":"x"}`)}) {
+		t.Error("matches(Rule{write}, any write) = false, want true")
 	}
-	if write.Matches(tool.Call{Name: "edit", Input: []byte(`{"patch":"x"}`)}) {
+	if matches(write, tool.Call{Name: "edit", Input: []byte(`{"patch":"x"}`)}) {
 		t.Error("Rule{write} must not match an edit call")
 	}
-	if (Rule{}).Matches(tool.Call{Name: "bash", Input: bashInput("ls")}) {
+	if matches(Rule{}, tool.Call{Name: "bash", Input: bashInput("ls")}) {
 		t.Error("the zero Rule must match nothing")
 	}
 }

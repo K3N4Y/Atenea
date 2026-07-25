@@ -7,14 +7,6 @@ import (
 	"github.com/K3N4Y/atenea/internal/tool"
 )
 
-// Rule is the shape of the tool calls a session grant covers: the tool it
-// applies to and, for bash, the command prefix the user authorized. An empty
-// Prefix grants the whole tool for the rest of the session.
-type Rule struct {
-	Tool   string
-	Prefix string
-}
-
 // shellMetacharacters are the characters that let a command line run
 // something other than the command it appears to run: chaining, redirection,
 // substitution and escaping. A prefix says nothing about what those would
@@ -46,28 +38,23 @@ func RuleFor(toolName string, input []byte) (Rule, bool) {
 	return Rule{}, false
 }
 
-// Matches reports whether the call falls under the rule. A bash rule
+// matches reports whether the call falls under the rule. A bash rule
 // re-derives the prefix from the incoming command, so the grantability test
 // runs again on every match: a command the user could not have granted can
 // never be matched by a grant either.
-func (r Rule) Matches(call tool.Call) bool {
-	if r.Tool == "" || !strings.EqualFold(r.Tool, call.Name) {
+//
+// It is a function rather than a method on Rule because the derivation it
+// depends on is tool-specific: the contract publishes the grant's shape, this
+// package owns how a given tool's input reduces to it.
+func matches(rule Rule, call tool.Call) bool {
+	if rule.Tool == "" || !strings.EqualFold(rule.Tool, call.Name) {
 		return false
 	}
-	if r.Prefix == "" {
+	if rule.Prefix == "" {
 		return true
 	}
 	prefix, ok := grantablePrefix(bashCommand(call.Input))
-	return ok && prefix == r.Prefix
-}
-
-// Label names the subject the rule authorizes, for the panel's action row
-// ("go test", "write").
-func (r Rule) Label() string {
-	if r.Prefix != "" {
-		return r.Prefix
-	}
-	return r.Tool
+	return ok && prefix == rule.Prefix
 }
 
 // grantablePrefix derives the widest honest prefix of a bash command: the

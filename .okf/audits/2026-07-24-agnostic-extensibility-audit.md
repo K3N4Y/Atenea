@@ -60,7 +60,7 @@ of them delete code.
 | Prompt assembly | **Missing** — fixed string concatenation | `internal/session/prompt/prompt.go:68-81` |
 | Composition root | **Weak** — two outer roots, duplicated provider bootstrap and demo provider | `app.go:76-152` vs `cmd/atenea/main.go:64-130` |
 | CLI / headless | **Missing** | `cmd/atenea/main.go:53-62` |
-| Public API | **Missing** — 0 importable packages; module path now fetchable (R1.1 done) | `go.mod:1`, `go list ./...` |
+| Public API | **Partial** — 5 importable contract packages under `agentcore/`, boundary enforced by test; implementations still private (R1.3 done, kits R1.4 pending) | `agentcore/`, `agentcore/boundary_test.go` |
 | Branding/paths | **Weak** — `atenea` literal in 6+ path builders, no XDG | §3.6 |
 | MCP as plugin substrate | **Partial** — first-class in the registry, but stdio-only, allow-by-default, invisible to subagents | §3.8 |
 | Contributor docs | **Weak** — no CONTRIBUTING; `AGENTS.md` points at two files that do not exist; LICENSE now present (R1.2 done) | §3.9 |
@@ -70,9 +70,14 @@ of them delete code.
 ### 3.1 The module cannot be consumed — at all
 
 > `[done 2026-07-24]` The module path is now `github.com/K3N4Y/atenea` and the
-> dead `replace` comment is gone (R1.1). The rest of this finding stands: every
-> package is still under `internal/`, so the importable surface remains zero
-> until R1.3 lands.
+> dead `replace` comment is gone (R1.1). The contract types moved to
+> `agentcore/{tool,llm,session,permission}` (R1.3), so the importable surface is
+> no longer zero: a third party can implement a tool, a provider, a policy or a
+> gate, and read the durable event stream. Everything that runs the agent stays
+> under `internal/` on purpose — see
+> [Published contracts](../architecture/public-contracts.md). What remains of
+> this finding is the missing contract test kits (R1.4) and the absence of any
+> stability promise on the new packages.
 
 `go.mod:1` is `module atenea`. Even if packages were moved out of `internal/`,
 `go get`/import is impossible: there is no resolvable path. Combined with 100% of
@@ -352,6 +357,21 @@ Ordered by leverage. R1–R3 are the ones that actually unlock third parties.
    Keep `runner`, `wiring`, `tui`, stores internal until they have earned
    stability. Migrate with type aliases (`type Tool = tool.Tool`) so no
    call site changes in one commit.
+   `[done 2026-07-24]` — the four packages exist and the aliases live in one
+   `contract.go` per internal package, so no call site moved. Documented in
+   [Published contracts](../architecture/public-contracts.md). Three decisions
+   worth recording:
+   - `Policy` and `Gate` were published alongside `Decision`/`Verdict`: the
+     vocabulary is useless without the interfaces that speak it.
+   - `Rule.Matches` came off the type. The shape of a grant is a contract;
+     re-deriving a bash prefix from a tool's input is not, and publishing it
+     would freeze bash semantics into the API that R2 is meant to replace.
+   - R2's capability interfaces must be declared in `agentcore/permission`, not
+     `agentcore/tool`: `Grantable` returns a `Rule` while `Policy` takes a
+     `Call`, so declaring them tool-side would be an import cycle.
+   `agentcore/boundary_test.go` enforces the two invariants that keep this from
+   rotting: no package under `agentcore/` may import `internal/`, and none may
+   import a third-party module.
 4. Ship **contract test kits** next to the contracts: `tooltest.Contract(t, tool)`,
    `llmtest.Contract(t, provider)`, and export the existing store contract
    (`store_contract_test.go` already proves the pattern works). This is how you
@@ -618,7 +638,7 @@ catalog + delete `wailsprovider`.
 security default flips to ask.*
 
 **Phase 2 — integration surface.** R4 single host + headless `run` with NDJSON.
-R1 public contract packages + contract test kits.
+R1 public contract packages (landed early, 2026-07-24) + contract test kits.
 *Outcome: anything can drive atenea — CI, editors, other agents — and outside
 contributions of tools/providers become reviewable.*
 

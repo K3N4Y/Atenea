@@ -7,13 +7,6 @@ import (
 
 var ErrNothingToUndo = errors.New("nothing to undo")
 
-type PromptCheckpoint struct {
-	ID         string
-	Prompt     string
-	BeforeTree string
-	AfterTree  string
-}
-
 type EffectiveCheckpoint struct {
 	ID         string
 	Prompt     string

@@ -2,47 +2,12 @@ package tool
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
 
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/tool/repair"
 )
-
-// Tool es una herramienta registrada: su esquema anunciable y su ejecucion. El
-// registry la materializa (Name/Description/Schema -> llm.ToolDef) y la asienta
-// (Execute). Execute recibe el input JSON crudo del modelo y lo parsea con
-// json.Unmarshal (nunca por match de string: el modelo escapa el JSON distinto
-// entre turnos, ver llm.Event.Input). Devuelve el Result completo; el registry
-// se encarga de acotarlo.
-type Tool interface {
-	Name() string
-	Description() string
-	Schema() json.RawMessage
-	Execute(ctx context.Context, input json.RawMessage) (Result, error)
-}
-
-// Call es una tool call que Settle debe asentar. En M5 el loop de consumo la
-// arma desde el evento del proveedor: Call{ID: ev.CallID, Name: ev.ToolName,
-// Input: ev.Input}. Un struct nombrado se lee mejor que tres args posicionales y
-// crece (p.ej. metadata de epoch en M7) sin cambiar la firma de Settle.
-type Call struct {
-	ID    string
-	Name  string
-	Input json.RawMessage
-}
-
-// Result es el resultado asentado de una tool call. Output es lo que vera el
-// modelo en el siguiente turno (acotado por el OutputStore si era grande);
-// Truncated marca que es una version acotada y que el output completo quedo en el
-// OutputStore, referenciable por el CallID de la Call. Diff es un diff unificado
-// SOLO para la UI (edit/write): no lo ve el modelo y no se acota.
-type Result struct {
-	Output    string
-	Truncated bool
-	Diff      string
-}
 
 // SettleFunc asienta una tool call: valida contra el set materializado,
 // repairs the input against the tool's schema (repair.Repair), ejecuta y

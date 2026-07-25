@@ -18,25 +18,9 @@ var (
 	ErrCompactionRequiresCommit    = errors.New("compaction events must use CommitCompaction")
 )
 
-type CompactionReason string
-
-const (
-	CompactionPreventive CompactionReason = "preventive"
-	CompactionOverflow   CompactionReason = "overflow"
-)
-
-type StructuredSummary struct {
-	CurrentGoal string   `json:"current_goal"`
-	Constraints []string `json:"constraints_and_instructions"`
-	Decisions   []string `json:"decisions"`
-	Completed   []string `json:"completed_work"`
-	Files       []string `json:"files_and_changes"`
-	ToolResults []string `json:"relevant_tool_results"`
-	Failures    []string `json:"failures_and_attempts"`
-	Pending     []string `json:"pending_and_next_step"`
-	Invariants  []string `json:"facts_not_to_reinterpret"`
-}
-
+// summaryFields is the closed set of StructuredSummary fields keyed by whether
+// the field is a list. It drives both the presence check and the "must be an
+// array" check, so the decoder never trusts a summary the model shortened.
 var summaryFields = map[string]bool{
 	"current_goal":                 false,
 	"constraints_and_instructions": true,
@@ -122,18 +106,6 @@ func decodeSummaryFields(raw []byte) (map[string]json.RawMessage, error) {
 		}
 	}
 	return fields, nil
-}
-
-type CompactionCheckpoint struct {
-	Summary              StructuredSummary `json:"summary"`
-	ExpectedEpoch        ContextEpoch      `json:"expected_epoch"`
-	CoveredThroughSeq    Seq               `json:"covered_through_seq"`
-	AnchorUserSeq        Seq               `json:"anchor_user_seq"`
-	PreservedFromSeq     Seq               `json:"preserved_from_seq"`
-	Model                string            `json:"model"`
-	Reason               CompactionReason  `json:"reason"`
-	InputTokensBefore    int               `json:"input_tokens_before"`
-	EstimatedTokensAfter int               `json:"estimated_tokens_after"`
 }
 
 type RunnerContext struct {

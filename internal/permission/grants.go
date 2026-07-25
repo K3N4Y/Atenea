@@ -41,7 +41,7 @@ func (g *SessionGrants) Decide(sessionID string, call tool.Call) Decision {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	for _, rule := range g.rules[sessionID] {
-		if rule.Matches(call) {
+		if matches(rule, call) {
 			return Allow
 		}
 	}

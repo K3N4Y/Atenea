@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-21
+updated_at: 2026-07-24
 summary: Architecture of Atenea’s Go agent execution loop.
 ---
 
@@ -46,14 +46,19 @@ that we want in Athena:
 atenea/
   app.go                      // adapter Wails sobre agent.Service
   main.go                     // wails.Run(...)
+  agentcore/                  // published contracts (see public-contracts.md)
+    tool/tool.go              // Tool, Call, Result
+    llm/{provider,event}.go   // Provider, Request, Message, Event, Usage
+    session/event.go          // SessionEvent, EventKind, Seq
+    permission/{policy,gate}.go // Policy, Gate, Decision, Verdict, Rule
   internal/
     agent/
       service.go              // lifecycle shared by Wails and TUI
     session/
-      session.go              // agregado durable: Session, Message, Seq
+      session.go              // agregado durable: Session
+      contract.go             // aliases de agentcore/session
       inbox.go                // input durable: queue | steer
       projection.go           // proyecciones puras compartidas por los stores
-      epoch.go                // ContextEpoch
       store.go                // interfaces Store y CompactionStore
       memstore.go             // adaptador en memoria
       sqlitestore.go          // adaptador SQLite durable
@@ -62,11 +67,13 @@ atenea/
         turn.go               // runTurn(): un turno de proveedor
         publish.go            // traduce eventos de provider a eventos de sesion
     llm/
-      provider.go             // interface Provider, Request, Event
+      contract.go             // aliases de agentcore/llm
       anthropic.go            // adaptador concreto (Claude)
+      openai.go               // adaptador OpenAI-compatible
     tool/
+      contract.go             // aliases de agentcore/tool
       registry.go             // Materialize(), settle()
-      builtin.go              // bash, read, edit, write, grep, glob...
+      bash.go, read.go, ...   // builtins
     event/
       bus.go                  // EventBus: publish + suscripcion (para Wails/SSE)
 ```
@@ -78,7 +85,7 @@ observability contract towards the UI.
 ## Main types
 
 ```go
-// internal/llm/provider.go
+// agentcore/llm/provider.go
 type Provider interface {
     // Stream produce exactamente un turno. El channel se cierra al terminar.
     // Cancelar ctx interrumpe el turno (equivalente a una interrupcion de usuario).

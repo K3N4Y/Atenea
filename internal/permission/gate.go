@@ -5,46 +5,6 @@ import (
 	"sync"
 )
 
-// Request describes the tool call waiting for user approval (ask-before-run).
-// The runner builds it and hands it to the Gate; the implementation
-// correlates it by (SessionID, CallID) with the response arriving from the
-// UI.
-type Request struct {
-	SessionID string
-	CallID    string
-	ToolName  string
-	Input     []byte // raw JSON input of the tool call (informational for the UI)
-}
-
-// Verdict is the user's answer to a Request. It is the UI's vocabulary, not
-// the policy's: the gate only cares whether the call may run, and the resolver
-// turns AllowedSession into a SessionGrants entry so calls of the same shape
-// stop asking for the rest of the session.
-type Verdict int
-
-const (
-	// Denied fails the call. Zero value: an unanswered request denies.
-	Denied Verdict = iota
-	// AllowedOnce runs this call and nothing more.
-	AllowedOnce
-	// AllowedSession runs this call and grants its shape (see Rule) for the
-	// rest of the session.
-	AllowedSession
-)
-
-// Approved reports whether the verdict lets the call run.
-func (v Verdict) Approved() bool { return v != Denied }
-
-// Gate is the ask-before-run boundary: Ask blocks until the user approves or
-// denies the tool call (or the ctx is cancelled). The runner consumes it as
-// an optional dependency (nil = never asks); the concrete implementation is
-// MemoryGate, which the UI resolves via an App binding or the TUI engine.
-type Gate interface {
-	// Ask blocks until the user's decision on req and returns approved=true when
-	// approved. A cancelled ctx (stop) must unblock Ask with an error.
-	Ask(ctx context.Context, req Request) (approved bool, err error)
-}
-
 // MemoryGate is the in-memory ask-before-run broker: Ask registers a pending
 // request per (SessionID, CallID) and blocks; Resolve (invoked by an App
 // binding or the TUI engine from the UI) delivers the decision to the waiting

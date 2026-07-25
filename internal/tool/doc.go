@@ -1,25 +1,33 @@
-// Package tool implementa el registry de herramientas: Materialize, settle y los
-// builtins. M4 aterrizo el Registry (Materialize/Settle), los tipos del contrato
-// (Tool, Call, Result, Permissions, Materialized, UnknownToolError), el
-// OutputStore que acota el output grande por callID y el primer builtin
-// ejecutable, Echo. Ademas aterrizaron read y edit, apoyados en el motor hashline
-// del subpaquete internal/tool/hashline (hash de frescura + snapshot del archivo
-// + lineas vistas): el read numera lineas tras un header [path#HASH] y graba el
-// snapshot; el edit aplica un patch hashline anclado contra ese header y consume
-// el SnapshotStore que el read grabo; el write crea un archivo nuevo con su
-// contenido completo (la via para archivos nuevos, que el edit no puede crear) y
-// graba su snapshot para que un edit posterior ancle sin re-leer (los tres
-// comparten root y snaps por sesion). glob busca archivos por patron ripgrep y
-// devuelve rutas relativas al workspace; grep busca contenido y devuelve lineas en
-// formato hashline para encadenar edit. bash ya aterrizo: corre comandos con
-// bash -c por llamada (sin sesion persistente, el cwd y el env no sobreviven entre
-// calls), combina stdout+stderr, aplica un timeout por tiers (rapido por defecto,
-// lento con slow_ok), mata el grupo de procesos al expirar, scrubea los secretos
-// del env y acota el output head+tail. Settle now passes each call's input
-// through the repair layer of the internal/tool/repair subpackage
-// (validate-then-repair) BEFORE Execute: an almost-valid input is repaired
-// against the tool's schema and notes about what was repaired are prepended to
-// the output as <repair_note> lines so the model corrects its next call; an
-// irreparable input returns a model-readable error without executing the
-// tool.
+// Package tool is the private side of the tool boundary: the registry that
+// materializes and settles tool calls, the output capping, and the built-in
+// tools atenea ships. The contract itself — Tool, Call, Result — is published in
+// agentcore/tool and re-exported here by contract.go.
+//
+// The Registry announces the permitted subset of its catalog as llm.ToolDef and
+// returns a SettleFunc closed over that same subset, so a denied or unknown tool
+// fails before executing and produces no side effects. Settlement passes every
+// input through the repair layer of internal/tool/repair BEFORE Execute:
+// an almost-valid input is repaired against the tool's schema and what was
+// repaired is prepended to the output as <repair_note> lines so the model
+// corrects its next call, while an irreparable input returns a model-readable
+// error without executing anything. The OutputStore then caps large output by
+// call id, keeping the full text addressable.
+//
+// The built-ins:
+//
+//   - read, edit and write share the hashline engine of internal/tool/hashline
+//     (freshness hash + file snapshot + lines seen): read numbers lines under a
+//     [path#HASH] header and records the snapshot, edit applies a hashline patch
+//     anchored to that header, and write creates a new file — the path edit
+//     cannot take — recording its snapshot so a later edit anchors without
+//     re-reading.
+//   - glob finds files by ripgrep pattern and returns workspace-relative paths;
+//     grep searches content and returns lines in hashline format so an edit can
+//     be chained onto the result.
+//   - bash runs a command per call with bash -c (no persistent session: cwd and
+//     env do not survive between calls), combines stdout and stderr, applies a
+//     tiered timeout (fast by default, slow with slow_ok), kills the process
+//     group on expiry, scrubs secrets from the environment and caps output
+//     head+tail.
+//   - web_fetch, skill, todo_write, present_plan and echo complete the set.
 package tool

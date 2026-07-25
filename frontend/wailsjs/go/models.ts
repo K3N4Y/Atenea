@@ -21,56 +21,6 @@ export namespace command {
 
 export namespace main {
 	
-	export class GitChange {
-	    path: string;
-	    status: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new GitChange(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.path = source["path"];
-	        this.status = source["status"];
-	    }
-	}
-	export class GitStatus {
-	    isRepo: boolean;
-	    staged: GitChange[];
-	    unstaged: GitChange[];
-	    untracked: GitChange[];
-	
-	    static createFrom(source: any = {}) {
-	        return new GitStatus(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.isRepo = source["isRepo"];
-	        this.staged = this.convertValues(source["staged"], GitChange);
-	        this.unstaged = this.convertValues(source["unstaged"], GitChange);
-	        this.untracked = this.convertValues(source["untracked"], GitChange);
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
 	export class ProviderConfig {
 	    kind: string;
 	    baseURL: string;
@@ -256,6 +206,7 @@ export namespace session {
 	    Text: string;
 	    ToolCalls: ToolCall[];
 	    ToolCallID: string;
+	    IsError: boolean;
 	    Seq: number;
 	
 	    static createFrom(source: any = {}) {
@@ -269,6 +220,7 @@ export namespace session {
 	        this.Text = source["Text"];
 	        this.ToolCalls = this.convertValues(source["ToolCalls"], ToolCall);
 	        this.ToolCallID = source["ToolCallID"];
+	        this.IsError = source["IsError"];
 	        this.Seq = source["Seq"];
 	    }
 	
@@ -314,6 +266,7 @@ export namespace session {
 	    ReasoningTokens: number;
 	    CacheReadTokens: number;
 	    CacheWriteTokens: number;
+	    CacheableInputTokens: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new Usage(source);
@@ -326,6 +279,7 @@ export namespace session {
 	        this.ReasoningTokens = source["ReasoningTokens"];
 	        this.CacheReadTokens = source["CacheReadTokens"];
 	        this.CacheWriteTokens = source["CacheWriteTokens"];
+	        this.CacheableInputTokens = source["CacheableInputTokens"];
 	    }
 	}
 	export class SessionEvent {
@@ -421,6 +375,61 @@ export namespace session {
 	}
 	
 	
+
+}
+
+export namespace workspacegit {
+	
+	export class Change {
+	    path: string;
+	    status: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Change(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.status = source["status"];
+	    }
+	}
+	export class Status {
+	    isRepo: boolean;
+	    staged: Change[];
+	    unstaged: Change[];
+	    untracked: Change[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Status(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.isRepo = source["isRepo"];
+	        this.staged = this.convertValues(source["staged"], Change);
+	        this.unstaged = this.convertValues(source["unstaged"], Change);
+	        this.untracked = this.convertValues(source["untracked"], Change);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 
 }
 

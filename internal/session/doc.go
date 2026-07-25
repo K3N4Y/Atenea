@@ -1,21 +1,25 @@
-// Package session concentra el dominio durable del agente. M1 define los tipos
-// base (Seq, Role, Message, SessionEvent, Session) y el Store: un log de eventos
-// append-only como unica fuente de verdad, con los mensajes derivados por
-// proyeccion. M3 suma la taxonomia de streaming de forma aditiva sobre
-// SessionEvent (EventKind con las constantes Step.* / Text.* / Reasoning.* /
-// Tool.* y el tipo Usage). M5 suma, de forma aditiva sobre SessionEvent, el campo
-// Error (el mensaje de fallo de una tool, Tool.Failed; M8 lo reutiliza para
-// Step.Failed). M6 suma, de forma aditiva, el Inbox: el input durable de la
-// sesion (queue/steer) detras de una interface, con la implementacion en memoria
-// MemoryInbox (dos colas FIFO por sesion); el runner lo drena y promueve a
-// mensajes del historial. M7 suma el ContextEpoch: la foto del contexto del
-// turno (Agent, Model, BaselineSeq, Revision) que el runner compara para detectar
-// cambios concurrentes entre preparar un turno y llamar al proveedor, expuesta por
-// Store.Epoch (MemoryStore devuelve un epoch estable en cero, asi el camino feliz
-// no reconstruye; el driver real del epoch llega en M10). M8 suma
-// PendingToolCalls como proyeccion durable de Tool.Called sin Tool.Success ni
-// Tool.Failed posterior; el runner la usa al reanudar tras crash para cerrar
-// tools colgadas antes de abrir el siguiente turno. M10 suma SQLiteStore: la
-// implementacion durable del Store (log de eventos en SQLite) detras de la misma
-// interface, intercambiable con MemoryStore y validada por el mismo contrato.
+// Package session is the private side of the durable session domain: the Store
+// and its two implementations, the projections that fold the event log, and the
+// validation that guards what enters it. The event stream itself — SessionEvent,
+// EventKind and their payloads — is published in agentcore/session and
+// re-exported here by contract.go.
+//
+// The Store is an append-only event log as the single source of truth, with
+// everything else derived by projection:
+//
+//   - Messages reprojects the conversation, coalescing each assistant turn's
+//     text with its tool calls into one message.
+//   - PendingToolCalls projects a Tool.Called with no later Tool.Success or
+//     Tool.Failed, which is how a resumed session closes tool calls left hanging
+//     by a crash before opening the next turn.
+//   - Epoch exposes the ContextEpoch of a turn so the runner can detect a
+//     context change that happened between preparing a request and sending it.
+//   - CommitCompaction is the only way a Context.Compacted event enters the log,
+//     so a checkpoint is always validated and always checked against the epoch it
+//     was computed for.
+//
+// MemoryStore and SQLiteStore are interchangeable behind the same interface and
+// validated by the same contract test. The Inbox is the session's durable input
+// (queue and steer) behind its own interface, drained by the runner and promoted
+// into history messages.
 package session

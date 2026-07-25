@@ -1,19 +1,16 @@
-// Package llm define la frontera con los proveedores de modelo. M2 fija el
-// contrato: la interface Provider, los tipos Request, Event, EventKind y Usage,
-// y un FakeProvider scriptable que reproduce un guion determinista de eventos
-// por un channel para tests sin red. El adaptador real (Claude/Anthropic) entra
-// en M10 detras de esta misma interface. M4 sumo, de forma aditiva, el tipo
-// ToolDef: el esquema anunciable de una tool que el registry (internal/tool)
-// materializa y que M5 pondra en Request.Tools. M5 hizo crecer el Request de
-// forma aditiva con Messages (el historial proyectado en el formato del
-// proveedor, via el nuevo tipo Message) y Tools (las defs materializadas), y sumo
-// el campo Event.ProviderExecuted, que marca una tool call que el proveedor
-// ejecuto el mismo. M10 suma el primer adaptador real detras de esta interface:
-// OpenAIProvider, que habla con un endpoint OpenAI-compatible via streaming SSE
-// (se usa con OpenRouter para pruebas apuntando el base URL) y traduce el turno a
-// llm.Event (StepStarted, ReasoningStarted/Delta/Ended, TextStarted/Delta/Ended,
-// ToolInputStarted/Delta/Ended por los fragmentos de arguments mas un ToolCall por
-// cada delta.tool_calls acumulado, StepEnded con Usage, StepFailed ante error del
-// stream). El adaptador de Claude/Anthropic entra despues detras de la misma
-// interface.
+// Package llm is the private side of the provider boundary: the adapters that
+// speak a real wire format, the scriptable FakeProvider used by the tests, the
+// model catalog lookup and the context-window accounting that feeds compaction.
+//
+// The contract itself — Provider, Request, Message, ToolDef, Event, Usage — is
+// published in agentcore/llm and re-exported here by contract.go, so a caller
+// spells every type llm.X regardless of which side defines it.
+//
+// Adapters currently living here: OpenAIProvider, which talks to an
+// OpenAI-compatible endpoint over SSE streaming (also used against OpenRouter),
+// and AnthropicProvider. Both translate one turn into llm.Event (StepStarted,
+// ReasoningStarted/Delta/Ended, TextStarted/Delta/Ended, ToolInputStarted/Delta/
+// Ended for the argument fragments plus a ToolCall per accumulated call,
+// StepEnded with Usage, StepFailed on stream error). SwitchableProvider wraps
+// whichever one is active so a model change does not have to rebuild the loop.
 package llm
