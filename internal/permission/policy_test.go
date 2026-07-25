@@ -40,7 +40,7 @@ func TestStaticPolicy_AsksListedToolsOnly(t *testing.T) {
 		{"", Allow},
 	}
 	for _, tc := range cases {
-		if got := p.Decide(tool.Call{Name: tc.name}); got != tc.want {
+		if got := p.Decide("s1", tool.Call{Name: tc.name}); got != tc.want {
 			t.Errorf("Decide(%q) = %v, want %v", tc.name, got, tc.want)
 		}
 	}
@@ -50,7 +50,7 @@ func TestStaticPolicy_AsksListedToolsOnly(t *testing.T) {
 // gates nothing.
 func TestStaticPolicy_EmptyAllowsEverything(t *testing.T) {
 	p := NewStaticPolicy()
-	if got := p.Decide(tool.Call{Name: "bash"}); got != Allow {
+	if got := p.Decide("s1", tool.Call{Name: "bash"}); got != Allow {
 		t.Errorf("Decide(bash) with empty policy = %v, want Allow", got)
 	}
 }

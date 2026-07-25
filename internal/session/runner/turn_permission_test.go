@@ -40,14 +40,16 @@ func (g *fakeGate) calls() []permission.Request {
 }
 
 // policyFunc adapts a function to permission.Policy for tests.
-type policyFunc func(call tool.Call) permission.Decision
+type policyFunc func(sessionID string, call tool.Call) permission.Decision
 
-func (f policyFunc) Decide(call tool.Call) permission.Decision { return f(call) }
+func (f policyFunc) Decide(sessionID string, call tool.Call) permission.Decision {
+	return f(sessionID, call)
+}
 
 // askFor builds a test policy that asks for the named tool and allows
 // everything else.
 func askFor(name string) policyFunc {
-	return func(c tool.Call) permission.Decision {
+	return func(_ string, c tool.Call) permission.Decision {
 		if c.Name == name {
 			return permission.Ask
 		}
@@ -200,7 +202,7 @@ func TestRunner_GateSkippedWhenPolicyAllows(t *testing.T) {
 
 	gate := &fakeGate{approved: false} // would deny if asked
 	r.gate = gate
-	r.policy = policyFunc(func(c tool.Call) permission.Decision { return permission.Allow }) // nothing gated
+	r.policy = policyFunc(func(_ string, c tool.Call) permission.Decision { return permission.Allow }) // nothing gated
 
 	if _, err := r.runTurn(ctx, "s1"); err != nil {
 		t.Fatalf("runTurn unexpected error: %v", err)
@@ -282,7 +284,7 @@ func TestRunner_PolicyDeniedFailsWithoutAsking(t *testing.T) {
 
 	gate := &fakeGate{approved: true} // would approve if asked: Deny must not ask
 	r.gate = gate
-	r.policy = policyFunc(func(c tool.Call) permission.Decision { return permission.Deny })
+	r.policy = policyFunc(func(_ string, c tool.Call) permission.Decision { return permission.Deny })
 
 	cont, err := r.runTurn(ctx, "s1")
 	if err != nil {

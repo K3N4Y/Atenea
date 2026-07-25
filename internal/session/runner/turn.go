@@ -205,12 +205,14 @@ func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Ev
 		ev := ev // capture for the goroutine
 		g.Go(func() error {
 			call := tool.Call{ID: ev.CallID, Name: ev.ToolName, Input: ev.Input}
-			// Ask-before-run: the policy classifies the call. Allow settles
-			// directly; Ask persists the request (the UI shows the prompt) and
-			// blocks on the gate until the decision; Deny — from the policy or
-			// from the user — publishes Tool.Failed and does NOT run the tool.
+			// Ask-before-run: the policy classifies the call for this session
+			// (its session-scoped grants are part of the classification). Allow
+			// settles directly; Ask persists the request (the UI shows the
+			// prompt) and blocks on the gate until the decision; Deny — from the
+			// policy or from the user — publishes Tool.Failed and does NOT run
+			// the tool.
 			if r.gate != nil && r.policy != nil {
-				switch r.policy.Decide(call) {
+				switch r.policy.Decide(sessionID, call) {
 				case permission.Deny:
 					return pub.ToolFailed(cleanupCtx, ev.CallID, errPermissionDenied)
 				case permission.Ask:

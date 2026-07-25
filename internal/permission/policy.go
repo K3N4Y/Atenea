@@ -17,10 +17,11 @@ const (
 )
 
 // Policy decides what to do with a tool call before it settles. It receives
-// the full call (name and raw input) so richer implementations can match on
-// command prefixes or paths; StaticPolicy only looks at the name.
+// the session the call belongs to and the full call (name and raw input) so
+// richer implementations can match on command prefixes or paths and scope
+// their rules per session; StaticPolicy only looks at the name.
 type Policy interface {
-	Decide(call tool.Call) Decision
+	Decide(sessionID string, call tool.Call) Decision
 }
 
 // StaticPolicy is the fixed classification by tool name: the listed tools
@@ -40,7 +41,8 @@ func NewStaticPolicy(ask ...string) StaticPolicy {
 }
 
 // Decide returns Ask for the classified tools and Allow for everything else.
-func (p StaticPolicy) Decide(call tool.Call) Decision {
+// The classification is fixed, so the session plays no part in it.
+func (p StaticPolicy) Decide(_ string, call tool.Call) Decision {
 	if p.ask[call.Name] {
 		return Ask
 	}

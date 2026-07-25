@@ -101,7 +101,7 @@ func TestAskPolicy_GatesShellFSAndNetwork(t *testing.T) {
 		{"task", permission.Allow},
 	}
 	for _, tc := range cases {
-		if got := askPolicy.Decide(tool.Call{Name: tc.name}); got != tc.want {
+		if got := askPolicy.Decide("s1", tool.Call{Name: tc.name}); got != tc.want {
 			t.Errorf("askPolicy.Decide(%q) = %v, want %v", tc.name, got, tc.want)
 		}
 	}

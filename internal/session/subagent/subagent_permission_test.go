@@ -300,7 +300,7 @@ func TestTaskTool_NoGatePropagatedRunsToolUngated(t *testing.T) {
 // askBash is a test permission.Policy that asks only for "bash".
 type askBash struct{}
 
-func (askBash) Decide(c tool.Call) permission.Decision {
+func (askBash) Decide(_ string, c tool.Call) permission.Decision {
 	if c.Name == "bash" {
 		return permission.Ask
 	}
