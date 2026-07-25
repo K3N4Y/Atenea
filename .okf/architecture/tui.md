@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-22
+updated_at: 2026-07-24
 summary: Architecture and behavior of the Atenea terminal user interface.
 ---
 
@@ -279,8 +279,19 @@ gap between actions explicitly retains the `#303030` panel surface. The label
 uses muted `#999999` text so the body remains the primary focus, and `Deny`
 remains selected by default. Request origin, working directory, keyboard
 help, the queue counter, and the `once` qualifier are not rendered on the
-compact panel. This is presentation-only: approval still applies to the
-single pending execution.
+compact panel.
+
+A grantable request adds a third action, `Allow <subject> this session`, which
+records a session-scoped grant so calls of the same shape stop asking (see
+[session-scoped permission grants](../specs/2026-07-24-session-permission-grants.md)).
+`bash` names the granted command prefix (`Allow go test this session`), `write`
+and `edit` name the tool. The action is withheld when the request is not
+grantable (`web_fetch`, MCP tools, a shell command a prefix cannot describe)
+and when the row does not fit the panel width: a truncated action reads as a
+bug, so a narrow terminal offers two actions and the selection cannot point
+past what is drawn. ←/→ and Tab move over the offered actions, Enter confirms,
+`a` takes the session grant directly, and `y`/`n` keep meaning allow-once and
+deny.
 
 The compact body shows the exact thing the user authorizes: `Bash <command>`;
 `Write <path>` followed by the content to be written; `Edit` followed by the
@@ -293,7 +304,8 @@ pretty-JSON input.
 Tools without a dedicated renderer (e.g. a future gated MCP tool) keep the
 detailed generic panel: ANSI-green title text, the `<tool> request` label,
 request origin, working directory, queue count, help, and `Deny` /
-`Allow once` actions with the `›` selection marker.
+`Allow once` actions with the `›` selection marker, plus the same session grant
+when the request is grantable.
 
 Permissions are processed FIFO. The detailed generic panel shows `1 of N` for
 multiple pending requests and omits the redundant `1 of 1`; the compact panel

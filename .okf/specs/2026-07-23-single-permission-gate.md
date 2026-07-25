@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-23
+updated_at: 2026-07-24
 summary: Design specification for the single ask-before-run permission gate covering shell and local filesystem tools, the internal/permission package, and the TUI compact panels per gated tool.
 ---
 
@@ -81,6 +81,9 @@ run?", and no vocabulary to grow toward richer policies (persisted rules,
 
 ## Out of scope
 
-Vue frontend polish; persisted allow/deny rules and "always allow";
-permission modes (auto-accept / plan-style gating); a read-only fast path for
-shell commands.
+Vue frontend polish; persisted allow/deny rules; permission modes
+(auto-accept / plan-style gating); a read-only fast path for shell commands.
+
+Session-scoped "allow this for the rest of the session" grants shipped later as
+a `Policy` layer over this classification: see
+[session-scoped permission grants](2026-07-24-session-permission-grants.md).
