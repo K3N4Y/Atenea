@@ -1,6 +1,6 @@
 ---
 updated_at: 2026-07-26
-summary: Audit of how agnostic atenea's seams are, and what to change to enable third-party integrations, contributions, and a plugin system.
+summary: Audit of how agnostic atenea's seams are, and what to change to enable third-party integrations, contributions, and a plugin system. R1, R2, R3 and R4.1-R4.3 are done; the headless `atenea run` closed the programmatic surface.
 ---
 
 # Agnosticism and extensibility audit — atenea
@@ -28,9 +28,18 @@ What blocks integrations is not the loop, it is the perimeter:
    party can consume any of this code without forking.
 2. **There is no LICENSE file.** Contributions and any extension ecosystem are
    legally undefined today.
-3. **There is no programmatic surface.** `cmd/atenea/main.go:53-62` is the whole
-   CLI: one string comparison for `--version`, otherwise the TUI. No headless
-   mode, no JSON event stream, no stdin. Every integrator's first ask is missing.
+3. ~~**There is no programmatic surface.**~~ `[done 2026-07-26]` `cmd/atenea/main.go`
+   used to be one string comparison for `--version` and otherwise the TUI. R4.3
+   added `atenea run`: a prompt from `-p` or stdin, the durable
+   `session.SessionEvent` stream serialized as NDJSON, a result document, six
+   documented exit codes, three permission modes derived from what each tool
+   declares rather than from a name list, and two refusals that keep the surface
+   honest — it never waits on stdin nobody will close, and it will not answer from
+   the offline demo. It is the third caller of `host.New`
+   driving `Sitting.Agent` — no new turn logic — and it is language-agnostic, which
+   for most integrators beats a Go SDK. See
+   [Headless CLI](../architecture/headless-cli.md). What remains of this point is
+   `atenea mcp` and `atenea skill` (R4.4) on the dispatch it left behind.
 4. ~~**Extension identity is spread across name-keyed switches.**~~
    `[done 2026-07-24]` A tool's permission class, session-grant shape, UI
    rendering and workspace-mutation flag used to be decided by `switch`/lookup on
@@ -57,12 +66,12 @@ of them delete code.
 | LLM `Provider` | **Good** — R3 complete: neutral domain model, an open factory registry (R3.1), an optional capability declaration the host derives windows and reserves from (R3.2), a shipped catalog that is embedded data rather than code (R3.3), one provider system for both hosts extensible by the user (R3.4), and message content as parts, so an image is a new kind rather than a breaking change (R3.6) | `agentcore/llm/content.go`, `agentcore/llm/capabilities.go`, `internal/providerconfig/registry.go`, `internal/providerconfig/providers.default.json` |
 | Provider identity | **Good** — the declared type is the wire format, resolved through a registry that builds *and* describes it; a provider's id decides nothing (R3.1, R3.2) | `internal/providerconfig/registry.go` |
 | Provider auth | **Good** — a tagged `Credential` variant with an `api_key` and an `exec` arm, resolved by a `CredentialResolver` separate from the store that persists it (R3.5); a token is still resolved once per selection, not per request | `internal/providerconfig/credentials.go`, `internal/providerconfig/credentialresolver.go` |
-| Event taxonomy | **Weak** — open string set, two hand-maintained non-exhaustive switches that already disagree | `internal/tui/transcript.go:59-151`, `frontend/src/features/chat/chat.ts:215-341` |
+| Event taxonomy | **Weak** — open string set, two hand-maintained non-exhaustive switches that already disagree; the third projection (R4.3's NDJSON) is exhaustive by construction, which now makes the Go field names a wire format two consumers read | `internal/tui/transcript.go:59-151`, `frontend/src/features/chat/chat.ts:215-341`, `internal/cli/output.go` |
 | Event payload evolution | **Weak** — no version, 4 hand-synced sites per new field | `internal/session/sqlitestore.go:22-57,134-149,279-369,510-601` |
 | Tool-use hooks | **Missing** — no pre/post seam; gate + repair + capping hardcoded in the loop | `runner/turn.go:214-235` |
 | Prompt assembly | **Missing** — fixed string concatenation | `internal/session/prompt/prompt.go:68-81` |
-| Composition root | **Good** — one outer root both entrypoints construct (`internal/host`) over the one inner root both managers call (`wiring.Build`), whose assembly policy (output cap, classification, discovery paths, plan-mode surface) is a `Config` field with a documented, tested zero value (R4.1, R4.2) | `internal/host`, `internal/wiring/wiring.go`, `main.go:22`, `cmd/atenea/main.go:51` |
-| CLI / headless | **Missing** | `cmd/atenea/main.go:53-62` |
+| Composition root | **Good** — one outer root every entrypoint constructs (`internal/host`), now three of them counting the headless run, over the one inner root they all call (`wiring.Build`), whose assembly policy (output cap, classification, discovery paths, plan-mode surface) is a `Config` field with a documented, tested zero value (R4.1, R4.2, R4.3) | `internal/host`, `internal/wiring/wiring.go`, `main.go:22`, `cmd/atenea/main.go`, `internal/cli/run.go` |
+| CLI / headless | **Good** — `atenea run` over a stdlib-`flag` dispatch: NDJSON of the durable stream, a result document, six exit codes, three effect-derived permission modes, `--session` on the shared store (R4.3) | `internal/cli`, `internal/permission/unattended.go`, `cmd/atenea/main.go` |
 | Public API | **Partial** — 5 importable contract packages under `agentcore/` plus 2 contract test kits, boundary enforced by test; the tool capability interfaces landed with R2, message content parts with R3.6 (the first breaking change, taken deliberately while nothing promises stability); implementations still private, no stability promise yet (R1.3, R1.4, R2, R3 done) | `agentcore/`, `agentcore/boundary_test.go`, `agentcore/{tool/tooltest,llm/llmtest}` |
 | Branding/paths | **Weak** — `atenea` literal in 6+ path builders, no XDG | §3.6 |
 | MCP as plugin substrate | **Partial** — first-class in the registry and now gated ask-by-default with a session grant (R2), but stdio-only and invisible to subagents | §3.8 |
@@ -238,6 +247,16 @@ include `Session.Cwd`, `Session.Mode`, `Composer.Prompt` and
 `Prompt.Checkpoint.*`. A plugin-emitted kind would persist fine (SQLite stores
 `Kind` as plain TEXT, no CHECK constraint), traverse the bus unfiltered
 (`internal/event/bus.go:22-27`), and then be **silently dropped by both UIs**.
+
+There is a third projection since R4.3, and it is the one that behaves: `atenea run
+--output-format stream-json` writes every event it is handed, so it is exhaustive by
+construction and an unknown kind reaches a consumer intact. It also raises the stakes
+of the payload half of this finding, since those Go field names are now a wire format
+two consumers read. Two more things for R5 to take on: the CLI counts refused tool
+calls at the decision rather than from the stream, because the denial reason is a
+message a reader would have to match on — `internal/tui/transcript.go:270` does
+exactly that today, against the literal `"tool denied by the user"` — and the same
+message is what a headless run reports to the model, where "by the user" is not true.
 
 Payload evolution is equally manual. `SessionEvent` has no version field, and
 adding one field means editing four hand-synced sites: the `schema` const
@@ -991,8 +1010,135 @@ it.
    This single feature unlocks CI use, editor plugins, other agents calling
    atenea, and TTY-free end-to-end tests — and it is **language-agnostic**, which
    for most integrators beats a Go SDK.
+   `[done 2026-07-26]` — `internal/cli` holds the dispatch and `atenea run`; the
+   `mcp` and `skill` subcommands stay with R4.4. The terminology held all the way
+   through: nothing was added to the turn loop, `agent.Service` is driven exactly as
+   the two UIs drive it, and the package is argument parsing, one policy choice and a
+   serializer. `version` moved onto the dispatch (`--version` survives as an alias,
+   because `install.sh` verifies an installation with it), and an unknown first
+   argument is now a usage error instead of silently opening the TUI. Documented in
+   [Headless CLI](../architecture/headless-cli.md). Nine decisions worth recording:
+   - **All three permission modes shipped, and `allowlist` became an effect budget.**
+     `--allow-effects writes-files,runs-commands,reaches-network` names
+     *consequences*, spelled in the vocabulary R2 gave tools, with the accepted
+     values derived from `Effects.String()` rather than restated — so a flag added
+     to that vocabulary is spellable on the commit that defines it. A call runs when
+     every effect its tool declares is inside the budget, which means a tool joins by
+     declaring rather than by being named: an MCP server's tool is inside the budget
+     the moment its author says what it does, and nothing in the host has to have
+     heard of it. Two properties fall out for free. An effect this build cannot spell
+     is outside every budget, so adding a flag can only leave a run more careful. And
+     a tool that declares *nothing* is refused even with every effect allowed — which
+     is the sentence that separates this mode from `auto`: **`allowlist` decides on
+     evidence, `auto` decides in its absence.**
+   - **Seeding session grants from the command line was the other candidate, and it
+     is unbuildable.** `--allow bash:'go test'` would reuse the exact vocabulary the
+     interactive "allow for the session" answer speaks, which is why it was
+     tempting. But `permission.Rule` is derived from a *specific call's input* by the
+     tool itself (`Grantable.GrantRule`, and `covers` re-derives it on every call
+     precisely so a grant cannot claim more than what the user was shown), so
+     constructing one on a command line means reproducing each tool's
+     input-summarizing rules outside the tool. R1.3 already refused to publish
+     `Rule.Matches` for this reason. It would also put tool names back on the surface
+     an integrator writes, so renaming a tool or swapping an MCP server would break a
+     pipeline's configuration.
+   - **No mode was allowed to be another one under a second name.** `allowlist` with
+     no `--allow-effects` is a usage error rather than `deny`, because a CI
+     configuration that reads as permissive and behaves as strict says so nowhere;
+     `--allow-effects` outside `allowlist` is a usage error for the same reason read
+     from the other end. `deny` is not "refuse everything" either — the whole
+     `NoEffects` half of the catalog runs, so an unattended investigation works with
+     nothing granted, and a refused call is reported to the model as its own tool
+     result so it can adapt. `auto` is a separate policy type rather than a full
+     budget, so the two are not neighbouring settings on one dial, and it is
+     unreachable by accident: not the default, exact-match only (`au`, `AUTO`, `all`
+     are all usage errors listing the three), and every run in it warns on stderr
+     naming what it does.
+   - **The gate is not nil, and that is the bug this avoided.** The runner consults
+     its policy only when a gate is present, so a headless host that passed
+     `Gate: nil` would have settled every call regardless of what its mode decided —
+     a "secure by default" flag that silently did nothing. `permission.UnattendedGate`
+     answers immediately, and the answer is no: an `Ask` reaching it is a bug in
+     whichever policy produced it, and refusing beats blocking, which for a CI job is
+     the one failure worse than a wrong answer. The classification itself is
+     `permission.UnattendedPolicy`, a sibling of `EffectsPolicy` rather than a variant
+     of it — both read `Effects`, but "I cannot show this to be harmless" means *ask*
+     with a user present and *refuse* without one.
+   - **`stream-json` marshals `SessionEvent` exactly as it already crosses the Wails
+     boundary, and it is verbose because of that.** The desktop frontend reads
+     `ev.Kind`, `ev.ToolName`, `ev.Input` — Go field names, every field present,
+     `Message: null` on a delta. Tagging the struct for snake_case and `omitempty`
+     would either break a shipped consumer or give one contract two spellings
+     depending on which host emitted it, so the format took the noise and kept one
+     serialization. This is the one thing an integrator will notice first, and it is
+     R5's to fix: it is a change to the published stream, not to this format.
+   - **Nothing is appended to the NDJSON at the end.** A closing result object would
+     have been convenient and would have broken the only promise the format makes —
+     one `SessionEvent` per line — which is also the promise that keeps the CLI from
+     growing a second event taxonomy. The outcome is the exit code, and
+     `--output-format json` is the format for a caller that wants it as data. That
+     document is snake_case and tagged, because it is the CLI's own, and every field
+     in it is a *fold of the same stream* so it cannot contradict the events a
+     consumer just read.
+   - **`denied_tool_calls` is counted at the decision, not recognized in the
+     stream.** A refusal reaches the stream as a `Tool.Failed` carrying a message, so
+     reading it back means matching that message — which
+     `internal/tui/transcript.go:270` already does, comparing against the literal
+     `"tool denied by the user"`. An exit code must not be built on that. It is worth
+     naming as a finding of its own: the denial reason should be a field rather than a
+     matched string, which belongs with R5.
+   - **stdin is read only when the invocation asked for it**, and getting this wrong
+     was the one real bug this change shipped in review. The first rule was "read
+     stdin whenever stdin is not a terminal", which looks equivalent and is not:
+     *not a terminal* is not *will reach EOF*, so `atenea run -p hi` hung forever on
+     an open pipe nobody closes — the normal state of stdin under a CI runner, `ssh`
+     without `-n`, `docker run -i`, or a wrapper script, and a true deadlock for an
+     editor plugin that spawns the process with `stdin=PIPE, stdout=PIPE` and waits
+     for the answer atenea will only produce after the EOF the plugin sends once it
+     has one. Two of the four integrators this recommendation names would have hit
+     it. The rule now: `-p` alone never touches stdin; with no `-p`, stdin is the
+     only source there is and is read; combining them is `--stdin`, said out loud.
+     Composition survives with both parts kept, because dropping one is the failure
+     that leaves no trace anywhere — the same argument R3.6 made about a dropped
+     content part. A terminal on stdin is a usage error either way, never a wait.
+     The regression test hands the run an `os.Pipe` whose write end is deliberately
+     left open; a `strings.Reader` or `/dev/null` cannot fail this way, which is
+     exactly why the first round of tests missed it.
+   - **A headless run refuses to answer from the offline demo.** With no credential
+     anywhere the host lands on the canned fake, which is right interactively — a
+     person reads the notice and runs `/connect` — and wrong here, where nobody
+     reads stderr: the run would put a fabricated answer on stdout and exit 0, so a
+     job whose key merely expired would look exactly like one that worked, and the
+     normal way to consume a CLI (pipe stdout, ignore stderr) is precisely the way
+     that would never notice. `atenea run` exits `ExitStartup` naming the
+     environment variables that would fix it, read off the shipped catalog so the
+     advice cannot go stale. This was shipped the other way for one review round on
+     the argument that driving the demo is how the surface is demonstrated without a
+     network; that does not bind, because the tests inject a provider through
+     `host.Config.Providers` and a demonstration can point `providers.json` at any
+     endpoint. No flag re-enables it: a flag whose only purpose is to allow a wrong
+     answer is surface worth not having. The interactive TUI is untouched.
+   - **Two codes are arguments rather than conventions.** `ExitPermissionDenied` (3)
+     exists because it is the one outcome a caller fixes by changing the invocation
+     rather than the prompt; folding it into success would hide it and folding it into
+     failure would misreport a turn that ran to completion and reported honestly.
+     `ExitCanceled` is 4 and not 130/143: atenea *handles* the signal rather than
+     dying from it, and "the run was interrupted" is one fact, not which of two
+     signals delivered it. The precedence is fixed and tested — cancelled outranks
+     failed outranks denied — because an interrupted run makes no claim about the
+     conversation at all, while a denial is a report the run made deliberately.
+   The `text` format came out better than planned: the answer goes to stdout and
+   the activity to stderr, so the human format is the pipeable one too, and each
+   activity line asks the tool how its call should read (R2's `Presentation`, now with
+   a third consumer) instead of switching on a name.
 4. Use stdlib `flag` per subcommand with a small dispatch rather than adding a CLI
    framework; the surface above does not justify the dependency.
+   The dispatch half of this landed with R4.3: a `[]command{name, summary, run}`
+   table, one `flag.FlagSet` per subcommand with `ContinueOnError` (so the stdlib's
+   own usage exit and `ExitUsage` are the same number instead of one having to
+   intercept the other), the top-level help generated from the table, and `go.mod`
+   unchanged. Adding `mcp` and `skill` is one struct literal and one file each, which
+   is what remains open here.
 
 ### R5 — Make the event stream a stable, forward-compatible contract
 
@@ -1114,7 +1260,9 @@ right shape. Consolidate the plumbing:
 2. **Add a `version` field** to skill and agent manifests, and make unknown keys
    tolerated *by design* (documented) rather than by accident.
 3. **`atenea skill validate` / `atenea agent validate`** (part of R4's CLI) so a
-   contributor gets a real error instead of silent non-discovery.
+   contributor gets a real error instead of silent non-discovery. Since R4.3 the
+   dispatch exists and adding the subcommand is a struct literal plus a file; R4.4 is
+   where `atenea skill` lands, and this item is the `validate` verb on it.
 4. **Decide on `skills-lock.json`**: either own an install/pin model
    (`atenea skill add gh:owner/repo` + lockfile with content hashes, which is what
    that file's format implies) or delete the orphan. Leaving it advertises a
@@ -1156,19 +1304,22 @@ seam on `Message` (all four landed 2026-07-26).
 security default flipped to ask; a wire format is one file plus one registry line
 plus one catalog entry, and multimodal is one more `PartKind` rather than a break.*
 
-**Phase 2 — integration surface. In progress.** R4.1 single host and R4.2
-configurable assembly both landed 2026-07-26: one outer composition root both
-entrypoints construct, with the two UI managers left alone above the one inner
-root, and that inner root's five hardcoded policy values promoted to `Config`
-fields with documented zero values. R1 public contract packages and contract test
-kits landed early (2026-07-24). What remains is R4.3–R4.4, the headless `run` with
-NDJSON — which is the item that actually opens the surface, and which now has
-somewhere to stand twice over: a non-interactive entrypoint is a third caller of
-`host.New` driving `Sitting.Agent`, not a third copy of the bootstrap, and its
-`--permission-mode deny|allowlist|auto` is a `wiring.Config.Policy` rather than a
-branch inside the loop.
-*Outcome: anything can drive atenea — CI, editors, other agents — and outside
-contributions of tools/providers become reviewable.*
+**Phase 2 — integration surface. Substantially complete.** R4.1 single host, R4.2
+configurable assembly and R4.3 the headless CLI all landed 2026-07-26: one outer
+composition root both entrypoints construct, with the two UI managers left alone
+above the one inner root; that inner root's five hardcoded policy values promoted to
+`Config` fields with documented zero values; and `atenea run` on top of both. R1
+public contract packages and contract test kits landed early (2026-07-24).
+
+R4.3 stood exactly where R4.1 and R4.2 had prepared for it, which is the argument
+for having done them first: the entrypoint is a *third caller* of `host.New` driving
+`Sitting.Agent` rather than a third copy of the bootstrap, and each
+`--permission-mode` is a `wiring.Config.Policy` — `permission.UnattendedPolicy` over
+an effect budget — rather than a branch inside the loop. Neither the runner nor
+`agent.Service` was touched. What remains is R4.4's two remaining subcommands
+(`atenea mcp`, `atenea skill`) on the dispatch it left behind.
+*Outcome: anything can drive atenea — CI, editors, other agents — and the TTY-free
+end-to-end test it also unlocked is what the feature's own tests are written as.*
 
 **Phase 3 — plugin substrate.** R8 MCP transports, permissions, subagent
 exposure, prompts/resources/sampling, lifecycle. R9 unified manifests +

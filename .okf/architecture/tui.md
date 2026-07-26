@@ -1,6 +1,6 @@
 ---
 updated_at: 2026-07-26
-summary: Architecture and behavior of the Atenea terminal user interface.
+summary: Architecture and behavior of the Atenea terminal user interface — what a bare `atenea` does, one of the binary's two surfaces alongside the headless CLI.
 ---
 
 # atenea: the terminal interface
@@ -10,9 +10,16 @@ runs in the terminal. Reuse the SAME agent loop as the Wails app (the
 runner, the tools, the ask-before-run, the skills and the subagents); the only thing that
 changes is the presentation border.
 
-The executable lives in `cmd/atenea`. Running `atenea` uses the process current
-working directory as the workspace root, so the shell remains the only project
-selector and no launcher or project-discovery layer is needed.
+The executable lives in `cmd/atenea`. Running `atenea` with no arguments uses the
+process current working directory as the workspace root, so the shell remains the
+only project selector and no launcher or project-discovery layer is needed.
+
+The binary is no longer only this interface. `cmd/atenea/main.go` hands the process
+to `internal/cli`, which dispatches to a subcommand or — with no arguments — to the
+terminal interface assembled below. `atenea run` drives the same agent
+non-interactively, over the same store and the same provider selection; see
+[Headless CLI](headless-cli.md). Everything in this document is what a bare `atenea`
+does.
 
 On exit, the executable calls `Engine.Shutdown` before closing the shared
 session store. Shutdown stops active runs, cancels and waits for context
@@ -55,13 +62,21 @@ OpenAI-compatible client performs at most two transient retries, using 2s and
 ```
 wails app:  agent.Service -> runner -> EmittingStore -> Bus -> runtime.EventsEmit -> frontend web
 atenea:     agent.Service -> runner -> EmittingStore -> Bus -> chan tea.Msg       -> Bubble Tea
+atenea run: agent.Service -> runner -> EmittingStore -> Bus -> NDJSON on stdout   -> any consumer
 ```
+
+Three surfaces, one pipeline: only the last arrow differs.
 
 ## Pieces
 
-- `cmd/atenea/main.go` — the thin border (equivalent to `main.go` from Wails).
- It diverts the standard log to a temporary file first (do not paint over the
- alternative screen), then builds `host.New` — the shared outer assembly: the
+- `cmd/atenea/main.go` — the thin border (equivalent to `main.go` from Wails). It
+ hands the process to `cli.Main` and exits with the code it returns; what it keeps
+ is only what needs the real process: the version string the release build stamps
+ in, whether stdin is a terminal, and the interactive launcher below.
+- `runInteractive` (same file) — what a bare `atenea` means. It diverts the standard
+ log to a temporary file first (do not paint over the alternative screen — a
+ headless run leaves the log on stderr for the opposite reason), then builds
+ `host.New` — the shared outer assembly: the
  `.env` (development builds only — `-tags production` compiles `dotenv.Load` to a
  no-op), the built-in skills, the workspace root, the SQLite SHARED with the
  desktop app, and the global provider service over `providers.json` and

@@ -1,13 +1,19 @@
 ---
-updated_at: 2026-07-21
-summary: Release and installation architecture for the Atenea terminal interface.
+updated_at: 2026-07-26
+summary: Release and installation architecture for the Atenea command-line binary — the terminal interface and the headless CLI ship as one artifact.
 ---
 
-# TUI distribution
+# CLI distribution
 
-The terminal interface is distributed as precompiled GitHub Release archives
-for Linux and macOS on `amd64` and `arm64`. The desktop Wails application has a
-separate delivery lifecycle and is not part of these archives.
+The `atenea` binary is distributed as precompiled GitHub Release archives for Linux
+and macOS on `amd64` and `arm64`. The desktop Wails application has a separate
+delivery lifecycle and is not part of these archives.
+
+One artifact carries both of the binary's surfaces: a bare `atenea` is the
+[terminal interface](tui.md) and `atenea run` is the [headless CLI](headless-cli.md).
+There is nothing to choose at install time and no second download for CI — which is
+the point of shipping them together: an integrator installs the same executable a
+user runs, so what a pipeline drives is what a person can reproduce by hand.
 
 ## Release contract
 
@@ -25,8 +31,9 @@ checksums.txt
 
 Release binaries use the `production` build tag so they never load credentials
 from a workspace `.env`. GoReleaser injects the tag, commit, and build date;
-`atenea --version` exposes those values without initializing the TUI or any
-persistent state.
+`atenea --version` and `atenea version` expose those values — the same string, one
+being an alias of the other — without initializing either surface or any persistent
+state.
 
 `.github/workflows/release.yml` publishes these artifacts only for `v*` tags.
 The normal CI workflow also runs a snapshot release, which exercises every

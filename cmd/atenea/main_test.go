@@ -997,3 +997,34 @@ func (b *lockedBuffer) String() string {
 	defer b.mu.Unlock()
 	return b.b.String()
 }
+
+// TestIsTerminal_DevNullAndPipesAreNotTerminals pins the check `atenea run` uses to
+// decide whether there is anything on the other end of stdin to read a prompt from.
+//
+// It exists because the first implementation tested for a character device, and
+// /dev/null is a character device. That got the safety direction right — a real
+// terminal is always a character device, so it never waited on a prompt nobody was
+// going to type — while refusing `atenea run < /dev/null`, which is how a CI script
+// says "this command has no input and must not block", with the untrue explanation
+// that stdin was interactive. Both cases below are reachable from a pipeline, and
+// neither is a terminal.
+func TestIsTerminal_DevNullAndPipesAreNotTerminals(t *testing.T) {
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatalf("open %s: %v", os.DevNull, err)
+	}
+	defer devNull.Close()
+	if isTerminal(devNull) {
+		t.Errorf("isTerminal(%s) = true, want false: it is a character device, not a terminal", os.DevNull)
+	}
+
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	defer read.Close()
+	defer write.Close()
+	if isTerminal(read) {
+		t.Error("isTerminal(pipe) = true, want false: a piped prompt is the case the flag exists to detect")
+	}
+}

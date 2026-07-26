@@ -1,14 +1,16 @@
-// Command atenea is the terminal interface (Claude Code style) of the atenea
-// agent. It is the thin boundary equivalent to the Wails main.go: it assembles
-// the shared host (internal/host), builds the headless Engine
-// (internal/tui/engine) over it and runs the Bubble Tea program. The testable
-// logic lives in internal/tui.
+// Command atenea is the atenea agent's command-line binary. It is the thin
+// boundary equivalent to the Wails main.go: it hands the process — its arguments,
+// its streams and its version — to internal/cli, which dispatches to a subcommand
+// or, with no arguments, to the terminal interface assembled here.
+//
+// Everything testable lives behind that line: internal/cli owns the argument
+// surface and the headless run, internal/tui owns the interactive one, and what
+// stays in this file is only what needs the real process.
 package main
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"os"
 	"os/exec"
@@ -16,8 +18,10 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"golang.org/x/term"
 
 	"github.com/K3N4Y/atenea/internal/checkpoint"
+	"github.com/K3N4Y/atenea/internal/cli"
 	"github.com/K3N4Y/atenea/internal/host"
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/tui"
@@ -25,22 +29,43 @@ import (
 )
 
 func main() {
-	if len(os.Args) == 2 && os.Args[1] == "--version" {
-		fmt.Fprintln(os.Stdout, versionString())
-		return
-	}
-	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "atenea:", err)
-		os.Exit(1)
-	}
+	os.Exit(cli.Main(cli.Env{
+		Args:            os.Args[1:],
+		Stdin:           os.Stdin,
+		Stdout:          os.Stdout,
+		Stderr:          os.Stderr,
+		Version:         versionString(),
+		StdinIsTerminal: isTerminal(os.Stdin),
+		Interactive:     runInteractive,
+	}))
 }
 
-func run() error {
+// isTerminal reports whether f is a terminal rather than a pipe, a file or a
+// device, which is how `atenea run` knows whether there is anything on the other
+// end of stdin to read a prompt from.
+//
+// It asks the terminal driver (an ioctl, through x/term) rather than testing for a
+// character device, because /dev/null is a character device and is not a terminal.
+// The heuristic got the safety direction right — a real terminal is always a
+// character device, so it never read a prompt nobody was going to type — but it
+// reported the wrong reason for the wrong inputs: `atenea run </dev/null`, the
+// standard way a CI script guarantees a command cannot block, was refused for
+// being interactive. Now it reads the empty device and says the prompt was empty,
+// which is what happened.
+func isTerminal(f *os.File) bool {
+	return term.IsTerminal(int(f.Fd()))
+}
+
+func runInteractive() error {
 	// The standard log (tool failures, skills that failed to be discovered) would go
 	// to stderr and paint over Bubble Tea's alternate screen: it is redirected to a
 	// file. This happens FIRST, so every warning the host bootstrap emits — an
 	// unopenable SQLite, a provider config that will not load — lands in the file
 	// instead of on the user's screen.
+	//
+	// A headless run does the opposite and leaves the log on stderr, because there
+	// is no screen to corrupt and a CI job's diagnostics belong in its output. That
+	// is why the redirection lives here and not in main.
 	redirectLog()
 
 	// The shared outer assembly: the .env of the working directory, the built-in
