@@ -22,6 +22,7 @@ uses Markdown and begins with `updated_at` and `summary` YAML metadata.
 
 - [Agent loop](architecture/agent-loop.md)
 - [Claude LLM integration](architecture/llm-claude.md)
+- [Composition root](architecture/composition-root.md)
 - [Continuous integration and automated review](architecture/continuous-integration.md)
 - [TUI distribution](architecture/distribution.md)
 - [OpenCode/OpenAI LLM integration](architecture/llm-opencode-openai.md)

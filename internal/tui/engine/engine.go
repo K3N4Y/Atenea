@@ -19,6 +19,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/checkpoint"
 	"github.com/K3N4Y/atenea/internal/command"
 	"github.com/K3N4Y/atenea/internal/event"
+	"github.com/K3N4Y/atenea/internal/host"
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/mcpclient"
 	"github.com/K3N4Y/atenea/internal/permission"
@@ -29,14 +30,21 @@ import (
 	"github.com/K3N4Y/atenea/internal/wiring"
 )
 
-// Config describe el ensamblado del agente headless: la raiz del
-// workspace, el proveedor LLM y el store durable.
+// Config describes the headless agent assembly: the workspace root, the LLM
+// provider and the durable store.
 type Config struct {
 	Root        string
 	Provider    llm.Provider
 	Store       session.Store
 	Models      ModelService
 	Checkpoints checkpoint.Store
+	// Sitting is the per-process agent state the engine rewires into every build
+	// instead of rebuilding — the permission gate and grants, the prompt inbox, the
+	// turn lifecycle and the read snapshots. It belongs to whoever owns the sitting,
+	// which is internal/host when a real entrypoint is driving; nil assembles one
+	// through host.NewSitting, so an engine driven on its own is a complete host of
+	// one.
+	Sitting *host.Sitting
 }
 
 type UndoResult struct {
@@ -77,42 +85,42 @@ type ConnectService interface {
 	Connect(ctx context.Context, providerID, apiKey string) (providerconfig.Active, error)
 }
 
-// Engine es el agente headless que arma runner + tools + permisos sin Wails y
-// publica los eventos durables de la sesion por un canal de mensajes Bubble Tea.
-// El ensamblado real vive en wiring.Build (la misma fuente de verdad que la app
-// Wails); aqui solo se cablea la frontera: Bus -> canal de la TUI.
+// Engine is the headless agent: it assembles runner + tools + permissions
+// without Wails and publishes the durable session events on a Bubble Tea message
+// channel. The assembly itself lives in wiring.Build (the same source of truth
+// the Wails app uses); what is wired here is only the boundary, Bus -> TUI
+// channel.
 type Engine struct {
 	events chan tea.Msg
+	// inbox, gate, grants and agent come from the sitting: they outlive every
+	// rewire, so the user's permission answers and the turn lifecycle are not
+	// dropped when the wiring is rebuilt.
 	inbox  session.Inbox
 	gate   *permission.MemoryGate
-	// grants holds the "allow this for the rest of the session" answers. It is
-	// created once (like gate) so a rewire does not drop the user's grants, and
-	// the policy the runner consults reads it on every gated call.
 	grants *permission.SessionGrants
 	agent  *agent.Service
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	// runner, glob y tools son las piezas mutables del ensamblado: rewire (al
-	// conectar o desconectar un MCP) las reemplaza, asi que se leen bajo mu. glob
-	// alimenta el @-menu de archivos del composer (espejo de
-	// App.ListProjectFiles); tools es el catalogo que la TUI consulta sobre una
-	// tool que solo conoce por nombre.
+	// runner, glob and tools are the mutable pieces of the assembly: rewire (on an
+	// MCP connect or disconnect) replaces them, so they are read under mu. glob feeds
+	// the composer's @-menu of files (the mirror of App.ListProjectFiles); tools is the
+	// catalog the TUI asks about a tool it only knows by name.
 	runner *runner.Runner
 	glob   *tool.GlobTool
 	tools  tool.Catalog
 
-	// wiring es la config base del ensamblado; rewire la reusa con las MCPTools
-	// vigentes. mcp es el manager de servidores MCP locales (stdio) del engine;
-	// los servers declarados salen de <root>/.mcp.json y se releen en cada
-	// listado, asi una edicion del archivo se refleja sin reiniciar.
+	// wiring is the base config of the assembly; rewire reuses it with the MCPTools in
+	// force. mcp is the engine's manager of local (stdio) MCP servers; the declared
+	// servers come from <root>/.mcp.json and are re-read on every listing, so an edit
+	// to the file shows up without a restart.
 	wiring wiring.Config
 	mcp    *mcpclient.Manager
 
-	// root y store espejan a.workspaceRoot()/a.store en la app Wails: la raiz
-	// del workspace y el store DECORADO con EmittingStore (el mismo que recibe
-	// wiring.Build). send los usa para grabar Session.Cwd en el primer prompt
-	// de cada sesion. Inmutables tras New: se leen sin mu.
+	// root and store mirror a.workspace.Root()/a.store in the Wails app: the workspace
+	// root and the store DECORATED with EmittingStore (the same one wiring.Build
+	// receives). send uses them to record Session.Cwd on the first prompt of each
+	// session. Immutable after New, so they are read without mu.
 	root             string
 	store            session.Store
 	undoStore        session.UndoStore
@@ -132,27 +140,32 @@ type Engine struct {
 	compactions  sync.WaitGroup
 }
 
-// New arma el engine a partir de la configuracion: una EmitFunc que
-// puentea los SessionEvent durables del Bus al canal de la TUI, el store
-// decorado con EmittingStore sobre ese bus, y el agente completo via
-// wiring.Build (tools, skills, subagentes, runner con ask-before-run).
+// New assembles the engine from the configuration: an EmitFunc bridging the Bus's
+// durable SessionEvents to the TUI channel, the store decorated with
+// EmittingStore over that bus, and the whole agent through wiring.Build (tools,
+// skills, subagents, runner with ask-before-run).
 func New(cfg Config) *Engine {
+	sitting := cfg.Sitting
+	if sitting == nil {
+		sitting = host.NewSitting()
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	e := &Engine{
-		// Buffer generoso: amortigua rafagas de deltas mientras la TUI drena.
+		// Generous buffer: it absorbs bursts of deltas while the TUI drains.
 		events:             make(chan tea.Msg, 256),
-		inbox:              session.NewMemoryInbox(),
-		gate:               permission.NewMemoryGate(),
-		grants:             wiring.NewSessionGrants(),
+		inbox:              sitting.Inbox,
+		gate:               sitting.Gate,
+		grants:             sitting.Grants,
+		agent:              sitting.Agent,
 		pendingCompactions: map[string]bool{},
 		compacting:         map[string]bool{},
 		ctx:                ctx,
 		cancel:             cancel,
 		shutdownDone:       make(chan struct{}),
 	}
-	// La frontera: donde la app Wails emite a runtime.EventsEmit, aqui el evento
-	// durable va al canal de la TUI. El send bloqueante es deliberado: la TUI
-	// drena el canal en continuo, asi no se pierden eventos bajo rafagas.
+	// The boundary: where the Wails app emits to runtime.EventsEmit, here the
+	// durable event goes to the TUI channel. The blocking send is deliberate: the
+	// TUI drains the channel continuously, so no event is lost under a burst.
 	emit := func(name string, data ...interface{}) {
 		if len(data) == 0 {
 			return
@@ -165,7 +178,6 @@ func New(cfg Config) *Engine {
 	e.root = cfg.Root
 	e.undoStore, _ = cfg.Store.(session.UndoStore)
 	e.store = event.NewEmittingStore(cfg.Store, bus)
-	e.agent = agent.NewService(e.inbox)
 	e.checkpoints = cfg.Checkpoints
 	e.models = cfg.Models
 	e.mcp = mcpclient.NewManager(cfg.Root)
@@ -176,7 +188,7 @@ func New(cfg Config) *Engine {
 		Inbox:    e.inbox,
 		Gate:     e.gate,
 		Grants:   e.grants,
-		Snaps:    tool.NewSessionSnapshots(),
+		Snaps:    sitting.Snapshots,
 		Bus:      bus,
 		// The selection answers this, so switching to or from a local endpoint with
 		// /model changes the prompt on the next turn instead of the next launch.
@@ -188,10 +200,10 @@ func New(cfg Config) *Engine {
 	return e
 }
 
-// rewire re-ensambla el agente con las tools MCP vigentes y publica el swap:
-// el mismo movimiento que App.wire (build fuera de los locks, swap de las
-// piezas mutables bajo mu y Configure dentro de lifecycleMu para no competir
-// con la admision de prompts ni el shutdown).
+// rewire re-assembles the agent with the MCP tools in force and publishes the swap:
+// the same move wailsworkspace makes — build outside the locks, swap the mutable
+// pieces under mu, and Configure inside lifecycleMu so it does not race prompt
+// admission or shutdown.
 func (e *Engine) rewire() {
 	cfg := e.wiring
 	cfg.MCPTools = e.mcp.Tools()
@@ -324,8 +336,8 @@ func (e *Engine) RefreshModels() {
 	}()
 }
 
-// Commands lista los slash-commands disponibles (nombre + descripcion) para el
-// menu "/" del composer, ordenados por nombre (espejo de App.ListCommands).
+// Commands lists the available slash commands (name + description) for the composer's
+// "/" menu, sorted by name (the mirror of App.ListCommands).
 func (e *Engine) Commands() []command.Command {
 	commands := e.agent.Commands()
 	commands = append(commands,
@@ -336,9 +348,9 @@ func (e *Engine) Commands() []command.Command {
 	return commands
 }
 
-// ProjectFiles lista los archivos del workspace (rutas relativas a la raiz,
-// respetando .gitignore y excluyendo .git) para el @-menu de archivos del
-// composer, acotado por el limite del glob (espejo de App.ListProjectFiles).
+// ProjectFiles lists the workspace files (paths relative to the root, honoring
+// .gitignore and excluding .git) for the composer's @-menu, bounded by the glob's
+// limit (the mirror of App.ListProjectFiles).
 func (e *Engine) ProjectFiles() ([]string, error) {
 	glob := e.currentGlob()
 	files, _, err := glob.Files(context.Background(), "", ".", glob.MaxLimit)
@@ -348,8 +360,8 @@ func (e *Engine) ProjectFiles() ([]string, error) {
 	return files, nil
 }
 
-// currentGlob y currentRunner leen las piezas mutables bajo mu: rewire las
-// reemplaza al conectar o desconectar un MCP.
+// currentGlob and currentRunner read the mutable pieces under mu: rewire replaces
+// them on an MCP connect or disconnect.
 func (e *Engine) currentGlob() *tool.GlobTool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -374,7 +386,7 @@ func (e *Engine) currentRunner() *runner.Runner {
 	return e.runner
 }
 
-// PromptHistory reconstruye los ultimos prompts literales enviados por TUI.
+// PromptHistory reconstructs the last literal prompts sent from the TUI.
 func (e *Engine) PromptHistory() ([]string, error) {
 	ctx := context.Background()
 	sessions, err := e.store.Sessions(ctx)
@@ -426,8 +438,8 @@ func (e *Engine) NewSessionID() string {
 	return "tui-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 }
 
-// ListResumeSessions devuelve las sesiones TUI resumibles del workspace actual
-// en el mismo orden de recencia entregado por el store.
+// ListResumeSessions returns the resumable TUI sessions of the current workspace, in
+// the same recency order the store delivers.
 func (e *Engine) ListResumeSessions(currentSessionID string) ([]session.SessionSummary, error) {
 	e.resumeMu.Lock()
 	defer e.resumeMu.Unlock()
@@ -477,8 +489,8 @@ func workspaceDirectoryInfo(path string) (os.FileInfo, error) {
 	return info, nil
 }
 
-// ResumeSessionByID carga exactamente una sesion resumible del workspace y
-// persiste el modo restaurado como el modo vigente de la sesion.
+// ResumeSessionByID loads exactly one resumable session of the workspace and persists
+// the restored mode as the session's mode in force.
 func (e *Engine) ResumeSessionByID(currentSessionID, targetSessionID string) (ResumeResult, error) {
 	e.resumeMu.Lock()
 	defer e.resumeMu.Unlock()
@@ -558,11 +570,11 @@ func modeFromEvents(events []session.SessionEvent) session.Mode {
 	return mode
 }
 
-// SendPrompt encola un prompt del usuario por el camino normal y devuelve la
-// sesion activa junto con el runID. Para /new exacto crea y devuelve una sesion
-// durable nueva sin corrida; en cualquier otro caso conserva sessionID. Fija
-// modo normal primero: una sesion que estaba en plan-mode vuelve a las tools
-// normales al enviar.
+// SendPrompt queues a user prompt through the normal path and returns the active
+// session along with the runID. For exactly "/new" it creates and returns a new
+// durable session with no run; in every other case it keeps sessionID. It sets normal
+// mode first: a session that was in plan mode goes back to the normal tools on
+// send.
 func (e *Engine) SendPrompt(sessionID, text string) (RunHandle, error) {
 	e.resumeMu.Lock()
 	defer e.resumeMu.Unlock()
@@ -601,9 +613,9 @@ func (e *Engine) RetryPrompt(sessionID string) (RunHandle, error) {
 	return RunHandle{SessionID: sessionID, RunID: run.ID}, err
 }
 
-// SendPlanPrompt encola el prompt en plan-mode: investigacion de solo lectura
-// mas present_plan, con el contrato de plan-mode en el system prompt. Fija
-// ModePlan antes de arrancar (espejo de App.SendPlanPrompt).
+// SendPlanPrompt queues the prompt in plan mode: read-only research plus
+// present_plan, with the plan-mode contract in the system prompt. It sets ModePlan
+// before starting (the mirror of App.SendPlanPrompt).
 func (e *Engine) SendPlanPrompt(sessionID, text string) (RunHandle, error) {
 	e.resumeMu.Lock()
 	defer e.resumeMu.Unlock()
@@ -612,8 +624,8 @@ func (e *Engine) SendPlanPrompt(sessionID, text string) (RunHandle, error) {
 	return RunHandle{SessionID: sessionID, RunID: run.ID}, err
 }
 
-// turnHooks conserva las responsabilidades exclusivas de la TUI alrededor del
-// ciclo compartido: CWD, checkpoints, historial literal, RunDoneMsg y compactado.
+// turnHooks keeps the responsibilities that are the TUI's alone around the shared
+// lifecycle: CWD, checkpoints, the literal history, RunDoneMsg and compaction.
 func (e *Engine) turnHooks(sessionID, composerPrompt string, mode session.Mode) agent.Hooks {
 	checkpointID := ""
 	return agent.Hooks{
@@ -629,7 +641,7 @@ func (e *Engine) turnHooks(sessionID, composerPrompt string, mode session.Mode) 
 			if _, err := e.store.LoadSession(context.Background(), sessionID); err != nil {
 				if _, err := e.store.AppendEvent(context.Background(), sessionID,
 					session.SessionEvent{Kind: session.KindSessionCwd, Text: e.root}); err != nil {
-					log.Printf("atenea: no se pudo guardar la carpeta de %s: %v", sessionID, err)
+					log.Printf("atenea: could not save the folder of %s: %v", sessionID, err)
 				}
 			}
 			if _, err := e.store.AppendEvent(context.Background(), sessionID,
@@ -653,7 +665,7 @@ func (e *Engine) turnHooks(sessionID, composerPrompt string, mode session.Mode) 
 			}
 			if _, err := e.store.AppendEvent(context.Background(), sessionID,
 				session.SessionEvent{Kind: session.KindComposerPrompt, Text: composerPrompt}); err != nil {
-				log.Printf("atenea: no se pudo guardar el prompt en el historial de %s: %v", sessionID, err)
+				log.Printf("atenea: could not save the prompt in the history of %s: %v", sessionID, err)
 			}
 		},
 		AfterRun: func(result agent.RunResult) {
@@ -729,9 +741,9 @@ func (e *Engine) Undo(sessionID string) (UndoResult, error) {
 	return result, err
 }
 
-// AcceptPlan acepta y ejecuta el plan: vuelve la sesion a modo normal y
-// promueve el prompt fijo de implementacion como prompt del usuario,
-// arrancando la corrida (espejo de App.AcceptPlan).
+// AcceptPlan accepts and executes the plan: it returns the session to normal mode and
+// promotes the fixed implementation prompt as the user's prompt, starting the run (the
+// mirror of App.AcceptPlan).
 func (e *Engine) AcceptPlan(sessionID string) (RunHandle, error) {
 	e.resumeMu.Lock()
 	defer e.resumeMu.Unlock()
@@ -756,7 +768,7 @@ func (e *Engine) ResolvePermission(sessionID, callID string, verdict permission.
 	e.gate.Resolve(sessionID, callID, verdict.Approved())
 }
 
-// Stop interrumpe la corrida en curso de la sesion. No-op si no corre.
+// Stop interrupts the session's run in progress. No-op if none is running.
 func (e *Engine) Stop(sessionID string) {
 	e.agent.Stop(sessionID)
 }
@@ -773,7 +785,7 @@ func (e *Engine) Shutdown(ctx context.Context) error {
 		go func() {
 			e.agent.Wait()
 			e.compactions.Wait()
-			// Con las corridas ya detenidas, cerrar los MCP mata sus subprocesos.
+			// With the runs already stopped, closing the MCPs kills their subprocesses.
 			e.mcp.Close()
 			close(e.shutdownDone)
 		}()
@@ -786,8 +798,8 @@ func (e *Engine) Shutdown(ctx context.Context) error {
 	}
 }
 
-// clear saca del mapa la corrida h solo si sigue siendo la vigente (un
-// SendPrompt mas nuevo pudo reemplazarla).
+// finishRun clears the session's compaction claim only when the finished run was
+// still the current one (a newer SendPrompt may have replaced it).
 func (e *Engine) finishRun(sessionID string, current bool) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -869,6 +881,6 @@ func (e *Engine) sendEvent(msg tea.Msg) {
 	}
 }
 
-// Events entrega los EventMsg durables de la corrida y un RunDoneMsg al
-// terminar cada corrida.
+// Events delivers the run's durable EventMsgs and one RunDoneMsg as each run
+// finishes.
 func (e *Engine) Events() <-chan tea.Msg { return e.events }

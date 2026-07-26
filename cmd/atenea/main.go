@@ -1,14 +1,14 @@
-// atenea es la interfaz de terminal (estilo Claude Code) del agente atenea.
-// Es la frontera delgada equivalente al main.go de Wails: arma el provider desde
-// el entorno, ensambla el Engine headless (internal/tui/engine) anclado al cwd y
-// corre el programa Bubble Tea. La logica testeable vive en internal/tui.
+// Command atenea is the terminal interface (Claude Code style) of the atenea
+// agent. It is the thin boundary equivalent to the Wails main.go: it assembles
+// the shared host (internal/host), builds the headless Engine
+// (internal/tui/engine) over it and runs the Bubble Tea program. The testable
+// logic lives in internal/tui.
 package main
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -18,9 +18,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/K3N4Y/atenea/internal/checkpoint"
-	"github.com/K3N4Y/atenea/internal/dotenv"
-	"github.com/K3N4Y/atenea/internal/llm"
-	"github.com/K3N4Y/atenea/internal/providerconfig"
+	"github.com/K3N4Y/atenea/internal/host"
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/tui"
 	"github.com/K3N4Y/atenea/internal/tui/engine"
@@ -38,83 +36,66 @@ func main() {
 }
 
 func run() error {
-	// Cargar .env del cwd (si existe) antes de armar el engine: deja
-	// OPENROUTER_API_KEY y demas a mano en dev. Las env vars reales tienen prioridad.
-	dotenv.Load(".env")
-
-	// El log estandar (fallos de tools, skills no descubiertas) iria a stderr y
-	// pintaria sobre la pantalla alternativa de Bubble Tea: se desvia a un archivo.
+	// The standard log (tool failures, skills that failed to be discovered) would go
+	// to stderr and paint over Bubble Tea's alternate screen: it is redirected to a
+	// file. This happens FIRST, so every warning the host bootstrap emits — an
+	// unopenable SQLite, a provider config that will not load — lands in the file
+	// instead of on the user's screen.
 	redirectLog()
 
-	// El store durable COMPARTIDO con la app Wails (mismo SQLite): las sesiones
-	// de la TUI aparecen en su sidebar. Se abre DESPUES de dotenv.Load (ATENEA_DB
-	// puede venir del .env) y de redirectLog (el warning va al log desviado, no
-	// a la pantalla). Si falla, OpenDefault ya devolvio un store en memoria
-	// usable: la TUI sigue funcionando, solo que sin persistir.
-	store, err := session.OpenDefault()
-	if err != nil {
-		log.Printf("atenea: no se pudo abrir el SQLite (%v); las sesiones NO van a persistir (store en memoria)", err)
-	}
-	closer, _ := store.(io.Closer)
-
-	root, err := os.Getwd()
-	if err != nil {
-		root = "."
-	}
-
-	// El provider y la etiqueta del modelo se resuelven UNA vez: el mismo valor
-	// alimenta al engine y al pie del composer (no duplicar la resolucion).
-	providerService, warning := openProviderService()
-	if warning != nil {
-		log.Printf("atenea: provider config: %v", warning)
-	}
-	active := providerService.Active()
+	// The shared outer assembly: the .env of the working directory, the built-in
+	// skills, the workspace root, the SQLite store and the provider service the
+	// desktop app also reads, and the sitting. See internal/host.
+	h := host.New(context.Background(), host.Config{
+		Dotenv:               ".env",
+		ExtractBuiltinSkills: true,
+	})
+	// The active selection is read ONCE: the same value feeds the engine and the
+	// composer footer.
+	active := h.Providers.Active()
 
 	eng := engine.New(engine.Config{
-		Root:        root,
-		Provider:    providerService.Provider(),
-		Store:       store,
-		Models:      providerService,
+		Root:        h.Root,
+		Provider:    h.Providers.Provider(),
+		Store:       h.Store,
+		Models:      h.Providers,
 		Checkpoints: checkpoint.NewGitStore(session.DefaultCheckpointPath()),
+		Sitting:     h.Sitting,
 	})
 	history, err := eng.PromptHistory()
 	if err != nil {
-		log.Printf("atenea: no se pudo cargar el historial del composer: %v", err)
+		log.Printf("atenea: could not load the composer history: %v", err)
 	}
 
 	// Every launch starts a fresh conversation: no transcript from previous
 	// runs on screen. Older sessions of this workspace stay one /resume away.
 	sessionID := eng.NewSessionID()
 
-	// El autocompletado del composer sale del engine: los slash-commands de las
-	// skills para el menu "/" y el listado del workspace para el @-menu.
+	// The composer's autocompletion comes from the engine: the skills' slash
+	// commands for the "/" menu and the workspace listing for the @-menu.
 	m := tui.NewModel(eng, sessionID, eng.Events()).
 		WithHistory(history).
 		WithStatus("build", active.Model).
-		WithWorkspaceRoot(gitBranch(root), displayDir(root), root).
+		WithWorkspaceRoot(gitBranch(h.Root), displayDir(h.Root), h.Root).
 		WithCompletions(eng.Commands(), eng.ProjectFiles).
-		WithFileReader(tui.WorkspaceFileReader(root))
-	// Starting on demo means there is no key anywhere (neither environment nor
-	// stored credential): say so, and say how to get out of it, instead of
-	// letting the user chat with the fake and find out the hard way.
-	if active.ProviderID == "demo" {
+		WithFileReader(tui.WorkspaceFileReader(h.Root))
+	// Starting on the offline provider means there is no key anywhere (neither
+	// environment nor stored credential): say so, and say how to get out of it,
+	// instead of letting the user chat with the fake and find out the hard way.
+	if active.ProviderID == host.OfflineProviderID {
 		m = m.WithNotice("No provider connected — run /connect to connect an LLM provider. Demo mode: replies are canned.")
 	}
-	// WithMouseCellMotion habilita el mouse tracking: sin el, la terminal nunca
-	// reporta la rueda a la app (en pantalla alternativa la traduce a flechas
-	// via "alternate scroll"); con la opcion llegan eventos de mouse reales.
+	// WithMouseCellMotion enables mouse tracking: without it the terminal never
+	// reports the wheel to the app (on the alternate screen it translates it to
+	// arrows via "alternate scroll"); with the option real mouse events arrive.
 	_, runErr := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithReportFocus()).Run()
 	shutdownErr := eng.Shutdown(context.Background())
-	var closeErr error
-	if closer != nil {
-		closeErr = closer.Close()
-	}
-	return errors.Join(runErr, shutdownErr, closeErr)
+	return errors.Join(runErr, shutdownErr, h.Close())
 }
 
-// gitBranch devuelve la rama git actual del repo en root (git rev-parse
-// --abbrev-ref HEAD), o "" ante cualquier error o si root no es un repo. La
-// top bar la muestra a la izquierda.
+// gitBranch returns the current git branch of the repo at root (git rev-parse
+// --abbrev-ref HEAD), or "" on any error and when root is not a repo. The top bar
+// shows it on the left.
 func gitBranch(root string) string {
 	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
 	cmd.Dir = root
@@ -125,9 +106,9 @@ func gitBranch(root string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// displayDir abrevia el prefijo del home a "~" para mostrar el directorio de
-// trabajo en la top bar; sin home resoluble o sin prefijo comun devuelve root
-// tal cual.
+// displayDir abbreviates the home prefix to "~" for the working directory shown
+// in the top bar; with no resolvable home or no common prefix it returns root
+// unchanged.
 func displayDir(root string) string {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
@@ -142,43 +123,9 @@ func displayDir(root string) string {
 	return root
 }
 
-// openProviderService opens the provider service on the shared paths: the
-// providers.json, model cache and credentials the desktop app reads too, so a
-// selection made in either one is the selection both see.
-//
-// The fallback is what the TUI chats with before any selection exists: the first
-// provider of the built-in catalog whose API-key variable is set, and otherwise
-// the offline demo, so the TUI can be driven without configuring anything.
-func openProviderService() (*providerconfig.Service, error) {
-	fallback, fromEnvironment := providerconfig.DefaultFallback(offlineSnapshot())
-	if !fromEnvironment {
-		log.Print("atenea: no provider API key in the environment; using the stored selection or the offline demo provider")
-	}
-	return providerconfig.OpenDefault(context.Background(), fallback)
-}
-
-// offlineSnapshot is the fake the TUI lands on with no credential anywhere,
-// presented as a provider like any other so /model and the composer footer have
-// something honest to show.
-func offlineSnapshot() llm.ProviderSnapshot {
-	return llm.ProviderSnapshot{ProviderID: "demo", ProviderName: "Demo", BaseURL: "demo://local", Model: "demo", Provider: demoProvider()}
-}
-
-// demoProvider arma un FakeProvider con un guion corto (texto + Step.Ended) para
-// ver streaming en la TUI sin red, igual que el demo de la app Wails.
-func demoProvider() llm.Provider {
-	return llm.NewFakeProvider(
-		llm.Event{Kind: llm.StepStarted},
-		llm.Event{Kind: llm.TextStarted},
-		llm.Event{Kind: llm.TextDelta, Text: "Hola desde atenea."},
-		llm.Event{Kind: llm.TextEnded},
-		llm.Event{Kind: llm.StepEnded},
-	)
-}
-
-// redirectLog manda el log estandar a un archivo en el dir temporal para no
-// corromper el render de la terminal. Si no se puede abrir, se descarta a
-// /dev/null antes que pintar sobre la pantalla.
+// redirectLog sends the standard log to a file in the temporary directory so it
+// does not corrupt the terminal's rendering. If it cannot be opened, the log is
+// discarded rather than painted over the screen.
 func redirectLog() {
 	path := filepath.Join(os.TempDir(), "atenea.log")
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
@@ -189,7 +136,7 @@ func redirectLog() {
 	log.SetOutput(f)
 }
 
-// devNull descarta el log cuando ni el archivo temporal se pudo abrir.
+// devNull discards the log when not even the temporary file could be opened.
 type devNull struct{}
 
 func (devNull) Write(p []byte) (int, error) { return len(p), nil }

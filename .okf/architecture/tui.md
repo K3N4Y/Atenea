@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-24
+updated_at: 2026-07-26
 summary: Architecture and behavior of the Atenea terminal user interface.
 ---
 
@@ -59,20 +59,19 @@ atenea:     agent.Service -> runner -> EmittingStore -> Bus -> chan tea.Msg     
 
 ## Pieces
 
-- `cmd/atenea/main.go` — the thin border (equivalent to `main.go` from
- Wails): loads `.env` (development builds only — `-tags production` compiles
- `dotenv.Load` to a no-op), opens the global provider service from
- `os.UserConfigDir()/atenea/providers.json` with the shared credential store
- (`credentials.json`), and preserves the previous
- environment fallback (`OPENROUTER_API_KEY` present = OpenRouter with
- `OPENROUTER_MODEL`; absent = demo without network) when no valid global
- selection is available. Starting on the demo provider seeds the transcript
- with a notice pointing at `/connect`. It diverts
- the standard log to a temporary file (do not paint over the alternative screen),
- opens the SQLite SHARED with the app via `session.OpenDefault` (fallback to
- memory if it fails, with `Close` on exit), resumes the latest TUI session for
- the current workspace, and runs `tea.NewProgram` with alt-screen. Without its
- own testable logic.
+- `cmd/atenea/main.go` — the thin border (equivalent to `main.go` from Wails).
+ It diverts the standard log to a temporary file first (do not paint over the
+ alternative screen), then builds `host.New` — the shared outer assembly: the
+ `.env` (development builds only — `-tags production` compiles `dotenv.Load` to a
+ no-op), the built-in skills, the workspace root, the SQLite SHARED with the
+ desktop app, and the global provider service over `providers.json` and
+ `credentials.json`, falling back to the first catalog provider whose key is
+ exported and then to the offline demo. See
+ [Composition root](composition-root.md). Starting on the demo provider seeds the
+ transcript with a notice pointing at `/connect`. Every launch starts a fresh
+ conversation (older ones stay one `/resume` away), and `tea.NewProgram` runs with
+ alt-screen. `h.Close()` closes the store on the way out. Without its own testable
+ logic beyond `gitBranch`/`displayDir`.
 - `internal/tui/engine/engine.go` — coordinates `/compact` per session. An idle session
   starts immediately; an active run records one deduplicated pending request and
   drains it after normal completion or cancellation. Prompt execution and
@@ -88,10 +87,12 @@ atenea:     agent.Service -> runner -> EmittingStore -> Bus -> chan tea.Msg     
   IDs, replacement/cancellation ordering, completion hooks, and stale-run
   cleanup. Its `Mode` method is the mode hook passed to `wiring.Build`.
 - `internal/tui/engine/` (package `engine`) — the terminal adapter and headless
- assembly, built with `engine.New(engine.Config{...})`. It creates
- inbox/gate/snapshots in memory, decorates the store with `EmittingStore` on a
- `event.Bus` whose `EmitFunc` bridges each `session.SessionEvent` to the
- TUI channel, and delegates runner wiring to `wiring.Build`. `SendPrompt`,
+ assembly, built with `engine.New(engine.Config{...})`. It takes the
+ `*host.Sitting` — inbox, gate, grants, `agent.Service`, snapshots — and assembles
+ one of its own when the field is left nil, decorates the store with
+ `EmittingStore` on a `event.Bus` whose `EmitFunc` bridges each
+ `session.SessionEvent` to the TUI channel, and delegates runner wiring to
+ `wiring.Build`. `SendPrompt`,
  `SendPlanPrompt`, `AcceptPlan`, and `Stop` delegate their common behavior to
  `agent.Service`; hooks retain TUI-only CWD persistence, checkpoints, literal
  prompt history, durable session mode, `RunDoneMsg`, and pending compaction. It

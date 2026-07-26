@@ -202,9 +202,10 @@ the two used to end up reading different files.
 - **The fallback reads the shipped catalog, not the user's merged config.** The
   host passes `DefaultCatalog()` because `Open` takes the fallback as a
   constructor argument, before it has loaded anything — so a `model_env` a user
-  edited in their own `providers.json` does not reach it. This matches what
-  shipped before, and closing it means the fallback being resolved *inside* `Open`
-  once the config is known, which is R4's single composition root.
+  edited in their own `providers.json` does not reach it. This matches what shipped
+  before. R4.1 gave the call one home ([composition root](composition-root.md)),
+  which is what makes the remaining fix a single change, but it is a change inside
+  `Open`: the fallback has to be resolved there, once the config is known.
 - **A model discovered remotely has no window.** `ModelLister` returns bare ids,
   so the models this catalog does *not* curate show an em dash where a context
   label belongs. See

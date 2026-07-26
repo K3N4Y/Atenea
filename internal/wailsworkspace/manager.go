@@ -9,12 +9,11 @@ import (
 	"os"
 	"sync"
 
-	"github.com/K3N4Y/atenea/internal/agent"
 	"github.com/K3N4Y/atenea/internal/command"
 	"github.com/K3N4Y/atenea/internal/event"
+	"github.com/K3N4Y/atenea/internal/host"
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/mcpclient"
-	"github.com/K3N4Y/atenea/internal/permission"
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/tool"
 	"github.com/K3N4Y/atenea/internal/wiring"
@@ -31,11 +30,11 @@ type Config struct {
 	// wiring.Config.LocalPrompt.
 	LocalPrompt func() bool
 	Store       session.Store
-	Inbox       session.Inbox
-	Gate        permission.Gate
-	Snapshots   *tool.SessionSnapshots
 	Bus         *event.Bus
-	Agent       *agent.Service
+	// Sitting is the per-process agent state this manager rewires into every build
+	// rather than rebuilding: the permission gate, the prompt inbox, the read
+	// snapshots and the turn lifecycle it reconfigures. See host.Sitting.
+	Sitting *host.Sitting
 }
 
 // Manager owns workspace and MCP lifecycle state. Admit serializes prompt
@@ -48,11 +47,8 @@ type Manager struct {
 	provider    llm.Provider
 	localPrompt func() bool
 	store       session.Store
-	inbox       session.Inbox
-	gate        permission.Gate
-	snaps       *tool.SessionSnapshots
 	bus         *event.Bus
-	agent       *agent.Service
+	sitting     *host.Sitting
 	mcp         *mcpclient.Manager
 }
 
@@ -62,11 +58,8 @@ func New(cfg Config) *Manager {
 		provider:    cfg.Provider,
 		localPrompt: cfg.LocalPrompt,
 		store:       cfg.Store,
-		inbox:       cfg.Inbox,
-		gate:        cfg.Gate,
-		snaps:       cfg.Snapshots,
 		bus:         cfg.Bus,
-		agent:       cfg.Agent,
+		sitting:     cfg.Sitting,
 		mcp:         mcpclient.NewManager(cfg.Root),
 	}
 	m.lifecycleMu.Lock()
@@ -93,10 +86,10 @@ func (m *Manager) Root() string {
 func (m *Manager) SetRoot(path string) error {
 	info, err := os.Stat(path)
 	if err != nil {
-		return fmt.Errorf("workspace invalido: %w", err)
+		return fmt.Errorf("invalid workspace: %w", err)
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("workspace invalido: %s no es una carpeta", path)
+		return fmt.Errorf("invalid workspace: %s is not a folder", path)
 	}
 	m.lifecycleMu.Lock()
 	defer m.lifecycleMu.Unlock()
@@ -161,7 +154,7 @@ func (m *Manager) MCPStatus() []mcpclient.ServerStatus {
 }
 
 // Commands returns the commands from the currently configured agent.
-func (m *Manager) Commands() []command.Command { return m.agent.Commands() }
+func (m *Manager) Commands() []command.Command { return m.sitting.Agent.Commands() }
 
 // Close stops all connected MCP processes after excluding lifecycle changes.
 func (m *Manager) Close() {
@@ -170,15 +163,22 @@ func (m *Manager) Close() {
 	m.mcp.Close()
 }
 
+// rebuildLocked re-anchors the whole wiring at root and publishes it.
+//
+// The sitting's Grants deliberately stays out of the build. The desktop's
+// ResolveToolPermission binding carries an approve/deny boolean and cannot
+// express "allow for the rest of the session", so handing wiring a store nothing
+// ever writes to would advertise an affordance this UI does not have. The day the
+// frontend grows the third button, this is the line that changes.
 func (m *Manager) rebuildLocked(root string) {
 	built := wiring.Build(wiring.Config{
-		Root: root, Provider: m.provider, Store: m.store, Inbox: m.inbox,
-		Gate: m.gate, Snaps: m.snaps, Bus: m.bus, LocalPrompt: m.localPrompt,
-		NextID: wiring.NewIDGen(), Mode: m.agent.Mode, MCPTools: m.mcp.Tools(),
+		Root: root, Provider: m.provider, Store: m.store, Inbox: m.sitting.Inbox,
+		Gate: m.sitting.Gate, Snaps: m.sitting.Snapshots, Bus: m.bus, LocalPrompt: m.localPrompt,
+		NextID: wiring.NewIDGen(), Mode: m.sitting.Agent.Mode, MCPTools: m.mcp.Tools(),
 	})
 	m.mu.Lock()
 	m.root = root
 	m.glob = built.Glob
 	m.mu.Unlock()
-	m.agent.Configure(built.Runner, built.Commands)
+	m.sitting.Agent.Configure(built.Runner, built.Commands)
 }

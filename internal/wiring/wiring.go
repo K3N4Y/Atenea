@@ -93,15 +93,6 @@ type Built struct {
 	Policy permission.Policy
 }
 
-// NewSessionGrants builds the session-grant store: the UI adds to it when the
-// user answers "allow this for the rest of the session". The caller owns it and
-// passes it in Config.Grants so it survives a rewire (MCP connect, workspace
-// change) instead of being dropped mid-session; a UI without that affordance
-// passes nil and gates exactly as before.
-func NewSessionGrants() *permission.SessionGrants {
-	return permission.NewSessionGrants()
-}
-
 // Build arma todo el cableado anclado a cfg.Root: las file/exec tools, el glob
 // del @-menu, las skills y sus slash-commands, el catalogo de subagentes y un
 // runner nuevo con el system prompt apuntando a la raiz. No muta estado global:

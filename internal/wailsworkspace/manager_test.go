@@ -13,10 +13,9 @@ import (
 	"github.com/K3N4Y/atenea/internal/agent"
 	"github.com/K3N4Y/atenea/internal/command"
 	"github.com/K3N4Y/atenea/internal/event"
+	"github.com/K3N4Y/atenea/internal/host"
 	"github.com/K3N4Y/atenea/internal/llm"
-	"github.com/K3N4Y/atenea/internal/permission"
 	"github.com/K3N4Y/atenea/internal/session"
-	"github.com/K3N4Y/atenea/internal/tool"
 )
 
 type recordingProvider struct {
@@ -42,17 +41,14 @@ func (p *recordingProvider) lastRequest() llm.Request {
 
 func newTestManager(t *testing.T, root string, provider llm.Provider) (*Manager, *agent.Service) {
 	t.Helper()
-	store := session.NewMemoryStore()
-	inbox := session.NewMemoryInbox()
-	service := agent.NewService(inbox)
+	sitting := host.NewSitting()
 	bus := event.NewBus(func(string, ...interface{}) {})
 	manager := New(Config{
-		Root: root, Provider: provider, Store: store, Inbox: inbox,
-		Gate: permission.NewMemoryGate(), Snapshots: tool.NewSessionSnapshots(),
-		Bus: bus, Agent: service,
+		Root: root, Provider: provider, Store: session.NewMemoryStore(),
+		Bus: bus, Sitting: sitting,
 	})
 	t.Cleanup(manager.Close)
-	return manager, service
+	return manager, sitting.Agent
 }
 
 func writeSkill(t *testing.T, root, name string) {

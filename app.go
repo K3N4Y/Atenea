@@ -3,9 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
@@ -13,25 +10,18 @@ import (
 	"github.com/K3N4Y/atenea/internal/agent"
 	"github.com/K3N4Y/atenea/internal/command"
 	"github.com/K3N4Y/atenea/internal/event"
+	"github.com/K3N4Y/atenea/internal/host"
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/mcpclient"
 	"github.com/K3N4Y/atenea/internal/permission"
 	"github.com/K3N4Y/atenea/internal/providerconfig"
 	"github.com/K3N4Y/atenea/internal/session"
-	"github.com/K3N4Y/atenea/internal/skill"
 	"github.com/K3N4Y/atenea/internal/terminal"
-	"github.com/K3N4Y/atenea/internal/tool"
 	"github.com/K3N4Y/atenea/internal/wailssession"
 	"github.com/K3N4Y/atenea/internal/wailsworkspace"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
-
-// offlineProviderID names the fake the app falls back to with no credential
-// anywhere. It is not in any catalog, so nothing can ever select it — the app only
-// lands on it, and the UI has an id that matches no row, which is how the model
-// panel knows to say that replies are canned.
-const offlineProviderID = "demo"
 
 // ProviderEntry is one row of the model picker: a provider the user has
 // configured, the models it offers, and what the UI can do about it. It mirrors
@@ -61,66 +51,49 @@ type ActiveProvider struct {
 	ContextWindow int    `json:"contextWindow"`
 }
 
-// App cablea el loop del agente (M1..M8) a la app Wails: arranca/corta Run desde
-// el frontend y reenvia el log durable por el Bus. La logica del loop no cambia.
+// App wires the agent loop (M1..M8) to the Wails app: it starts and cancels Run
+// from the frontend and forwards the durable log over the Bus. The loop's logic
+// does not change.
 type App struct {
-	ctx       context.Context // ctx de Wails; lo fija startup. Solo lo usa la EmitFunc real.
+	ctx       context.Context // Wails ctx, set by startup. Only the real EmitFunc reads it.
 	inbox     session.Inbox
 	bus       *event.Bus
-	emit      event.EmitFunc          // la misma frontera que usa el bus; la tab Terminal empuja su salida por aca
+	emit      event.EmitFunc          // the same boundary the bus uses; the Terminal tab pushes its output through it
 	gate      *permission.MemoryGate  // ask-before-run: the UI resolves via ResolveToolPermission
-	agent     *agent.Service          // ciclo headless compartido con la TUI
-	providers *providerconfig.Service // el mismo catalogo, credenciales y seleccion que la TUI
-	workspace *wailsworkspace.Manager // root, wiring, glob y MCP publicados como un snapshot serializado
-	sessions  *wailssession.Manager   // historial durable, metadata inicial, titulos y borrado
+	agent     *agent.Service          // the headless turn lifecycle shared with the TUI
+	providers *providerconfig.Service // the same catalog, credentials and selection the TUI holds
+	workspace *wailsworkspace.Manager // root, wiring, glob and MCP published as one serialized configuration
+	sessions  *wailssession.Manager   // durable history, initial metadata, titles and deletion
 
-	term *terminal.Manager // las tabs Terminal: varias sesiones pty vivas por id
+	term *terminal.Manager // the Terminal tabs: several live pty sessions, one per id
 }
 
-// newAppWithStore arma la app sobre un store, el servicio de providers y la
-// frontera (emit) inyectados. El store se decora con EmittingStore (puente Store
-// -> UI) y el cableado del agente (tools, skills, subagentes, runner) se delega
-// al modulo wailsworkspace.
-// Es el punto unico de ensamblado: los tests lo llaman con un MemoryStore y un
-// servicio sin archivo, produccion via NewApp (SQLite + providers.json real).
-func newAppWithStore(store session.Store, providers *providerconfig.Service, emit event.EmitFunc) *App {
-	a := &App{providers: providers}
-	// El watcher del data_version se ancla al store CRUDO (antes de decorarlo):
-	// solo el SQLiteStore sobre archivo sabe exponerlo; un MemoryStore no, y la
-	// app queda sin watcher (no hay otro proceso posible sobre memoria).
+// newAppWithHost assembles the app over an already-assembled host and the
+// injected boundary (emit). The host owns everything above the wiring — the
+// store, the provider service and the sitting — so this function is only the
+// Wails-shaped part of the assembly: decorating the store with EmittingStore
+// (Store -> UI bridge) and handing the workspace manager what it rebuilds with.
+func newAppWithHost(h *host.Host, emit event.EmitFunc) *App {
+	a := &App{providers: h.Providers, gate: h.Gate, inbox: h.Inbox, agent: h.Agent}
+	// The data_version watcher is anchored to the RAW store (before decorating it):
+	// only the file-backed SQLiteStore can expose it; a MemoryStore cannot, and then
+	// the app runs without a watcher (nothing else can be writing to memory).
 	var versioner event.DataVersioner
-	if v, ok := store.(event.DataVersioner); ok {
+	if v, ok := h.Store.(event.DataVersioner); ok {
 		versioner = v
 	}
 	a.emit = emit
 	a.bus = event.NewBus(emit)
 	a.term = terminal.NewManager()
-	emitting := event.NewEmittingStore(store, a.bus)
-	a.inbox = session.NewMemoryInbox()
-	a.agent = agent.NewService(a.inbox)
-	// read, write y edit comparten snapshots por sesion: read graba hash + lineas
-	// vistas, edit lo lee para anclar ediciones, write crea archivos nuevos con su
-	// snapshot. El read-state es por sesion (no por carpeta): se crea una vez y
-	// sobrevive a los cambios de workspace.
-	snaps := tool.NewSessionSnapshots()
-	// Ask-before-run: the fixed policy (wiring.askPolicy) gates bash, write,
-	// edit and web_fetch. The UI approves/denies each call via
-	// ResolveToolPermission. The gate does not depend on the root: it is
-	// created once and wailsworkspace rewires it into every runner.
-	a.gate = permission.NewMemoryGate()
-	// La raiz inicial es el cwd del proceso; SetWorkspace la cambia en vivo.
-	root, err := os.Getwd()
-	if err != nil {
-		root = "."
-	}
+	emitting := event.NewEmittingStore(h.Store, a.bus)
 	a.workspace = wailsworkspace.New(wailsworkspace.Config{
-		Root: root,
-		// El handle switchable es estable: elegir otro modelo cambia a que delega,
-		// no que se cablea, asi que el rebuild solo existe para cortar las corridas
-		// que venian del modelo anterior.
+		Root: h.Root,
+		// The switchable handle is stable: choosing another model changes what it
+		// delegates to, not what is wired, so the rebuild exists only to cut the runs
+		// that came from the previous model.
 		Provider:    a.providers.Provider(),
 		LocalPrompt: func() bool { return a.providers.Active().LocalModels },
-		Store:       emitting, Inbox: a.inbox, Gate: a.gate, Snapshots: snaps, Bus: a.bus, Agent: a.agent,
+		Store:       emitting, Bus: a.bus, Sitting: h.Sitting,
 	})
 	a.sessions = wailssession.New(wailssession.Config{
 		Store: emitting, Root: a.workspace.Root, Forget: a.agent.Forget,
@@ -129,82 +102,42 @@ func newAppWithStore(store session.Store, providers *providerconfig.Service, emi
 	return a
 }
 
-// NewApp arma la app de produccion: store SQLite durable y el servicio de
-// providers sobre los archivos compartidos con la TUI. La EmitFunc cierra sobre a
-// para leer a.ctx (que startup fija despues): emitir antes de startup pasa un ctx
-// nil, pero la UI no llama SendPrompt antes de cargar.
-func NewApp() *App {
+// NewApp assembles the production app over the real host. The EmitFunc closes
+// over a so it can read a.ctx (which startup sets afterwards): emitting before
+// startup passes a nil ctx, but the UI does not call SendPrompt before it loads.
+func NewApp(h *host.Host) *App {
 	var a *App
 	emit := func(name string, data ...interface{}) {
 		runtime.EventsEmit(a.ctx, name, data...)
 	}
-	// Skills built-in: materializar a ~/.atenea/skills (ruta que skillDirs ya escanea)
-	// las skills que viajan embebidas en el binario, antes de descubrir. Asi vienen "de
-	// fabrica" tras instalar, sin que el usuario copie nada. No es fatal: si falla, la
-	// app arranca igual con las skills que haya en disco.
-	if home, herr := os.UserHomeDir(); herr != nil {
-		log.Printf("atenea: no se pudo resolver el home para extraer skills built-in: %v", herr)
-	} else if eerr := skill.ExtractBuiltins(filepath.Join(home, ".atenea", "skills")); eerr != nil {
-		log.Printf("atenea: no se pudieron extraer las skills built-in: %v", eerr)
-	}
-	a = newAppWithStore(openStore(), openProviderService(), emit)
-	// Auto-title: el primer mensaje de cada sesion se resume con el provider real.
-	// Solo en produccion; los tests dejan titler nil para no doblar las llamadas al
-	// provider en cada envio. Lee provider y modelo vigentes (SetProvider puede
-	// cambiarlos en vivo) desde el snapshot del manager.
+	a = newAppWithHost(h, emit)
+	// Auto-title: the first message of each session is summarized with the real
+	// provider. Production only; tests leave titler nil so a send does not double the
+	// calls to the provider. It reads the provider and model in force (they can change
+	// live) rather than capturing them.
 	a.sessions.SetTitler(wailssession.ProviderTitler(func() (llm.Provider, string) {
 		return a.currentProvider(), a.currentModel()
 	}))
 	return a
 }
 
-// openStore abre el SQLite COMPARTIDO con la TUI via session.OpenDefault (la
-// fuente unica de la ruta y la apertura: ambos procesos ven las mismas
-// sesiones). Si falla (disco/permiso), OpenDefault ya devolvio el fallback en
-// memoria usable: la app abre igual, solo que sin persistencia. El cierre del
-// store se delega al ciclo de vida del proceso.
-func openStore() session.Store {
-	store, err := session.OpenDefault()
-	if err != nil {
-		log.Printf("atenea: no se pudo abrir SQLite (%v); usando store en memoria", err)
-	}
-	return store
-}
-
-// openProviderService abre el servicio de providers de produccion: providers.json,
-// el cache de modelos y las credenciales en sus rutas por defecto — las MISMAS que
-// la TUI, asi que elegir un modelo en cualquiera de las dos lo cambia en las dos.
-// Ningun fallo es fatal: el servicio vuelve usable (sirviendo el fallback) y solo
-// la seleccion falla, con el motivo en el log.
-func openProviderService() *providerconfig.Service {
-	fallback, fromEnvironment := providerconfig.DefaultFallback(offlineSnapshot())
-	if !fromEnvironment {
-		log.Print("atenea: no provider API key in the environment; falling back to the stored selection or the offline demo")
-	}
-	providers, err := providerconfig.OpenDefault(context.Background(), fallback)
-	if err != nil {
-		log.Printf("atenea: provider config: %v", err)
-	}
-	return providers
-}
-
-// ProviderCatalog lista los providers configurados con sus modelos y su estado de
-// credencial: es lo que pinta el selector de modelo del panel de ajustes.
+// ProviderCatalog lists the configured providers with their models and credential
+// state: it is what the settings panel's model picker paints.
 func (a *App) ProviderCatalog() []ProviderEntry {
 	return a.providerEntries(a.providers.Catalog())
 }
 
-// RefreshModels vuelve a pedir el catalogo de modelos a cada endpoint que soporta
-// descubrimiento y devuelve el catalogo resultante. El error es una advertencia:
-// los endpoints que si respondieron ya estan en la respuesta.
+// RefreshModels re-asks every endpoint that supports discovery for its model
+// catalog and returns the result. The error is a warning: the endpoints that did
+// answer are already in the response.
 func (a *App) RefreshModels() ([]ProviderEntry, error) {
 	providers, err := a.providers.Refresh(context.Background())
 	return a.providerEntries(providers), err
 }
 
-// providerEntries proyecta el catalogo al selector, cruzandolo con lo que /connect
-// puede gestionar: el catalogo sabe de modelos y el store de credenciales sabe de
-// keys, y la fila necesita las dos cosas.
+// providerEntries projects the catalog onto the picker, crossed with what /connect
+// can manage: the catalog knows about models and the credential store knows about
+// keys, and a row needs both.
 func (a *App) providerEntries(providers []providerconfig.ProviderModels) []ProviderEntry {
 	connectable := map[string]bool{}
 	for _, provider := range a.providers.Connectable() {
@@ -221,9 +154,9 @@ func (a *App) providerEntries(providers []providerconfig.ProviderModels) []Provi
 	return entries
 }
 
-// ActiveProvider expone la seleccion vigente y la ventana de contexto que el
-// adapter declara para ese modelo, para que la UI dimensione la barra de contexto
-// sin mantener su propia tabla de ventanas.
+// ActiveProvider exposes the selection in force and the context window the adapter
+// declares for that model, so the UI can size the context bar without keeping a
+// window table of its own.
 func (a *App) ActiveProvider() ActiveProvider {
 	active := a.providers.Active()
 	window := 0
@@ -233,10 +166,10 @@ func (a *App) ActiveProvider() ActiveProvider {
 	return ActiveProvider{ProviderID: active.ProviderID, ProviderName: active.ProviderName, Model: active.Model, ContextWindow: window}
 }
 
-// SelectModel cambia el provider/modelo activo en vivo: reconstruye el adapter,
-// corta las corridas en vuelo (venian del modelo anterior) y persiste la seleccion
-// en el providers.json compartido. Es el binding que el frontend llama al elegir un
-// modelo del selector.
+// SelectModel changes the active provider/model live: it rebuilds the adapter, cuts
+// the runs in flight (they came from the previous model) and persists the selection
+// in the shared providers.json. It is the binding the frontend calls when a model is
+// chosen in the picker.
 func (a *App) SelectModel(providerID, model string) error {
 	return a.workspace.Reconfigure(func() error {
 		_, err := a.providers.Select(context.Background(), providerID, model)
@@ -244,9 +177,9 @@ func (a *App) SelectModel(providerID, model string) error {
 	})
 }
 
-// ConnectProvider valida una API key contra el provider y la guarda en el store de
-// credenciales compartido con la TUI. Si no habia nada seleccionado, deja el
-// provider activo en su primer modelo.
+// ConnectProvider validates an API key against the provider and stores it in the
+// credential store shared with the TUI. With nothing selected yet, it leaves the
+// provider active on its first model.
 func (a *App) ConnectProvider(providerID, apiKey string) error {
 	return a.workspace.Reconfigure(func() error {
 		_, err := a.providers.Connect(context.Background(), providerID, apiKey)
@@ -254,10 +187,10 @@ func (a *App) ConnectProvider(providerID, apiKey string) error {
 	})
 }
 
-// DeclareEndpoint agrega un endpoint OpenAI-compatible del usuario (LM Studio,
-// Ollama) al providers.json compartido y devuelve su id. No lo activa: elegirlo es
-// SelectModel. model es opcional — sin el, el endpoint queda listo para que
-// RefreshModels descubra su catalogo.
+// DeclareEndpoint adds a user's OpenAI-compatible endpoint (LM Studio, Ollama) to
+// the shared providers.json and returns its id. It does not activate it: choosing it
+// is SelectModel. model is optional — without it the endpoint is ready for
+// RefreshModels to discover its catalog.
 func (a *App) DeclareEndpoint(name, baseURL, model string) (string, error) {
 	id := endpointID(name)
 	if id == "" {
@@ -268,8 +201,8 @@ func (a *App) DeclareEndpoint(name, baseURL, model string) (string, error) {
 		Name:    strings.TrimSpace(name),
 		Type:    providerconfig.OpenAICompatible,
 		BaseURL: strings.TrimSpace(baseURL),
-		// Un endpoint del usuario corre modelos locales: sus ids son arbitrarios, asi
-		// que el prompt no puede enrutarse por familia de modelo.
+		// A user's endpoint runs local models: their ids are arbitrary, so the prompt
+		// cannot be routed by model family.
 		LocalModels: true,
 	}
 	if model = strings.TrimSpace(model); model != "" {
@@ -281,14 +214,14 @@ func (a *App) DeclareEndpoint(name, baseURL, model string) (string, error) {
 	return id, nil
 }
 
-// ForgetProvider quita del providers.json un endpoint declarado por el usuario.
+// ForgetProvider removes a user-declared endpoint from providers.json.
 func (a *App) ForgetProvider(providerID string) error {
 	return a.providers.Forget(providerID)
 }
 
-// endpointID deriva un id estable del nombre que escribio el usuario, para que el
-// formulario pida un dato en vez de dos. Cualquier cosa que no sea letra o digito
-// se vuelve un guion, y los guiones de los extremos se caen.
+// endpointID derives a stable id from the name the user typed, so the form asks for
+// one thing instead of two. Anything that is not a letter or a digit becomes a dash,
+// and the dashes at either end are dropped.
 func endpointID(name string) string {
 	var id strings.Builder
 	for _, r := range strings.ToLower(strings.TrimSpace(name)) {
@@ -302,33 +235,34 @@ func endpointID(name string) string {
 	return strings.Trim(id.String(), "-")
 }
 
-// ListModels devuelve el catalogo de un endpoint OpenAI-compatible (GET
-// baseURL/models) ANTES de declararlo, para que el formulario de "agregar
-// endpoint" pueda ofrecer los modelos que hay en vez de pedirlos de memoria. Sin
-// secreto: un endpoint local no exige key.
+// ListModels returns the catalog of an OpenAI-compatible endpoint (GET
+// baseURL/models) BEFORE it is declared, so the "add endpoint" form can offer the
+// models that are there instead of asking the user to recall them. No secret: a
+// local endpoint requires no key.
 func (a *App) ListModels(baseURL string) ([]string, error) {
 	return llm.ListModels(context.Background(), baseURL, "")
 }
 
-// currentProvider es el handle switchable: siempre delega al adapter vigente.
+// currentProvider is the switchable handle: it always delegates to the adapter in
+// force.
 func (a *App) currentProvider() llm.Provider { return a.providers.Provider() }
 
-// currentModel es el modelo de la seleccion vigente.
+// currentModel is the model of the selection in force.
 func (a *App) currentModel() string { return a.providers.Active().Model }
 
-// startup guarda el ctx de Wails (lo usa la EmitFunc real) y, si el store
-// expone su data_version, lanza el watcher que emite "sessions:changed" cuando
-// OTRO proceso (la TUI) escribe sesiones nuevas/actualizadas en el SQLite
-// compartido; la sidebar re-pide ListSessions al recibirlo. El ctx de Wails se
-// cancela al cerrar la app, lo que apaga el watcher.
+// startup keeps the Wails ctx (the real EmitFunc reads it) and, when the store
+// exposes its data_version, starts the watcher that emits "sessions:changed" as soon
+// as ANOTHER process (the TUI) writes new or updated sessions into the shared SQLite;
+// the sidebar re-asks ListSessions on it. The Wails ctx is cancelled when the app
+// closes, which shuts the watcher down.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.sessions.Watch(ctx)
 }
 
-// SendPrompt admite el texto como prompt en cola y arranca Run en una goroutine.
-// Es el binding que el frontend llama al enviar. Fija modo normal primero: una
-// sesion que estaba en plan-mode vuelve a las tools normales al enviar.
+// SendPrompt admits the text as a queued prompt and starts Run in a goroutine. It is
+// the binding the frontend calls on send. It sets normal mode first: a session that
+// was in plan mode goes back to the normal tools when a prompt is sent.
 func (a *App) SendPrompt(sessionID, text string) error {
 	turn := a.sessions.Turn(sessionID, text)
 	return a.workspace.Admit(func() error {
@@ -337,14 +271,15 @@ func (a *App) SendPrompt(sessionID, text string) error {
 	})
 }
 
-// Workspace devuelve la carpeta de trabajo vigente. La UI la muestra en la sidebar
-// y la usa para decidir si abrir un chat de otra carpeta cambia el workspace.
+// Workspace returns the working folder in force. The UI shows it in the sidebar and
+// uses it to decide whether opening a chat from another folder changes the
+// workspace.
 func (a *App) Workspace() string { return a.workspace.Root() }
 
-// SetWorkspace cambia la carpeta de trabajo en vivo: valida que path sea una
-// carpeta, corta las corridas en vuelo (apuntaban al root viejo) y recablea todas
-// las tools/skills/subagentes/prompt al root nuevo. Las sesiones nuevas capturan
-// esta carpeta. Es el binding que el frontend llama al elegir o cambiar de carpeta.
+// SetWorkspace changes the working folder live: it validates that path is a folder,
+// cuts the runs in flight (they pointed at the old root) and rewires every
+// tool/skill/subagent/prompt to the new one. New sessions capture this folder. It is
+// the binding the frontend calls when a folder is chosen or changed.
 func (a *App) SetWorkspace(path string) error {
 	return a.workspace.SetRoot(path)
 }
@@ -399,17 +334,17 @@ func (a *App) RemoveMCPConfig(name string) error {
 	return nil
 }
 
-// SelectWorkspace abre el dialogo nativo de carpeta y, si el usuario elige una, la
-// fija con SetWorkspace; devuelve la carpeta vigente resultante. Es la frontera
-// Wails (necesita el ctx y el GUI), no testeable headless; la logica testeable vive
-// en SetWorkspace. Si el usuario cancela (path ""), deja la carpeta como estaba.
+// SelectWorkspace opens the native folder dialog and, if the user picks one, sets it
+// with SetWorkspace; it returns the resulting folder. It is the Wails boundary (it
+// needs the ctx and the GUI), not testable headless; the testable logic lives in
+// SetWorkspace. If the user cancels (path ""), the folder is left as it was.
 func (a *App) SelectWorkspace() (string, error) {
 	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "Elegir carpeta de trabajo"})
 	if err != nil {
 		return a.workspace.Root(), err
 	}
 	if dir == "" {
-		return a.workspace.Root(), nil // cancelado
+		return a.workspace.Root(), nil // cancelled
 	}
 	if err := a.SetWorkspace(dir); err != nil {
 		return a.workspace.Root(), err
@@ -417,9 +352,9 @@ func (a *App) SelectWorkspace() (string, error) {
 	return dir, nil
 }
 
-// SendPlanPrompt admite el texto en plan-mode: investigacion de solo lectura mas
-// present_plan, con el contrato de plan-mode en el system prompt. Fija ModePlan
-// antes de arrancar. Es el binding que el frontend llama al planear una feature.
+// SendPlanPrompt admits the text in plan mode: read-only research plus present_plan,
+// with the plan-mode contract in the system prompt. It sets ModePlan before starting.
+// It is the binding the frontend calls to plan a feature.
 func (a *App) SendPlanPrompt(sessionID, text string) error {
 	turn := a.sessions.Turn(sessionID, text)
 	return a.workspace.Admit(func() error {
@@ -428,9 +363,9 @@ func (a *App) SendPlanPrompt(sessionID, text string) error {
 	})
 }
 
-// AcceptPlan acepta y ejecuta el plan: vuelve a modo normal y promueve el prompt
-// fijo de implementacion como prompt del usuario. Es el binding que el frontend
-// llama al aprobar un plan presentado.
+// AcceptPlan accepts and executes the plan: it returns to normal mode and promotes
+// the fixed implementation prompt as the user's prompt. It is the binding the
+// frontend calls when a presented plan is approved.
 func (a *App) AcceptPlan(sessionID string) error {
 	return a.workspace.Admit(func() error {
 		_, err := a.agent.AcceptPlan(sessionID, a.turnHooks(sessionID, nil))
@@ -438,32 +373,32 @@ func (a *App) AcceptPlan(sessionID string) error {
 	})
 }
 
-// ListSessions devuelve el historial de chats para la sidebar: un resumen por
-// sesion (ID + Title del primer prompt), mas reciente primero. Es el binding que
-// el frontend llama al montar la vista. Lee del store durable sin emitir.
+// ListSessions returns the chat history for the sidebar: one summary per session (ID
+// + Title from the first prompt), most recent first. It is the binding the frontend
+// calls when it mounts the view. It reads the durable store without emitting.
 func (a *App) ListSessions() ([]session.SessionSummary, error) {
 	return a.sessions.List(context.Background())
 }
 
-// SessionHistory devuelve el log durable completo de una sesion (los mismos
-// SessionEvent que viajan por el bus en vivo) para que el frontend lo reproduzca
-// y rehidrate la conversacion. Es el binding que el frontend llama al abrir una
-// sesion del historial.
+// SessionHistory returns the complete durable log of a session (the same
+// SessionEvents that travel the bus live) so the frontend can replay it and
+// rehydrate the conversation. It is the binding the frontend calls when a session
+// from the history is opened.
 func (a *App) SessionHistory(sessionID string) ([]session.SessionEvent, error) {
 	return a.sessions.History(context.Background(), sessionID)
 }
 
-// ListProjectFiles lista los archivos del workspace (rutas relativas a la raiz,
-// respetando .gitignore y excluyendo .git) para el @-menu de archivos del
-// composer. El frontend filtra/ordena en cliente conforme el usuario escribe;
-// aqui se devuelve el listado completo, acotado por el limite del glob.
+// ListProjectFiles lists the workspace files (paths relative to the root, honoring
+// .gitignore and excluding .git) for the composer's @-menu. The frontend filters and
+// sorts client-side as the user types; what is returned here is the whole listing,
+// bounded by the glob's limit.
 func (a *App) ListProjectFiles() ([]string, error) {
 	return a.workspace.Files(context.Background())
 }
 
-// ListCommands lista los slash-commands disponibles (nombre + descripcion) para
-// el menu del composer, ordenados por nombre. El frontend filtra/ordena en cliente
-// conforme el usuario escribe tras "/"; al enviar, el backend expande el comando.
+// ListCommands lists the available slash commands (name + description) for the
+// composer menu, sorted by name. The frontend filters and sorts client-side as the
+// user types after "/"; on send, the backend expands the command.
 func (a *App) ListCommands() ([]command.Command, error) {
 	return a.workspace.Commands(), nil
 }
@@ -476,14 +411,15 @@ func (a *App) ResolveToolPermission(sessionID, callID string, approved bool) {
 	a.gate.Resolve(sessionID, callID, approved)
 }
 
-// DeleteSession borra una conversacion del historial: corta la corrida en vuelo
-// de la sesion (si la hay), olvida su modo, y borra su log durable del store. Es
-// el binding que el frontend llama al borrar un chat de la sidebar.
+// DeleteSession deletes a conversation from the history: it cuts the session's run in
+// flight (if any), forgets its mode, and deletes its durable log from the store. It is
+// the binding the frontend calls when a chat is deleted from the sidebar.
 func (a *App) DeleteSession(sessionID string) error {
 	return a.sessions.Delete(context.Background(), sessionID)
 }
 
-// Stop cancela la corrida en vuelo de sessionID (boton stop). No-op si no corre.
+// Stop cancels the run in flight for sessionID (the stop button). No-op if none is
+// running.
 func (a *App) Stop(sessionID string) {
 	a.agent.Stop(sessionID)
 }
@@ -507,32 +443,6 @@ func (a *App) turnHooks(sessionID string, turn *wailssession.Turn) agent.Hooks {
 	}
 }
 
-// wait bloquea hasta que terminen las corridas en vuelo. Solo lo usan los tests
-// para ser deterministas sin sleep; la UI no lo llama.
+// wait blocks until the runs in flight have finished. Only the tests use it, to
+// be deterministic without sleeping; the UI never calls it.
 func (a *App) wait() { a.agent.Wait() }
-
-// offlineSnapshot es con lo que arranca la app cuando no hay credencial en
-// ninguna parte: el fake sin red, presentado como cualquier otro provider para
-// que la UI pueda decir en que esta en vez de mostrar respuestas inventadas como
-// si fueran de un modelo.
-func offlineSnapshot() llm.ProviderSnapshot {
-	return llm.ProviderSnapshot{
-		ProviderID:   offlineProviderID,
-		ProviderName: "Demo",
-		BaseURL:      "demo://local",
-		Model:        "demo",
-		Provider:     demoProvider(),
-	}
-}
-
-// demoProvider arma un FakeProvider con un guion corto (texto + Step.Ended) para
-// que `wails dev` muestre streaming sin red.
-func demoProvider() llm.Provider {
-	return llm.NewFakeProvider(
-		llm.Event{Kind: llm.StepStarted},
-		llm.Event{Kind: llm.TextStarted},
-		llm.Event{Kind: llm.TextDelta, Text: "Hola desde atenea."},
-		llm.Event{Kind: llm.TextEnded},
-		llm.Event{Kind: llm.StepEnded},
-	)
-}

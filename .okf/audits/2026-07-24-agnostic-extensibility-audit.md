@@ -61,7 +61,7 @@ of them delete code.
 | Event payload evolution | **Weak** — no version, 4 hand-synced sites per new field | `internal/session/sqlitestore.go:22-57,134-149,279-369,510-601` |
 | Tool-use hooks | **Missing** — no pre/post seam; gate + repair + capping hardcoded in the loop | `runner/turn.go:214-235` |
 | Prompt assembly | **Missing** — fixed string concatenation | `internal/session/prompt/prompt.go:68-81` |
-| Composition root | **Weak** — two outer roots, duplicated provider bootstrap and demo provider | `app.go:76-152` vs `cmd/atenea/main.go:64-130` |
+| Composition root | **Good** — one outer root both entrypoints construct (`internal/host`) over the one inner root both managers call (`wiring.Build`); what `wiring.Config` still hardcodes is R4.2 (R4.1) | `internal/host`, `main.go:22`, `cmd/atenea/main.go:51` |
 | CLI / headless | **Missing** | `cmd/atenea/main.go:53-62` |
 | Public API | **Partial** — 5 importable contract packages under `agentcore/` plus 2 contract test kits, boundary enforced by test; the tool capability interfaces landed with R2, message content parts with R3.6 (the first breaking change, taken deliberately while nothing promises stability); implementations still private, no stability promise yet (R1.3, R1.4, R2, R3 done) | `agentcore/`, `agentcore/boundary_test.go`, `agentcore/{tool/tooltest,llm/llmtest}` |
 | Branding/paths | **Weak** — `atenea` literal in 6+ path builders, no XDG | §3.6 |
@@ -295,14 +295,29 @@ honored on Linux beyond what that function does.
 
 Two asymmetries in the discovery rules are probably bugs rather than design:
 skills search project **and** `$HOME`, but agents search project only; skills
-honor `.claude/`, agents do not. `skill.ExtractBuiltins` runs only on the Wails
-path (`app.go:148-152`), so the TUI never materializes built-in skills.
+honor `.claude/`, agents do not. ~~`skill.ExtractBuiltins` runs only on the Wails
+path (`app.go:148-152`), so the TUI never materializes built-in skills.~~
+`[done 2026-07-26]` R4.1 moved extraction into the shared host, so both
+entrypoints materialize the embedded skills into `~/.atenea/skills` at launch.
+The two discovery asymmetries stay open; they are R7.
 
 Genuine win worth documenting as a contract: reading `.claude/` and `.agents/`,
 and using the de-facto `.mcp.json` schema, already makes atenea interoperable
 with other agent CLIs (`.okf/architecture/mcp.md:44-45`).
 
 ### 3.7 Two composition roots, one shared core
+
+> `[done 2026-07-26]` The outer half of this is closed. `internal/host` is the
+> one place both entrypoints call: it loads the `.env`, extracts the built-in
+> skills, resolves the root, opens the shared store and the shared provider
+> service, and publishes the `Sitting` — the state a rewire must not drop. Every
+> bullet below is deleted code, and the `ExtractBuiltins` asymmetry is closed in
+> the direction that gives the TUI what it was missing. The two managers stayed
+> separate on purpose: one switches workspaces live and emits through Wails, the
+> other owns a Bubble Tea channel, and neither is the composition problem. See
+> [Composition root](../architecture/composition-root.md). What is still open in
+> this finding is the second paragraph — what `wiring.Config` hardcodes — which is
+> R4.2.
 
 `internal/wiring.Build` is a real single inner composition root, called by both
 frontends (`internal/wailsworkspace/manager.go:167`, `internal/tui/engine/engine.go`).
@@ -816,6 +831,66 @@ it.
    `main.go` (Wails) and `cmd/atenea` (TUI) construct it. Deletes the duplicated
    `.env` load, the duplicated demo provider, and the `ExtractBuiltins`
    asymmetry.
+   `[done 2026-07-26]` — `internal/host`, not `agentcore/host`: nothing here has
+   earned a stability promise, and a host that opens SQLite could not satisfy
+   `boundary_test.go`'s ban on third-party imports anyway. Both entrypoints now
+   open with the same four lines, and everything this item lists as duplicated is
+   deleted. Documented in
+   [Composition root](../architecture/composition-root.md). Six decisions worth
+   recording:
+   - **The MCP manager and `wiring.Build` stayed with the two managers, and that is
+     not a shortcut.** `wailsworkspace` and `tui/engine` differ in what they are
+     for — live workspace switching and a Wails event bus versus a Bubble Tea
+     channel — and both the MCP manager and the build are rooted at the workspace,
+     so they are rebuilt by whoever owns the root. Hoisting them would have meant
+     merging the two managers, which is a different change and a worse one: the
+     duplication that cost anything was above that line, not at it.
+   - **The five per-sitting pieces became a type, because the alternative
+     reintroduced the duplication.** Adding `Gate`, `Grants`, `Inbox`, `Agent` and
+     `Snapshots` to `engine.Config` as optional fields would have left
+     `permission.NewMemoryGate()` and three siblings alive in `engine.New` as
+     nil-defaults — two construction sites plus a branch, which is strictly worse
+     than one site. Making them required would have rewritten 61 test call sites
+     for no decision anyone varies. `host.Sitting` with `NewSitting` as the one
+     constructor answers both: the engine's nil case calls the same function the
+     host does. It is a separate type from `Host` for a reason that is also the
+     seam — nothing in a sitting touches disk, so a caller who needs only the agent
+     state gets it without opening a database.
+   - **The desktop deliberately did not gain session grants.** The sitting carries
+     `Grants` and `wailsworkspace` receives it, but `rebuildLocked` leaves it out
+     of the build: `ResolveToolPermission` is an approve/deny boolean and cannot
+     express "allow for this session", so a store nothing writes to would advertise
+     an affordance the UI does not have. `NewGrantedPolicy(base, nil, …)` returning
+     the base untouched is the honest description of that UI. Wiring it would have
+     been provably behaviour-neutral — an empty store upgrades nothing — which is
+     exactly why it was tempting and why it was refused: a refactor should not
+     smuggle in plumbing for a feature.
+   - **`New` takes a `ctx` and returns no error.** The context is not decoration:
+     activating a persisted selection whose credential is an `exec` command runs
+     that command, and R3.5 grew `providerconfig.Open`'s context precisely so a
+     caller could bound it — throwing it away here would have undone that. There is
+     no error to return because nothing in the bootstrap is fatal: an unopenable
+     store degrades to memory, an unloadable config to the fallback, an
+     unresolvable home to no built-in skills. Every one of those is repaired from
+     inside the running app, so refusing to start is the one answer a user cannot
+     act on.
+   - **The offline demo provider belongs to the host, not to `providerconfig`.**
+     `EnvironmentFallback` answers a question about the environment and returning
+     `false` is the honest end of that answer; what to chat with when the answer is
+     `false` is a product decision about startup. Keeping it host-side is also what
+     makes it *one* copy: the byte-for-byte duplicate existed because two `main`
+     packages each needed one and neither could import the other.
+   - **The `ExtractBuiltins` asymmetry closed toward the TUI, which needed a test
+     fix first.** The PTY tests isolated `XDG_CONFIG_HOME` but not `HOME`, and skill
+     discovery scans `$HOME/.atenea/skills`, `$HOME/.agents/skills` and
+     `$HOME/.claude/skills` — so whatever the developer had installed was already
+     reaching the "/" menu and the system prompt of those tests, and extraction
+     would have started writing into a real home as well. `HOME` is now a temp dir
+     there, which closes a flakiness hole that predates this change.
+   One behaviour change rode along and is worth naming: the demo greeting is
+   `Hello from atenea.` instead of the Spanish original, which is what moving it
+   into a package written under the English-only rule implies. Four PTY assertions
+   moved with it.
 2. **Promote `wiring.Config`'s hardcoded values to fields**: `OutputLimit`,
    `Policy`, `SkillDirs`, `AgentDirs`, `PlanPermissions`. An embedder configures
    them; both current callers pass defaults.
@@ -904,8 +979,11 @@ name and the filesystem layout:
   to the MCP client identity (`manager.go:93` currently hardcodes `"dev"`)
 
 While consolidating, fix the two discovery asymmetries: agents should search
-`$HOME` and honor `.claude/agents` exactly as skills do, and `ExtractBuiltins`
-should run from the shared host (R4) so the TUI gets built-in skills too.
+`$HOME` and honor `.claude/agents` exactly as skills do. ~~`ExtractBuiltins`
+should run from the shared host (R4) so the TUI gets built-in skills too.~~
+`[done 2026-07-26]` with R4.1 — but the destination path is still assembled from
+`os.UserHomeDir()` inside `internal/host`, which is one more caller for this
+package to take over.
 
 Document the `.claude/` + `.agents/` + `.mcp.json` compatibility as an explicit,
 tested contract — it is a real differentiator and should not be allowed to rot.
@@ -999,9 +1077,14 @@ seam on `Message` (all four landed 2026-07-26).
 security default flipped to ask; a wire format is one file plus one registry line
 plus one catalog entry, and multimodal is one more `PartKind` rather than a break.*
 
-**Phase 2 — integration surface.** R4 single host + headless `run` with NDJSON.
-R1 public contract packages and contract test kits (both landed early,
-2026-07-24).
+**Phase 2 — integration surface. In progress.** R4.1 single host landed
+2026-07-26: one outer composition root both entrypoints construct, with the two
+UI managers left alone above the one inner root. R1 public contract packages and
+contract test kits landed early (2026-07-24). What remains is R4.2 (promote
+`wiring.Config`'s hardcoded values to fields) and R4.3–R4.4, the headless `run`
+with NDJSON — which is the item that actually opens the surface, and which now has
+somewhere to stand: a non-interactive entrypoint is a third caller of `host.New`
+driving `Sitting.Agent`, not a third copy of the bootstrap.
 *Outcome: anything can drive atenea — CI, editors, other agents — and outside
 contributions of tools/providers become reviewable.*
 

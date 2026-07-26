@@ -51,20 +51,6 @@ func blankProviderKeys() []string {
 	return assignments
 }
 
-// Which environment key selects which provider is providerconfig's answer and
-// its tests pin it. What is the TUI's own is the last resort: with no key
-// anywhere the app still has to be usable, so the host supplies the offline demo
-// and the shared fallback must hand it straight back.
-func TestOfflineSnapshot_IsTheFallbackWithoutAnyKey(t *testing.T) {
-	for _, name := range providerKeyEnvNames() {
-		t.Setenv(name, "")
-	}
-	got, fromEnvironment := providerconfig.DefaultFallback(offlineSnapshot())
-	if fromEnvironment || got.ProviderID != "demo" || got.Provider == nil {
-		t.Fatalf("fallback = %#v (fromEnvironment=%v), want the offline demo provider", got, fromEnvironment)
-	}
-}
-
 func TestAteneaVersion_PrintsReleaseMetadataAndExits(t *testing.T) {
 	repoRoot, err := filepath.Abs("../..")
 	if err != nil {
@@ -114,7 +100,7 @@ func TestTUI_PromptHistorySurvivesRestartUnderPTY(t *testing.T) {
 	if _, err := firstTerminal.Write([]byte("mensaje persistente\r")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYTextAfter(t, firstOutput, beforeSubmit, "Hola desde atenea.")
+	waitForPTYTextAfter(t, firstOutput, beforeSubmit, "Hello from atenea.")
 	if _, err := firstTerminal.Write([]byte("\x03")); err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +146,7 @@ func TestTUI_StartsFreshSessionOnLaunchUnderPTY(t *testing.T) {
 	if _, err := firstTerminal.Write([]byte("\tcontinuidad tui\r")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYTextAfter(t, firstOutput, beforeSubmit, "Hola desde atenea.")
+	waitForPTYTextAfter(t, firstOutput, beforeSubmit, "Hello from atenea.")
 	if _, err := firstTerminal.Write([]byte("\x03")); err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +191,7 @@ func TestTUI_ResumeCommandOpensPreviousWorkspaceSessionUnderPTY(t *testing.T) {
 	if _, err := firstTerminal.Write([]byte("\tsesion anterior\r")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYTextAfter(t, firstOutput, beforeFirstSubmit, "Hola desde atenea.")
+	waitForPTYTextAfter(t, firstOutput, beforeFirstSubmit, "Hello from atenea.")
 	if _, err := firstTerminal.Write([]byte("\x03")); err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +207,7 @@ func TestTUI_ResumeCommandOpensPreviousWorkspaceSessionUnderPTY(t *testing.T) {
 	if _, err := secondTerminal.Write([]byte("sesion actual\r")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYTextAfter(t, secondOutput, beforeSecondSubmit, "Hola desde atenea.")
+	waitForPTYTextAfter(t, secondOutput, beforeSecondSubmit, "Hello from atenea.")
 	if _, err := secondTerminal.Write([]byte("\x03")); err != nil {
 		t.Fatal(err)
 	}
@@ -808,7 +794,15 @@ func startTUIUnderPTY(t *testing.T, binary, workdir, database string) (*exec.Cmd
 	// These tests depend on the demo provider: every API key the built-in catalog
 	// reads is blanked and XDG_CONFIG_HOME is isolated, so neither the environment
 	// nor the developer's real providers.json can slip a network provider in.
-	cmd.Env = append(append(os.Environ(), blankProviderKeys()...), "XDG_CONFIG_HOME="+t.TempDir(), "ATENEA_DB="+database, "ATENEA_CHECKPOINTS="+filepath.Join(filepath.Dir(database), "checkpoints"))
+	//
+	// HOME is isolated for the same reason, one level up: skill discovery scans
+	// $HOME/.atenea/skills, $HOME/.agents/skills and $HOME/.claude/skills, so
+	// whatever the developer happens to have installed there was reaching the "/"
+	// menu and the system prompt of these tests. It is also where the launched
+	// binary materializes its built-in skills, which must not be the real home.
+	cmd.Env = append(append(os.Environ(), blankProviderKeys()...),
+		"HOME="+t.TempDir(), "XDG_CONFIG_HOME="+t.TempDir(), "ATENEA_DB="+database,
+		"ATENEA_CHECKPOINTS="+filepath.Join(filepath.Dir(database), "checkpoints"))
 	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 24})
 	if err != nil {
 		t.Fatal(err)

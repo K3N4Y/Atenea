@@ -13,6 +13,7 @@ import (
 
 	"github.com/K3N4Y/atenea/internal/agent"
 	"github.com/K3N4Y/atenea/internal/event"
+	"github.com/K3N4Y/atenea/internal/host"
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/permission"
 	"github.com/K3N4Y/atenea/internal/providerconfig"
@@ -89,6 +90,18 @@ func (p *requestRecordingProvider) captured() llm.Request {
 	return p.req
 }
 
+// newAppWithStore is the test assembly: the same newAppWithHost production goes
+// through, over a host whose store and provider service are injected. Everything
+// else about that host is the real thing, and with both overrides given nothing
+// in it touches a file: no .env is loaded, no built-in skills are extracted, no
+// SQLite and no providers.json is opened.
+func newAppWithStore(store session.Store, providers *providerconfig.Service, emit event.EmitFunc) *App {
+	return newAppWithHost(host.New(context.Background(), host.Config{
+		Store:     store,
+		Providers: providers,
+	}), emit)
+}
+
 // newApp arma la app con un MemoryStore (no durable), el emit inyectado y un
 // servicio de providers que sirve provider y nada mas. Lo usan los tests cuyo
 // sujeto es un turno, no la seleccion de modelo: sin archivo de config no hay
@@ -96,6 +109,20 @@ func (p *requestRecordingProvider) captured() llm.Request {
 func newApp(t *testing.T, provider llm.Provider, emit event.EmitFunc) *App {
 	t.Helper()
 	return newAppWithStore(session.NewMemoryStore(), inertProviderService(t, provider), emit)
+}
+
+// demoProvider scripts the same short turn the host's offline provider does. It
+// is redeclared here rather than reached for in internal/host because these tests
+// only need *a* provider that streams one turn: what the app does when no
+// credential exists anywhere is the host's behavior, and internal/host tests it.
+func demoProvider() llm.Provider {
+	return llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.TextStarted},
+		llm.Event{Kind: llm.TextDelta, Text: "Hello from atenea."},
+		llm.Event{Kind: llm.TextEnded},
+		llm.Event{Kind: llm.StepEnded},
+	)
 }
 
 // inertProviderService abre el servicio sobre una ruta que no puede existir: Open
