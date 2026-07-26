@@ -54,7 +54,7 @@ of them delete code.
 | Permission policy | **Good** — derived from what each tool declares, not from a name list; decorated by session grants (R2) | `internal/permission/policy.go`, `internal/wiring/wiring.go` |
 | Tool interface | **Good** — 4-method contract plus optional capabilities for effects, grants and presentation (R2) | `agentcore/tool`, `agentcore/permission/grantable.go` |
 | Tool registration | **Partial** — fixed constructor list; `cfg.MCPTools` is the only open slot | `wiring.go:138-142,167-175` |
-| LLM `Provider` | **Good** — neutral domain model, an open factory registry (R3.1), an optional capability declaration the host derives windows and reserves from (R3.2), and a shipped catalog that is embedded data rather than code (R3.3) | `agentcore/llm/capabilities.go`, `internal/providerconfig/registry.go`, `internal/providerconfig/providers.default.json` |
+| LLM `Provider` | **Good** — neutral domain model, an open factory registry (R3.1), an optional capability declaration the host derives windows and reserves from (R3.2), a shipped catalog that is embedded data rather than code (R3.3), and one provider system for both hosts, extensible by the user (R3.4) | `agentcore/llm/capabilities.go`, `internal/providerconfig/registry.go`, `internal/providerconfig/providers.default.json` |
 | Provider identity | **Good** — the declared type is the wire format, resolved through a registry that builds *and* describes it; a provider's id decides nothing (R3.1, R3.2) | `internal/providerconfig/registry.go` |
 | Event taxonomy | **Weak** — open string set, two hand-maintained non-exhaustive switches that already disagree | `internal/tui/transcript.go:59-151`, `frontend/src/features/chat/chat.ts:215-341` |
 | Event payload evolution | **Weak** — no version, 4 hand-synced sites per new field | `internal/session/sqlitestore.go:22-57,134-149,279-369,510-601` |
@@ -140,12 +140,14 @@ The wiring around it is closed:
   `{Type, APIKey}` (`internal/providerconfig/credentials.go:16-21`). Bedrock
   (SigV4), Vertex (ADC) and subscription OAuth have no home. The code comment
   already anticipates this.
-- **A second, parallel provider system exists.**
-  `internal/wailsprovider/manager.go:20-29,141-170` re-implements provider
-  construction for the desktop app with its own 3-value `Kind` enum, its own
-  base-URL/model constants and its own `OPENROUTER_API_KEY` lookup
-  (`manager.go:130`), sharing nothing with `providerconfig` except the
-  credentials file.
+- ~~**A second, parallel provider system exists.**~~ `[done 2026-07-26]` R3.4
+  deleted `internal/wailsprovider`. The desktop app holds the same
+  `providerconfig.Service` the TUI does, opened through the same
+  `OpenDefault`, so there is one catalog, one credential path and one selection —
+  choosing a model in either host changes it in both. The one thing the parallel
+  system could do that the service could not, declaring an arbitrary local
+  endpoint, became `Service.Declare`/`Forget` rather than a special case of the
+  desktop. See [Wails provider surface](../architecture/wails-provider.md).
 
 Cost to add one new wire format when this was written: **7 files**, two of them
 `main` packages (`config.go`, `service.go`, new `internal/llm/*.go`, `context.go`,
@@ -153,8 +155,10 @@ Cost to add one new wire format when this was written: **7 files**, two of them
 it is one factory plus one registry entry — and for anything OpenAI-shaped, a
 closure over existing options rather than an adapter. The remaining files on that
 list were R3.2 (`context.go`, now deleted), R3.3 (`cmd/atenea/main.go`, whose
-catalog is now embedded JSON in `providerconfig`) and R3.4
-(`wailsprovider`).
+catalog is now embedded JSON in `providerconfig`) and R3.4 (`wailsprovider`, now
+deleted). All of them are closed: adding a wire format is one factory plus one
+registry entry, and adding an endpoint on an existing format is data — a catalog
+line, or `Declare` from either UI.
 
 ### 3.3 Tools cannot describe themselves, so core describes them by name
 
@@ -627,6 +631,52 @@ Effect: files touched to add a fully first-class tool drops from ~11 to **3**
 4. **Delete `internal/wailsprovider`**; make the desktop app consume
    `providerconfig`. This removes a whole duplicated provider model, its second
    `OPENROUTER_API_KEY` lookup and its second set of URL/model constants.
+   `[done 2026-07-26]` — the desktop now holds the same `*providerconfig.Service`
+   as the TUI and its bindings are a projection of it. Documented in
+   [Wails provider surface](../architecture/wails-provider.md). Five decisions
+   worth recording:
+   - **The deletion had to give something back first.** `wailsprovider` was not
+     only duplication: its `local` kind let a user point the app at an arbitrary
+     OpenAI-compatible endpoint, which `providerconfig` had no way to express — a
+     TUI user could only get LM Studio by hand-editing `providers.json`. Deleting
+     the module without that would have traded duplication for a lost feature, so
+     it became `Service.Declare`/`Forget` and **both** hosts gained it. That is the
+     rule this item is an instance of: fold the second system in by making the
+     first one capable, never by dropping what the second one did.
+   - **A declared provider is refused what a loaded one is forgiven.** `Declare`
+     rejects an unspeakable wire format and an unreachable base URL; loading the
+     config still tolerates both (R3.1's decision). The asymmetry is the point: a
+     shared file must not lose four working providers over a fifth entry meant for
+     another build, but a person typing an endpoint right now can be told. Which is
+     also why the URL check lives in `Declare` and not in `normalizeAndValidate`.
+   - **Removal needed a fact, not a rule.** The built-in catalog is merged in at
+     every launch, so forgetting `anthropic` would look like it worked and undo
+     itself at the next start. `Service` remembers which ids came from the defaults
+     and `ProviderModels.BuiltIn` carries it outward, so the UI hides the remove
+     button for the same reason `Forget` refuses it. Forgetting the *active*
+     provider is refused too — asking for another selection first beats pulling the
+     provider out from under a live conversation.
+   - **`wiring.Config.Local` became `LocalPrompt func() bool`.** The local system
+     prompt was reached through the desktop's `kind == local`, which the switch to a
+     catalog would have silently dropped (a real fix: that prompt is what stopped
+     local models narrating tool calls as text). It is now declared per provider as
+     `local_models` — a fact about the endpoint, not a preference — and read once
+     per turn instead of baked into an assembly. So a `/model` switch to or from a
+     local endpoint changes the prompt on the next turn, in the TUI too, which
+     never had this behavior at all. Deriving it from the type would have been
+     wrong: OpenCode Zen also declares `openai-compatible` and serves frontier
+     models.
+   - **The provider handle stopped needing a rebuild, and the fourth window table
+     went with the change.** Wiring now receives the `*llm.SwitchableProvider`
+     itself, so `wailsworkspace.ProviderState` and `wailsprovider.Snapshot` are both
+     gone — there is no provider/config pair left to keep consistent. And with
+     capabilities in reach, the desktop hands the declared context window to the UI
+     with the active selection, which deleted
+     `frontend/src/features/chat/contextWindow.ts`'s hand-maintained map (the copy
+     R3.2 left behind) along with its 200K default for everything it did not know.
+   The frontend's `localStorage` copy of the selection went too: the backend owns
+   `providers.json`, so a stale client copy could no longer re-point a running app
+   at an endpoint that had stopped existing.
 5. **Widen `Credential` now**, while it is cheap: add an `exec` credential type
    (run a command, read a token from stdout). That covers Bedrock/Vertex/enterprise
    gateways without building OAuth, and establishes the variant shape the existing
@@ -822,8 +872,8 @@ right shape. Consolidate the plumbing:
 
 **Phase 1 — agnostic core (weeks).** R2 tool capability interfaces and removal of
 the six name-keyed switches (landed 2026-07-24). R3 provider registry and
-capabilities (both landed 2026-07-25) + data-driven catalog (landed
-2026-07-26) + delete `wailsprovider`.
+capabilities (both landed 2026-07-25) + data-driven catalog and the deletion of
+`wailsprovider` (both landed 2026-07-26).
 *Outcome: tools and providers become additive instead of invasive; the extension
 security default flips to ask.*
 

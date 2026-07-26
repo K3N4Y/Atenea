@@ -38,7 +38,7 @@ func TestApp_EmitsSessionsChangedOnExternalDBWrite(t *testing.T) {
 	t.Cleanup(func() { store.Close() })
 
 	rec := &recordingEmit{}
-	a := newAppWithStore(store, demoProvider(), rec.emit)
+	a := newAppWithStore(store, inertProviderService(t, demoProvider()), rec.emit)
 	a.sessions.SetWatchPeriod(10 * time.Millisecond) // acelera el polling en el test
 	a.startup(ctx)
 

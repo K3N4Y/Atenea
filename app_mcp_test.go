@@ -25,7 +25,7 @@ func TestApp_MCPConfigLifecycle(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".mcp.json"), []byte(workspaceConfig), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	app := newApp(llm.NewFakeProvider(), func(string, ...interface{}) {})
+	app := newApp(t, llm.NewFakeProvider(), func(string, ...interface{}) {})
 	if err := app.SetWorkspace(root); err != nil {
 		t.Fatal(err)
 	}

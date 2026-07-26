@@ -398,3 +398,229 @@ func TestService_SelectSaveFailureKeepsPreviousSelection(t *testing.T) {
 		t.Fatalf("snapshot model = %q", got)
 	}
 }
+
+// offlineLister is the model lister for tests whose subject is the config rather
+// than discovery: every endpoint refuses, so nothing reaches the network and a
+// refresh still produces a full snapshot from the curated models.
+func offlineLister() ModelLister {
+	return func(context.Context, string, string) ([]string, error) { return nil, errors.New("offline") }
+}
+
+// shippedService opens a service over a temp config with the built-in catalog
+// merged in, which is the shape both hosts actually run with — and the only shape
+// in which "ships with atenea" means anything.
+func shippedService(t *testing.T) (*Service, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "providers.json")
+	s, err := Open(path, "", fallbackSnapshot(), envFrom(nil), inertRegistry(), nil, offlineLister(), nil, DefaultCatalog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s, path
+}
+
+func catalogEntry(providers []ProviderModels, id string) (ProviderModels, bool) {
+	for _, provider := range providers {
+		if provider.ID == id {
+			return provider, true
+		}
+	}
+	return ProviderModels{}, false
+}
+
+// A declared endpoint is a provider like any other: it reaches the picker, it can
+// be selected, and it lands in the providers.json the other host reads — which is
+// the whole point of declaring it here instead of in one host's own config.
+func TestService_DeclareMakesAUserEndpointSelectableAndPersistsIt(t *testing.T) {
+	s, path := shippedService(t)
+	endpoint := Provider{ID: "lmstudio", Name: "LM Studio", Type: OpenAICompatible, BaseURL: "http://localhost:1234/v1", LocalModels: true, Models: []string{"qwen2.5-coder"}}
+
+	if err := s.Declare(endpoint); err != nil {
+		t.Fatalf("Declare: %v", err)
+	}
+	entry, ok := catalogEntry(s.Catalog(), "lmstudio")
+	if !ok || entry.Name != "LM Studio" || entry.BuiltIn {
+		t.Fatalf("catalog entry = %#v (ok=%v), want the declared endpoint, not built in", entry, ok)
+	}
+	// Declaring is not selecting: the endpoint exists, the conversation has not moved.
+	if got := s.Active().ProviderID; got == "lmstudio" {
+		t.Fatal("Declare activated the endpoint; declaring one and chatting with it are two decisions")
+	}
+
+	active, err := s.Select(context.Background(), "lmstudio", "qwen2.5-coder")
+	if err != nil {
+		t.Fatalf("Select: %v", err)
+	}
+	if !active.LocalModels {
+		t.Fatalf("active = %#v, want LocalModels: a host shaping a turn around it has nowhere else to read it", active)
+	}
+
+	reopened, err := Open(path, "", fallbackSnapshot(), envFrom(nil), inertRegistry(), nil, offlineLister(), nil, DefaultCatalog())
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if got := reopened.Active(); got.ProviderID != "lmstudio" || !got.LocalModels {
+		t.Fatalf("reopened active = %#v, want the declared endpoint back from disk", got)
+	}
+}
+
+// Declare answers now, to someone who can fix it. That is the difference from
+// loading a shared file, where an entry this build cannot use is kept for the
+// build that can.
+func TestService_DeclareRefusesWhatCouldNotBeUsed(t *testing.T) {
+	tests := []struct {
+		name string
+		def  Provider
+		want string
+	}{
+		{
+			name: "an id that ships with atenea",
+			def:  Provider{ID: "anthropic", Name: "Not Anthropic", Type: OpenAICompatible, BaseURL: "http://localhost:1234/v1"},
+			want: "ships with atenea",
+		},
+		{
+			name: "a wire format this build cannot speak",
+			def:  Provider{ID: "gateway", Name: "Gateway", Type: "vertex", BaseURL: "https://gateway.test"},
+			want: "not one this build speaks",
+		},
+		{
+			name: "a base URL no adapter could reach",
+			def:  Provider{ID: "lmstudio", Name: "LM Studio", Type: OpenAICompatible, BaseURL: "localhost:1234"},
+			want: "invalid base URL",
+		},
+		{
+			name: "no display name for the picker to show",
+			def:  Provider{ID: "lmstudio", Type: OpenAICompatible, BaseURL: "http://localhost:1234/v1"},
+			want: "requires id, name",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			s, path := shippedService(t)
+			err := s.Declare(test.def)
+			if err == nil {
+				t.Fatalf("Declare(%#v) = nil, want an error mentioning %q", test.def, test.want)
+			}
+			if !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Declare error = %q, want it to mention %q", err, test.want)
+			}
+			if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("a rejected declaration wrote the config file (stat err=%v)", statErr)
+			}
+		})
+	}
+}
+
+// Re-declaring an id is how a user fixes a typo in the endpoint they added, so it
+// replaces rather than duplicating or refusing.
+func TestService_DeclareReplacesAnEndpointWithTheSameID(t *testing.T) {
+	s, _ := shippedService(t)
+	if err := s.Declare(Provider{ID: "lmstudio", Name: "LM Studio", Type: OpenAICompatible, BaseURL: "http://localhost:1234/v1", Models: []string{"qwen"}}); err != nil {
+		t.Fatal(err)
+	}
+	before := len(s.Catalog())
+
+	if err := s.Declare(Provider{ID: "lmstudio", Name: "LM Studio", Type: OpenAICompatible, BaseURL: "http://localhost:4321/v1", Models: []string{"llama"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(s.Catalog()); got != before {
+		t.Fatalf("catalog grew to %d entries, want %d: re-declaring an id replaces it", got, before)
+	}
+	entry, _ := catalogEntry(s.Catalog(), "lmstudio")
+	if len(entry.Models) != 1 || entry.Models[0] != "llama" {
+		t.Fatalf("entry = %#v, want the re-declared models", entry)
+	}
+}
+
+func TestService_ForgetRemovesADeclaredEndpoint(t *testing.T) {
+	s, path := shippedService(t)
+	if err := s.Declare(Provider{ID: "lmstudio", Name: "LM Studio", Type: OpenAICompatible, BaseURL: "http://localhost:1234/v1", Models: []string{"qwen"}}); err != nil {
+		t.Fatal(err)
+	}
+	// A second endpoint takes the selection: the active provider cannot be
+	// forgotten, and a config with no selection is not one a host reopens cleanly.
+	if err := s.Declare(Provider{ID: "ollama", Name: "Ollama", Type: OpenAICompatible, BaseURL: "http://localhost:11434/v1", Models: []string{"llama"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Select(context.Background(), "ollama", "llama"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Forget("lmstudio"); err != nil {
+		t.Fatalf("Forget: %v", err)
+	}
+	if entry, ok := catalogEntry(s.Catalog(), "lmstudio"); ok {
+		t.Fatalf("catalog still offers %#v after forgetting it", entry)
+	}
+	reopened, err := Open(path, "", fallbackSnapshot(), envFrom(nil), inertRegistry(), nil, offlineLister(), nil, DefaultCatalog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry, ok := catalogEntry(reopened.Catalog(), "lmstudio"); ok {
+		t.Fatalf("the forgotten endpoint came back from disk: %#v", entry)
+	}
+}
+
+// The two removals that would leave the host in a state it cannot explain: one
+// that silently undoes itself at the next launch, and one that pulls the provider
+// out from under a live conversation.
+func TestService_ForgetRefusesBuiltInAndActiveProviders(t *testing.T) {
+	s, _ := shippedService(t)
+	if err := s.Forget("anthropic"); err == nil || !strings.Contains(err.Error(), "ships with atenea") {
+		t.Fatalf("Forget(anthropic) = %v, want a refusal: the built-in catalog is merged back at every launch", err)
+	}
+	if err := s.Forget("nope"); err == nil || !strings.Contains(err.Error(), "not configured") {
+		t.Fatalf("Forget(nope) = %v, want it to say the provider is not configured", err)
+	}
+
+	if err := s.Declare(Provider{ID: "lmstudio", Name: "LM Studio", Type: OpenAICompatible, BaseURL: "http://localhost:1234/v1", Models: []string{"qwen"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Select(context.Background(), "lmstudio", "qwen"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Forget("lmstudio"); err == nil || !strings.Contains(err.Error(), "select another provider first") {
+		t.Fatalf("Forget on the active provider = %v, want it to ask for another selection first", err)
+	}
+}
+
+// A host offers removal per row, so the flag has to survive every path that
+// produces a row — including a refresh, which is where the desktop's picker gets
+// its entries after the user asks for models.
+func TestService_CatalogMarksWhatShipsWithAtenea(t *testing.T) {
+	s, _ := shippedService(t)
+	if err := s.Declare(Provider{ID: "lmstudio", Name: "LM Studio", Type: OpenAICompatible, BaseURL: "http://localhost:1234/v1", Models: []string{"qwen"}}); err != nil {
+		t.Fatal(err)
+	}
+	// The offline lister makes every discovery attempt fail; the warning it joins
+	// is not the subject here, the flags on the snapshot are.
+	refreshed, _ := s.Refresh(context.Background())
+	for _, providers := range [][]ProviderModels{s.Catalog(), refreshed} {
+		for _, provider := range providers {
+			if want := provider.ID != "lmstudio"; provider.BuiltIn != want {
+				t.Errorf("%s BuiltIn = %v, want %v", provider.ID, provider.BuiltIn, want)
+			}
+		}
+	}
+}
+
+// With no catalog behind it nothing ships with atenea, so a host that composes
+// the service itself can forget any provider in its own config.
+func TestService_WithoutADefaultCatalogNothingIsBuiltIn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "providers.json")
+	s, err := Open(path, "", fallbackSnapshot(), envFrom(nil), inertRegistry(), nil, offlineLister(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Declare(Provider{ID: "anthropic", Name: "Anthropic", Type: Anthropic, BaseURL: "https://api.anthropic.com", Models: []string{"claude-opus-4-8"}}); err != nil {
+		t.Fatalf("Declare: %v", err)
+	}
+	// The lister the host injected has to survive that first Declare: with no config
+	// file there was no catalog to inherit it from, and reaching for the default
+	// would have this test talking to api.anthropic.com.
+	if _, err := s.Refresh(context.Background()); err == nil || !strings.Contains(err.Error(), "offline") {
+		t.Fatalf("Refresh error = %v, want the injected lister's warning", err)
+	}
+	if err := s.Forget("anthropic"); err != nil {
+		t.Fatalf("Forget: %v", err)
+	}
+}

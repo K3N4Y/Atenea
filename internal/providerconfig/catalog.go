@@ -22,6 +22,11 @@ type ProviderModels struct {
 	// offers, not only the one currently selected. Zero when this build cannot
 	// speak the type, which reads as "nothing known", never as "nothing there".
 	Capabilities llm.Capabilities
+	// BuiltIn marks a provider that ships in atenea's catalog, as opposed to one
+	// the user declared. Only a declared provider can be forgotten — removing a
+	// built-in one would see it merged back at the next launch — so a host that
+	// offers removal reads this rather than keeping its own list of names.
+	BuiltIn bool
 }
 
 type CachedProvider struct {
@@ -201,8 +206,6 @@ func CloneProviderModels(in []ProviderModels) []ProviderModels {
 	}
 	return out
 }
-
-func (c *Catalog) modelLister() ModelLister { return c.list }
 
 func saveCache(path string, cache Cache) error {
 	data, err := json.MarshalIndent(cache, "", "  ")

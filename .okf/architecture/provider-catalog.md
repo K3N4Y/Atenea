@@ -129,6 +129,64 @@ comment on `defaultCatalogJSON` in `defaults.go`, next to the `//go:embed` that
 pulls the file in. The invariants that comment asserts are pinned by
 `defaults_test.go`, so the prose and the data cannot drift apart silently.
 
+## The user can declare providers too
+
+The shipped catalog is one input; the other is whatever the user added. `Declare`
+adds or replaces a provider in the same `providers.json`, and `Forget` removes it:
+
+```go
+service.Declare(providerconfig.Provider{
+    ID: "lm-studio", Name: "LM Studio", Type: providerconfig.OpenAICompatible,
+    BaseURL: "http://localhost:1234/v1", LocalModels: true,
+})
+```
+
+Three rules hold it together:
+
+- **A declared provider cannot shadow a shipped one.** The built-in catalog is
+  merged in at every launch (`mergeMissingProviders`), so an id it owns is an id a
+  user's entry would lose to — silently, at the next start. `Declare` refuses it
+  by name, and `Forget` refuses the same set for the same reason: removing
+  `anthropic` would look like it worked and then undo itself.
+- **A wire format this build cannot speak is refused here, and tolerated on
+  load.** The two look contradictory and are not: loading a shared file must not
+  drop four working providers over a fifth entry meant for another build, while a
+  user typing an endpoint right now can be told that nothing will ever be able to
+  select it. Same for the base URL, which is only validated here.
+- **`Declare` does not select.** Declaring an endpoint and chatting with it are
+  two decisions; the second one is `Select`. That also lets a declaration carry no
+  models at all and wait for a refresh to discover them.
+
+`ProviderModels.BuiltIn` carries the distinction outward, so a host offering
+removal reads it from the catalog instead of keeping its own list of names.
+
+### `local_models` is a fact, not a preference
+
+A declared endpoint says whether its models run on the user's machine:
+
+```json
+{ "id": "lm-studio", "base_url": "http://localhost:1234/v1", "local_models": true }
+```
+
+Nothing in `providerconfig` acts on it. It exists because a host cannot derive it:
+the type is `openai-compatible`, which OpenCode Zen also declares while serving
+frontier models, and the base URL is not evidence either. atenea reads it through
+`Active().LocalModels` to pick the system prompt that spells out the tool-calling
+protocol, since a local model id (`qwen2.5-coder`) carries no family to route on.
+Another host may read it for something else, or ignore it.
+
+## Both hosts open it the same way
+
+`OpenDefault(fallback)` is the composition atenea ships: config, model cache and
+credentials at their default paths, over the built-in registry and catalog.
+`DefaultFallback(offline)` is the provider a bare environment can speak, with the
+host supplying only the offline provider — the one part that is not a fact about
+the environment.
+
+They exist because the desktop app and the TUI would otherwise each spell out the
+same six arguments, and a fifth place deciding which paths are "the" paths is how
+the two used to end up reading different files.
+
 ## Cost of a change now
 
 | Change | Before | After |
@@ -137,6 +195,7 @@ pulls the file in. The invariants that comment asserts are pinned by
 | Add a provider on a known wire format | edit `cmd/atenea/main.go` (+ constants) | one JSON object |
 | Change an endpoint | two places, silently divergent | one place |
 | Make a provider environment-selectable | new branch in an if-chain | already is, by being in the catalog |
+| Add a local endpoint from a UI | impossible in the TUI; a `kind` in the desktop | `Declare`, in both |
 
 ## Still open
 
@@ -146,9 +205,6 @@ pulls the file in. The invariants that comment asserts are pinned by
   edited in their own `providers.json` does not reach it. This matches what
   shipped before, and closing it means the fallback being resolved *inside* `Open`
   once the config is known, which is R4's single composition root.
-- **The desktop app does not read this catalog.** `internal/wailsprovider` still
-  carries its own base-URL and model constants (R3.4), so "the built-in catalog"
-  currently means the TUI's.
 - **A model discovered remotely has no window.** `ModelLister` returns bare ids,
   so the models this catalog does *not* curate show an em dash where a context
   label belongs. See

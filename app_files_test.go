@@ -18,7 +18,7 @@ func TestApp_ListProjectFilesReturnsWorkspaceFiles(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(root, "internal", "tool", "glob.go"), "package tool\n")
 	t.Chdir(root)
-	app := newApp(demoProvider(), func(string, ...interface{}) {})
+	app := newApp(t, demoProvider(), func(string, ...interface{}) {})
 
 	files, err := app.ListProjectFiles()
 	if err != nil {
@@ -51,7 +51,7 @@ func TestApp_ListProjectFilesRespectsGitignoreAndExcludesGit(t *testing.T) {
 	writeFile(t, filepath.Join(root, ".git", "config"), "[core]\n")
 	t.Chdir(root)
 
-	app := newApp(demoProvider(), func(string, ...interface{}) {})
+	app := newApp(t, demoProvider(), func(string, ...interface{}) {})
 	files, err := app.ListProjectFiles()
 	if err != nil {
 		t.Fatalf("ListProjectFiles: %v", err)

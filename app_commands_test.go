@@ -64,7 +64,7 @@ func (r *recordingInbox) last() string {
 // TestApp_ListCommandsReturnsRegisteredCommands: el binding devuelve los comandos
 // del registro, ordenados por nombre, para el slash-menu del composer.
 func TestApp_ListCommandsReturnsRegisteredCommands(t *testing.T) {
-	app := newApp(demoProvider(), func(string, ...interface{}) {})
+	app := newApp(t, demoProvider(), func(string, ...interface{}) {})
 	app.agent.SetCommands(command.New([]command.Command{
 		{Name: "commit", Description: "arma el commit"},
 		{Name: "abc", Description: "algo"},
@@ -84,7 +84,7 @@ func TestApp_ListCommandsReturnsRegisteredCommands(t *testing.T) {
 // Bajo -race, una lectura sin sincronizacion detonaria una carrera. Tambien verifica que ListCommands sigue
 // devolviendo una lista valida (no nil) mientras corre el swap.
 func TestApp_ListCommandsConcurrentWithSetWorkspace(t *testing.T) {
-	app := newApp(demoProvider(), func(string, ...interface{}) {})
+	app := newApp(t, demoProvider(), func(string, ...interface{}) {})
 	dirA := t.TempDir()
 	dirB := t.TempDir()
 
@@ -149,7 +149,7 @@ func TestApp_ListCommandsDiscoversSkillsFromClaudeDir(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Chdir(root)
 
-	app := newApp(demoProvider(), func(string, ...interface{}) {})
+	app := newApp(t, demoProvider(), func(string, ...interface{}) {})
 	cmds, err := app.ListCommands()
 	if err != nil {
 		t.Fatalf("ListCommands: %v", err)
@@ -175,7 +175,7 @@ func TestApp_ListCommandsDiscoversGlobalSkills(t *testing.T) {
 	// Proyecto vacio (sin skills propias): solo debe aparecer la global.
 	t.Chdir(t.TempDir())
 
-	app := newApp(demoProvider(), func(string, ...interface{}) {})
+	app := newApp(t, demoProvider(), func(string, ...interface{}) {})
 	cmds, err := app.ListCommands()
 	if err != nil {
 		t.Fatalf("ListCommands: %v", err)
@@ -196,7 +196,7 @@ func TestApp_ProjectSkillOverridesGlobalSkill(t *testing.T) {
 	writeSkillMD(t, filepath.Join(root, ".claude", "skills"), "dup", "project")
 	t.Chdir(root)
 
-	app := newApp(demoProvider(), func(string, ...interface{}) {})
+	app := newApp(t, demoProvider(), func(string, ...interface{}) {})
 	cmds, err := app.ListCommands()
 	if err != nil {
 		t.Fatalf("ListCommands: %v", err)
@@ -213,7 +213,7 @@ func TestApp_ProjectSkillOverridesGlobalSkill(t *testing.T) {
 // TestApp_SendPromptExpandsSlashCommand: SendPrompt expande un "/name args" de un
 // comando registrado antes de admitirlo (el agente recibe el prompt expandido).
 func TestApp_SendPromptExpandsSlashCommand(t *testing.T) {
-	app := newApp(demoProvider(), func(string, ...interface{}) {})
+	app := newApp(t, demoProvider(), func(string, ...interface{}) {})
 	rec := &recordingInbox{MemoryInbox: session.NewMemoryInbox()}
 	app.inbox = rec
 	app.agent.SetInbox(rec)
@@ -234,7 +234,7 @@ func TestApp_SendPromptExpandsSlashCommand(t *testing.T) {
 // TestApp_SendPromptLeavesNormalTextUnchanged: un prompt normal (sin "/") o un
 // comando desconocido se admite verbatim, sin transformar.
 func TestApp_SendPromptLeavesNormalTextUnchanged(t *testing.T) {
-	app := newApp(demoProvider(), func(string, ...interface{}) {})
+	app := newApp(t, demoProvider(), func(string, ...interface{}) {})
 	rec := &recordingInbox{MemoryInbox: session.NewMemoryInbox()}
 	app.inbox = rec
 	app.agent.SetInbox(rec)
@@ -254,7 +254,7 @@ func TestApp_SendPromptLeavesNormalTextUnchanged(t *testing.T) {
 // TestApp_SendPlanPromptExpandsSlashCommand: en modo plan tambien se expanden los
 // slash-commands, para que el comportamiento sea consistente con el envio normal.
 func TestApp_SendPlanPromptExpandsSlashCommand(t *testing.T) {
-	app := newApp(demoProvider(), func(string, ...interface{}) {})
+	app := newApp(t, demoProvider(), func(string, ...interface{}) {})
 	rec := &recordingInbox{MemoryInbox: session.NewMemoryInbox()}
 	app.inbox = rec
 	app.agent.SetInbox(rec)

@@ -118,6 +118,15 @@ func (r Registry) Describe(def Provider) (llm.Capabilities, bool) {
 	return format.Describe(def), true
 }
 
+// Speaks reports whether this build can construct a provider of this wire
+// format. Loading a config does not ask — an entry this build cannot speak stays
+// in the file for the build that can — but accepting a new one from a user does,
+// because an entry nobody can select is not worth writing.
+func (r Registry) Speaks(providerType string) bool {
+	format, ok := r[providerType]
+	return ok && format.Build != nil
+}
+
 // Types lists the wire formats this registry can build, sorted so the error
 // above is stable. A format registered with a description and no factory is left
 // out on purpose: it would otherwise be named as a known type by the very error

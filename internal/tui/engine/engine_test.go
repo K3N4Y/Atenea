@@ -2750,3 +2750,90 @@ func TestEngine_RequestCompactionDuringShutdownReleasesCompactingSlot(t *testing
 		t.Fatal("requestCompaction during shutdown left the compacting slot set; later requests would be silent no-ops")
 	}
 }
+
+// selectionModelService is a ModelService whose selection the test moves, to
+// exercise what the engine asks it per turn rather than at assembly time.
+type selectionModelService struct {
+	mu     sync.Mutex
+	active providerconfig.Active
+}
+
+func (s *selectionModelService) Active() providerconfig.Active {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.active
+}
+func (s *selectionModelService) set(active providerconfig.Active) {
+	s.mu.Lock()
+	s.active = active
+	s.mu.Unlock()
+}
+func (s *selectionModelService) Catalog() []providerconfig.ProviderModels { return nil }
+func (s *selectionModelService) Refresh(context.Context) ([]providerconfig.ProviderModels, error) {
+	return nil, nil
+}
+func (s *selectionModelService) Select(_ context.Context, providerID, model string) (providerconfig.Active, error) {
+	return s.Active(), nil
+}
+
+// systemRecordingProvider captures the system prompt of every turn it serves.
+type systemRecordingProvider struct {
+	mu      sync.Mutex
+	systems []string
+}
+
+func (p *systemRecordingProvider) Stream(_ context.Context, req llm.Request) (<-chan llm.Event, error) {
+	p.mu.Lock()
+	p.systems = append(p.systems, req.System)
+	p.mu.Unlock()
+	out := make(chan llm.Event, 2)
+	out <- llm.Event{Kind: llm.StepStarted}
+	out <- llm.Event{Kind: llm.StepEnded}
+	close(out)
+	return out, nil
+}
+
+func (p *systemRecordingProvider) captured() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.systems...)
+}
+
+// TestEngine_LocalEndpointSelectionSwitchesTheSystemPrompt: an endpoint serving
+// models on this machine gets the prompt that spells out the tool-calling protocol,
+// because a local model id (qwen2.5-coder) carries no family to route on. The TUI
+// could not reach that prompt at all before the selection started declaring it, and
+// the question is asked per turn: switching back to a cloud model has to switch the
+// prompt back without anything being re-assembled.
+func TestEngine_LocalEndpointSelectionSwitchesTheSystemPrompt(t *testing.T) {
+	service := &selectionModelService{active: providerconfig.Active{
+		ProviderID: "lm-studio", ProviderName: "LM Studio", Model: "qwen2.5-coder", LocalModels: true,
+	}}
+	provider := &systemRecordingProvider{}
+	engine := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore(), Models: service})
+	defer engine.Shutdown(context.Background())
+
+	if _, err := engine.SendPrompt("s1", "hola"); err != nil {
+		t.Fatal(err)
+	}
+	collectUntilRunDone(t, engine.Events(), 10*time.Second, nil)
+
+	// "# How you act" is local.txt's own heading; the other two variants do not
+	// carry it. Matching on "function-calling" would prove nothing — every variant
+	// tells the model to emit real tool calls.
+	systems := provider.captured()
+	if len(systems) != 1 || !strings.Contains(systems[0], "# How you act") {
+		t.Fatalf("system prompt of the local turn = %q, want the local variant", systems)
+	}
+
+	service.set(providerconfig.Active{ProviderID: "anthropic", ProviderName: "Anthropic", Model: "claude-opus-4-8"})
+	if _, err := engine.SendPrompt("s1", "otra"); err != nil {
+		t.Fatal(err)
+	}
+	collectUntilRunDone(t, engine.Events(), 10*time.Second, nil)
+
+	systems = provider.captured()
+	if len(systems) != 2 || strings.Contains(systems[1], "# How you act") {
+		t.Fatalf("system prompt after switching to a cloud model = %q, want the family-routed prompt", systems)
+	}
+}

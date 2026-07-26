@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,8 +12,10 @@ import (
 	"time"
 
 	"github.com/K3N4Y/atenea/internal/agent"
+	"github.com/K3N4Y/atenea/internal/event"
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/permission"
+	"github.com/K3N4Y/atenea/internal/providerconfig"
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/wailssession"
 )
@@ -86,6 +89,79 @@ func (p *requestRecordingProvider) captured() llm.Request {
 	return p.req
 }
 
+// newApp arma la app con un MemoryStore (no durable), el emit inyectado y un
+// servicio de providers que sirve provider y nada mas. Lo usan los tests cuyo
+// sujeto es un turno, no la seleccion de modelo: sin archivo de config no hay
+// catalogo, nada se puede elegir y nada toca disco ni red.
+func newApp(t *testing.T, provider llm.Provider, emit event.EmitFunc) *App {
+	t.Helper()
+	return newAppWithStore(session.NewMemoryStore(), inertProviderService(t, provider), emit)
+}
+
+// inertProviderService abre el servicio sobre una ruta que no puede existir: Open
+// reporta el archivo ausente devolviendo un servicio que sirve el fallback, que es
+// justo el provider que estos tests inyectan.
+func inertProviderService(t *testing.T, provider llm.Provider) *providerconfig.Service {
+	t.Helper()
+	service, err := providerconfig.Open("", "", testSnapshot(provider), envNothing, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("open inert provider service: %v", err)
+	}
+	return service
+}
+
+// newAppWithProviders arma la app sobre un servicio de providers real: un
+// providers.json en un directorio temporal, catalog como catalogo de fabrica y un
+// registry que construye provider para cualquier formato. Es lo que usan los tests
+// de seleccion de modelo, que necesitan algo que elegir y un archivo donde
+// persistir la eleccion.
+func newAppWithProviders(t *testing.T, provider llm.Provider, catalog providerconfig.Config) (*App, *providerconfig.Service) {
+	t.Helper()
+	registry := providerconfig.Registry{}
+	for _, format := range providerconfig.DefaultRegistry().Types() {
+		registry[format] = providerconfig.Format{
+			Build: func(providerconfig.Provider, string, string) (llm.Provider, error) { return provider, nil },
+		}
+	}
+	offline := func(context.Context, string, string) ([]string, error) {
+		return nil, errors.New("model discovery is offline in tests")
+	}
+	dir := t.TempDir()
+	credentials := providerconfig.NewFileCredentialStore(filepath.Join(dir, "credentials.json"))
+	service, err := providerconfig.Open(
+		filepath.Join(dir, "providers.json"), "", testSnapshot(provider),
+		envWithKeys(catalog), registry, nil, offline, credentials, catalog,
+	)
+	if err != nil {
+		t.Fatalf("open provider service: %v", err)
+	}
+	return newAppWithStore(session.NewMemoryStore(), service, func(string, ...interface{}) {}), service
+}
+
+// testSnapshot es el provider inyectado presentado como seleccion activa: el
+// switcher exige id, nombre, baseURL y modelo, y ninguno de los cuatro es el
+// sujeto de un test de turnos.
+func testSnapshot(provider llm.Provider) llm.ProviderSnapshot {
+	return llm.ProviderSnapshot{ProviderID: "test", ProviderName: "Test", BaseURL: "test://local", Model: "test-model", Provider: provider}
+}
+
+// envNothing es un entorno vacio: ningun test debe depender de las API keys que el
+// desarrollador tenga exportadas.
+func envNothing(string) string { return "" }
+
+// envWithKeys responde SOLO las variables de API key que declara catalog: elegir un
+// provider de la nube exige una key, y el sujeto de estos tests es la eleccion, no
+// de donde sale la key.
+func envWithKeys(catalog providerconfig.Config) func(string) string {
+	keys := map[string]string{}
+	for _, provider := range catalog.Providers {
+		if provider.APIKeyEnv != "" {
+			keys[provider.APIKeyEnv] = "test-key"
+		}
+	}
+	return func(name string) string { return keys[name] }
+}
+
 // TestApp_SendPromptStreamsTurnToBus: SendPrompt admite el prompt y arranca Run; el
 // turno completo viaja por el bus al canal de la sesion. El prompt se promueve como
 // Message{Role:user} y el texto del asistente se materializa coalescido en
@@ -99,7 +175,7 @@ func TestApp_SendPromptStreamsTurnToBus(t *testing.T) {
 		llm.Event{Kind: llm.TextEnded},
 		llm.Event{Kind: llm.StepEnded},
 	)
-	app := newApp(fake, rec.emit)
+	app := newApp(t, fake, rec.emit)
 
 	if err := app.SendPrompt("s1", "hola"); err != nil {
 		t.Fatalf("SendPrompt: %v", err)
@@ -148,7 +224,7 @@ func TestApp_ListSessionsReturnsSentPrompts(t *testing.T) {
 		llm.Event{Kind: llm.TextEnded},
 		llm.Event{Kind: llm.StepEnded},
 	)
-	app := newApp(fake, rec.emit)
+	app := newApp(t, fake, rec.emit)
 
 	if err := app.SendPrompt("s1", "primera"); err != nil {
 		t.Fatalf("SendPrompt(s1): %v", err)
@@ -187,7 +263,7 @@ func TestApp_DeleteSessionRemovesItFromList(t *testing.T) {
 		llm.Event{Kind: llm.TextEnded},
 		llm.Event{Kind: llm.StepEnded},
 	)
-	app := newApp(fake, rec.emit)
+	app := newApp(t, fake, rec.emit)
 
 	if err := app.SendPrompt("chat-del", "hola"); err != nil {
 		t.Fatalf("SendPrompt: %v", err)
@@ -237,7 +313,7 @@ func TestApp_SessionHistoryReplaysStoredLog(t *testing.T) {
 		llm.Event{Kind: llm.TextEnded},
 		llm.Event{Kind: llm.StepEnded},
 	)
-	app := newApp(fake, rec.emit)
+	app := newApp(t, fake, rec.emit)
 
 	if err := app.SendPrompt("s1", "hola"); err != nil {
 		t.Fatalf("SendPrompt: %v", err)
@@ -277,7 +353,7 @@ func TestApp_SessionHistoryReplaysStoredLog(t *testing.T) {
 // TestApp_SessionHistoryUnknownSessionReturnsError: pedir el historial de una
 // sesion inexistente propaga ErrSessionNotFound, no un log vacio silencioso.
 func TestApp_SessionHistoryUnknownSessionReturnsError(t *testing.T) {
-	app := newApp(demoProvider(), func(string, ...interface{}) {})
+	app := newApp(t, demoProvider(), func(string, ...interface{}) {})
 
 	if _, err := app.SessionHistory("ghost"); err == nil {
 		t.Fatal("SessionHistory(ghost): got nil error, want ErrSessionNotFound")
@@ -293,7 +369,7 @@ func TestApp_RequestAdvertisesGrepTool(t *testing.T) {
 		llm.Event{Kind: llm.StepStarted},
 		llm.Event{Kind: llm.StepEnded},
 	)}
-	app := newApp(prov, rec.emit)
+	app := newApp(t, prov, rec.emit)
 
 	if err := app.SendPrompt("s1", "busca Execute"); err != nil {
 		t.Fatalf("SendPrompt: %v", err)
@@ -315,7 +391,7 @@ func TestApp_RequestAdvertisesGlobTool(t *testing.T) {
 		llm.Event{Kind: llm.StepStarted},
 		llm.Event{Kind: llm.StepEnded},
 	)}
-	app := newApp(prov, rec.emit)
+	app := newApp(t, prov, rec.emit)
 
 	if err := app.SendPrompt("s1", "busca archivos go"); err != nil {
 		t.Fatalf("SendPrompt: %v", err)
@@ -337,7 +413,7 @@ func TestApp_RequestAdvertisesBashTool(t *testing.T) {
 		llm.Event{Kind: llm.StepStarted},
 		llm.Event{Kind: llm.StepEnded},
 	)}
-	app := newApp(prov, rec.emit)
+	app := newApp(t, prov, rec.emit)
 
 	if err := app.SendPrompt("s1", "run a command"); err != nil {
 		t.Fatalf("SendPrompt: %v", err)
@@ -363,7 +439,7 @@ func TestApp_OffersTaskToolToModel(t *testing.T) {
 		llm.Event{Kind: llm.TextEnded},
 		llm.Event{Kind: llm.StepEnded},
 	)}
-	a := newApp(prov, rec.emit)
+	a := newApp(t, prov, rec.emit)
 
 	if err := a.SendPrompt("s1", "hola"); err != nil {
 		t.Fatalf("SendPrompt: %v", err)
@@ -397,7 +473,7 @@ func TestApp_TaskToolDescriptionListsBuiltinSubagents(t *testing.T) {
 		llm.Event{Kind: llm.TextEnded},
 		llm.Event{Kind: llm.StepEnded},
 	)}
-	a := newApp(prov, rec.emit)
+	a := newApp(t, prov, rec.emit)
 
 	if err := a.SendPrompt("s1", "hola"); err != nil {
 		t.Fatalf("SendPrompt: %v", err)
@@ -436,7 +512,7 @@ func TestApp_PlanModeDoesNotOfferTaskTool(t *testing.T) {
 		llm.Event{Kind: llm.TextEnded},
 		llm.Event{Kind: llm.StepEnded},
 	)}
-	a := newApp(prov, rec.emit)
+	a := newApp(t, prov, rec.emit)
 
 	if err := a.SendPlanPrompt("s1", "investiga"); err != nil {
 		t.Fatalf("SendPlanPrompt: %v", err)
@@ -462,7 +538,7 @@ func TestApp_SendPlanPromptUsesPlanModeToolsAndPrompt(t *testing.T) {
 		llm.Event{Kind: llm.StepStarted},
 		llm.Event{Kind: llm.StepEnded},
 	)}
-	app := newApp(prov, rec.emit)
+	app := newApp(t, prov, rec.emit)
 
 	if err := app.SendPlanPrompt("s1", "planea la feature X"); err != nil {
 		t.Fatalf("SendPlanPrompt: %v", err)
@@ -510,7 +586,7 @@ func TestApp_SystemPromptAdvertisesDiscoveredSkills(t *testing.T) {
 		llm.Event{Kind: llm.StepStarted},
 		llm.Event{Kind: llm.StepEnded},
 	)}
-	app := newApp(prov, rec.emit)
+	app := newApp(t, prov, rec.emit)
 
 	if err := app.SendPrompt("s1", "hola"); err != nil {
 		t.Fatalf("SendPrompt: %v", err)
@@ -550,7 +626,7 @@ func TestApp_DiscoversSkillsFromAgentsDir(t *testing.T) {
 		llm.Event{Kind: llm.StepStarted},
 		llm.Event{Kind: llm.StepEnded},
 	)}
-	app := newApp(prov, rec.emit)
+	app := newApp(t, prov, rec.emit)
 
 	if err := app.SendPrompt("s1", "hola"); err != nil {
 		t.Fatalf("SendPrompt: %v", err)
@@ -572,7 +648,7 @@ func TestApp_SendPromptAfterPlanResetsToNormalTools(t *testing.T) {
 		llm.Event{Kind: llm.StepStarted},
 		llm.Event{Kind: llm.StepEnded},
 	)}
-	app := newApp(prov, rec.emit)
+	app := newApp(t, prov, rec.emit)
 
 	if err := app.SendPlanPrompt("s1", "plan"); err != nil {
 		t.Fatalf("SendPlanPrompt: %v", err)
@@ -601,7 +677,7 @@ func TestApp_AcceptPlanRunsNormalModeAndAdmitsImplementPrompt(t *testing.T) {
 		llm.Event{Kind: llm.StepStarted},
 		llm.Event{Kind: llm.StepEnded},
 	)}
-	app := newApp(prov, rec.emit)
+	app := newApp(t, prov, rec.emit)
 
 	if err := app.AcceptPlan("s1"); err != nil {
 		t.Fatalf("AcceptPlan: %v", err)
@@ -641,7 +717,7 @@ func TestApp_RequestPlanChangeStaysInPlanMode(t *testing.T) {
 		llm.Event{Kind: llm.StepStarted},
 		llm.Event{Kind: llm.StepEnded},
 	)}
-	app := newApp(prov, rec.emit)
+	app := newApp(t, prov, rec.emit)
 
 	if err := app.SendPlanPrompt("s1", "planea la feature X"); err != nil {
 		t.Fatalf("SendPlanPrompt: %v", err)
@@ -690,7 +766,7 @@ func TestApp_AcceptPlanFromPlanModeResetsToNormal(t *testing.T) {
 		llm.Event{Kind: llm.StepStarted},
 		llm.Event{Kind: llm.StepEnded},
 	)}
-	app := newApp(prov, rec.emit)
+	app := newApp(t, prov, rec.emit)
 
 	if err := app.SendPlanPrompt("s1", "planea la feature X"); err != nil {
 		t.Fatalf("SendPlanPrompt: %v", err)
@@ -707,29 +783,6 @@ func TestApp_AcceptPlanFromPlanModeResetsToNormal(t *testing.T) {
 	}
 	if requestHasTool(req, "present_plan") {
 		t.Errorf("Request.Tools sigue con present_plan tras aceptar; tools = %+v", req.Tools)
-	}
-}
-
-// TestApp_ModelReportsConfiguredModel: el binding Model() expone a la UI el modelo
-// activo resuelto desde OPENROUTER_MODEL, para que el frontend sepa que ventana de
-// contexto usar al pintar el uso de tokens.
-func TestApp_ModelReportsConfiguredModel(t *testing.T) {
-	t.Setenv("OPENROUTER_MODEL", "anthropic/claude-opus-4.8")
-	app := newApp(demoProvider(), func(string, ...interface{}) {})
-
-	if got := app.Model(); got != "anthropic/claude-opus-4.8" {
-		t.Errorf("Model() = %q, want %q", got, "anthropic/claude-opus-4.8")
-	}
-}
-
-// TestApp_ModelFallsBackToDefault: sin OPENROUTER_MODEL, Model() cae al defaultModel,
-// mismo fallback que chooseProvider para que la UI y el provider coincidan.
-func TestApp_ModelFallsBackToDefault(t *testing.T) {
-	t.Setenv("OPENROUTER_MODEL", "")
-	app := newApp(demoProvider(), func(string, ...interface{}) {})
-
-	if got := app.Model(); got != defaultModel {
-		t.Errorf("Model() = %q, want %q", got, defaultModel)
 	}
 }
 
@@ -774,7 +827,7 @@ func (p *blockingProvider) Stream(ctx context.Context, _ llm.Request) (<-chan ll
 func TestApp_StopInterruptsInflightTurn(t *testing.T) {
 	rec := &recordingEmit{}
 	prov := &blockingProvider{started: make(chan struct{})}
-	app := newApp(prov, rec.emit)
+	app := newApp(t, prov, rec.emit)
 
 	if err := app.SendPrompt("s1", "hola"); err != nil {
 		t.Fatalf("SendPrompt: %v", err)
@@ -811,7 +864,7 @@ func TestApp_StopInterruptsInflightTurn(t *testing.T) {
 func TestApp_StopDoesNotPublishCancelError(t *testing.T) {
 	rec := &recordingEmit{}
 	prov := &blockingProvider{started: make(chan struct{})}
-	app := newApp(prov, rec.emit)
+	app := newApp(t, prov, rec.emit)
 
 	if err := app.SendPrompt("s1", "hola"); err != nil {
 		t.Fatalf("SendPrompt: %v", err)
@@ -851,7 +904,7 @@ func (errProvider) Stream(_ context.Context, _ llm.Request) (<-chan llm.Event, e
 // excepcion del cierre limpio es SOLO para context.Canceled/DeadlineExceeded.
 func TestApp_RealErrorIsPublished(t *testing.T) {
 	rec := &recordingEmit{}
-	app := newApp(errProvider{}, rec.emit)
+	app := newApp(t, errProvider{}, rec.emit)
 
 	if err := app.SendPrompt("s1", "hola"); err != nil {
 		t.Fatalf("SendPrompt: %v", err)
@@ -928,7 +981,7 @@ func TestApp_BashCallAsksPermissionAndDenyDoesNotRun(t *testing.T) {
 			{Kind: llm.StepEnded},
 		},
 	}}
-	app := newApp(prov, rec.emit)
+	app := newApp(t, prov, rec.emit)
 
 	if err := app.SendPrompt("s1", "run echo"); err != nil {
 		t.Fatalf("SendPrompt: %v", err)
@@ -964,7 +1017,7 @@ func TestApp_BashCallAsksPermissionAndDenyDoesNotRun(t *testing.T) {
 // the decision arriving via ResolveToolPermission unblocks a pending Ask on the
 // app's gate (proves the gate field exists and the binding invokes it).
 func TestApp_ResolveToolPermissionWiredToGate(t *testing.T) {
-	app := newApp(demoProvider(), func(string, ...interface{}) {})
+	app := newApp(t, demoProvider(), func(string, ...interface{}) {})
 
 	done := make(chan bool, 1)
 	go func() {
@@ -1065,7 +1118,7 @@ func TestApp_SubagentBashIsGatedBySharedGate(t *testing.T) {
 
 	prov := &taskAwareProvider{sentinel: sentinel}
 	rec := &recordingEmit{}
-	app := newApp(prov, rec.emit)
+	app := newApp(t, prov, rec.emit)
 	if err := app.SetWorkspace(dir); err != nil {
 		t.Fatalf("SetWorkspace: %v", err)
 	}
@@ -1110,7 +1163,7 @@ func TestApp_SubagentPermissionRequestReachesBus(t *testing.T) {
 
 	prov := &taskAwareProvider{sentinel: sentinel}
 	rec := &recordingEmit{}
-	app := newApp(prov, rec.emit)
+	app := newApp(t, prov, rec.emit)
 	if err := app.SetWorkspace(dir); err != nil {
 		t.Fatalf("SetWorkspace: %v", err)
 	}
@@ -1220,7 +1273,7 @@ func TestTitleFromProvider_EmptyWhenNoText(t *testing.T) {
 // sesion nueva genera un Session.Title que la sidebar (ListSessions) muestra en vez
 // del primer prompt.
 func TestApp_AutoTitlesFirstMessage(t *testing.T) {
-	app := newApp(demoProvider(), func(string, ...interface{}) {})
+	app := newApp(t, demoProvider(), func(string, ...interface{}) {})
 	app.sessions.SetTitler(func(string) string { return "Titulo Generado" })
 
 	if err := app.SendPrompt("s1", "hola, este es el primer mensaje"); err != nil {
@@ -1240,7 +1293,7 @@ func TestApp_AutoTitlesFirstMessage(t *testing.T) {
 // TestApp_AutoTitleFallsBackToFirstMessageWhenEmpty: si el titler no produce titulo,
 // no se persiste nada y la sidebar cae al primer mensaje (el fallback pedido).
 func TestApp_AutoTitleFallsBackToFirstMessageWhenEmpty(t *testing.T) {
-	app := newApp(demoProvider(), func(string, ...interface{}) {})
+	app := newApp(t, demoProvider(), func(string, ...interface{}) {})
 	app.sessions.SetTitler(func(string) string { return "" })
 
 	if err := app.SendPrompt("s1", "mi primer mensaje"); err != nil {
@@ -1260,7 +1313,7 @@ func TestApp_AutoTitleFallsBackToFirstMessageWhenEmpty(t *testing.T) {
 // TestApp_AutoTitleSkipsSecondMessage: el titulo se genera solo en el primer mensaje;
 // los siguientes no vuelven a invocar al titler.
 func TestApp_AutoTitleSkipsSecondMessage(t *testing.T) {
-	app := newApp(demoProvider(), func(string, ...interface{}) {})
+	app := newApp(t, demoProvider(), func(string, ...interface{}) {})
 	var mu sync.Mutex
 	calls := 0
 	app.sessions.SetTitler(func(string) string {
@@ -1293,7 +1346,7 @@ func TestApp_AutoTitleSkipsSecondMessage(t *testing.T) {
 // proveedor al turno (lo que retrasaba el streaming en vivo).
 func TestApp_TitleGeneratedAfterTurnStreams(t *testing.T) {
 	rec := &recordingEmit{}
-	app := newApp(llm.NewFakeProvider(
+	app := newApp(t, llm.NewFakeProvider(
 		llm.Event{Kind: llm.StepStarted},
 		llm.Event{Kind: llm.TextStarted},
 		llm.Event{Kind: llm.TextDelta, Text: "respuesta del agente"},

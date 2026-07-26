@@ -4,6 +4,9 @@ import (
 	"bytes"
 	_ "embed"
 	"fmt"
+	"os"
+
+	"github.com/K3N4Y/atenea/internal/llm"
 )
 
 // defaultCatalogJSON is the catalog atenea ships with: the providers a fresh
@@ -49,4 +52,27 @@ func DefaultCatalog() Config {
 		panic(fmt.Sprintf("providerconfig: embedded providers.default.json is invalid: %v", err))
 	}
 	return cfg
+}
+
+// OpenDefault opens the provider service the way atenea ships it: the config,
+// model cache and credentials at their default paths — the ones every host
+// shares, which is what makes a selection in one visible to the other — over the
+// built-in registry and catalog.
+//
+// fallback is what the host chats with until a selection exists; see
+// DefaultFallback. A host with a reason to differ still has Open.
+func OpenDefault(fallback llm.ProviderSnapshot) (*Service, error) {
+	credentials := NewFileCredentialStore(DefaultCredentialsPath())
+	return Open(DefaultPath(), DefaultCachePath(), fallback, os.Getenv, nil, nil, nil, credentials, DefaultCatalog())
+}
+
+// DefaultFallback is the provider a bare environment can speak, taken from the
+// built-in catalog, and false with offline returned unchanged when no key in the
+// environment names one. The offline provider is the host's to supply: it is the
+// only part of this that is not a fact about the environment.
+func DefaultFallback(offline llm.ProviderSnapshot) (llm.ProviderSnapshot, bool) {
+	if snapshot, ok := EnvironmentFallback(DefaultCatalog(), os.Getenv, nil); ok {
+		return snapshot, true
+	}
+	return offline, false
 }

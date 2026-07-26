@@ -68,10 +68,10 @@ onMounted(async () => {
   // chat nuevo vacio (identidad §2, Chat First): NO se auto-carga la ultima
   // sesion; la sidebar es como el usuario vuelve a una conversacion pasada.
   chat.loadSessions()
-  // Re-aplica el provider/modelo elegido (persistido entre reinicios) y deja la
-  // barra de contexto dimensionada por ese modelo; cae al del backend si no hay
-  // ninguno o ya no aplica. Subsume loadModel: la config del provider trae el modelo.
-  chat.restoreProvider()
+  // Lee la seleccion vigente del backend (provider, modelo y la ventana de
+  // contexto que declara ese adapter) para el pie del composer y la barra de
+  // contexto. No hay nada que re-aplicar: la seleccion la persiste el backend.
+  chat.loadProvider()
   // Re-aplica la ultima carpeta usada (persistida entre reinicios) y la deja
   // vigente; cae a la del backend si no hay ninguna o ya no existe. Se hace antes
   // de listar archivos y comandos, que dependen de la carpeta vigente.
@@ -120,7 +120,10 @@ onUnmounted(() => chat.teardown())
              ContextUsedBar (ese se oculta sin usage y si lleva el margin,
              MCP y dev tools se van a la izquierda). -->
         <div class="ml-auto flex items-center">
-          <ContextUsedBar :usage="chat.usage" :model="chat.model" />
+          <ContextUsedBar
+            :usage="chat.usage"
+            :contextWindow="chat.contextWindow"
+          />
 
           <!-- Menu de servidores MCP: Flip desde el boton. Va a la izquierda
                de las herramientas de desarrollo. -->

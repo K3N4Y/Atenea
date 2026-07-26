@@ -58,9 +58,13 @@ type Config struct {
 	// Bus publica los eventos de permiso de los subagentes en el canal del
 	// padre (ChildPermissionStore), el mismo que ya escucha el frontend.
 	Bus *event.Bus
-	// Local marca un provider de endpoint local (LM Studio, Ollama): el
-	// system prompt base pasa al protocolo de function-calling explicito.
-	Local bool
+	// LocalPrompt answers, once per turn, whether the provider that will serve it
+	// runs local models (LM Studio, Ollama): then the base system prompt switches
+	// to the explicit function-calling protocol instead of routing by model
+	// family, because a local model id says nothing about its family. It is a
+	// question rather than a flag so a live provider switch takes effect on the
+	// next turn without re-assembling anything. nil means never local.
+	LocalPrompt func() bool
 	// NextID genera los assistantMessageID del runner (ver NewIDGen).
 	NextID func() string
 	// Mode es el hook de modo por sesion (normal/plan) que el runner consulta
@@ -196,13 +200,13 @@ func Build(cfg Config) Built {
 		permissions,
 		cfg.NextID)
 	r.SetCompactor(runner.NewContextCompactor(cfg.Store, cfg.Provider))
-	r.SetSystemPrompt(systemPromptBuilder(root, skillsBlock, cfg.Local))
+	r.SetSystemPrompt(systemPromptBuilder(root, skillsBlock, cfg.LocalPrompt))
 	r.SetPermissionGate(cfg.Gate, policy)
 	// Plan-mode: investigacion de solo lectura mas present_plan (sin write/edit/bash/
 	// echo). El hook de modo decide por sesion; SetMode/SetPlanMode toman efecto solo
 	// cuando cfg.Mode reporta ModePlan (nil = siempre normal, el default del runner).
 	r.SetMode(cfg.Mode)
-	r.SetPlanMode(planSystemPromptBuilder(root, skillsBlock, cfg.Local),
+	r.SetPlanMode(planSystemPromptBuilder(root, skillsBlock, cfg.LocalPrompt),
 		tool.Permissions{"read": true, "glob": true, "grep": true, "present_plan": true, "skill": true})
 
 	return Built{Runner: r, Glob: glob, Commands: commands, Tools: registry, Policy: policy}
@@ -272,13 +276,13 @@ func promptSetup(root string) (env func() prompt.Env, instructions string) {
 // systemPromptBuilder arma el builder del system prompt de modo normal anclado
 // a root: por turno compone el prompt base + el bloque <env> con la fecha del
 // dia + el bloque de skills (descubiertas una vez en el ensamblado y pasadas ya
-// formateadas), sobre el promptSetup compartido. Con local true (LM Studio,
-// Ollama) el base es el prompt local (protocolo de function-calling); si no, se
-// elige por familia de modelo.
-func systemPromptBuilder(root, skills string, local bool) func(model string) string {
+// formateadas), sobre el promptSetup compartido. El base sale del prompt local
+// (protocolo de function-calling) cuando local lo reporta en ese turno (LM
+// Studio, Ollama); si no, se elige por familia de modelo.
+func systemPromptBuilder(root, skills string, local func() bool) func(model string) string {
 	env, instructions := promptSetup(root)
 	return func(model string) string {
-		if local {
+		if local != nil && local() {
 			return prompt.BuildLocal(env(), instructions, skills)
 		}
 		return prompt.Build(model, env(), instructions, skills)
@@ -289,10 +293,10 @@ func systemPromptBuilder(root, skills string, local bool) func(model string) str
 // forma que systemPromptBuilder pero agrega el contrato de plan-mode
 // (present_plan) sobre el prompt base, via BuildLocalPlan con local o BuildPlan
 // si no.
-func planSystemPromptBuilder(root, skills string, local bool) func(model string) string {
+func planSystemPromptBuilder(root, skills string, local func() bool) func(model string) string {
 	env, instructions := promptSetup(root)
 	return func(model string) string {
-		if local {
+		if local != nil && local() {
 			return prompt.BuildLocalPlan(env(), instructions, skills)
 		}
 		return prompt.BuildPlan(model, env(), instructions, skills)

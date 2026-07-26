@@ -107,7 +107,7 @@ func (s *Service) Connect(ctx context.Context, providerID, apiKey string) (Activ
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.credentials.Put(providerID, Credential{Type: CredentialTypeAPIKey, APIKey: apiKey}); err != nil {
-		return s.Active(), err
+		return s.activeLocked(), err
 	}
 	switch {
 	case s.config.Selected.Provider == providerID:
@@ -118,5 +118,5 @@ func (s *Service) Connect(ctx context.Context, providerID, apiKey string) (Activ
 			return s.selectLocked(providerID, provider.Models[0])
 		}
 	}
-	return s.Active(), nil
+	return s.activeLocked(), nil
 }

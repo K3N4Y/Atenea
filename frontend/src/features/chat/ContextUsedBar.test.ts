@@ -3,13 +3,21 @@ import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import ContextUsedBar from './ContextUsedBar.vue'
 
-// Indicador del contexto usado: porcentaje + barra de progreso, calculado contra
-// la ventana del modelo. Presentational: recibe usage (camelCase) y model por
-// prop; sin usage no pinta nada. Solo tokens, sin costos.
+const usage = (inputTokens: number, outputTokens = 0) => ({
+  inputTokens,
+  outputTokens,
+  reasoningTokens: 0,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+})
+
+// Indicador del contexto usado: porcentaje + barra de progreso, escalado contra la
+// ventana que declara el adapter activo. Presentational: recibe usage (camelCase) y
+// contextWindow por prop; sin usage no pinta nada. Solo tokens, sin costos.
 describe('ContextUsedBar', () => {
   it('no renderiza nada sin usage', () => {
     const wrapper = mount(ContextUsedBar, {
-      props: { usage: null, model: 'anthropic/claude-opus-4.8' },
+      props: { usage: null, contextWindow: 200000 },
     })
 
     expect(wrapper.text()).toBe('')
@@ -18,16 +26,7 @@ describe('ContextUsedBar', () => {
 
   it('muestra el porcentaje de contexto usado', () => {
     const wrapper = mount(ContextUsedBar, {
-      props: {
-        usage: {
-          inputTokens: 100000,
-          outputTokens: 0,
-          reasoningTokens: 0,
-          cacheReadTokens: 0,
-          cacheWriteTokens: 0,
-        },
-        model: 'anthropic/claude-opus-4.8',
-      },
+      props: { usage: usage(100000), contextWindow: 200000 },
     })
 
     expect(wrapper.text()).toContain('50%')
@@ -38,16 +37,7 @@ describe('ContextUsedBar', () => {
 
   it('muestra los tokens de entrada y salida', () => {
     const wrapper = mount(ContextUsedBar, {
-      props: {
-        usage: {
-          inputTokens: 1500,
-          outputTokens: 500,
-          reasoningTokens: 0,
-          cacheReadTokens: 0,
-          cacheWriteTokens: 0,
-        },
-        model: 'anthropic/claude-opus-4.8',
-      },
+      props: { usage: usage(1500, 500), contextWindow: 200000 },
     })
 
     const bar = wrapper.find('[role="progressbar"]')
@@ -60,16 +50,7 @@ describe('ContextUsedBar', () => {
     // 500k de input contra una ventana de 200k se acota a 100%: la barra no se
     // desborda ni muestra un porcentaje mayor a cien.
     const wrapper = mount(ContextUsedBar, {
-      props: {
-        usage: {
-          inputTokens: 500000,
-          outputTokens: 0,
-          reasoningTokens: 0,
-          cacheReadTokens: 0,
-          cacheWriteTokens: 0,
-        },
-        model: 'anthropic/claude-opus-4.8',
-      },
+      props: { usage: usage(500000), contextWindow: 200000 },
     })
 
     const bar = wrapper.find('[role="progressbar"]')
@@ -77,22 +58,17 @@ describe('ContextUsedBar', () => {
     expect(wrapper.text()).toContain('100%')
   })
 
-  it('un modelo desconocido usa la ventana por defecto', () => {
-    // Sin entrada en el mapa, la barra escala contra DEFAULT_CONTEXT_WINDOW
-    // (200k): 100k de input son la mitad, 50%.
+  // Con la ventana sin declarar (0) no hay escala honesta: se muestran los tokens
+  // sin barra ni porcentaje, en vez de inventar un default que miente para todo
+  // modelo que no lo tenga.
+  it('sin ventana declarada muestra tokens pero no barra ni porcentaje', () => {
     const wrapper = mount(ContextUsedBar, {
-      props: {
-        usage: {
-          inputTokens: 100000,
-          outputTokens: 0,
-          reasoningTokens: 0,
-          cacheReadTokens: 0,
-          cacheWriteTokens: 0,
-        },
-        model: 'totally/unknown',
-      },
+      props: { usage: usage(100000, 250), contextWindow: 0 },
     })
 
-    expect(wrapper.text()).toContain('50%')
+    expect(wrapper.find('[role="progressbar"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('%')
+    expect(wrapper.text()).toContain('100k in')
+    expect(wrapper.text()).toContain('250 out')
   })
 })

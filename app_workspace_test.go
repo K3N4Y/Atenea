@@ -40,7 +40,7 @@ func workspaceFake() *llm.FakeProvider {
 // expone en SessionSummary.Cwd para que la sidebar agrupe por carpeta.
 func TestApp_CapturesWorkspaceCwdOnNewSession(t *testing.T) {
 	rec := &recordingEmit{}
-	app := newApp(workspaceFake(), rec.emit)
+	app := newApp(t, workspaceFake(), rec.emit)
 	root := app.Workspace()
 
 	if err := app.SendPrompt("s1", "hola"); err != nil {
@@ -57,7 +57,7 @@ func TestApp_CapturesWorkspaceCwdOnNewSession(t *testing.T) {
 // trabajo vigente (Workspace la refleja) y las sesiones nuevas la capturan.
 func TestApp_SetWorkspaceChangesCwdForNewSessions(t *testing.T) {
 	rec := &recordingEmit{}
-	app := newApp(workspaceFake(), rec.emit)
+	app := newApp(t, workspaceFake(), rec.emit)
 	dir := t.TempDir()
 
 	if err := app.SetWorkspace(dir); err != nil {
@@ -81,7 +81,7 @@ func TestApp_SetWorkspaceChangesCwdForNewSessions(t *testing.T) {
 // no es carpeta) falla y no cambia la carpeta vigente.
 func TestApp_SetWorkspaceRejectsNonDir(t *testing.T) {
 	rec := &recordingEmit{}
-	app := newApp(workspaceFake(), rec.emit)
+	app := newApp(t, workspaceFake(), rec.emit)
 	before := app.Workspace()
 
 	if err := app.SetWorkspace(before + "/no-existe-xyz"); err == nil {
@@ -98,7 +98,7 @@ func TestApp_SetWorkspaceRejectsNonDir(t *testing.T) {
 func TestApp_SetWorkspaceRepointsSystemPrompt(t *testing.T) {
 	rec := &recordingEmit{}
 	prov := &requestRecordingProvider{FakeProvider: workspaceFake()}
-	app := newApp(prov, rec.emit)
+	app := newApp(t, prov, rec.emit)
 	dir := t.TempDir()
 
 	if err := app.SetWorkspace(dir); err != nil {
@@ -122,7 +122,7 @@ func TestApp_Race_ConcurrentSetWorkspaceAndSendPrompt(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		rec := &recordingEmit{}
 		prov := workspaceFake()
-		app := newApp(prov, rec.emit)
+		app := newApp(t, prov, rec.emit)
 		dir := t.TempDir()
 
 		var wg sync.WaitGroup

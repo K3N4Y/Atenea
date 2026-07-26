@@ -3,12 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/K3N4Y/atenea/internal/llm"
-	"github.com/K3N4Y/atenea/internal/wailsprovider"
 	"github.com/K3N4Y/atenea/internal/workspacegit"
 )
 
@@ -59,5 +57,5 @@ func (a *App) GenerateCommitMessage() (string, error) {
 	if runes := []rune(diff); len(runes) > maxDiffRunes {
 		diff = string(runes[:maxDiffRunes])
 	}
-	return commitMessageFromProvider(a.currentProvider(), wailsprovider.ResolveModel(os.Getenv), diff), nil
+	return commitMessageFromProvider(a.currentProvider(), a.currentModel(), diff), nil
 }

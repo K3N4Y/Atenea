@@ -21,20 +21,44 @@ export namespace command {
 
 export namespace main {
 	
-	export class ProviderConfig {
-	    kind: string;
-	    baseURL: string;
+	export class ActiveProvider {
+	    providerID: string;
+	    providerName: string;
 	    model: string;
+	    contextWindow: number;
 	
 	    static createFrom(source: any = {}) {
-	        return new ProviderConfig(source);
+	        return new ActiveProvider(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.kind = source["kind"];
-	        this.baseURL = source["baseURL"];
+	        this.providerID = source["providerID"];
+	        this.providerName = source["providerName"];
 	        this.model = source["model"];
+	        this.contextWindow = source["contextWindow"];
+	    }
+	}
+	export class ProviderEntry {
+	    id: string;
+	    name: string;
+	    models: string[];
+	    builtIn: boolean;
+	    connectable: boolean;
+	    connected: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProviderEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.models = source["models"];
+	        this.builtIn = source["builtIn"];
+	        this.connectable = source["connectable"];
+	        this.connected = source["connected"];
 	    }
 	}
 

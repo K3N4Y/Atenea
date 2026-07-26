@@ -1,79 +1,111 @@
 import { ref } from 'vue'
 import {
+  ActiveProvider,
+  ConnectProvider,
+  DeclareEndpoint,
+  ForgetProvider,
   ListModels,
-  Model,
-  ProviderConfig,
-  SetProvider,
+  ProviderCatalog,
+  RefreshModels,
+  SelectModel,
 } from '../../../wailsjs/go/main/App'
+import type { main } from '../../../wailsjs/go/models'
 
-// Owns provider selection and model discovery while allowing the chat Pinia
-// store to expose and persist these refs under its existing public contract.
+export type ProviderRow = main.ProviderEntry
+
+// Owns provider selection, connection and model discovery while allowing the chat
+// Pinia store to expose these refs under its existing public contract.
+//
+// None of this is persisted in the browser: the selection lives in the shared
+// providers.json the backend owns, which is also what the terminal app reads. The
+// UI's job is to show it, not to remember it — a second copy in localStorage is
+// how the two used to disagree.
 export function createProviderState() {
   const model = ref('')
-  const providerKind = ref('')
-  const baseURL = ref('')
-  const availableModels = ref<string[]>([])
-
-  async function loadModel(): Promise<void> {
-    try {
-      model.value = await Model()
-    } catch {
-      model.value = ''
-    }
-  }
+  const providerID = ref('')
+  const providerName = ref('')
+  const contextWindow = ref(0)
+  const providers = ref<ProviderRow[]>([])
 
   async function loadProvider(): Promise<void> {
     try {
-      const config = await ProviderConfig()
-      providerKind.value = config.kind
-      baseURL.value = config.baseURL
-      model.value = config.model
+      const active = await ActiveProvider()
+      providerID.value = active.providerID
+      providerName.value = active.providerName
+      model.value = active.model
+      contextWindow.value = active.contextWindow
     } catch {
-      // Preserve rehydrated configuration when the backend is unavailable.
+      // The backend is unavailable; leave what is on screen alone.
     }
   }
 
-  async function restoreProvider(): Promise<void> {
-    if (providerKind.value) {
-      try {
-        await SetProvider(providerKind.value, baseURL.value, model.value)
-        return
-      } catch {
-        // A stale persisted configuration falls back to the backend state.
-      }
+  async function loadProviders(): Promise<ProviderRow[]> {
+    try {
+      providers.value = await ProviderCatalog()
+    } catch {
+      providers.value = []
     }
+    return providers.value
+  }
+
+  // refreshProviders asks every endpoint that supports discovery for its models.
+  // A failing endpoint is a warning, not a failure: the rows that answered are in
+  // the result, so the catalog is replaced either way.
+  async function refreshProviders(): Promise<ProviderRow[]> {
+    try {
+      providers.value = await RefreshModels()
+    } catch {
+      await loadProviders()
+    }
+    return providers.value
+  }
+
+  async function selectModel(id: string, selected: string): Promise<void> {
+    await SelectModel(id, selected)
     await loadProvider()
   }
 
-  async function setProvider(
-    kind: string,
-    url: string,
-    selectedModel: string,
-  ): Promise<void> {
-    await SetProvider(kind, url, selectedModel)
-    providerKind.value = kind
-    baseURL.value = url
-    model.value = selectedModel
+  async function connectProvider(id: string, apiKey: string): Promise<void> {
+    await ConnectProvider(id, apiKey)
+    await Promise.all([loadProvider(), loadProviders()])
   }
 
-  async function listModels(url: string): Promise<string[]> {
-    try {
-      availableModels.value = await ListModels(url)
-    } catch {
-      availableModels.value = []
-    }
-    return availableModels.value
+  // declareEndpoint adds a local endpoint and returns its id. It does not select
+  // it: choosing a model on it is the next step, which is the caller's to take.
+  async function declareEndpoint(
+    name: string,
+    baseURL: string,
+    selected: string,
+  ): Promise<string> {
+    const id = await DeclareEndpoint(name, baseURL, selected)
+    await loadProviders()
+    return id
+  }
+
+  async function forgetProvider(id: string): Promise<void> {
+    await ForgetProvider(id)
+    await loadProviders()
+  }
+
+  // listModels probes an endpoint before it is declared, so the "add endpoint"
+  // form can offer the models that are there instead of asking for one by heart.
+  async function listModels(baseURL: string): Promise<string[]> {
+    return ListModels(baseURL)
   }
 
   return {
     model,
-    providerKind,
-    baseURL,
-    availableModels,
-    loadModel,
+    providerID,
+    providerName,
+    contextWindow,
+    providers,
     loadProvider,
-    restoreProvider,
-    setProvider,
+    loadProviders,
+    refreshProviders,
+    selectModel,
+    connectProvider,
+    declareEndpoint,
+    forgetProvider,
     listModels,
   }
 }

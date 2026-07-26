@@ -142,21 +142,26 @@ func displayDir(root string) string {
 	return root
 }
 
-// environmentFallbackSnapshot is what the TUI chats with before any provider
-// selection exists: the first provider of the built-in catalog whose API-key
-// variable is set, and otherwise the offline demo so the TUI can be driven
-// without configuring anything.
-func environmentFallbackSnapshot() llm.ProviderSnapshot {
-	if snapshot, ok := providerconfig.EnvironmentFallback(providerconfig.DefaultCatalog(), os.Getenv, nil); ok {
-		return snapshot
+// openProviderService opens the provider service on the shared paths: the
+// providers.json, model cache and credentials the desktop app reads too, so a
+// selection made in either one is the selection both see.
+//
+// The fallback is what the TUI chats with before any selection exists: the first
+// provider of the built-in catalog whose API-key variable is set, and otherwise
+// the offline demo, so the TUI can be driven without configuring anything.
+func openProviderService() (*providerconfig.Service, error) {
+	fallback, fromEnvironment := providerconfig.DefaultFallback(offlineSnapshot())
+	if !fromEnvironment {
+		log.Print("atenea: no provider API key in the environment; using the stored selection or the offline demo provider")
 	}
-	log.Print("atenea: no provider API key in the environment; using the offline demo provider")
-	return llm.ProviderSnapshot{ProviderID: "demo", ProviderName: "Demo", BaseURL: "demo://local", Model: "demo", Provider: demoProvider()}
+	return providerconfig.OpenDefault(fallback)
 }
 
-func openProviderService() (*providerconfig.Service, error) {
-	credentials := providerconfig.NewFileCredentialStore(providerconfig.DefaultCredentialsPath())
-	return providerconfig.Open(providerconfig.DefaultPath(), providerconfig.DefaultCachePath(), environmentFallbackSnapshot(), os.Getenv, nil, nil, nil, credentials, providerconfig.DefaultCatalog())
+// offlineSnapshot is the fake the TUI lands on with no credential anywhere,
+// presented as a provider like any other so /model and the composer footer have
+// something honest to show.
+func offlineSnapshot() llm.ProviderSnapshot {
+	return llm.ProviderSnapshot{ProviderID: "demo", ProviderName: "Demo", BaseURL: "demo://local", Model: "demo", Provider: demoProvider()}
 }
 
 // demoProvider arma un FakeProvider con un guion corto (texto + Step.Ended) para

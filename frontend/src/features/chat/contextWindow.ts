@@ -1,27 +1,15 @@
-// Ventana de contexto por modelo: decide la escala de la barra de uso. La app
-// apunta a la familia Claude via OpenRouter, asi que el default es conservador.
-export const DEFAULT_CONTEXT_WINDOW = 200_000
+// Escala del contexto usado. La ventana NO se decide aca: la declara el adapter
+// que sirve el modelo y el backend la entrega con la seleccion activa
+// (ActiveProvider.contextWindow). Una tabla mantenida a mano en el frontend era
+// una cuarta copia de la misma respuesta, y mentia para todo modelo que no
+// estuviera en ella.
+//
+// Una ventana en 0 significa "nadie la declara": entonces no hay porcentaje que
+// mostrar, y eso es mas honesto que escalar contra un numero inventado.
 
-// Mapa mantenido a mano de id de modelo OpenRouter -> tamano de ventana de
-// contexto (tokens). Se extiende a medida que se usan modelos nuevos; un modelo
-// que no este aqui cae al default.
-const WINDOWS: Record<string, number> = {
-  'anthropic/claude-opus-4.8': 200_000,
-  'anthropic/claude-sonnet-4.5': 200_000,
-  'anthropic/claude-3.5-sonnet': 200_000,
-  'openai/gpt-4o': 128_000,
-  'google/gemini-2.5-pro': 1_048_576,
-}
-
-// contextWindowFor devuelve la ventana del modelo conocido o el default.
-export function contextWindowFor(model: string): number {
-  return WINDOWS[model] ?? DEFAULT_CONTEXT_WINDOW
-}
-
-// contextPercent escala los tokens contra la ventana del modelo: porcentaje
-// 0..100, redondeado y acotado. Una ventana no positiva o tokens no finitos dan 0.
-export function contextPercent(tokens: number, model: string): number {
-  const window = contextWindowFor(model)
+// contextPercent escala los tokens contra la ventana dada: porcentaje 0..100,
+// redondeado y acotado. Una ventana no positiva o tokens no finitos dan 0.
+export function contextPercent(tokens: number, window: number): number {
   if (window <= 0 || !Number.isFinite(tokens)) return 0
   const pct = Math.round((tokens / window) * 100)
   return Math.min(100, Math.max(0, pct))

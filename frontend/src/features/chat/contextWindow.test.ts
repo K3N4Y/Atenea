@@ -1,54 +1,36 @@
 import { describe, it, expect } from 'vitest'
-import {
-  contextWindowFor,
-  contextPercent,
-  formatTokens,
-  DEFAULT_CONTEXT_WINDOW,
-} from './contextWindow'
+import { contextPercent, formatTokens } from './contextWindow'
 
-// La ventana de contexto por modelo decide la escala de la barra de uso. Un
-// modelo conocido trae su tamano real; uno desconocido cae al default para no
-// pintar porcentajes absurdos.
-describe('contextWindowFor', () => {
-  it('un modelo conocido devuelve su ventana real', () => {
-    expect(contextWindowFor('anthropic/claude-opus-4.8')).toBe(200000)
-  })
-
-  it('un modelo desconocido cae al default', () => {
-    expect(contextWindowFor('totally/unknown-model')).toBe(
-      DEFAULT_CONTEXT_WINDOW,
-    )
-  })
-
-  it('el string vacio cae al default', () => {
-    expect(contextWindowFor('')).toBe(DEFAULT_CONTEXT_WINDOW)
-  })
-
-  // Un modelo de ventana grande devuelve su tamano real, no el default ni un
-  // valor unico hardcodeado: el mapa por modelo escala distinto segun el modelo.
-  it('un modelo de ventana grande devuelve su tamano real', () => {
-    expect(contextWindowFor('google/gemini-2.5-pro')).toBe(1048576)
-  })
-})
-
-// El porcentaje de contexto usado escala los tokens contra la ventana del modelo.
+// El porcentaje de contexto usado escala los tokens contra la ventana que declara
+// el adapter activo y que el backend entrega con la seleccion. Aqui ya no hay tabla
+// de modelos: la ventana llega como numero.
 describe('contextPercent', () => {
   it('la mitad de la ventana es 50%', () => {
-    expect(contextPercent(100000, 'anthropic/claude-opus-4.8')).toBe(50)
+    expect(contextPercent(100000, 200000)).toBe(50)
   })
 
   it('cero tokens es 0%', () => {
-    expect(contextPercent(0, 'anthropic/claude-opus-4.8')).toBe(0)
+    expect(contextPercent(0, 200000)).toBe(0)
   })
 
   // Tokens por encima de la ventana se acotan a 100%: la barra nunca se desborda.
   it('tokens por encima de la ventana se acotan a 100%', () => {
-    expect(contextPercent(300000, 'anthropic/claude-opus-4.8')).toBe(100)
+    expect(contextPercent(300000, 200000)).toBe(100)
   })
 
   // Tokens no finitos (NaN) caen a 0%: no se pinta un porcentaje basura.
   it('tokens no finitos (NaN) son 0%', () => {
-    expect(contextPercent(Number.NaN, 'anthropic/claude-opus-4.8')).toBe(0)
+    expect(contextPercent(Number.NaN, 200000)).toBe(0)
+  })
+
+  // Una ventana que nadie declara llega como 0: no hay porcentaje posible, y
+  // devolver 0 evita el NaN que una division por cero pintaria en la barra.
+  it('una ventana sin declarar es 0%', () => {
+    expect(contextPercent(100000, 0)).toBe(0)
+  })
+
+  it('una ventana negativa es 0%', () => {
+    expect(contextPercent(100000, -1)).toBe(0)
   })
 })
 

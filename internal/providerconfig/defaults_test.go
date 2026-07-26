@@ -133,3 +133,32 @@ func TestDefaultCatalog_CoversEveryConnectableProvider(t *testing.T) {
 		}
 	}
 }
+
+// TestDefaultFallback_PrefersTheEnvironmentAndFallsBackToOffline: both hosts
+// resolve their startup provider through here, so the two answers that matter are
+// "the environment named one" and "it did not, here is yours back".
+func TestDefaultFallback_PrefersTheEnvironmentAndFallsBackToOffline(t *testing.T) {
+	// The catalog's own variables, cleared from the developer's shell so the result
+	// is a property of this test rather than of the machine running it. Derived from
+	// the catalog, which covers the next provider added to it too.
+	for _, provider := range DefaultCatalog().Providers {
+		if provider.APIKeyEnv != "" {
+			t.Setenv(provider.APIKeyEnv, "")
+		}
+		if provider.ModelEnv != "" {
+			t.Setenv(provider.ModelEnv, "")
+		}
+	}
+	offline := fallbackSnapshot()
+
+	got, fromEnvironment := DefaultFallback(offline)
+	if fromEnvironment || got.ProviderID != offline.ProviderID {
+		t.Fatalf("fallback = %#v (fromEnvironment=%v), want the offline provider unchanged", got, fromEnvironment)
+	}
+
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-key")
+	got, fromEnvironment = DefaultFallback(offline)
+	if !fromEnvironment || got.ProviderID != "anthropic" {
+		t.Fatalf("fallback = %#v (fromEnvironment=%v), want the catalog's first keyed provider", got, fromEnvironment)
+	}
+}

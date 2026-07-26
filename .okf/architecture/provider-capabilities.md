@@ -229,12 +229,12 @@ own, which for Anthropic is 8192 tokens the estimate used to ignore.
 
 ## Still open
 
-- **The frontend keeps its own table.**
-  `frontend/src/features/chat/contextWindow.ts` has a fourth copy of the windows,
-  with a 200K default for anything it does not know. Closing it means the desktop
-  app consuming `providerconfig` instead of `internal/wailsprovider`, which is
-  R3.4; until then the Go side is one declaration and the Wails frontend is
-  another.
+- ~~**The frontend keeps its own table.**~~ `[done 2026-07-26]` R3.4 deleted it.
+  The desktop app resolves the window through `llm.ActiveCapabilities` and hands it
+  to the UI with the active selection, so the declaration reaches the
+  context bar instead of being re-guessed there. A model no adapter declares now
+  reports zero and the bar shows tokens without a percentage, where the old table
+  scaled everything unknown against 200K.
 - **Windows are declared, never discovered.** OpenRouter's `/models` returns
   `context_length` per model and `llm.ListModels` throws it away. Reading it would
   give hundreds of models a real window instead of an em dash. R3.3 landed the

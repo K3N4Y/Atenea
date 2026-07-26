@@ -51,52 +51,17 @@ func blankProviderKeys() []string {
 	return assignments
 }
 
-// The TUI's fallback is the built-in catalog read through the environment: what
-// this pins is the wiring (which key selects which provider, on that provider's
-// curated default), not the catalog data, which providerconfig owns and tests.
-func TestEnvironmentFallbackSnapshot_SelectsTheKeyedCatalogProvider(t *testing.T) {
-	catalog := providerconfig.DefaultCatalog()
-	wantModel := func(id string) string {
-		for _, provider := range catalog.Providers {
-			if provider.ID == id {
-				return provider.Models[0]
-			}
-		}
-		t.Fatalf("the default catalog no longer declares %q", id)
-		return ""
-	}
-
-	for _, tc := range []struct {
-		name string
-		key  string
-		want string
-	}{
-		{"OpenAI", "OPENAI_API_KEY", "openai"},
-		{"Anthropic", "ANTHROPIC_API_KEY", "anthropic"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			for _, name := range append(providerKeyEnvNames(), "OPENAI_MODEL", "ANTHROPIC_MODEL") {
-				t.Setenv(name, "")
-			}
-			t.Setenv(tc.key, "test-key")
-
-			got := environmentFallbackSnapshot()
-			if got.ProviderID != tc.want || got.Model != wantModel(tc.want) {
-				t.Fatalf("fallback = %#v, want %s on %s", got, tc.want, wantModel(tc.want))
-			}
-		})
-	}
-}
-
-// With no key anywhere the TUI still has to be usable, so the fallback is the
-// offline demo rather than a provider that cannot reach the network.
-func TestEnvironmentFallbackSnapshot_FallsBackToTheOfflineDemo(t *testing.T) {
+// Which environment key selects which provider is providerconfig's answer and
+// its tests pin it. What is the TUI's own is the last resort: with no key
+// anywhere the app still has to be usable, so the host supplies the offline demo
+// and the shared fallback must hand it straight back.
+func TestOfflineSnapshot_IsTheFallbackWithoutAnyKey(t *testing.T) {
 	for _, name := range providerKeyEnvNames() {
 		t.Setenv(name, "")
 	}
-	got := environmentFallbackSnapshot()
-	if got.ProviderID != "demo" || got.Provider == nil {
-		t.Fatalf("fallback = %#v, want the offline demo provider", got)
+	got, fromEnvironment := providerconfig.DefaultFallback(offlineSnapshot())
+	if fromEnvironment || got.ProviderID != "demo" || got.Provider == nil {
+		t.Fatalf("fallback = %#v (fromEnvironment=%v), want the offline demo provider", got, fromEnvironment)
 	}
 }
 

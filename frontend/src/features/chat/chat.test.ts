@@ -12,16 +12,25 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   ListSessions: vi.fn(() => Promise.resolve([])),
   SessionHistory: vi.fn(() => Promise.resolve([])),
   DeleteSession: vi.fn(() => Promise.resolve()),
-  Model: vi.fn(() => Promise.resolve('anthropic/claude-opus-4.8')),
   ListProjectFiles: vi.fn(() => Promise.resolve([])),
   ListCommands: vi.fn(() => Promise.resolve([])),
   Workspace: vi.fn(() => Promise.resolve('/home/u/a')),
   SetWorkspace: vi.fn(() => Promise.resolve()),
   SelectWorkspace: vi.fn(() => Promise.resolve('/home/u/picked')),
-  SetProvider: vi.fn(() => Promise.resolve()),
-  ProviderConfig: vi.fn(() =>
-    Promise.resolve({ kind: '', baseURL: '', model: '' }),
+  ActiveProvider: vi.fn(() =>
+    Promise.resolve({
+      providerID: 'anthropic',
+      providerName: 'Anthropic',
+      model: 'claude-opus-4-8',
+      contextWindow: 200000,
+    }),
   ),
+  ProviderCatalog: vi.fn(() => Promise.resolve([])),
+  RefreshModels: vi.fn(() => Promise.resolve([])),
+  SelectModel: vi.fn(() => Promise.resolve()),
+  ConnectProvider: vi.fn(() => Promise.resolve()),
+  DeclareEndpoint: vi.fn(() => Promise.resolve('lm-studio')),
+  ForgetProvider: vi.fn(() => Promise.resolve()),
   ListModels: vi.fn(() => Promise.resolve([])),
 }))
 vi.mock('../../../wailsjs/runtime/runtime', () => ({
@@ -1282,25 +1291,6 @@ describe('chat store: uso de tokens (Usage)', () => {
     expect(store.usage).toMatchObject({ inputTokens: 1200 })
   })
 
-  it('loadModel trae el modelo del binding', async () => {
-    const store = useChatStore()
-
-    await store.loadModel()
-
-    expect(store.model).toBe('anthropic/claude-opus-4.8')
-  })
-
-  it('loadModel cae a modelo vacio si el binding falla', async () => {
-    // Sin backend disponible el binding rechaza; loadModel degrada a modelo
-    // vacio para que la barra use la ventana por defecto en vez de romper.
-    vi.mocked(App.Model).mockRejectedValueOnce(new Error('no backend'))
-    const store = useChatStore()
-
-    await store.loadModel()
-
-    expect(store.model).toBe('')
-  })
-
   it('loadProjectFiles trae las rutas del workspace para el @-menu', async () => {
     vi.mocked(App.ListProjectFiles).mockResolvedValueOnce([
       'app.go',
@@ -1500,49 +1490,177 @@ describe('chat store: carpeta de trabajo (workspace)', () => {
   })
 })
 
-describe('chat store: provider (selector OpenRouter/local)', () => {
-  it('setProvider recablea el backend y refleja kind/baseURL/model', async () => {
-    const store = useChatStore()
-
-    await store.setProvider('local', 'http://localhost:1234/v1', 'qwen')
-
-    expect(App.SetProvider).toHaveBeenCalledWith(
-      'local',
-      'http://localhost:1234/v1',
-      'qwen',
-    )
-    expect(store.providerKind).toBe('local')
-    expect(store.baseURL).toBe('http://localhost:1234/v1')
-    expect(store.model).toBe('qwen')
+describe('chat store: provider (catalogo compartido)', () => {
+  const row = (id: string, models: string[], extra = {}) => ({
+    id,
+    name: id,
+    models,
+    builtIn: true,
+    connectable: false,
+    connected: false,
+    ...extra,
   })
 
-  it('setProvider propaga el error del backend (config invalida)', async () => {
-    vi.mocked(App.SetProvider).mockRejectedValueOnce(
-      new Error('baseURL invalido'),
-    )
-    const store = useChatStore()
-
-    await expect(
-      store.setProvider('local', 'no-es-url', 'qwen'),
-    ).rejects.toThrow('baseURL invalido')
-  })
-
-  it('loadProvider lee la config del backend a kind/baseURL/model', async () => {
-    vi.mocked(App.ProviderConfig).mockResolvedValueOnce({
-      kind: 'openrouter',
-      baseURL: 'https://openrouter.ai/api/v1',
+  it('loadProvider lee la seleccion vigente y su ventana de contexto', async () => {
+    vi.mocked(App.ActiveProvider).mockResolvedValueOnce({
+      providerID: 'openrouter',
+      providerName: 'OpenRouter',
       model: 'openrouter/free',
+      contextWindow: 262144,
     })
     const store = useChatStore()
 
     await store.loadProvider()
 
-    expect(store.providerKind).toBe('openrouter')
-    expect(store.baseURL).toBe('https://openrouter.ai/api/v1')
+    expect(store.providerID).toBe('openrouter')
+    expect(store.providerName).toBe('OpenRouter')
     expect(store.model).toBe('openrouter/free')
+    expect(store.contextWindow).toBe(262144)
   })
 
-  it('listModels devuelve y guarda el catalogo del endpoint', async () => {
+  // Sin backend la UI conserva lo que ya mostraba en vez de vaciarse: un panel en
+  // blanco haria pensar que no hay ningun modelo configurado.
+  it('loadProvider deja el estado como estaba si el binding falla', async () => {
+    const store = useChatStore()
+    await store.loadProvider()
+    vi.mocked(App.ActiveProvider).mockRejectedValueOnce(new Error('no backend'))
+
+    await store.loadProvider()
+
+    expect(store.model).toBe('claude-opus-4-8')
+  })
+
+  it('loadProviders trae el catalogo para el selector', async () => {
+    vi.mocked(App.ProviderCatalog).mockResolvedValueOnce([
+      row('anthropic', ['claude-opus-4-8']),
+    ])
+    const store = useChatStore()
+
+    const got = await store.loadProviders()
+
+    expect(got).toHaveLength(1)
+    expect(store.providers[0].models).toEqual(['claude-opus-4-8'])
+  })
+
+  it('loadProviders degrada a catalogo vacio si el binding falla', async () => {
+    vi.mocked(App.ProviderCatalog).mockRejectedValueOnce(
+      new Error('no backend'),
+    )
+    const store = useChatStore()
+
+    expect(await store.loadProviders()).toEqual([])
+    expect(store.providers).toEqual([])
+  })
+
+  it('selectModel elige en el backend y relee la seleccion', async () => {
+    vi.mocked(App.ActiveProvider).mockResolvedValue({
+      providerID: 'openrouter',
+      providerName: 'OpenRouter',
+      model: 'tencent/hy3:free',
+      contextWindow: 262144,
+    })
+    const store = useChatStore()
+
+    await store.selectModel('openrouter', 'tencent/hy3:free')
+
+    expect(App.SelectModel).toHaveBeenCalledWith(
+      'openrouter',
+      'tencent/hy3:free',
+    )
+    expect(store.model).toBe('tencent/hy3:free')
+  })
+
+  // El error del backend sube al panel, que es quien lo muestra: tragarlo dejaria
+  // la UI sin explicar por que la eleccion no cambio nada.
+  it('selectModel propaga el error del backend', async () => {
+    vi.mocked(App.SelectModel).mockRejectedValueOnce(
+      new Error('no API key for provider "openai"'),
+    )
+    const store = useChatStore()
+
+    await expect(store.selectModel('openai', 'gpt-5.6')).rejects.toThrow(
+      'no API key',
+    )
+  })
+
+  it('connectProvider guarda la key y relee seleccion y catalogo', async () => {
+    const store = useChatStore()
+
+    await store.connectProvider('anthropic', 'sk-ant-test')
+
+    expect(App.ConnectProvider).toHaveBeenCalledWith('anthropic', 'sk-ant-test')
+    expect(App.ActiveProvider).toHaveBeenCalled()
+    expect(App.ProviderCatalog).toHaveBeenCalled()
+  })
+
+  it('connectProvider propaga una key rechazada', async () => {
+    vi.mocked(App.ConnectProvider).mockRejectedValueOnce(
+      new Error('invalid API key'),
+    )
+    const store = useChatStore()
+
+    await expect(
+      store.connectProvider('anthropic', 'sk-wrong'),
+    ).rejects.toThrow('invalid API key')
+  })
+
+  it('declareEndpoint devuelve el id del endpoint y recarga el catalogo', async () => {
+    const store = useChatStore()
+
+    const id = await store.declareEndpoint(
+      'LM Studio',
+      'http://localhost:1234/v1',
+      'qwen',
+    )
+
+    expect(App.DeclareEndpoint).toHaveBeenCalledWith(
+      'LM Studio',
+      'http://localhost:1234/v1',
+      'qwen',
+    )
+    expect(id).toBe('lm-studio')
+    expect(App.ProviderCatalog).toHaveBeenCalled()
+    // Declarar no elige: activar el endpoint es el paso siguiente.
+    expect(App.SelectModel).not.toHaveBeenCalled()
+  })
+
+  it('forgetProvider quita el endpoint y recarga el catalogo', async () => {
+    const store = useChatStore()
+
+    await store.forgetProvider('lm-studio')
+
+    expect(App.ForgetProvider).toHaveBeenCalledWith('lm-studio')
+    expect(App.ProviderCatalog).toHaveBeenCalled()
+  })
+
+  // refreshProviders reemplaza el catalogo con lo que respondio cada endpoint. Un
+  // endpoint caido es una advertencia y el binding rechaza; entonces se recae en el
+  // catalogo guardado en vez de dejar el selector vacio.
+  it('refreshProviders reemplaza el catalogo', async () => {
+    vi.mocked(App.RefreshModels).mockResolvedValueOnce([
+      row('lm-studio', ['qwen', 'llama'], { builtIn: false }),
+    ])
+    const store = useChatStore()
+
+    const got = await store.refreshProviders()
+
+    expect(got[0].models).toEqual(['qwen', 'llama'])
+    expect(store.providers[0].id).toBe('lm-studio')
+  })
+
+  it('refreshProviders cae al catalogo guardado si el refresh falla', async () => {
+    vi.mocked(App.RefreshModels).mockRejectedValueOnce(new Error('offline'))
+    vi.mocked(App.ProviderCatalog).mockResolvedValueOnce([
+      row('anthropic', ['claude-opus-4-8']),
+    ])
+    const store = useChatStore()
+
+    const got = await store.refreshProviders()
+
+    expect(got[0].id).toBe('anthropic')
+  })
+
+  it('listModels sondea un endpoint antes de declararlo', async () => {
     vi.mocked(App.ListModels).mockResolvedValueOnce(['qwen', 'llama'])
     const store = useChatStore()
 
@@ -1550,68 +1668,14 @@ describe('chat store: provider (selector OpenRouter/local)', () => {
 
     expect(App.ListModels).toHaveBeenCalledWith('http://localhost:1234/v1')
     expect(got).toEqual(['qwen', 'llama'])
-    expect(store.availableModels).toEqual(['qwen', 'llama'])
   })
 
-  it('listModels degrada a lista vacia si el endpoint no responde', async () => {
+  it('listModels propaga el fallo del sondeo', async () => {
     vi.mocked(App.ListModels).mockRejectedValueOnce(new Error('connrefused'))
     const store = useChatStore()
 
-    const got = await store.listModels('http://localhost:9999/v1')
-
-    expect(got).toEqual([])
-    expect(store.availableModels).toEqual([])
-  })
-
-  it('restoreProvider re-aplica la config persistida via SetProvider', async () => {
-    const store = useChatStore()
-    store.providerKind = 'local'
-    store.baseURL = 'http://localhost:1234/v1'
-    store.model = 'qwen'
-
-    await store.restoreProvider()
-
-    expect(App.SetProvider).toHaveBeenCalledWith(
-      'local',
-      'http://localhost:1234/v1',
-      'qwen',
+    await expect(store.listModels('http://localhost:9999/v1')).rejects.toThrow(
+      'connrefused',
     )
-  })
-
-  it('restoreProvider cae a loadProvider si no hay config persistida', async () => {
-    vi.mocked(App.ProviderConfig).mockResolvedValueOnce({
-      kind: 'openrouter',
-      baseURL: 'u',
-      model: 'm',
-    })
-    const store = useChatStore()
-    // providerKind vacio = nada persistido: no re-aplica, lee del backend.
-
-    await store.restoreProvider()
-
-    expect(App.SetProvider).not.toHaveBeenCalled()
-    expect(App.ProviderConfig).toHaveBeenCalled()
-    expect(store.providerKind).toBe('openrouter')
-  })
-
-  it('restoreProvider cae a loadProvider si la config persistida ya no aplica', async () => {
-    vi.mocked(App.SetProvider).mockRejectedValueOnce(
-      new Error('endpoint caido'),
-    )
-    vi.mocked(App.ProviderConfig).mockResolvedValueOnce({
-      kind: 'demo',
-      baseURL: '',
-      model: 'openrouter/free',
-    })
-    const store = useChatStore()
-    store.providerKind = 'local'
-    store.baseURL = 'http://localhost:1234/v1'
-    store.model = 'qwen'
-
-    await store.restoreProvider()
-
-    expect(App.SetProvider).toHaveBeenCalled()
-    expect(App.ProviderConfig).toHaveBeenCalled()
-    expect(store.providerKind).toBe('demo')
   })
 })

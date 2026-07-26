@@ -20,22 +20,22 @@ import (
 	"github.com/K3N4Y/atenea/internal/wiring"
 )
 
-// ProviderState is the provider snapshot consumed by one wiring build.
-type ProviderState struct {
-	Provider llm.Provider
-	Local    bool
-}
-
 // Config contains the stable dependencies shared by every workspace build.
 type Config struct {
-	Root          string
-	ProviderState func() ProviderState
-	Store         session.Store
-	Inbox         session.Inbox
-	Gate          permission.Gate
-	Snapshots     *tool.SessionSnapshots
-	Bus           *event.Bus
-	Agent         *agent.Service
+	Root string
+	// Provider is the handle every build wires, not the adapter of the moment: it
+	// is switchable, so selecting another model swaps what it delegates to without
+	// this manager rebuilding anything.
+	Provider llm.Provider
+	// LocalPrompt is the per-turn question wiring asks about that selection; see
+	// wiring.Config.LocalPrompt.
+	LocalPrompt func() bool
+	Store       session.Store
+	Inbox       session.Inbox
+	Gate        permission.Gate
+	Snapshots   *tool.SessionSnapshots
+	Bus         *event.Bus
+	Agent       *agent.Service
 }
 
 // Manager owns workspace and MCP lifecycle state. Admit serializes prompt
@@ -45,7 +45,8 @@ type Manager struct {
 	mu          sync.Mutex
 	root        string
 	glob        *tool.GlobTool
-	providers   func() ProviderState
+	provider    llm.Provider
+	localPrompt func() bool
 	store       session.Store
 	inbox       session.Inbox
 	gate        permission.Gate
@@ -58,14 +59,15 @@ type Manager struct {
 // New builds and publishes the initial workspace wiring.
 func New(cfg Config) *Manager {
 	m := &Manager{
-		providers: cfg.ProviderState,
-		store:     cfg.Store,
-		inbox:     cfg.Inbox,
-		gate:      cfg.Gate,
-		snaps:     cfg.Snapshots,
-		bus:       cfg.Bus,
-		agent:     cfg.Agent,
-		mcp:       mcpclient.NewManager(cfg.Root),
+		provider:    cfg.Provider,
+		localPrompt: cfg.LocalPrompt,
+		store:       cfg.Store,
+		inbox:       cfg.Inbox,
+		gate:        cfg.Gate,
+		snaps:       cfg.Snapshots,
+		bus:         cfg.Bus,
+		agent:       cfg.Agent,
+		mcp:         mcpclient.NewManager(cfg.Root),
 	}
 	m.lifecycleMu.Lock()
 	m.rebuildLocked(cfg.Root)
@@ -103,8 +105,12 @@ func (m *Manager) SetRoot(path string) error {
 	return nil
 }
 
-// Reconfigure runs change and publishes wiring from its resulting provider
-// snapshot as one lifecycle operation. Failed changes leave wiring untouched.
+// Reconfigure runs change and republishes wiring as one lifecycle operation, so
+// no prompt is admitted in between. A failed change leaves wiring untouched.
+//
+// The republish is what cuts the runs in flight: they were streaming from the
+// selection the change replaced, and a turn that finishes under a model the user
+// has already left is not one they asked for.
 func (m *Manager) Reconfigure(change func() error) error {
 	m.lifecycleMu.Lock()
 	defer m.lifecycleMu.Unlock()
@@ -165,10 +171,9 @@ func (m *Manager) Close() {
 }
 
 func (m *Manager) rebuildLocked(root string) {
-	state := m.providers()
 	built := wiring.Build(wiring.Config{
-		Root: root, Provider: state.Provider, Store: m.store, Inbox: m.inbox,
-		Gate: m.gate, Snaps: m.snaps, Bus: m.bus, Local: state.Local,
+		Root: root, Provider: m.provider, Store: m.store, Inbox: m.inbox,
+		Gate: m.gate, Snaps: m.snaps, Bus: m.bus, LocalPrompt: m.localPrompt,
 		NextID: wiring.NewIDGen(), Mode: m.agent.Mode, MCPTools: m.mcp.Tools(),
 	})
 	m.mu.Lock()

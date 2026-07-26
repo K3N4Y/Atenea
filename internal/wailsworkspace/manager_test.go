@@ -8,7 +8,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 
 	"github.com/K3N4Y/atenea/internal/agent"
@@ -41,14 +40,14 @@ func (p *recordingProvider) lastRequest() llm.Request {
 	return p.requests[len(p.requests)-1]
 }
 
-func newTestManager(t *testing.T, root string, state func() ProviderState) (*Manager, *agent.Service) {
+func newTestManager(t *testing.T, root string, provider llm.Provider) (*Manager, *agent.Service) {
 	t.Helper()
 	store := session.NewMemoryStore()
 	inbox := session.NewMemoryInbox()
 	service := agent.NewService(inbox)
 	bus := event.NewBus(func(string, ...interface{}) {})
 	manager := New(Config{
-		Root: root, ProviderState: state, Store: store, Inbox: inbox,
+		Root: root, Provider: provider, Store: store, Inbox: inbox,
 		Gate: permission.NewMemoryGate(), Snapshots: tool.NewSessionSnapshots(),
 		Bus: bus, Agent: service,
 	})
@@ -76,9 +75,7 @@ func TestManager_SetRootPublishesFilesCommandsAndRunnerTogether(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := &recordingProvider{}
-	manager, service := newTestManager(t, root1, func() ProviderState {
-		return ProviderState{Provider: provider}
-	})
+	manager, service := newTestManager(t, root1, provider)
 
 	if err := manager.SetRoot(root2); err != nil {
 		t.Fatal(err)
@@ -113,9 +110,7 @@ func TestManager_SetRootPublishesFilesCommandsAndRunnerTogether(t *testing.T) {
 func TestManager_AdmitExcludesSetRootAndReconfigure(t *testing.T) {
 	root1, root2 := t.TempDir(), t.TempDir()
 	provider := llm.NewFakeProvider(llm.Event{Kind: llm.StepEnded})
-	manager, _ := newTestManager(t, root1, func() ProviderState {
-		return ProviderState{Provider: provider}
-	})
+	manager, _ := newTestManager(t, root1, provider)
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	admitDone := make(chan error, 1)
@@ -173,18 +168,11 @@ func TestManager_ReconfigureFailureLeavesWiringUntouched(t *testing.T) {
 	root := t.TempDir()
 	writeSkill(t, root, "alpha")
 	provider := llm.NewFakeProvider(llm.Event{Kind: llm.StepEnded})
-	var snapshots atomic.Int32
-	manager, _ := newTestManager(t, root, func() ProviderState {
-		snapshots.Add(1)
-		return ProviderState{Provider: provider}
-	})
+	manager, _ := newTestManager(t, root, provider)
 	beforeCommands := manager.Commands()
 	wantErr := errors.New("invalid provider")
 	if err := manager.Reconfigure(func() error { return wantErr }); !errors.Is(err, wantErr) {
 		t.Fatalf("Reconfigure error = %v, want %v", err, wantErr)
-	}
-	if got := snapshots.Load(); got != 1 {
-		t.Fatalf("provider snapshots = %d, want initial build only", got)
 	}
 	afterCommands := manager.Commands()
 	if len(afterCommands) != len(beforeCommands) || afterCommands[0].Name != beforeCommands[0].Name {

@@ -6,6 +6,10 @@ export function AcceptPlan(arg1) {
   return window['go']['main']['App']['AcceptPlan'](arg1);
 }
 
+export function ActiveProvider() {
+  return window['go']['main']['App']['ActiveProvider']();
+}
+
 export function ClosePty(arg1) {
   return window['go']['main']['App']['ClosePty'](arg1);
 }
@@ -18,6 +22,14 @@ export function ConnectMCP(arg1) {
   return window['go']['main']['App']['ConnectMCP'](arg1);
 }
 
+export function ConnectProvider(arg1, arg2) {
+  return window['go']['main']['App']['ConnectProvider'](arg1, arg2);
+}
+
+export function DeclareEndpoint(arg1, arg2, arg3) {
+  return window['go']['main']['App']['DeclareEndpoint'](arg1, arg2, arg3);
+}
+
 export function DeleteSession(arg1) {
   return window['go']['main']['App']['DeleteSession'](arg1);
 }
@@ -28,6 +40,10 @@ export function DisconnectMCP(arg1) {
 
 export function FileDiff(arg1) {
   return window['go']['main']['App']['FileDiff'](arg1);
+}
+
+export function ForgetProvider(arg1) {
+  return window['go']['main']['App']['ForgetProvider'](arg1);
 }
 
 export function GenerateCommitMessage() {
@@ -62,12 +78,12 @@ export function ListSessions() {
   return window['go']['main']['App']['ListSessions']();
 }
 
-export function Model() {
-  return window['go']['main']['App']['Model']();
+export function ProviderCatalog() {
+  return window['go']['main']['App']['ProviderCatalog']();
 }
 
-export function ProviderConfig() {
-  return window['go']['main']['App']['ProviderConfig']();
+export function RefreshModels() {
+  return window['go']['main']['App']['RefreshModels']();
 }
 
 export function RemoveMCPConfig(arg1) {
@@ -86,6 +102,10 @@ export function SaveMCPConfig(arg1) {
   return window['go']['main']['App']['SaveMCPConfig'](arg1);
 }
 
+export function SelectModel(arg1, arg2) {
+  return window['go']['main']['App']['SelectModel'](arg1, arg2);
+}
+
 export function SelectWorkspace() {
   return window['go']['main']['App']['SelectWorkspace']();
 }
@@ -100,10 +120,6 @@ export function SendPrompt(arg1, arg2) {
 
 export function SessionHistory(arg1) {
   return window['go']['main']['App']['SessionHistory'](arg1);
-}
-
-export function SetProvider(arg1, arg2, arg3) {
-  return window['go']['main']['App']['SetProvider'](arg1, arg2, arg3);
 }
 
 export function SetWorkspace(arg1) {

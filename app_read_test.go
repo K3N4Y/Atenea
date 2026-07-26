@@ -38,7 +38,7 @@ func TestApp_ReadToolCallStreamsSuccess(t *testing.T) {
 		llm.Event{Kind: llm.ToolCall, CallID: "c1", ToolName: "read", Input: json.RawMessage(`{"path":"` + name + `"}`)},
 		llm.Event{Kind: llm.StepEnded},
 	)
-	app := newApp(fake, rec.emit)
+	app := newApp(t, fake, rec.emit)
 
 	if err := app.SendPrompt("s1", "lee el archivo"); err != nil {
 		t.Fatalf("SendPrompt: %v", err)

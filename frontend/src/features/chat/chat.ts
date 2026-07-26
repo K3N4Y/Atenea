@@ -109,16 +109,20 @@ export const useChatStore = defineStore(
     // Uso de tokens del ultimo Step.Ended (ocupacion de contexto actual).
     const usage = ref<Usage | null>(null)
     // Provider/model behavior lives in Settings. These refs remain part of this
-    // store's interface so its persisted shape and callers stay compatible.
+    // store's interface so its callers stay compatible.
     const {
       model,
-      providerKind,
-      baseURL,
-      availableModels,
-      loadModel,
+      providerID,
+      providerName,
+      contextWindow,
+      providers,
       loadProvider,
-      restoreProvider,
-      setProvider,
+      loadProviders,
+      refreshProviders,
+      selectModel,
+      connectProvider,
+      declareEndpoint,
+      forgetProvider,
       listModels,
     } = createProviderState()
     // Workspace behavior lives in its capability module. These refs and methods
@@ -553,9 +557,10 @@ export const useChatStore = defineStore(
       todos,
       usage,
       model,
-      providerKind,
-      baseURL,
-      availableModels,
+      providerID,
+      providerName,
+      contextWindow,
+      providers,
       projectFiles,
       commands,
       applyEvent,
@@ -567,10 +572,13 @@ export const useChatStore = defineStore(
       selectWorkspace,
       pickWorkspace,
       restoreWorkspace,
-      loadModel,
       loadProvider,
-      restoreProvider,
-      setProvider,
+      loadProviders,
+      refreshProviders,
+      selectModel,
+      connectProvider,
+      declareEndpoint,
+      forgetProvider,
       listModels,
       loadProjectFiles,
       loadCommands,
@@ -589,14 +597,15 @@ export const useChatStore = defineStore(
     }
   },
   {
-    // Se persisten la carpeta de trabajo y la config del provider (kind/baseURL/model):
-    // asi un chat nuevo sigue en la ultima carpeta y con el ultimo modelo elegido tras
-    // cerrar y reabrir la app (restoreWorkspace/restoreProvider los re-aplican al
-    // backend). No se guardan secretos (la key de OpenRouter vive en el entorno). El
-    // resto del store es estado vivo (log, streaming, suscripcion, availableModels)
-    // cuya fuente de verdad es el backend; no debe ir a localStorage.
+    // Solo se persiste la carpeta de trabajo: asi un chat nuevo sigue en la ultima
+    // carpeta tras cerrar y reabrir la app (restoreWorkspace la re-aplica al
+    // backend). El provider y el modelo NO se guardan aca: viven en el
+    // providers.json que el backend comparte con la TUI, y una segunda copia en
+    // localStorage es como las dos llegaban a contradecirse. El resto del store es
+    // estado vivo (log, streaming, suscripcion, catalogo) cuya fuente de verdad es
+    // el backend.
     persist: {
-      pick: ['workspace', 'providerKind', 'baseURL', 'model'],
+      pick: ['workspace'],
     },
   },
 )

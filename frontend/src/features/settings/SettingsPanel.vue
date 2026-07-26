@@ -28,6 +28,63 @@ const args = ref('')
 const mcpError = ref('')
 const connecting = ref(false)
 
+// Estado de la pestania General. El panel es quien corre las acciones del selector
+// y baja el error, igual que hace con los MCPs: ProviderSettings queda
+// presentacional. `discovered` son los modelos que devolvio el sondeo de un
+// endpoint que todavia no existe en la config.
+const providerPanel = ref<InstanceType<typeof ProviderSettings> | null>(null)
+const providerError = ref('')
+const refreshing = ref(false)
+const discovered = ref<string[]>([])
+
+// runProvider centraliza el "intenta y muestra el motivo": cada accion del selector
+// puede fallar por algo que el usuario puede arreglar (una key rechazada, un
+// endpoint inalcanzable, un id ya usado), y callar el error dejaria la UI sin
+// explicar por que no cambio nada.
+async function runProvider(action: () => Promise<void>): Promise<boolean> {
+  providerError.value = ''
+  try {
+    await action()
+    return true
+  } catch (error) {
+    providerError.value = error instanceof Error ? error.message : String(error)
+    return false
+  }
+}
+
+async function refreshModels(): Promise<void> {
+  refreshing.value = true
+  await runProvider(() => chat.refreshProviders().then(() => undefined))
+  refreshing.value = false
+}
+
+async function declareEndpoint(
+  name: string,
+  baseURL: string,
+  model: string,
+): Promise<void> {
+  let id = ''
+  const declared = await runProvider(async () => {
+    id = await chat.declareEndpoint(name, baseURL, model)
+  })
+  if (!declared) return
+  discovered.value = []
+  providerPanel.value?.resetForm()
+  // Con un modelo escrito el endpoint queda listo para hablar, asi que agregarlo y
+  // activarlo son un solo gesto; sin el, queda esperando a Reload models.
+  if (model.trim()) await runProvider(() => chat.selectModel(id, model.trim()))
+}
+
+async function probeEndpoint(baseURL: string): Promise<void> {
+  providerError.value = ''
+  try {
+    discovered.value = await chat.listModels(baseURL)
+  } catch (error) {
+    discovered.value = []
+    providerError.value = error instanceof Error ? error.message : String(error)
+  }
+}
+
 // Agregar un servidor es lo unico que no vive en el store MCP: conecta contra
 // el backend y, si la conexion confirma, persiste la config en el mcp.json
 // global (compartido con la TUI) antes de refrescar. El resto (listar,
@@ -73,6 +130,13 @@ async function removeMCP(server: (typeof mcp.servers)[number]) {
 function selectTab(id: TabId) {
   active.value = id
   if (id === 'mcps') void mcp.refresh()
+  if (id === 'general') void loadProviders()
+}
+
+// loadProviders relee el catalogo y la seleccion del backend: es la fuente de
+// verdad y pudo cambiar por fuera (la app de terminal escribe el mismo archivo).
+function loadProviders(): Promise<unknown> {
+  return Promise.all([chat.loadProviders(), chat.loadProvider()])
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -82,6 +146,7 @@ function onKeydown(event: KeyboardEvent) {
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   void mcp.refresh()
+  void loadProviders()
 })
 onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 </script>
@@ -131,12 +196,21 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       <div class="mx-auto w-full max-w-3xl px-8 py-10">
         <template v-if="active === 'general'">
           <ProviderSettings
-            :providerKind="chat.providerKind"
-            :baseURL="chat.baseURL"
-            :model="chat.model"
-            :availableModels="chat.availableModels"
-            @apply="(k, b, m) => chat.setProvider(k, b, m)"
-            @list-models="(b) => chat.listModels(b)"
+            ref="providerPanel"
+            :providers="chat.providers"
+            :activeProviderID="chat.providerID"
+            :activeModel="chat.model"
+            :discoveredModels="discovered"
+            :refreshing="refreshing"
+            :error="providerError"
+            @select="(id, m) => runProvider(() => chat.selectModel(id, m))"
+            @connect="
+              (id, key) => runProvider(() => chat.connectProvider(id, key))
+            "
+            @forget="(id) => runProvider(() => chat.forgetProvider(id))"
+            @declare="declareEndpoint"
+            @refresh="refreshModels"
+            @list-models="probeEndpoint"
           />
         </template>
 

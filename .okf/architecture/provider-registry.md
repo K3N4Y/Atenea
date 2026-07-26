@@ -160,8 +160,11 @@ The rest of R3 is untouched and each part is independent of this one:
   which this change's honest dialects were the precondition for. The environment
   fallback is derived from it instead of rebuilding providers by hand. See
   [Provider catalog](provider-catalog.md).
-- **`internal/wailsprovider` is still a parallel provider system** (R3.4) with its
-  own 3-value `Kind` enum. It does not go through this registry.
+- ~~**`internal/wailsprovider` is still a parallel provider system** (R3.4)~~
+  `[done 2026-07-26]` Deleted. The desktop app holds the same
+  `providerconfig.Service` the TUI does, so every provider either build constructs
+  now goes through this registry. See
+  [Wails provider surface](wails-provider.md).
 - **`Credential` is still `{Type, APIKey}`** (R3.5) — no `exec` credential, so
   Bedrock/Vertex/gateway auth has nowhere to live even with a factory registered.
 - **`/connect` is still keyed by provider id** (`connectableProviderIDs`,

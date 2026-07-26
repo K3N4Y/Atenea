@@ -30,12 +30,11 @@ import (
 )
 
 // Config describe el ensamblado del agente headless: la raiz del
-// workspace, el proveedor LLM, el store durable y el modo local.
+// workspace, el proveedor LLM y el store durable.
 type Config struct {
 	Root        string
 	Provider    llm.Provider
 	Store       session.Store
-	Local       bool
 	Models      ModelService
 	Checkpoints checkpoint.Store
 }
@@ -179,9 +178,11 @@ func New(cfg Config) *Engine {
 		Grants:   e.grants,
 		Snaps:    tool.NewSessionSnapshots(),
 		Bus:      bus,
-		Local:    cfg.Local,
-		NextID:   wiring.NewIDGen(),
-		Mode:     e.agent.Mode,
+		// The selection answers this, so switching to or from a local endpoint with
+		// /model changes the prompt on the next turn instead of the next launch.
+		LocalPrompt: e.localModels,
+		NextID:      wiring.NewIDGen(),
+		Mode:        e.agent.Mode,
 	}
 	e.rewire()
 	return e
@@ -269,6 +270,11 @@ func (e *Engine) CurrentModel() providerconfig.Active {
 	}
 	return e.models.Active()
 }
+
+// localModels is the question wiring asks once per turn: does the provider about
+// to serve it run models on this machine (LM Studio, Ollama)? e.models is written
+// once in New, and the service behind it is safe for concurrent readers.
+func (e *Engine) localModels() bool { return e.CurrentModel().LocalModels }
 
 func (e *Engine) SelectModel(providerID, model string) (providerconfig.Active, error) {
 	if e.models == nil {

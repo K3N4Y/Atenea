@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,8 +21,15 @@ type Provider struct {
 	// on when it is picked from the environment (see EnvironmentFallback). It is
 	// declared rather than derived from APIKeyEnv so a provider named by any
 	// convention can offer the override.
-	ModelEnv              string   `json:"model_env,omitempty"`
-	OpenRouterReasoning   bool     `json:"openrouter_reasoning,omitempty"`
+	ModelEnv            string `json:"model_env,omitempty"`
+	OpenRouterReasoning bool   `json:"openrouter_reasoning,omitempty"`
+	// LocalModels declares an endpoint whose models run on the user's own machine
+	// (LM Studio, Ollama, vLLM). It is a fact about the endpoint, not a request:
+	// a host that shapes anything around the difference — atenea picks the system
+	// prompt that spells out the tool-calling protocol — reads it here instead of
+	// guessing from a base URL or a model id. Local ids are arbitrary, so the
+	// family routing that works for a vendor catalog has nothing to route on.
+	LocalModels           bool     `json:"local_models,omitempty"`
 	DisableModelDiscovery bool     `json:"disable_model_discovery,omitempty"`
 	Models                []string `json:"models,omitempty"`
 }
@@ -140,6 +148,21 @@ func normalizeAndValidate(cfg *Config) error {
 		if _, ok := seen[cfg.Selected.Provider]; !ok {
 			return fmt.Errorf("selected provider %q is not configured", cfg.Selected.Provider)
 		}
+	}
+	return nil
+}
+
+// validateBaseURL rejects a base URL no adapter could reach. It runs when a user
+// declares a provider (see Service.Declare), not while loading the config: a
+// file is shared between hosts and one bad entry must not take the other
+// providers down with it, but someone typing an endpoint right now can be told.
+func validateBaseURL(raw string) error {
+	if strings.TrimSpace(raw) == "" {
+		return errors.New("base URL is required (e.g. http://localhost:1234/v1)")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("invalid base URL %q (expected http(s)://host:port/path)", raw)
 	}
 	return nil
 }
