@@ -148,7 +148,7 @@ func (f *fold) document(res result) resultDocument {
 		// The stream reported a failure the run handle did not. The stream is the
 		// source of truth about what happened, so the document follows it rather
 		// than reporting a success the events contradict.
-		status, code = statusTurnFailed, ExitTurnFailed
+		status, code = statusTurnFailed, ExitFailure
 	}
 	return resultDocument{
 		SessionID:       res.SessionID,

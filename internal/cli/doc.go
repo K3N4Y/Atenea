@@ -1,10 +1,17 @@
-// Package cli is atenea's command-line surface: the subcommand dispatch and the
-// non-interactive `atenea run`.
+// Package cli is atenea's command-line surface: the subcommand dispatch, the
+// non-interactive `atenea run`, and the two commands that configure what a run
+// finds when it starts — `atenea mcp` and `atenea skill`.
 //
 // It is the programmatic way in. Everything a third party needs in order to drive
 // the agent — a CI step, an editor plugin, another agent, a TTY-free end-to-end
 // test — goes through here, and it is language-agnostic on purpose: the protocol is
 // a process, its arguments, its streams and its exit code.
+//
+// A run needs a model provider and refuses to start without one. The
+// configuration commands need nothing at all: they read and write the same files
+// the desktop panel does, assemble no host, and start no server. That separation
+// is worth keeping — the moment `atenea mcp list` needs an API key to print a
+// config file, it has stopped being the command a fresh CI image can call.
 //
 // # What it is not
 //

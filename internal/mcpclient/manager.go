@@ -88,7 +88,7 @@ func (m *Manager) Connect(ctx context.Context, config ServerConfig) (ServerStatu
 	root := m.root
 	m.mu.RUnlock()
 	if exists {
-		return ServerStatus{}, fmt.Errorf("MCP %q ya esta conectado", config.Name)
+		return ServerStatus{}, fmt.Errorf("MCP %q is already connected", config.Name)
 	}
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "atenea", Version: "dev"}, nil)
@@ -103,24 +103,24 @@ func (m *Manager) Connect(ctx context.Context, config ServerConfig) (ServerStatu
 	defer cancel()
 	session, err := client.Connect(connectCtx, &mcp.CommandTransport{Command: command}, nil)
 	if err != nil {
-		return ServerStatus{}, fmt.Errorf("conectar MCP %q: %w", config.Name, err)
+		return ServerStatus{}, fmt.Errorf("connect MCP %q: %w", config.Name, err)
 	}
 	srv := &server{config: config, client: client, session: session}
 	definitions, err := listTools(connectCtx, session)
 	if err != nil {
 		_ = session.Close()
-		return ServerStatus{}, fmt.Errorf("descubrir tools de MCP %q: %w", config.Name, err)
+		return ServerStatus{}, fmt.Errorf("discover the tools of MCP %q: %w", config.Name, err)
 	}
 	names := make(map[string]struct{}, len(definitions))
 	for _, definition := range definitions {
 		adapter, err := newTool(config.Name, session, definition)
 		if err != nil {
 			_ = session.Close()
-			return ServerStatus{}, fmt.Errorf("tool %q de MCP %q: %w", definition.Name, config.Name, err)
+			return ServerStatus{}, fmt.Errorf("tool %q of MCP %q: %w", definition.Name, config.Name, err)
 		}
 		if _, duplicate := names[adapter.Name()]; duplicate {
 			_ = session.Close()
-			return ServerStatus{}, fmt.Errorf("dos tools de MCP %q se convierten en %q", config.Name, adapter.Name())
+			return ServerStatus{}, fmt.Errorf("two tools of MCP %q both become %q", config.Name, adapter.Name())
 		}
 		names[adapter.Name()] = struct{}{}
 		srv.tools = append(srv.tools, adapter)
@@ -129,7 +129,7 @@ func (m *Manager) Connect(ctx context.Context, config ServerConfig) (ServerStatu
 	if _, exists := m.servers[config.Name]; exists {
 		m.mu.Unlock()
 		_ = session.Close()
-		return ServerStatus{}, fmt.Errorf("MCP %q ya esta conectado", config.Name)
+		return ServerStatus{}, fmt.Errorf("MCP %q is already connected", config.Name)
 	}
 	m.servers[config.Name] = srv
 	m.mu.Unlock()
@@ -158,7 +158,7 @@ func (m *Manager) Disconnect(name string) error {
 		return nil
 	}
 	if err := srv.session.Close(); err != nil {
-		return fmt.Errorf("desconectar MCP %q: %w", name, err)
+		return fmt.Errorf("disconnect MCP %q: %w", name, err)
 	}
 	return nil
 }
@@ -199,10 +199,10 @@ func (m *Manager) Tools() []tool.Tool {
 
 func validate(config ServerConfig) error {
 	if !serverName.MatchString(config.Name) {
-		return fmt.Errorf("nombre MCP invalido %q: usa hasta 48 letras, numeros, _ o -", config.Name)
+		return fmt.Errorf("invalid MCP name %q: use up to 48 letters, digits, _ or -", config.Name)
 	}
 	if strings.TrimSpace(config.Command) == "" {
-		return fmt.Errorf("el comando MCP no puede estar vacio")
+		return fmt.Errorf("an MCP server needs a command to run")
 	}
 	return nil
 }
@@ -262,14 +262,14 @@ type mcpTool struct {
 func newTool(serverName string, session *mcp.ClientSession, definition *mcp.Tool) (*mcpTool, error) {
 	schema, err := json.Marshal(definition.InputSchema)
 	if err != nil {
-		return nil, fmt.Errorf("serializar input schema: %w", err)
+		return nil, fmt.Errorf("serialize the input schema: %w", err)
 	}
 	var object map[string]any
 	if err := json.Unmarshal(schema, &object); err != nil {
-		return nil, fmt.Errorf("input schema debe ser un objeto JSON: %w", err)
+		return nil, fmt.Errorf("the input schema must be a JSON object: %w", err)
 	}
 	if object == nil {
-		return nil, fmt.Errorf("input schema debe ser un objeto JSON")
+		return nil, fmt.Errorf("the input schema must be a JSON object")
 	}
 	return &mcpTool{
 		name:        toolName(serverName, definition.Name),
@@ -293,7 +293,7 @@ func listTools(ctx context.Context, session *mcp.ClientSession) ([]*mcp.Tool, er
 			return tools, nil
 		}
 		if _, repeated := seen[result.NextCursor]; repeated {
-			return nil, fmt.Errorf("cursor repetido %q", result.NextCursor)
+			return nil, fmt.Errorf("repeated cursor %q", result.NextCursor)
 		}
 		seen[result.NextCursor] = struct{}{}
 		cursor = result.NextCursor
@@ -325,7 +325,7 @@ func (t *mcpTool) GrantRule(tool.Call) (permission.Rule, bool) {
 func (t *mcpTool) Execute(ctx context.Context, input json.RawMessage) (tool.Result, error) {
 	var arguments map[string]any
 	if err := json.Unmarshal(input, &arguments); err != nil {
-		return tool.Result{}, fmt.Errorf("input MCP invalido: %w", err)
+		return tool.Result{}, fmt.Errorf("invalid MCP input: %w", err)
 	}
 	result, err := t.session.CallTool(ctx, &mcp.CallToolParams{Name: t.remoteName, Arguments: arguments})
 	if err != nil {

@@ -24,8 +24,8 @@ func TestExitCodeFor_PrecedenceIsTheContract(t *testing.T) {
 	}{
 		{"clean", result{}, ExitOK, statusOK},
 		{"denied", result{DeniedToolCalls: 2}, ExitPermissionDenied, statusPermissionDenied},
-		{"failed", result{Error: "boom"}, ExitTurnFailed, statusTurnFailed},
-		{"failed outranks denied", result{Error: "boom", DeniedToolCalls: 1}, ExitTurnFailed, statusTurnFailed},
+		{"failed", result{Error: "boom"}, ExitFailure, statusTurnFailed},
+		{"failed outranks denied", result{Error: "boom", DeniedToolCalls: 1}, ExitFailure, statusTurnFailed},
 		{"cancel outranks everything", result{Canceled: true, Error: "boom", DeniedToolCalls: 3}, ExitCanceled, statusCanceled},
 	}
 	for _, tc := range cases {
@@ -39,7 +39,7 @@ func TestExitCodeFor_PrecedenceIsTheContract(t *testing.T) {
 // TestExitCodes_AreAllDistinct: each code names one thing a caller reacts to
 // differently, so reusing one would make two outcomes indistinguishable.
 func TestExitCodes_AreAllDistinct(t *testing.T) {
-	codes := []int{ExitOK, ExitTurnFailed, ExitUsage, ExitPermissionDenied, ExitCanceled, ExitStartup}
+	codes := []int{ExitOK, ExitFailure, ExitUsage, ExitPermissionDenied, ExitCanceled, ExitStartup}
 	sorted := append([]int(nil), codes...)
 	sort.Ints(sorted)
 	for i := 1; i < len(sorted); i++ {
@@ -82,8 +82,8 @@ func TestFold_AStreamFailureOutranksASilentRunHandle(t *testing.T) {
 	f.apply(session.SessionEvent{Kind: session.KindStepFailed, Error: "the provider gave up"})
 
 	doc := f.document(result{SessionID: "s1"})
-	if doc.Status != statusTurnFailed || doc.ExitCode != ExitTurnFailed {
-		t.Errorf("status/exit_code = %q/%d, want %q/%d", doc.Status, doc.ExitCode, statusTurnFailed, ExitTurnFailed)
+	if doc.Status != statusTurnFailed || doc.ExitCode != ExitFailure {
+		t.Errorf("status/exit_code = %q/%d, want %q/%d", doc.Status, doc.ExitCode, statusTurnFailed, ExitFailure)
 	}
 	if !strings.Contains(doc.Error, "the provider gave up") {
 		t.Errorf("error = %q, want the cause from the stream", doc.Error)

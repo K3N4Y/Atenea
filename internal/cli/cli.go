@@ -1,11 +1,15 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"text/tabwriter"
 
@@ -83,6 +87,16 @@ var commands = []command{
 		run:     runCommand,
 	},
 	{
+		name:    "mcp",
+		summary: "List, declare and delete the MCP servers atenea can connect",
+		run:     mcpCommand,
+	},
+	{
+		name:    "skill",
+		summary: "List the discovered skills, and report the ones that will not load",
+		run:     skillCommand,
+	},
+	{
 		name:    "version",
 		summary: "Print the version, commit and build date of this binary",
 		run:     versionCommand,
@@ -134,7 +148,7 @@ func interactive(env Env) int {
 		// The interface failing is the generic failure of what the command was asked
 		// to do, which is the same 1 a failed turn reports and the same 1 this
 		// entrypoint has always exited with.
-		return ExitTurnFailed
+		return ExitFailure
 	}
 	return ExitOK
 }
@@ -153,18 +167,154 @@ Usage:
 
 Commands:
 `)
-	table := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	for _, candidate := range commands {
-		fmt.Fprintf(table, "  %s\t%s\n", candidate.name, candidate.summary)
-	}
 	// --version is listed with the commands because that is what it is: the one
 	// spelling of one of them that is not a subcommand, kept because install.sh and
 	// the release check call it.
-	fmt.Fprintf(table, "  %s\t%s\n", "--version", `Alias of "atenea version"`)
-	_ = table.Flush()
+	commandTable(w, commands, command{name: "--version", summary: `Alias of "atenea version"`})
 	fmt.Fprint(w, `
 Run "atenea <command> -h" for the flags of one command.
 `)
+}
+
+// commandTable writes the "Commands:" block. Every help screen is generated from
+// the table it dispatches on, at both levels, so a command cannot be added
+// without appearing in its own help.
+func commandTable(w io.Writer, table []command, extras ...command) {
+	tabbed := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	for _, candidate := range table {
+		fmt.Fprintf(tabbed, "  %s\t%s\n", candidate.name, candidate.summary)
+	}
+	for _, candidate := range extras {
+		fmt.Fprintf(tabbed, "  %s\t%s\n", candidate.name, candidate.summary)
+	}
+	_ = tabbed.Flush()
+}
+
+// verbs is the second dispatch level: `atenea mcp list` resolved the same way
+// `atenea run` is, one level down. It is the same table, the same generated help
+// and the same errors, because a wrong sub-verb deserves the answer a wrong
+// command gets — a group whose mistakes read worse than the top level's would be
+// two dispatches with one name.
+//
+// A group with no verb is a usage error rather than a default verb. Picking one
+// (list, say) would make `atenea mcp` mean something the user did not type, and
+// the reason the top level does not do that either: a bare `atenea` is the
+// interactive interface because that is what it has always meant, not because a
+// dispatch chose a favourite.
+func verbs(env Env, path, blurb string, table []command, args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintf(env.Stderr, "%s: expected a command\n\n", path)
+		verbUsage(env.Stderr, path, blurb, table)
+		return ExitUsage
+	}
+	name := args[0]
+	if name == "-h" || name == "--help" || name == "help" {
+		verbUsage(env.Stdout, path, blurb, table)
+		return ExitOK
+	}
+	for _, candidate := range table {
+		if candidate.name == name {
+			return candidate.run(env, args[1:])
+		}
+	}
+	fmt.Fprintf(env.Stderr, "%s: unknown command %q\n\n", path, name)
+	verbUsage(env.Stderr, path, blurb, table)
+	return ExitUsage
+}
+
+func verbUsage(w io.Writer, path, blurb string, table []command) {
+	fmt.Fprintf(w, "%s — %s\n\nUsage:\n  %s <command> [flags]\n\nCommands:\n", path, blurb, path)
+	commandTable(w, table)
+	fmt.Fprintf(w, "\nRun \"%s <command> -h\" for the flags of one command.\n", path)
+}
+
+// flags builds the flag set of one leaf command: stdlib flag, ContinueOnError so
+// the package's own usage exit and ExitUsage are the same number, and the help
+// this repo spells rather than the stdlib's.
+//
+// header is everything above the flag list — the one-line summary, the usage
+// lines, whatever the command owes an integrator — and ends with "Flags:".
+func flags(env Env, path, header string) *flag.FlagSet {
+	fs := flag.NewFlagSet(path, flag.ContinueOnError)
+	fs.SetOutput(env.Stderr)
+	fs.Usage = func() {
+		fmt.Fprint(env.Stderr, header)
+		fmt.Fprint(env.Stderr, flagUsage(fs))
+	}
+	return fs
+}
+
+// parseFlags parses a command's flags and reports whether there is work left to
+// do: -h printed the help and a bad flag printed the error, and both are the end
+// of that invocation.
+func parseFlags(fs *flag.FlagSet, args []string) (int, bool) {
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return ExitOK, false
+		}
+		return ExitUsage, false
+	}
+	return ExitOK, true
+}
+
+// flagUsage renders a flag set the way the documented surface spells it. The
+// stdlib prints one dash, accepts one or two, and every example an integrator will
+// read uses two — so the help is rewritten rather than left to contradict the
+// documentation. A one-character flag keeps its single dash, because that is how a
+// short flag is written everywhere.
+func flagUsage(fs *flag.FlagSet) string {
+	var buf bytes.Buffer
+	previous := fs.Output()
+	fs.SetOutput(&buf)
+	fs.PrintDefaults()
+	fs.SetOutput(previous)
+
+	lines := strings.Split(buf.String(), "\n")
+	for i, line := range lines {
+		const indent = "  -"
+		if !strings.HasPrefix(line, indent) {
+			continue
+		}
+		body := line[len(indent):]
+		name := body
+		if end := strings.IndexAny(body, " \t"); end >= 0 {
+			name = body[:end]
+		}
+		if len(name) < 2 {
+			continue
+		}
+		lines[i] = "  --" + body
+	}
+	return strings.Join(lines, "\n")
+}
+
+// flushTable writes a rendered listing out and reports the failure a full disk or
+// a closed pipe would otherwise swallow. The data was the point of the command, so
+// failing to deliver it cannot be an exit code of zero.
+func flushTable(env Env, table *tabwriter.Writer) int {
+	if err := table.Flush(); err != nil {
+		fmt.Fprintln(env.Stderr, "atenea: could not write the listing:", err)
+		return ExitFailure
+	}
+	return ExitOK
+}
+
+// workspaceRoot resolves the workspace a command reads its configuration from.
+//
+// It is resolveRoot plus the fallback host.New applies to an empty Root, because
+// these commands have no host to apply it for them: `atenea mcp list` and
+// `atenea run` must read the same .mcp.json when neither is given a --cwd, and
+// two spellings of "the working directory" is how they would come to differ.
+func workspaceRoot(cwd string) (string, error) {
+	root, err := resolveRoot(cwd)
+	if err != nil || root != "" {
+		return root, err
+	}
+	root, err = os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("could not resolve the working directory: %w", err)
+	}
+	return root, nil
 }
 
 // interrupts resolves the channel a run watches for a stop, and the cleanup that

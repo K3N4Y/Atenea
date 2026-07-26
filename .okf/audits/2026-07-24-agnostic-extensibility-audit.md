@@ -1,6 +1,6 @@
 ---
 updated_at: 2026-07-26
-summary: Audit of how agnostic atenea's seams are, and what to change to enable third-party integrations, contributions, and a plugin system. R1, R2, R3 and R4.1-R4.3 are done; the headless `atenea run` closed the programmatic surface.
+summary: Audit of how agnostic atenea's seams are, and what to change to enable third-party integrations, contributions, and a plugin system. R1, R2, R3 and R4 are done — Phase 2 is complete — and the CLI (`atenea run`, `mcp`, `skill`) is the programmatic surface.
 ---
 
 # Agnosticism and extensibility audit — atenea
@@ -37,9 +37,11 @@ What blocks integrations is not the loop, it is the perimeter:
    honest — it never waits on stdin nobody will close, and it will not answer from
    the offline demo. It is the third caller of `host.New`
    driving `Sitting.Agent` — no new turn logic — and it is language-agnostic, which
-   for most integrators beats a Go SDK. See
-   [Headless CLI](../architecture/headless-cli.md). What remains of this point is
-   `atenea mcp` and `atenea skill` (R4.4) on the dispatch it left behind.
+   for most integrators beats a Go SDK. R4.4 closed the rest of the surface on the
+   dispatch it left behind: `atenea mcp list|add|remove` and `atenea skill
+   list|validate`, which configure and inspect what a run reads, need no provider to
+   do it, and cost no dependency. See
+   [Headless CLI](../architecture/headless-cli.md).
 4. ~~**Extension identity is spread across name-keyed switches.**~~
    `[done 2026-07-24]` A tool's permission class, session-grant shape, UI
    rendering and workspace-mutation flag used to be decided by `switch`/lookup on
@@ -71,7 +73,7 @@ of them delete code.
 | Tool-use hooks | **Missing** — no pre/post seam; gate + repair + capping hardcoded in the loop | `runner/turn.go:214-235` |
 | Prompt assembly | **Missing** — fixed string concatenation | `internal/session/prompt/prompt.go:68-81` |
 | Composition root | **Good** — one outer root every entrypoint constructs (`internal/host`), now three of them counting the headless run, over the one inner root they all call (`wiring.Build`), whose assembly policy (output cap, classification, discovery paths, plan-mode surface) is a `Config` field with a documented, tested zero value (R4.1, R4.2, R4.3) | `internal/host`, `internal/wiring/wiring.go`, `main.go:22`, `cmd/atenea/main.go`, `internal/cli/run.go` |
-| CLI / headless | **Good** — `atenea run` over a stdlib-`flag` dispatch: NDJSON of the durable stream, a result document, six exit codes, three effect-derived permission modes, `--session` on the shared store (R4.3) | `internal/cli`, `internal/permission/unattended.go`, `cmd/atenea/main.go` |
+| CLI / headless | **Good** — the complete R4 surface over a two-level stdlib-`flag` dispatch and no CLI framework: `atenea run` (NDJSON of the durable stream, a result document, six exit codes, three effect-derived permission modes, `--session` on the shared store) plus `atenea mcp list\|add\|remove` and `atenea skill list\|validate`, which declare and inspect what a run reads and need no provider to do it (R4.3, R4.4) | `internal/cli`, `internal/permission/unattended.go`, `cmd/atenea/main.go` |
 | Public API | **Partial** — 5 importable contract packages under `agentcore/` plus 2 contract test kits, boundary enforced by test; the tool capability interfaces landed with R2, message content parts with R3.6 (the first breaking change, taken deliberately while nothing promises stability); implementations still private, no stability promise yet (R1.3, R1.4, R2, R3 done) | `agentcore/`, `agentcore/boundary_test.go`, `agentcore/{tool/tooltest,llm/llmtest}` |
 | Branding/paths | **Weak** — `atenea` literal in 6+ path builders, no XDG | §3.6 |
 | MCP as plugin substrate | **Partial** — first-class in the registry and now gated ask-by-default with a session grant (R2), but stdio-only and invisible to subagents | §3.8 |
@@ -1137,8 +1139,90 @@ it.
    table, one `flag.FlagSet` per subcommand with `ContinueOnError` (so the stdlib's
    own usage exit and `ExitUsage` are the same number instead of one having to
    intercept the other), the top-level help generated from the table, and `go.mod`
-   unchanged. Adding `mcp` and `skill` is one struct literal and one file each, which
-   is what remains open here.
+   unchanged.
+   `[done 2026-07-26]` — `atenea mcp list|add|remove` and `atenea skill
+   list|validate` are that struct literal and that file each, and the claim above is
+   now checkable rather than asserted: `go.mod` and `go.sum` are byte-identical to
+   R4.3's, whose only movement was promoting `golang.org/x/term` from indirect to
+   direct for the terminal check. Documented in
+   [Headless CLI](../architecture/headless-cli.md) and
+   [MCP servers](../architecture/mcp.md). Eight decisions worth recording:
+   - **Nested verbs are the same dispatch one level down, not a second one.**
+     `mcpCommand` is `verbs(env, "atenea mcp", blurb, mcpCommands, args)`, and that
+     helper is the top level's own behaviour: the generated command list, the
+     `unknown command "lst"` error, `-h` on stdout and a mistake's help on stderr,
+     `ExitUsage`. A group whose mistakes read worse than the top level's would be two
+     dispatches wearing one name. `atenea mcp` with no verb is a usage error rather
+     than a default verb, because choosing `list` for the user would make the command
+     mean something nobody typed — the reason the top level does not do it either.
+   - **The two commands never assemble a host, and that is an assertion rather than
+     a fact about today's code.** The test harness passes an `Env.Host` that fails
+     the test if anything calls it. Coupling here would not have arrived as a
+     decision: it would have come through a shared setup helper, and `atenea mcp
+     list` would have started refusing to print a config file because no model was
+     configured — R4.3's provider refusal reaching a command with nothing to do with
+     a provider.
+   - **`ExitTurnFailed` became `ExitFailure`, one name for one number.** 1 was never
+     turn-specific — `interactive()` has returned it for a failed TUI launch since
+     R4.3 — and these subcommands run no turn at all. A distinct "validation failed"
+     code was the alternative and it fails its own test: a new code has to name an
+     outcome a caller reacts to differently, and the two that qualify are already
+     carved out as "you called me wrong" (2) and "your environment is wrong" (5). A
+     validation failure is neither; it is the command answering no, which is what
+     `grep`, `go vet` and every linter return 1 for. What did *not* move: a malformed
+     skill is not a usage error, because the invocation was right and the answer was
+     no.
+   - **`mcp list` has no connected column, and the absence is the design.**
+     Connection state belongs to a running host — the servers are subprocesses the
+     desktop app or the TUI owns — and a CLI invocation connects to nothing. A column
+     reading `false` on every row of every listing is worse than no column: a reader
+     takes it for a report about their servers rather than about this process. The
+     listing answers what is declarable and true from disk.
+   - **A shadowed declaration is listed, which meant making one reader of the two
+     files.** `mcpclient.Declarations(root)` returns every declaration with its
+     scope, its path and whether a same-named one beat it, and `LoadConfig` is now
+     defined as *that list minus the shadowed entries*. So the listing is the only
+     place in the product where a workspace override is visible — the whole answer to
+     "why is this server running a command I did not configure" — and it cannot drift
+     from what a host connects, because what a host connects is a fold of it.
+     `skill.Scan` is the identical move on the other side: every `SKILL.md` walked,
+     with the parse error or the shadowing that befell it, and `Discover` is that
+     list minus the unusable and the shadowed. Both replaced a `return nil` inside a
+     walk, which is precisely the shape that cannot be reported on.
+   - **`RemoveGlobalConfig` grew the workspace root, and the desktop lost a
+     hand-rolled error.** `app.go` used to rebuild "declared in the workspace
+     `.mcp.json`, edit that file" itself out of `LoadConfig` after a failed removal,
+     so the CLI would have been a second copy of that sentence. It lives in
+     `mcpclient` now, naming the actual path rather than the bare filename, and
+     `App.RemoveMCPConfig` is four lines. One behaviour deliberately stayed
+     per-host: a name nothing declares is `false, nil`, which the desktop reads as
+     nothing to do (its list may be stale) and the CLI reports as an error (a person
+     who typed a name meant it).
+   - **`skill validate` validates the discovery set *and* named paths.** They are
+     different questions: "why does my skill not show up" is about the set this
+     workspace walks and nothing else, while "is this file right" is asked before the
+     skill is anywhere near a discovery directory — a draft, or a repository checking
+     its own skills in CI before anyone installs them. A skill with no `description`
+     is a problem rather than a remark, because `Format` puts only described skills
+     in the system prompt, so the model is never told the name it would have to ask
+     for: the same silent non-discovery, one step later. That rule is
+     `Info.Announced()`, applied by the prompt and by the validator, so the two
+     cannot drift. And zero files checked is a failure rather than a pass — a
+     contributor who points this at the wrong path and is told `ok` ships the skill
+     broken.
+   - **Driving the binary found one real defect, the same species as R4.3's three.**
+     `atenea mcp remove NAME` on a name both files declare deleted the *global* half
+     — correct, since the global config is the only file this command writes — and
+     reported a plain success, while `mcp list` went on showing the server and the
+     agent went on connecting it. Nothing was wrong except what the user would
+     conclude. It now names the file that still declares it, reusing the sentence the
+     refusal path already had.
+   R9.3's `atenea skill validate` is the part of R9 that lands here. The rest of R9
+   is untouched on purpose: no `version` field, no unified frontmatter parser, no
+   `atenea agent validate`, no `skills-lock.json` decision. One migration rode along,
+   under the rule that a touched file is migrated: `internal/skill` and
+   `mcpclient`'s server errors are English now, which they had to be — a Spanish
+   parse error was about to be the output of `atenea skill validate`.
 
 ### R5 — Make the event stream a stable, forward-compatible contract
 
@@ -1259,10 +1343,21 @@ right shape. Consolidate the plumbing:
    already diverge (block scalars vs. comma lists).
 2. **Add a `version` field** to skill and agent manifests, and make unknown keys
    tolerated *by design* (documented) rather than by accident.
-3. **`atenea skill validate` / `atenea agent validate`** (part of R4's CLI) so a
-   contributor gets a real error instead of silent non-discovery. Since R4.3 the
-   dispatch exists and adding the subcommand is a struct literal plus a file; R4.4 is
-   where `atenea skill` lands, and this item is the `validate` verb on it.
+3. ~~**`atenea skill validate`**~~ / **`atenea agent validate`** (part of R4's CLI)
+   so a contributor gets a real error instead of silent non-discovery.
+   `[half done 2026-07-26]` — `atenea skill validate` shipped with R4.4: it walks
+   the discovery set (or the paths named), reports every `SKILL.md` that does not
+   parse and every skill that declares no description — discovered but never
+   announced, which is the same silence one step later — with the file that has the
+   problem, and exits 1 if there is one. `skill.Scan` is what made it possible:
+   `Discover` skipped a bad file inside its walk, so nothing could report on it, and
+   `Discover` is now that scan minus the unusable and the shadowed.
+   **`atenea agent validate` remains open**, and it is the item that wants R9.1
+   first: subagents have their own hand-rolled frontmatter parser
+   (`internal/agent/agent.go`), so a validator for them written today would be a
+   second validator over a second parser — exactly the duplication this
+   recommendation exists to remove. R9.2's `version` field and R9.4's
+   `skills-lock.json` decision are also untouched.
 4. **Decide on `skills-lock.json`**: either own an install/pin model
    (`atenea skill add gh:owner/repo` + lockfile with content hashes, which is what
    that file's format implies) or delete the orphan. Leaving it advertises a
@@ -1304,22 +1399,33 @@ seam on `Message` (all four landed 2026-07-26).
 security default flipped to ask; a wire format is one file plus one registry line
 plus one catalog entry, and multimodal is one more `PartKind` rather than a break.*
 
-**Phase 2 — integration surface. Substantially complete.** R4.1 single host, R4.2
-configurable assembly and R4.3 the headless CLI all landed 2026-07-26: one outer
+**Phase 2 — integration surface. Complete (2026-07-26).** Every item of R4 and every
+item of R1 is closed. R4.1 single host, R4.2 configurable assembly, R4.3 the headless
+`atenea run` and R4.4 the rest of the surface all landed on 2026-07-26: one outer
 composition root both entrypoints construct, with the two UI managers left alone
 above the one inner root; that inner root's five hardcoded policy values promoted to
-`Config` fields with documented zero values; and `atenea run` on top of both. R1
-public contract packages and contract test kits landed early (2026-07-24).
+`Config` fields with documented zero values; `atenea run` on top of both; and
+`atenea mcp list|add|remove` plus `atenea skill list|validate` beside it, on the same
+dispatch, with `go.mod` unchanged by any of it. R1's public contract packages and
+contract test kits landed early (2026-07-24).
 
 R4.3 stood exactly where R4.1 and R4.2 had prepared for it, which is the argument
 for having done them first: the entrypoint is a *third caller* of `host.New` driving
 `Sitting.Agent` rather than a third copy of the bootstrap, and each
 `--permission-mode` is a `wiring.Config.Policy` — `permission.UnattendedPolicy` over
 an effect budget — rather than a branch inside the loop. Neither the runner nor
-`agent.Service` was touched. What remains is R4.4's two remaining subcommands
-(`atenea mcp`, `atenea skill`) on the dispatch it left behind.
-*Outcome: anything can drive atenea — CI, editors, other agents — and the TTY-free
-end-to-end test it also unlocked is what the feature's own tests are written as.*
+`agent.Service` was touched, and R4.4 did not touch them either: its two commands
+assemble no host at all.
+
+Two things this phase does **not** claim, so the completion is not read as more than
+it is. The public API is still marked *Partial* in §2, and that is about a stability
+promise nobody has asked for yet rather than an open R1 item — the packages, the
+boundary test and the kits all exist. And `internal/host` is not `agentcore/host`,
+which R4.1 argued for on the record: a host that opens SQLite cannot satisfy the
+boundary test's ban on third-party imports.
+*Outcome: anything can drive atenea — CI, editors, other agents — including
+configuring what it will find when it starts, and the TTY-free end-to-end test the
+phase also unlocked is what its own tests are written as.*
 
 **Phase 3 — plugin substrate.** R8 MCP transports, permissions, subagent
 exposure, prompts/resources/sampling, lifecycle. R9 unified manifests +

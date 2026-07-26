@@ -1,8 +1,13 @@
-// Package skill descubre y formatea las skills del workspace para el agente.
+// Package skill discovers and formats the workspace's skills for the agent.
 //
-// Una skill es un directorio con un SKILL.md: frontmatter (name, description) mas
-// un cuerpo Markdown con instrucciones y recursos. El agente expone disclosure
-// progresivo en dos niveles, como opencode: solo los metadatos (name +
-// description) viajan en el system prompt (ver Format), y el cuerpo completo se
-// carga bajo demanda cuando el modelo invoca la tool skill (ver internal/tool).
+// A skill is a directory holding a SKILL.md: frontmatter (name, description) plus
+// a Markdown body with instructions and resources. The agent exposes them through
+// two levels of progressive disclosure, as opencode does: only the metadata (name
+// + description) travels in the system prompt (see Format), and the full body is
+// loaded on demand when the model invokes the skill tool (see internal/tool).
+//
+// Discovery is deliberately forgiving — a SKILL.md that cannot be parsed is
+// skipped so one broken skill cannot take the others down — which makes a
+// malformed skill invisible rather than loud. Scan is the same walk with nothing
+// skipped, so `atenea skill validate` can report what discovery silently dropped.
 package skill

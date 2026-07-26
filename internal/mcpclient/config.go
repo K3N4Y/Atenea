@@ -29,30 +29,89 @@ func GlobalConfigPath() string {
 	return filepath.Join(dir, "atenea", "mcp.json")
 }
 
-// LoadConfig returns the declared servers sorted by name: the global config
-// merged with <root>/.mcp.json, where a workspace server overrides a global
-// one with the same name (the same project-over-global precedence as skills).
-// Missing files are not an error. Declared names must satisfy the same
-// validation Connect enforces, so a bad entry surfaces here (naming the file
-// and server) instead of failing later on connect.
+// Scope is the file a declaration came from.
+type Scope string
+
+const (
+	// ScopeGlobal is the user-level config, available in every workspace.
+	ScopeGlobal Scope = "global"
+	// ScopeWorkspace is the project's own .mcp.json.
+	ScopeWorkspace Scope = "workspace"
+)
+
+// Declaration is one declared server and where it was declared.
+//
+// A shadowed declaration is one another declaration of the same name beat. Only
+// a global one can be shadowed, since the workspace wins, and it stays in the
+// list rather than being dropped because "why is this server running a different
+// command than the one I configured" is answered by seeing both.
+type Declaration struct {
+	ServerConfig
+	Scope Scope
+	// Path is the file that declares it, which is the file to edit.
+	Path     string
+	Shadowed bool
+}
+
+// Declarations returns every declared server, sorted by name and, within a name,
+// the one in force first: the global config merged with <root>/.mcp.json, where a
+// workspace server overrides a global one with the same name (the same
+// project-over-global precedence as skills). Missing files are not an error.
+// Declared names must satisfy the same validation Connect enforces, so a bad
+// entry surfaces here (naming the file and server) instead of failing later on
+// connect.
+//
+// This is the one reader of the two files. LoadConfig is this list with the
+// shadowed entries dropped, so what a host connects and what `atenea mcp list`
+// prints cannot disagree.
+func Declarations(root string) ([]Declaration, error) {
+	globalPath := GlobalConfigPath()
+	global, err := loadConfigFile(globalPath)
+	if err != nil {
+		return nil, err
+	}
+	workspacePath := filepath.Join(root, ConfigFile)
+	workspace, err := loadConfigFile(workspacePath)
+	if err != nil {
+		return nil, err
+	}
+	declarations := make([]Declaration, 0, len(global)+len(workspace))
+	overridden := make(map[string]bool, len(workspace))
+	for _, config := range workspace {
+		overridden[config.Name] = true
+		declarations = append(declarations, Declaration{ServerConfig: config, Scope: ScopeWorkspace, Path: workspacePath})
+	}
+	for _, config := range global {
+		declarations = append(declarations, Declaration{
+			ServerConfig: config,
+			Scope:        ScopeGlobal,
+			Path:         globalPath,
+			Shadowed:     overridden[config.Name],
+		})
+	}
+	sort.Slice(declarations, func(i, j int) bool {
+		if declarations[i].Name != declarations[j].Name {
+			return declarations[i].Name < declarations[j].Name
+		}
+		return !declarations[i].Shadowed && declarations[j].Shadowed
+	})
+	return declarations, nil
+}
+
+// LoadConfig returns the servers in force, sorted by name: every declaration
+// except the ones a same-named declaration overrides.
 func LoadConfig(root string) ([]ServerConfig, error) {
-	global, err := loadConfigFile(GlobalConfigPath())
+	declarations, err := Declarations(root)
 	if err != nil {
 		return nil, err
 	}
-	workspace, err := loadConfigFile(filepath.Join(root, ConfigFile))
-	if err != nil {
-		return nil, err
+	configs := make([]ServerConfig, 0, len(declarations))
+	for _, declaration := range declarations {
+		if declaration.Shadowed {
+			continue
+		}
+		configs = append(configs, declaration.ServerConfig)
 	}
-	byName := make(map[string]ServerConfig, len(global)+len(workspace))
-	for _, config := range append(global, workspace...) {
-		byName[config.Name] = config
-	}
-	configs := make([]ServerConfig, 0, len(byName))
-	for _, config := range byName {
-		configs = append(configs, config)
-	}
-	sort.Slice(configs, func(i, j int) bool { return configs[i].Name < configs[j].Name })
 	return configs, nil
 }
 
@@ -94,10 +153,16 @@ func UpsertGlobalConfig(config ServerConfig) error {
 	return writeConfigMap(path, servers)
 }
 
-// RemoveGlobalConfig deletes a server from the global MCP config file. It
-// reports whether the server was declared there: false lets the caller tell a
-// workspace-declared server apart instead of pretending it was removed.
-func RemoveGlobalConfig(name string) (bool, error) {
+// RemoveGlobalConfig deletes a server from the global MCP config file, reading
+// root's .mcp.json only to explain a removal it cannot perform: a server the
+// workspace declares is not the global config's to delete, and the error names
+// the file to edit instead.
+//
+// It reports whether the server was removed. false with no error means nothing
+// anywhere declares that name, which each host reads its own way — the desktop
+// panel is refreshing a list that may be stale, while a person typing
+// `atenea mcp remove` mistyped a name.
+func RemoveGlobalConfig(root, name string) (bool, error) {
 	path := GlobalConfigPath()
 	if path == "" {
 		return false, fmt.Errorf("cannot resolve the user config directory")
@@ -107,10 +172,26 @@ func RemoveGlobalConfig(name string) (bool, error) {
 		return false, err
 	}
 	if _, ok := servers[name]; !ok {
-		return false, nil
+		return false, workspaceDeclaration(root, name)
 	}
 	delete(servers, name)
 	return true, writeConfigMap(path, servers)
+}
+
+// workspaceDeclaration is the error for a name the global config does not
+// declare and the workspace does, and nil when the workspace does not declare it
+// either.
+func workspaceDeclaration(root, name string) error {
+	declarations, err := Declarations(root)
+	if err != nil {
+		return err
+	}
+	for _, declaration := range declarations {
+		if declaration.Name == name && declaration.Scope == ScopeWorkspace {
+			return fmt.Errorf("MCP %q is declared in %s; edit that file to remove it", name, declaration.Path)
+		}
+	}
+	return nil
 }
 
 func readConfigMap(path string) (map[string]ServerConfig, error) {

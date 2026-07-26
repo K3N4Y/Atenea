@@ -1,10 +1,8 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -36,8 +34,7 @@ type result struct {
 // runCommand is `atenea run`: one non-interactive turn over the same agent both
 // UIs drive.
 func runCommand(env Env, args []string) int {
-	fs := flag.NewFlagSet("atenea run", flag.ContinueOnError)
-	fs.SetOutput(env.Stderr)
+	fs := flags(env, "atenea run", runUsage)
 
 	var (
 		prompt       = ""
@@ -62,16 +59,9 @@ func runCommand(env Env, args []string) int {
 	fs.StringVar(&sessionID, "session", "",
 		"run under this session id, continuing it when the shared store already has it")
 	fs.StringVar(&cwd, "cwd", "", "the workspace root the agent is anchored to (default: the working directory)")
-	fs.Usage = func() {
-		fmt.Fprint(env.Stderr, runUsage)
-		fmt.Fprint(env.Stderr, flagUsage(fs))
-	}
 
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return ExitOK
-		}
-		return ExitUsage
+	if code, ok := parseFlags(fs, args); !ok {
+		return code
 	}
 	if fs.NArg() > 0 {
 		fmt.Fprintf(env.Stderr, "atenea run: unexpected argument %q; the prompt is given with -p or on stdin\n", fs.Arg(0))
@@ -226,7 +216,7 @@ func execute(env Env, t turn) int {
 	if err != nil {
 		// The turn never started: the prompt was not admitted. That is the
 		// environment being wrong rather than the conversation going badly, which is
-		// why it is not ExitTurnFailed.
+		// why it is not ExitFailure.
 		fmt.Fprintln(env.Stderr, "atenea run:", err)
 		return ExitStartup
 	}
@@ -299,37 +289,6 @@ func recordWorkspace(ctx context.Context, store session.Store, sessionID, root s
 // store sees them all.
 func newSessionID() string {
 	return "cli-" + strconv.FormatInt(time.Now().UnixNano(), 10)
-}
-
-// flagUsage renders a flag set the way the documented surface spells it. The
-// stdlib prints one dash, accepts one or two, and every example an integrator will
-// read uses two — so the help is rewritten rather than left to contradict the
-// documentation. A one-character flag keeps its single dash, because that is how a
-// short flag is written everywhere.
-func flagUsage(fs *flag.FlagSet) string {
-	var buf bytes.Buffer
-	previous := fs.Output()
-	fs.SetOutput(&buf)
-	fs.PrintDefaults()
-	fs.SetOutput(previous)
-
-	lines := strings.Split(buf.String(), "\n")
-	for i, line := range lines {
-		const indent = "  -"
-		if !strings.HasPrefix(line, indent) {
-			continue
-		}
-		body := line[len(indent):]
-		name := body
-		if end := strings.IndexAny(body, " \t"); end >= 0 {
-			name = body[:end]
-		}
-		if len(name) < 2 {
-			continue
-		}
-		lines[i] = "  --" + body
-	}
-	return strings.Join(lines, "\n")
 }
 
 func validFormat(format string) bool {

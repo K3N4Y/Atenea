@@ -10,14 +10,25 @@ package cli
 // from it, and a consumer of this surface wants to know "the run was interrupted",
 // which is one fact, rather than which of two signals delivered it.
 const (
-	// ExitOK: the turn finished and every tool call the model made was permitted.
+	// ExitOK: the command did what it was asked. For a run, the turn finished and
+	// every tool call the model made was permitted.
 	ExitOK = 0
 
-	// ExitTurnFailed: the run started and the turn failed — the provider errored,
-	// the stream broke, the store refused a write. It is 1 because it is the
-	// generic failure of the thing the command exists to do, which is what a shell
-	// expects from a plain `if ! atenea run ...`.
-	ExitTurnFailed = 1
+	// ExitFailure: the command failed at the thing it exists to do. For `run` that
+	// is the turn — the provider errored, the stream broke, the store refused a
+	// write. For `mcp add` it is a server that could not be declared, and for
+	// `skill validate` a skill that will not load. It is 1 because it is the generic
+	// failure, which is what a shell expects from a plain `if ! atenea run ...` and
+	// what a linter returns when it has findings.
+	//
+	// The name is no longer `ExitTurnFailed`: 1 was never turn-specific — the interactive
+	// interface failing to start has always returned it — and R4.4's subcommands do
+	// not run turns at all. Splitting it per command was the alternative and it
+	// buys nothing: a second failure code has to name an outcome a caller reacts to
+	// differently, and the two that qualify are already carved out as "the
+	// invocation was wrong" (2) and "the environment is wrong" (5). A validation
+	// failure is neither. It is the command answering no.
+	ExitFailure = 1
 
 	// ExitUsage: the invocation is wrong — an unknown subcommand or flag, an
 	// unparseable value, no prompt, a --cwd that is not a directory. 2 is the Unix
@@ -42,7 +53,7 @@ const (
 
 	// ExitStartup: the run never got as far as a turn. No model provider is
 	// configured, prompt admission failed, or stdin could not be read. It is
-	// separate from ExitTurnFailed because the two point at different things: this
+	// separate from ExitFailure because the two point at different things: this
 	// one says the environment is wrong (no credential, a database that will not
 	// accept a write, a broken pipe), while a turn failure says the conversation
 	// went badly. Retrying is reasonable for one and not for the other.
@@ -73,7 +84,7 @@ func outcome(res result) (status string, code int) {
 	case res.Canceled:
 		return statusCanceled, ExitCanceled
 	case res.Error != "":
-		return statusTurnFailed, ExitTurnFailed
+		return statusTurnFailed, ExitFailure
 	case res.DeniedToolCalls > 0:
 		return statusPermissionDenied, ExitPermissionDenied
 	default:

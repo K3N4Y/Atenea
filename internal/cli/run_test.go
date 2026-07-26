@@ -284,8 +284,8 @@ func TestRun_TurnFailureExitsTurnFailed(t *testing.T) {
 
 	got := s.run("run", "-p", "try", "--output-format", "json")
 
-	if got.code != ExitTurnFailed {
-		t.Fatalf("exit code = %d, want %d\nstderr: %s", got.code, ExitTurnFailed, got.stderr)
+	if got.code != ExitFailure {
+		t.Fatalf("exit code = %d, want %d\nstderr: %s", got.code, ExitFailure, got.stderr)
 	}
 	doc := decodeResult(t, got.stdout)
 	if doc.Status != statusTurnFailed {

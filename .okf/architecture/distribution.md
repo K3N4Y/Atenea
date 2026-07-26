@@ -10,7 +10,8 @@ and macOS on `amd64` and `arm64`. The desktop Wails application has a separate
 delivery lifecycle and is not part of these archives.
 
 One artifact carries both of the binary's surfaces: a bare `atenea` is the
-[terminal interface](tui.md) and `atenea run` is the [headless CLI](headless-cli.md).
+[terminal interface](tui.md), and `atenea run`, `atenea mcp` and `atenea skill` are
+the [headless CLI](headless-cli.md).
 There is nothing to choose at install time and no second download for CI — which is
 the point of shipping them together: an integrator installs the same executable a
 user runs, so what a pipeline drives is what a person can reproduce by hand.

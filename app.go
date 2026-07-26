@@ -313,25 +313,15 @@ func (a *App) SaveMCPConfig(config mcpclient.ServerConfig) error {
 
 // RemoveMCPConfig disconnects the server (idempotent) and deletes it from the
 // global MCP config. A server declared in the workspace .mcp.json cannot be
-// removed from here: the error points at the file to edit.
+// removed from here: the error points at the file to edit. A name nothing
+// declares is not an error — the panel may be acting on a list an edit outside
+// the app already invalidated.
 func (a *App) RemoveMCPConfig(name string) error {
 	if err := a.workspace.DisconnectMCP(name); err != nil {
 		return err
 	}
-	removed, err := mcpclient.RemoveGlobalConfig(name)
-	if err != nil || removed {
-		return err
-	}
-	configs, err := mcpclient.LoadConfig(a.workspace.Root())
-	if err != nil {
-		return err
-	}
-	for _, config := range configs {
-		if config.Name == name {
-			return fmt.Errorf("MCP %q is declared in the workspace %s; edit that file to remove it", name, mcpclient.ConfigFile)
-		}
-	}
-	return nil
+	_, err := mcpclient.RemoveGlobalConfig(a.workspace.Root(), name)
+	return err
 }
 
 // SelectWorkspace opens the native folder dialog and, if the user picks one, sets it

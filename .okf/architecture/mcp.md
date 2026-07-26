@@ -1,15 +1,21 @@
 ---
-updated_at: 2026-07-18
-summary: Local MCP server integration for the Wails application, the TUI, and the agent tool registry.
+updated_at: 2026-07-26
+summary: Local MCP server integration for the Wails application, the TUI, the `atenea mcp` subcommand, and the agent tool registry.
 ---
 
 # MCP servers
 
 Atenea connects to **local MCP servers over stdio**. Server definitions live in
-shared JSON config files — the single source of truth for both the desktop app
-and the TUI (see "Configuration files" below). Opening Atenea never launches a
-configured process: every configured server starts only after the user
-explicitly connects it.
+shared JSON config files — the single source of truth for the desktop app, the
+TUI and the `atenea mcp` subcommand (see "Configuration files" below). Opening
+Atenea never launches a configured process: every configured server starts only
+after the user explicitly connects it.
+
+Declaring a server and connecting one are separate acts, and the surfaces split
+along that line. The desktop panel and the TUI picker do both, because they are
+hosts with a running process to attach. `atenea mcp` only declares: a CLI
+invocation owns no session, so it writes the config and exits, and the next host
+to open connects what it finds.
 
 ## Flow
 
@@ -46,11 +52,22 @@ shared by other agent CLIs:
 
 - **`<user config dir>/atenea/mcp.json`** — global servers, available in every
   workspace (`~/.config/atenea/mcp.json` on Linux, next to `providers.json`).
-  This is where the desktop app's Settings > MCPs panel saves and removes
-  entries. Written atomically with `0600` permissions (`env` can carry tokens).
-- **`<workspace>/.mcp.json`** — project servers, edited by hand. On a name
-  collision the workspace entry overrides the global one, the same
-  project-over-global precedence as skills.
+  This is where the desktop app's Settings > MCPs panel and `atenea mcp add` /
+  `atenea mcp remove` save and delete entries. Written atomically with `0600`
+  permissions (`env` can carry tokens).
+- **`<workspace>/.mcp.json`** — project servers, edited by hand and committed with
+  the project. On a name collision the workspace entry overrides the global one,
+  the same project-over-global precedence as skills. Nothing writes this file:
+  the desktop panel and `atenea mcp remove` both refuse a server declared here
+  and name the file to edit, because it belongs to the repository rather than to
+  the machine.
+
+`mcpclient.Declarations(root)` is the one reader of both files. It returns every
+declaration with the scope and path it came from, *including* a global entry the
+workspace overrides, and `LoadConfig` — what a host connects — is defined as that
+list minus the shadowed entries. That is what lets `atenea mcp list` show an
+override that would otherwise be invisible without it being able to disagree with
+what actually starts.
 
 MCP subprocesses inherit only the operational environment needed to launch
 portable local commands (`PATH`, home/temp, locale, timezone, and Windows
@@ -79,6 +96,30 @@ manager's current tools and swaps the runner — the same move `App.wire` makes
 in the Wails app. Startup never launches a configured server (same contract as
 the desktop app), and engine shutdown closes every MCP subprocess after active
 runs stop.
+
+## Command line
+
+`atenea mcp list | add | remove` (R4.4) is the third surface over the same two
+files, and the one a script, a CI image or another agent can use:
+
+```console
+$ atenea mcp add --env GITHUB_TOKEN=$TOKEN github -- npx github-mcp
+declared "github" in /home/k/.config/atenea/mcp.json
+  env: GITHUB_TOKEN
+
+$ atenea mcp list
+NAME    SCOPE              COMMAND
+github  workspace          docker run ghcr.io/github/github-mcp-server
+github  global (shadowed)  npx github-mcp
+```
+
+It reuses `LoadConfig`/`Declarations`, `UpsertGlobalConfig` and
+`RemoveGlobalConfig` rather than adding a second config path, needs no model
+provider, and **starts nothing** — so its listing has no connected column, which
+would be `false` on every row of every listing and would be read as a report about
+the user's servers rather than about the process printing it. The full surface,
+the refusals and the exit codes are in
+[Headless CLI](headless-cli.md#atenea-mcp--the-servers-from-a-script).
 
 ## Scope
 

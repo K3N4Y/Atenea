@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -318,6 +320,55 @@ func decodeResult(t *testing.T, stdout string) resultDocument {
 	return doc
 }
 
+// invoke drives one configuration command through the real dispatch with no host
+// at all: Env.Host fails the test if anything reaches it.
+//
+// That is an assertion, not setup. `atenea mcp list` and `atenea skill list` read
+// files, and routing them through the bootstrap would hand them a provider they
+// do not need — which is how `atenea mcp list` would come to refuse to run
+// without an API key: through a shared setup helper, rather than through anybody
+// deciding it should.
+//
+// stdin is an os.Pipe whose write end is never closed, so a command that read it
+// would hang rather than pass. That is the shape of the deadlock R4.3 shipped in
+// review, and these commands share its entrypoint.
+func invoke(t *testing.T, args ...string) outcomeOf {
+	t.Helper()
+	stdin, hold, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		stdin.Close()
+		hold.Close()
+	})
+	var stdout, stderr bytes.Buffer
+	code := Main(Env{
+		Args:   args,
+		Stdin:  stdin,
+		Stdout: &stdout,
+		Stderr: &stderr,
+		Host: func(context.Context, host.Config) *host.Host {
+			t.Errorf("%v assembled a host: a configuration command must not need a provider or a store", args)
+			return host.New(context.Background(), host.Config{Store: session.NewMemoryStore()})
+		},
+	})
+	return outcomeOf{code: code, stdout: stdout.String(), stderr: stderr.String()}
+}
+
+// isolateConfig points the user config directory and the home at empty
+// directories of the test's own, so a developer's real ~/.config/atenea/mcp.json
+// and installed skills cannot reach an assertion.
+func isolateConfig(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		t.Skipf("XDG_CONFIG_HOME is not the UserConfigDir override on %s", runtime.GOOS)
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+}
+
 // TestMain_NoArgumentsStartsTheInteractiveInterface: the bare command keeps
 // meaning what it has always meant. Adding subcommands must not make a user type
 // one to get the terminal UI.
@@ -390,6 +441,65 @@ func TestMain_HelpListsEverySubcommand(t *testing.T) {
 		for _, candidate := range commands {
 			if !strings.Contains(stdout.String(), candidate.name) {
 				t.Errorf("%v help does not list %q:\n%s", args, candidate.name, stdout.String())
+			}
+		}
+	}
+}
+
+// TestMain_GroupWithoutAVerbIsAUsageError: `atenea mcp` names no operation, and
+// picking one for the user would make the command mean something nobody typed. A
+// group's mistakes get the same answer the top level's do — the error, the
+// generated list, exit 2 — because they are the same dispatch.
+func TestMain_GroupWithoutAVerbIsAUsageError(t *testing.T) {
+	for _, group := range []struct {
+		name  string
+		verbs []command
+	}{
+		{"mcp", mcpCommands},
+		{"skill", skillCommands},
+	} {
+		got := invoke(t, group.name)
+		if got.code != ExitUsage {
+			t.Errorf("`atenea %s` exit code = %d, want %d", group.name, got.code, ExitUsage)
+		}
+		if got.stdout != "" {
+			t.Errorf("`atenea %s` wrote to stdout: %q", group.name, got.stdout)
+		}
+		for _, verb := range group.verbs {
+			if !strings.Contains(got.stderr, verb.name) {
+				t.Errorf("`atenea %s` help does not list %q:\n%s", group.name, verb.name, got.stderr)
+			}
+		}
+	}
+}
+
+// TestMain_UnknownVerbIsAUsageError: the second level names the typo the way the
+// first one does.
+func TestMain_UnknownVerbIsAUsageError(t *testing.T) {
+	got := invoke(t, "mcp", "lst")
+	if got.code != ExitUsage {
+		t.Errorf("exit code = %d, want %d", got.code, ExitUsage)
+	}
+	if !strings.Contains(got.stderr, `unknown command "lst"`) {
+		t.Errorf("stderr does not name the unknown verb:\n%s", got.stderr)
+	}
+	if !strings.Contains(got.stderr, "list") {
+		t.Errorf("stderr does not list the verbs that do exist:\n%s", got.stderr)
+	}
+}
+
+// TestMain_GroupHelpGoesToStdout: asked for, the help is the output; volunteered
+// after a mistake, it is a diagnostic. The top level splits them that way and so
+// does the second.
+func TestMain_GroupHelpGoesToStdout(t *testing.T) {
+	for _, args := range [][]string{{"mcp", "-h"}, {"mcp", "--help"}, {"mcp", "help"}} {
+		got := invoke(t, args...)
+		if got.code != ExitOK {
+			t.Errorf("%v exit code = %d, want %d", args, got.code, ExitOK)
+		}
+		for _, verb := range mcpCommands {
+			if !strings.Contains(got.stdout, verb.name) {
+				t.Errorf("%v help does not list %q on stdout:\n%s", args, verb.name, got.stdout)
 			}
 		}
 	}

@@ -100,6 +100,55 @@ func TestLoadConfig_MergesGlobalWithWorkspacePrecedence(t *testing.T) {
 	}
 }
 
+// TestDeclarations_ReportsScopeAndKeepsTheShadowedEntry: LoadConfig answers
+// "what does this workspace connect", which is why it drops the overridden
+// declaration. Declarations answers "what is declared and where", which is the
+// question `atenea mcp list` asks, so the loser stays in the list — otherwise the
+// one thing that explains a server running a command nobody configured is
+// invisible.
+func TestDeclarations_ReportsScopeAndKeepsTheShadowedEntry(t *testing.T) {
+	skipWithoutXDGOverride(t)
+	configHome := isolateGlobalConfig(t)
+	globalDir := filepath.Join(configHome, "atenea")
+	if err := os.MkdirAll(globalDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	globalPath := filepath.Join(globalDir, "mcp.json")
+	globalConfig := `{"mcpServers": {"shared": {"command": "global-command"}}}`
+	if err := os.WriteFile(globalPath, []byte(globalConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	writeConfig(t, root, `{"mcpServers": {"shared": {"command": "workspace-command"}}}`)
+
+	declarations, err := Declarations(root)
+	if err != nil {
+		t.Fatalf("Declarations: %v", err)
+	}
+	if len(declarations) != 2 {
+		t.Fatalf("expected both declarations of the name, got %+v", declarations)
+	}
+	winner, loser := declarations[0], declarations[1]
+	if winner.Scope != ScopeWorkspace || winner.Command != "workspace-command" || winner.Shadowed {
+		t.Fatalf("the workspace declaration must come first, unshadowed: %+v", winner)
+	}
+	if winner.Path != filepath.Join(root, ConfigFile) {
+		t.Fatalf("Path = %q, want the workspace file", winner.Path)
+	}
+	if loser.Scope != ScopeGlobal || !loser.Shadowed || loser.Path != globalPath {
+		t.Fatalf("the global declaration must be listed as shadowed, naming its file: %+v", loser)
+	}
+	// The list a host connects is still only what wins, so a shadowed entry can
+	// never be started by a UI reading LoadConfig.
+	configs, err := LoadConfig(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(configs) != 1 || configs[0].Command != "workspace-command" {
+		t.Fatalf("LoadConfig must serve only the winner, got %+v", configs)
+	}
+}
+
 func TestLoadConfig_RejectsInvalidJSON(t *testing.T) {
 	isolateGlobalConfig(t)
 	root := t.TempDir()
@@ -213,11 +262,12 @@ func TestRemoveGlobalConfig_RemovesAndReportsMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	removed, err := RemoveGlobalConfig("github")
+	root := t.TempDir()
+	removed, err := RemoveGlobalConfig(root, "github")
 	if err != nil || !removed {
 		t.Fatalf("RemoveGlobalConfig = (%v, %v), want (true, nil)", removed, err)
 	}
-	configs, err := LoadConfig(t.TempDir())
+	configs, err := LoadConfig(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,8 +275,35 @@ func TestRemoveGlobalConfig_RemovesAndReportsMissing(t *testing.T) {
 		t.Fatalf("expected no servers after removal, got %+v", configs)
 	}
 
-	removed, err = RemoveGlobalConfig("github")
+	removed, err = RemoveGlobalConfig(root, "github")
 	if err != nil || removed {
 		t.Fatalf("removing an absent server = (%v, %v), want (false, nil)", removed, err)
+	}
+}
+
+// TestRemoveGlobalConfig_WorkspaceDeclaredPointsAtItsFile: the global config
+// cannot delete what the workspace file declares, and the caller is told which
+// file to edit. Both hosts get this from here rather than each rebuilding it —
+// the desktop panel and `atenea mcp remove` say the same sentence because there
+// is one sentence.
+func TestRemoveGlobalConfig_WorkspaceDeclaredPointsAtItsFile(t *testing.T) {
+	skipWithoutXDGOverride(t)
+	isolateGlobalConfig(t)
+	root := t.TempDir()
+	writeConfig(t, root, `{"mcpServers": {"local": {"command": "npx", "args": ["local-mcp"]}}}`)
+
+	removed, err := RemoveGlobalConfig(root, "local")
+	if removed {
+		t.Fatal("a workspace-declared server must not be reported as removed")
+	}
+	if err == nil {
+		t.Fatal("removing a workspace-declared server must be an error, got nil")
+	}
+	if !strings.Contains(err.Error(), filepath.Join(root, ConfigFile)) {
+		t.Fatalf("the error must name the file to edit, got %v", err)
+	}
+	configs, err := LoadConfig(root)
+	if err != nil || len(configs) != 1 {
+		t.Fatalf("the workspace declaration must survive: %+v, %v", configs, err)
 	}
 }

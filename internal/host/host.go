@@ -69,7 +69,7 @@ func New(ctx context.Context, cfg Config) *Host {
 		dotenv.Load(cfg.Dotenv)
 	}
 	if cfg.ExtractBuiltinSkills {
-		extractBuiltinSkills()
+		ExtractBuiltinSkills()
 	}
 	h := &Host{
 		Sitting:   NewSitting(),
@@ -130,11 +130,17 @@ func openProviders(ctx context.Context) *providerconfig.Service {
 	return providers
 }
 
-// extractBuiltinSkills writes the embedded skills into ~/.atenea/skills, one of
+// ExtractBuiltinSkills writes the embedded skills into ~/.atenea/skills, one of
 // the global directories wiring already scans, so they are discovered exactly
 // like a skill the user wrote. Neither failure is fatal: the host starts with
 // whatever skills are on disk.
-func extractBuiltinSkills() {
+//
+// It is exported for the one caller that needs the skills a run would see without
+// being a run: `atenea skill list` opens no store and no provider, and listing
+// fewer skills than the agent has would make the command a second answer to the
+// question it exists to answer. Extraction never overwrites, so calling it costs
+// nothing and cannot hide a local edit.
+func ExtractBuiltinSkills() {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		log.Printf("atenea: could not resolve the home directory to extract the built-in skills: %v", err)

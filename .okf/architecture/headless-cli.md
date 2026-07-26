@@ -1,11 +1,11 @@
 ---
 updated_at: 2026-07-26
-summary: The non-interactive command-line surface — the subcommand dispatch, `atenea run`, the three output formats over the durable event stream, the three permission modes a host with nobody to ask can honestly offer, the exit codes, the rule that keeps a run from ever waiting on stdin, and the refusal to answer from the offline demo.
+summary: The non-interactive command-line surface — the two-level subcommand dispatch, `atenea run`, the three output formats over the durable event stream, the three permission modes a host with nobody to ask can honestly offer, the exit codes, the rule that keeps a run from ever waiting on stdin, the refusal to answer from the offline demo, and the configuration commands `atenea mcp` and `atenea skill`, which need no provider at all.
 ---
 
 # Headless CLI
 
-> Status: implemented 2026-07-26 (audit recommendation R4.3).
+> Status: implemented 2026-07-26 (audit recommendations R4.3 and R4.4).
 > See the [agnosticism and extensibility audit](../audits/2026-07-24-agnostic-extensibility-audit.md) §1, §2 and §4 R4.
 > Builds on the [composition root](composition-root.md) (R4.1, R4.2), the
 > [tool capabilities](tool-capabilities.md) (R2) and the
@@ -22,10 +22,21 @@ arguments, its streams and its exit code.
 atenea                                     start the interactive terminal interface
 atenea run -p PROMPT [flags]               run one non-interactive turn
 ... | atenea run [flags]                   the prompt on stdin instead
+atenea mcp list                            every declared MCP server, and where from
+atenea mcp add NAME -- COMMAND [ARG...]    declare a stdio server globally
+atenea mcp remove NAME                     delete one from the global config
+atenea skill list                          every SKILL.md discovery walked
+atenea skill validate [PATH...]            report the skills that will not load
 atenea version                             print the build metadata
 atenea --version                           alias of the above
 atenea help | -h | --help                  the command list
 ```
+
+`run` is the agent. `mcp` and `skill` are the two configuration surfaces it reads
+at startup, and they are commands for the same reason the run is: everything a
+person can set up through a UI, a pipeline has to be able to set up without one.
+**Neither needs a model provider** — see [Configuring without a
+provider](#configuring-without-a-provider).
 
 `atenea run`:
 
@@ -284,9 +295,9 @@ the honest description of a run that cannot be asked anything.
 
 | Code | Constant | Means |
 |---|---|---|
-| 0 | `ExitOK` | the turn finished and every tool call was permitted |
-| 1 | `ExitTurnFailed` | the turn failed — the provider errored, the stream broke, a store write was refused |
-| 2 | `ExitUsage` | the invocation was wrong: unknown subcommand or flag, unparseable value, no prompt, a `--cwd` that is not a directory |
+| 0 | `ExitOK` | the command did what it was asked; for a run, the turn finished and every tool call was permitted |
+| 1 | `ExitFailure` | the command failed at what it exists to do — for `run`, the turn failed (the provider errored, the stream broke, a store write was refused); for `mcp add`, the server could not be declared; for `skill validate`, a skill will not load |
+| 2 | `ExitUsage` | the invocation was wrong: unknown command or verb or flag, unparseable value, no prompt, a `--cwd` or a path argument that is not there |
 | 3 | `ExitPermissionDenied` | the turn completed, but at least one call was refused by the permission mode |
 | 4 | `ExitCanceled` | SIGINT or SIGTERM stopped the run |
 | 5 | `ExitStartup` | the run never got as far as a turn: no model provider is configured, prompt admission failed, or stdin could not be read |
@@ -439,23 +450,262 @@ provider through `host.Config.Providers` rather than depending on the fallback, 
 demonstration can point `providers.json` at any endpoint. A flag would be surface
 whose only purpose is to re-enable a wrong answer.
 
+## `atenea mcp` — the servers, from a script
+
+An MCP server used to be declarable in two ways: the desktop Settings panel, or a
+text editor. A CI image that wants a server, a dotfiles repo that provisions a
+machine, and an agent configuring another agent all had the editor and nothing
+else.
+
+```console
+$ atenea mcp add playwright -- npx @playwright/mcp@latest
+declared "playwright" in /home/k/.config/atenea/mcp.json
+
+$ atenea mcp add --env GITHUB_TOKEN=$TOKEN github -- npx github-mcp
+declared "github" in /home/k/.config/atenea/mcp.json
+  env: GITHUB_TOKEN
+
+$ atenea mcp list
+NAME        SCOPE   COMMAND
+github      global  npx github-mcp
+playwright  global  npx @playwright/mcp@latest
+```
+
+`add` writes the **global** config, which is the one the desktop panel writes and
+both hosts read; the workspace `.mcp.json` belongs to the project and is committed
+with it, so a command run on one machine has no business editing it. Flags go
+before `NAME`, and everything after it (optionally after `--`) is the server's
+command line, exactly as `docker run` and every `mcp add` in this class of tool
+spell it.
+
+### What it prints, and what it does not
+
+**There is no connected column.** Connection state is a property of a *running
+host* — the servers are subprocesses the desktop app or the TUI owns — and this
+process connects to nothing. A column that read `false` on every row of every
+listing would be worse than absent, because a reader would take it for a report
+about their servers rather than about this process. `atenea mcp list` answers what
+is *declarable and true from disk*; the TUI's `/mcp` picker and the desktop panel
+answer what is running.
+
+**A shadowed declaration is listed.** The workspace file overrides a global entry
+of the same name, and `mcpclient.LoadConfig` — what a host actually connects —
+drops the loser. That makes the listing the only place in the product where the
+override is visible, which is the whole answer to "why is this server running a
+command I did not configure":
+
+```console
+$ atenea mcp list
+NAME    SCOPE              COMMAND
+github  workspace          docker run ghcr.io/github/github-mcp-server
+github  global (shadowed)  npx github-mcp
+```
+
+`Declarations(root)` is now the one reader of both files and `LoadConfig` is
+defined as *its list minus the shadowed entries*, so what a host connects and what
+this prints cannot drift apart.
+
+**An env value is never echoed**, on `add` or on `list`. An `env` entry is where a
+server's token lives; the file is written `0600` for that reason, and a terminal is
+recorded in more places than that file is. The confirmation names the keys.
+
+### The two refusals
+
+```console
+$ atenea mcp remove github          # declared in the workspace file
+atenea mcp remove: MCP "github" is declared in /repo/.mcp.json; edit that file to remove it
+$ echo $?
+1
+
+$ atenea mcp add github -- npx other
+atenea mcp add: MCP "github" is already declared in /home/k/.config/atenea/mcp.json
+  Remove it first with `atenea mcp remove github`, or edit that file.
+$ echo $?
+1
+```
+
+The first is the case the desktop already handled, and it is now handled *in one
+place*: `mcpclient.RemoveGlobalConfig(root, name)` reads the workspace file only to
+explain the removal it cannot perform, and `App.RemoveMCPConfig` lost its
+hand-rolled copy of that error. One sentence, both hosts.
+
+The second exists because the config is a JSON map: an upsert would succeed and
+take whatever was there with it, including an `env` carrying a token nothing else
+has a copy of. A refusal is undone with one command; an overwrite is not undone at
+all. A name the *workspace* declares is refused for a different reason — the global
+entry would be written and immediately overridden, so the add would report success
+and change nothing any host reads.
+
+One more line exists so a removal cannot be misread. Deleting the global half of a
+shadowed name leaves the server the caller was just looking at exactly where it
+was:
+
+```console
+$ atenea mcp remove github
+removed "github" from /home/k/.config/atenea/mcp.json
+  MCP "github" is still declared in /repo/.mcp.json; edit that file to remove it too.
+```
+
+## `atenea skill` — what was discovered, and what was not
+
+Skill discovery is deliberately forgiving: `skill.Discover` skips a `SKILL.md` it
+cannot parse so that one broken skill cannot take the others down. The cost is
+paid by whoever wrote the broken one — it simply never appears, and nothing
+anywhere says why. These two verbs are the other half of that trade, and R9.3 is
+where the audit asks for them: *a contributor gets a real error instead of silent
+non-discovery*.
+
+```console
+$ atenea skill list
+NAME             STATUS   DESCRIPTION                                             LOCATION
+-                invalid  the frontmatter declares no 'name'                      /repo/.atenea/skills/broken/SKILL.md
+dup              active   The project's own copy.                                 /repo/.atenea/skills/dup/SKILL.md
+dup              shadowed The one that loses.                                     /repo/.agents/skills/dup/SKILL.md
+quiet            invalid  (no description: never announced to the model)          /repo/.agents/skills/quiet/SKILL.md
+ponytail         active   Forces the laziest solution that actually works, sim…   /home/k/.atenea/skills/ponytail/SKILL.md
+```
+
+Every `SKILL.md` the walk found is a row, sorted by name with the winner of a name
+before the entries it shadows — so the two rows that explain a precedence question
+are adjacent, which walk order would not have given (the shadowed copy lives in
+another directory, pages away). `STATUS` is one of:
+
+| | |
+|---|---|
+| `active` | discovered and announced to the model |
+| `shadowed` | a same-named skill earlier in the search order won; `LOCATION` is the file that **lost** |
+| `invalid` | `validate` fails on it: it does not parse, or it declares no description |
+
+The search order is `wiring.DefaultSkillDirs(root)` — the same ordered list the
+agent is built with, not a second copy of it — and the built-in skills are
+materialized first through the same `host.ExtractBuiltinSkills` every entrypoint
+calls, so the listing cannot show fewer skills than a run would have.
+
+### `validate` is the verb that fails
+
+```console
+$ atenea skill validate
+/repo/.atenea/skills/broken/SKILL.md: the frontmatter declares no 'name'
+/repo/.agents/skills/quiet/SKILL.md: skill "quiet" declares no 'description', so it is never announced to the model
+2 problems in 8 SKILL.md files under 6 discovery directories
+$ echo $?
+1
+
+$ atenea skill validate
+ok: 7 skills under 6 discovery directories, no problems
+$ echo $?
+0
+```
+
+Four decisions in that output:
+
+- **It validates the discovery set by default, and named paths when given some.**
+  Both, because they are different questions. "Why does my skill not show up" is a
+  question about the set this workspace actually walks and about nothing else;
+  "is this file right" is asked *before* the skill is anywhere near a discovery
+  directory — a draft, or a repository checking its own skills in CI before anyone
+  installs them. Neither answers the other, so `atenea skill validate ./skills/mine`
+  walks what you name (a file whatever it is called, a directory for the `SKILL.md`
+  under it) and the bare form walks what a run would.
+- **A skill with no description is a problem, not a remark.** It parses, so
+  discovery keeps it and the `skill` tool can load it by name — but `skill.Format`
+  puts only described skills in the system prompt, so the model is never told the
+  name it would have to ask for. That is the same silent non-discovery one step
+  later. The rule lives in `Info.Announced()` so the prompt and the validator apply
+  one rule rather than two that can drift.
+- **Findings go to stderr and stdout stays empty**, the way `go vet` reports. The
+  exit code is the answer and the detail is the explanation, so
+  `atenea skill validate && deploy` reads correctly and nothing has to be parsed.
+- **Nothing to validate is a failure.** A contributor who points this at the wrong
+  path and is told `ok` ships the skill broken. Zero files checked is not a pass.
+
+`skill.Scan` is what makes any of this possible: it reports *every* `SKILL.md` the
+walk found, with the parse error or the shadowing that befell it, and `Discover` is
+now defined as that list minus the unusable and the shadowed. The two cannot
+describe different sets of files, which is the property the old arrangement — a
+`return nil` inside the walk — could not have.
+
+This is the R4 half of R9.3. The rest of R9 is untouched: no `version` field in the
+manifest, no unified frontmatter parser, no `atenea agent validate`, no decision on
+`skills-lock.json`.
+
+## Configuring without a provider
+
+`atenea mcp` and `atenea skill` **must work with no API key anywhere**, and that is
+a tested property rather than an accident:
+
+```console
+$ env -i PATH=$PATH HOME=$(mktemp -d) atenea mcp list
+atenea mcp list: no MCP server is declared.
+  workspace: /repo/.mcp.json
+  global:    /tmp/tmp.XXXX/.config/atenea/mcp.json
+  Declare one with `atenea mcp add NAME -- COMMAND [ARG...]`.
+$ echo $?
+0
+```
+
+Neither command calls `host.New`. They read `mcpclient` and `skill` directly, plus
+`wiring.DefaultSkillDirs` and `host.ExtractBuiltinSkills`, and they open no session
+store, resolve no credential and start no server. The one thing they share with a
+run is `--cwd`, which means the same thing everywhere in this CLI: the workspace
+root, resolved the way `host.New` resolves an empty one, so `atenea mcp list` and
+`atenea run` read the same `.mcp.json`.
+
+The test says it out loud: the harness passes an `Env.Host` that **fails the test if
+anything calls it**. Getting this wrong would not have looked like a decision — it
+would have arrived through a shared setup helper, and `atenea mcp list` would refuse
+to list a config file because no model was configured.
+
+## Exit codes across the surface
+
+The six codes are one vocabulary, and the subcommands did not add to it:
+
+- **1 is the generic failure**, not "the turn failed". It always was — the
+  interactive interface failing to start has returned it since before the dispatch
+  existed — so the constant is `ExitFailure`. For `run` it is the turn; for
+  `mcp add` a server that could not be declared; for `skill validate` a skill that
+  will not load, which is also what every linter returns when it has findings.
+- **2 stays the invocation being wrong**, and a validation failure is deliberately
+  not one. `atenea skill validate` exiting 2 on a malformed skill would say the
+  command was called wrong when it was called exactly right and answered. What *is*
+  a usage error: an unknown verb, a `--cwd` that is not a directory, a path argument
+  that does not exist, `mcp add` with no command, and a flag written after `NAME`.
+- **A new code was considered and rejected.** A distinct "validation failed" would
+  have to name something a caller reacts to differently, and nothing does: a script
+  either proceeds or it does not, and the two branches it *would* want — "you called
+  me wrong" and "your environment is wrong" — are already 2 and 5.
+
 ## Adding a subcommand
 
-The dispatch is a table and a `func(Env, []string) int`. `atenea mcp` and
-`atenea skill` (R4.4) are one struct literal and one file each:
+The dispatch is a table and a `func(Env, []string) int`. A command is one struct
+literal and one file:
 
 ```go
 var commands = []command{
     {name: "run",     summary: "…", run: runCommand},
+    {name: "mcp",     summary: "…", run: mcpCommand},
+    {name: "skill",   summary: "…", run: skillCommand},
     {name: "version", summary: "…", run: versionCommand},
 }
 ```
 
-The top-level help is generated from that table, so a command cannot be added
-without appearing in it, and a test asserts it. Per R4.4 there is no CLI framework:
-one `flag.FlagSet` per subcommand with `ContinueOnError`, which also puts the
-stdlib's own usage exit code and `ExitUsage` on the same number instead of having to
-intercept one to renumber the other.
+A command with sub-verbs is the same table one level down: `mcpCommand` is a call to
+`verbs(env, "atenea mcp", blurb, mcpCommands, args)`, and that helper is the top
+level's own logic — the generated list, the `unknown command "lst"` error, `-h` on
+stdout and a mistake's help on stderr, `ExitUsage`. A group whose mistakes read
+worse than the top level's would be two dispatches wearing one name.
+
+`atenea mcp` with no verb is a **usage error**, not a default verb: choosing `list`
+for the user would make the command mean something nobody typed. (A bare `atenea` is
+the interactive interface because that is what it has always meant, not because the
+dispatch picked a favourite.)
+
+Both help screens are generated from the table they dispatch on, so a command
+cannot be added without appearing in its own help, and a test asserts it at both
+levels. Per R4.4 there is **no CLI framework**: one `flag.FlagSet` per command with
+`ContinueOnError` — which also puts the stdlib's own usage exit code and `ExitUsage`
+on the same number instead of having to intercept one to renumber the other — and
+`go.mod` is unchanged by the whole of R4.4.
 
 ## Testability
 
@@ -473,6 +723,16 @@ reading a line off a pipe while the turn is held open, and cancellation by pushi
 signal onto `Env.Interrupts`. No PTY, no subprocess, which is the point of the
 feature applied to itself.
 
+The configuration commands are driven the same way, against the real files: a
+config `mcp add` wrote is read back by `mcpclient.LoadConfig` — the function every
+host starts a server from, so a CLI that wrote a file only the CLI could read would
+fail — and `skill validate` runs against genuinely malformed `SKILL.md` fixtures
+with the exit code asserted. Two things the harness asserts by construction rather
+than by an assertion: `Env.Host` fails the test if a configuration command
+assembles a host, and `Env.Stdin` is an `os.Pipe` whose write end is never closed,
+so a command that read stdin would hang instead of passing — the shape of the
+deadlock R4.3 shipped in review, which these commands share an entrypoint with.
+
 ## Related
 
 - [Composition root](composition-root.md) — `host.New` and `wiring.Config`, the two
@@ -482,6 +742,8 @@ feature applied to itself.
   from.
 - [Published contracts](public-contracts.md) — `agentcore/session.SessionEvent`, the
   contract `stream-json` serializes.
+- [MCP servers](mcp.md) — the two config files `atenea mcp` reads and writes, and
+  what connecting one means.
 - [Shared headless agent service](../specs/2026-07-13-headless-agent-service-design.md)
   — the turn lifecycle this drives.
 - [CLI distribution](distribution.md) — the binary this ships in.
