@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-24
+updated_at: 2026-07-26
 summary: Architecture of Atenea’s Go agent execution loop.
 ---
 
@@ -125,9 +125,13 @@ func (r *Registry) Materialize(perms Permissions) Materialized
 
 The registry is also the single source of truth for the default permission set:
 `Registry.Permissions()` derives it from the registered tool names. Assembly
-must not repeat those names in a second allowlist. Mode-only tools are explicit
-exclusions from that default (`present_plan` is excluded from normal mode), and
-restricted modes still pass an explicit subset to `Materialize`.
+must not repeat those names in a second allowlist. Mode-only tools are the one
+declared exception to that, and they are declared once: `wiring.Config.PlanMode`
+names the tools plan mode announces and, in `Exclusive`, the ones normal mode
+therefore hides (`present_plan` today). A restricted mode still passes an explicit
+subset to `Materialize` — for plan mode that subset is `Tools ∪ Exclusive` of the
+same field, so the announcement and the exclusion cannot disagree. See
+[composition root](composition-root.md#planmode-is-one-field-because-it-is-one-decision).
 
 ```go
 // internal/session/inbox.go

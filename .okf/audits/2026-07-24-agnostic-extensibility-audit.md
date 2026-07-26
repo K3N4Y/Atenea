@@ -61,7 +61,7 @@ of them delete code.
 | Event payload evolution | **Weak** — no version, 4 hand-synced sites per new field | `internal/session/sqlitestore.go:22-57,134-149,279-369,510-601` |
 | Tool-use hooks | **Missing** — no pre/post seam; gate + repair + capping hardcoded in the loop | `runner/turn.go:214-235` |
 | Prompt assembly | **Missing** — fixed string concatenation | `internal/session/prompt/prompt.go:68-81` |
-| Composition root | **Good** — one outer root both entrypoints construct (`internal/host`) over the one inner root both managers call (`wiring.Build`); what `wiring.Config` still hardcodes is R4.2 (R4.1) | `internal/host`, `main.go:22`, `cmd/atenea/main.go:51` |
+| Composition root | **Good** — one outer root both entrypoints construct (`internal/host`) over the one inner root both managers call (`wiring.Build`), whose assembly policy (output cap, classification, discovery paths, plan-mode surface) is a `Config` field with a documented, tested zero value (R4.1, R4.2) | `internal/host`, `internal/wiring/wiring.go`, `main.go:22`, `cmd/atenea/main.go:51` |
 | CLI / headless | **Missing** | `cmd/atenea/main.go:53-62` |
 | Public API | **Partial** — 5 importable contract packages under `agentcore/` plus 2 contract test kits, boundary enforced by test; the tool capability interfaces landed with R2, message content parts with R3.6 (the first breaking change, taken deliberately while nothing promises stability); implementations still private, no stability promise yet (R1.3, R1.4, R2, R3 done) | `agentcore/`, `agentcore/boundary_test.go`, `agentcore/{tool/tooltest,llm/llmtest}` |
 | Branding/paths | **Weak** — `atenea` literal in 6+ path builders, no XDG | §3.6 |
@@ -286,8 +286,11 @@ Literal `atenea` path segments and identifiers, each built independently:
   (`internal/mcpclient/manager.go:93`) — the version literal is wrong; real
   version vars exist in `cmd/atenea/version.go`
 - Discovery directories `.atenea/skills`, `.agents/skills`, `.claude/skills`
-  (`wiring.go:205-216`) and `.atenea/agents`, `.agents/agents`
-  (`wiring.go:128-131`), all string literals with no override
+  (`wiring.DefaultSkillDirs`) and `.atenea/agents`, `.agents/agents`
+  (`wiring.DefaultAgentDirs`), all string literals — ~~with no override~~
+  `[done 2026-07-26]` since R4.2 the two lists are `wiring.Config` fields, so an
+  embedder replaces them without editing the assembly; the brand inside each
+  default is still typed out here, which is what this finding is about
 
 Only two escape hatches exist (`ATENEA_DB`, `ATENEA_CHECKPOINTS`). `os.UserConfigDir()`
 is used directly, so `XDG_CONFIG_HOME`/`XDG_DATA_HOME` conventions are not
@@ -315,9 +318,10 @@ with other agent CLIs (`.okf/architecture/mcp.md:44-45`).
 > the direction that gives the TUI what it was missing. The two managers stayed
 > separate on purpose: one switches workspaces live and emits through Wails, the
 > other owns a Bubble Tea channel, and neither is the composition problem. See
-> [Composition root](../architecture/composition-root.md). What is still open in
-> this finding is the second paragraph — what `wiring.Config` hardcodes — which is
-> R4.2.
+> [Composition root](../architecture/composition-root.md). The second paragraph
+> closed with R4.2 on the same day: the five hardcoded values are `Config` fields
+> whose zero value is the literal they replaced, so both hosts still pass none of
+> them and an embedder that varies one no longer has to fork this file.
 
 `internal/wiring.Build` is a real single inner composition root, called by both
 frontends (`internal/wailsworkspace/manager.go:167`, `internal/tui/engine/engine.go`).
@@ -332,10 +336,13 @@ Above it, each frontend re-implements the outer assembly:
 - gate/grants constructed separately (`app.go:108`, `engine.go:143-144`)
 - `ExtractBuiltins` called on one path only
 
-`internal/wiring/wiring.go` also hardcodes what an embedder would want to
+~~`internal/wiring/wiring.go` also hardcodes what an embedder would want to
 configure: `outputLimit = 32*1024` (`:31`), `askPolicy` (`:87`), skill/agent
 discovery paths (`:129-130,205`), the plan-mode allowlist (`:192`) and the
-`present_plan` exclusion (`:180`).
+`present_plan` exclusion (`:180`).~~ One entry of that list was stale by the time
+R4.2 read it: R2 had already replaced the `askPolicy` name list with
+`EffectsPolicy`, so what was hardcoded there was the *choice of classifier*, not a
+list of tool names. It was promoted as such.
 
 ### 3.8 MCP is the plugin system in embryo, and is under-built
 
@@ -894,6 +901,75 @@ it.
 2. **Promote `wiring.Config`'s hardcoded values to fields**: `OutputLimit`,
    `Policy`, `SkillDirs`, `AgentDirs`, `PlanPermissions`. An embedder configures
    them; both current callers pass defaults.
+   `[done 2026-07-26]` — five fields, four of the five names as written, and
+   `Config` now reads in two halves: the dependencies a caller always passes, and
+   the policy of the assembly, which until now was not a caller's business at all.
+   Documented in
+   [Composition root](../architecture/composition-root.md#what-the-inner-root-exposes).
+   Six decisions worth recording:
+   - **Both callers pass the defaults by saying nothing, and that is the design
+     rather than the shortcut.** Every default is derived from `Root`
+     (`DefaultSkillDirs`, `DefaultAgentDirs`) or from the registry of the moment
+     (`Policy`), or is a product decision the two hosts must not be able to
+     disagree about (`OutputLimit`, `PlanMode`) — so spelling them out at the two
+     call sites would have put two copies of one list back where R4.1 had just
+     finished deleting them. What makes that safe is that the zero value is a
+     documented contract instead of an accident: one `Config.resolve` reads it,
+     each field says what its zero means, and there is a test per field asserting
+     that a caller who leaves it alone gets exactly today's behaviour.
+   - **`OutputLimit` is the one whose zero could not be passed through.**
+     `tool.NewOutputStore` reads a zero as *no* cap, so forwarding it would have
+     given a caller who said nothing an uncapped tool output in the model's
+     context — the "field whose zero value is a silently different behaviour"
+     failure in its purest form. Zero is `DefaultOutputLimit` and a negative value
+     is how "no cap" is said out loud. `SkillDirs` and `AgentDirs` are the same
+     rule in slice form: nil takes the defaults, an empty non-nil slice discovers
+     nothing, and `len() == 0` would have flattened the two — R2's "said nothing"
+     versus "declared nothing", one more time.
+   - **`Policy` is a factory over the catalog, not a policy.** `Build` builds the
+     policy after the registry on purpose, so a `permission.Policy` the caller
+     constructed once could only ever answer for the previous assembly's tools —
+     an MCP server that just connected contributes tools the classification has to
+     see. `func(tool.Catalog) permission.Policy` is the smallest shape that still
+     sees the registry of the moment. It returns the *base* classification and
+     `Build` layers `Grants` over whatever comes back, which is what keeps the two
+     fields from overlapping: a caller's own classification inherits "allow for the
+     rest of the session" without knowing the grant store exists, and exactly one
+     place in the tree can apply a grant.
+   - **`PlanPermissions` became `PlanMode{Tools, Exclusive}`, because the plan set
+     and the `present_plan` exclusion are one decision seen from two sides.** As
+     two fields they could contradict each other — a tool excluded from normal mode
+     but missing from the plan set would be registered, executable and announced
+     nowhere — and a configuration that can be put into an incoherent state is
+     worse than the constant it replaced. Plan mode announces `Tools ∪ Exclusive`,
+     normal mode announces everything registered minus `Exclusive`, so the two
+     facts are derived from one answer. Declaring mode-only-ness on the tool
+     instead (an R2-style capability) was rejected twice over: it would make a tool
+     name the host's modes, and it would say nothing about the rest of the plan
+     set, leaving one surface described by two mechanisms.
+   - **The defaults live in `wiring`, not in `host`, one commit after R4.1 built
+     the host.** `internal/host` does not construct a `wiring.Config` — the two
+     managers do, because the build is rooted at the workspace — so host-owned
+     defaults would have to be restated at both call sites or reached by giving the
+     host a hand in a build it deliberately does not own. And they would only apply
+     to callers who came through the host: R4.3's headless entrypoint assembling a
+     `wiring.Config` directly would get no output cap and no skills. A zero value is
+     only a contract if the function that reads it enforces it.
+   - **The two discovery asymmetries were preserved, not chosen.** Skills search the
+     project and `$HOME` and honour `.claude/`; subagents search the project only
+     and do not. §3.6 reads both as probably bugs and R7 is where the one ordered
+     list resolves them; promoting a literal to a field is not the place to change
+     what it promotes. Each default now has a test, so the R7 change will be visible
+     instead of silent.
+   The file was migrated to English on the way, which R4.1 had deferred as
+   deserving its own pass — it holds the densest argument in the tree and the
+   translation is of the argument, not a summary of it. One stale claim went with
+   it: `NewIDGen` promised ids stable across restarts "with M10's persistent
+   store", which shipped without changing the counter, so the comment now states
+   the limitation instead of a plan. And one flakiness hole closed, the same one
+   R4.1 found in the PTY tests: `wiring`'s own tests build over the default skill
+   directories, which include `$HOME`, so whatever the developer had installed was
+   reaching their assertions. `HOME` is a temp dir there now.
 3. **Headless *CLI* mode — the highest-value integration feature.** Note the
    terminology: `.okf/specs/2026-07-13-headless-agent-service-design.md` is
    already implemented and delivered a *UI-independent* turn lifecycle
@@ -972,7 +1048,10 @@ name and the filesystem layout:
   `XDG_DATA_HOME`/`XDG_CACHE_HOME` with `os.UserConfigDir()` as fallback
 - `DB()`, `Checkpoints()`, `Credentials()`, `Providers()`, `ModelsCache()`,
   `MCPConfig()`
-- `SkillDirs(root)`, `AgentDirs(root)` from one ordered, documented list
+- `SkillDirs(root)`, `AgentDirs(root)` from one ordered, documented list — since
+  R4.2 those two lists live as `wiring.DefaultSkillDirs`/`DefaultAgentDirs`, which
+  is where they are documented and tested today, and they are what this package
+  takes over
 - One `EnvPrefix = "ATENEA_"` constant so `ATENEA_DB`, `ATENEA_CHECKPOINTS`,
   `ATENEA_CONFIG_DIR` are derived, not re-typed
 - One `Product` / `Version` pair, wired from `cmd/atenea/version.go`, and passed
@@ -1077,14 +1156,17 @@ seam on `Message` (all four landed 2026-07-26).
 security default flipped to ask; a wire format is one file plus one registry line
 plus one catalog entry, and multimodal is one more `PartKind` rather than a break.*
 
-**Phase 2 — integration surface. In progress.** R4.1 single host landed
-2026-07-26: one outer composition root both entrypoints construct, with the two
-UI managers left alone above the one inner root. R1 public contract packages and
-contract test kits landed early (2026-07-24). What remains is R4.2 (promote
-`wiring.Config`'s hardcoded values to fields) and R4.3–R4.4, the headless `run`
-with NDJSON — which is the item that actually opens the surface, and which now has
-somewhere to stand: a non-interactive entrypoint is a third caller of `host.New`
-driving `Sitting.Agent`, not a third copy of the bootstrap.
+**Phase 2 — integration surface. In progress.** R4.1 single host and R4.2
+configurable assembly both landed 2026-07-26: one outer composition root both
+entrypoints construct, with the two UI managers left alone above the one inner
+root, and that inner root's five hardcoded policy values promoted to `Config`
+fields with documented zero values. R1 public contract packages and contract test
+kits landed early (2026-07-24). What remains is R4.3–R4.4, the headless `run` with
+NDJSON — which is the item that actually opens the surface, and which now has
+somewhere to stand twice over: a non-interactive entrypoint is a third caller of
+`host.New` driving `Sitting.Agent`, not a third copy of the bootstrap, and its
+`--permission-mode deny|allowlist|auto` is a `wiring.Config.Policy` rather than a
+branch inside the loop.
 *Outcome: anything can drive atenea — CI, editors, other agents — and outside
 contributions of tools/providers become reviewable.*
 

@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-24
+updated_at: 2026-07-26
 summary: How a tool declares what it affects, what granting it authorizes and how it should read — the optional capability interfaces that replaced six name-keyed switches, and the ask-by-default security flip that came with them.
 ---
 
@@ -284,10 +284,13 @@ it goes.
 - **MCP tools cannot declare effects.** They ask because they are silent, which is
   correct but coarse. A per-server declaration in `.mcp.json` plus a persisted
   allowlist is R8.2.
-- **Plan mode's tool set is still a literal** in `internal/wiring`
-  (`read/glob/grep/present_plan/skill`). It is not derivable from `Effects` —
-  `todo_write` declares `NoEffects` and is deliberately absent from plan mode — so
-  it stays an explicit policy, promoted to a `wiring.Config` field by R4.2.
+- ~~**Plan mode's tool set is still a literal** in `internal/wiring`.~~
+  `[done 2026-07-26]` R4.2 promoted it to `wiring.Config.PlanMode`, together with
+  the `present_plan` exclusion from normal mode, which is the same decision seen
+  from the other side. It stays configuration rather than a capability for the
+  reason this section gave: it is not derivable from `Effects` — `todo_write`
+  declares `NoEffects` and is deliberately absent from plan mode. See
+  [composition root](composition-root.md#planmode-is-one-field-because-it-is-one-decision).
 - **`Def.Tools` validation reports to the log.** A contributor writing
   `.atenea/agents/foo.md` gets a warning on stderr instead of silence, which is the
   change; `atenea agent validate` (R4.3, R9.3) is the real answer.

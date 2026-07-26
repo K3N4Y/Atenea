@@ -1,7 +1,12 @@
-// Package wiring arma el ensamblado compartido del agente (tools, skills,
-// subagentes, runner) anclado a una raiz de workspace. Es la unica fuente de
-// verdad del cableado: la app Wails (app.go) y el engine headless de la TUI
-// construyen el mismo agente llamando Build con sus propias dependencias.
+// Package wiring assembles the shared agent (tools, skills, subagents, runner)
+// anchored to a workspace root. It is the inner composition root: the Wails app
+// (through internal/wailsworkspace) and the TUI's headless engine build the same
+// agent by calling Build with their own dependencies.
+//
+// The split with internal/host is by lifetime. The host owns what is built once
+// per process; this package owns what is rebuilt whenever the workspace root, the
+// set of connected MCP tools or the active model changes. See
+// .okf/architecture/composition-root.md.
 package wiring
 
 import (
@@ -27,36 +32,45 @@ import (
 	"github.com/K3N4Y/atenea/internal/tool/hashline"
 )
 
-// outputLimit acota la salida persistida de cada tool call.
-const outputLimit = 32 * 1024
-
-// Config son las dependencias que el caller aporta al ensamblado.
+// Config is what the caller contributes to the assembly, in two halves.
+//
+// The first half is the dependencies: the workspace root, the provider, the
+// durable store and the pieces of the sitting that have to survive a rewire.
+// Nothing here has a useful default and the caller always passes it.
+//
+// The second half — from OutputLimit down — is the assembly's policy: how much of
+// a tool's output the model sees, how a call is classified before it runs, where
+// skills and subagents are discovered, and what plan mode announces. Each of
+// those was a literal in this file until an embedder needed to vary it. Every one
+// of them has a documented zero value that is atenea's own answer, pinned by a
+// test, so the two hosts that vary none of them keep passing nothing rather than
+// each spelling out the same default.
 type Config struct {
-	// Root es la raiz del workspace: ancla las file/exec tools, las skills,
-	// los subagentes y el system prompt.
+	// Root is the workspace root: it anchors the file and exec tools, the skills,
+	// the subagents and the system prompt.
 	Root string
-	// Provider es el modelo: lo comparten el runner, los subagentes (task) y
-	// la tool web_fetch.
+	// Provider is the model, shared by the runner, the subagents (task) and the
+	// web_fetch tool.
 	Provider llm.Provider
-	// Store es el log durable de sesiones que usa el runner. Ya viene decorado
-	// por el caller (p.ej. EmittingStore sobre el Bus); Build no lo vuelve a
-	// envolver.
+	// Store is the durable session log the runner writes to. It arrives already
+	// decorated by the caller (EmittingStore over that host's bus); Build does not
+	// wrap it again.
 	Store session.Store
-	// Inbox es la cola de prompts que el runner drena por sesion.
+	// Inbox is the prompt queue the runner drains per session.
 	Inbox session.Inbox
-	// Gate es el gate de ask-before-run que comparten el runner principal y
-	// los subagentes; el caller entrega por el la decision del usuario.
+	// Gate is the ask-before-run broker shared by the main runner and the
+	// subagents; the caller delivers the user's decision through it.
 	Gate permission.Gate
 	// Grants is the caller-owned store of session-scoped approvals layered over
 	// the classification (see permission.GrantedPolicy). It outlives the build so
 	// a rewire does not drop the user's grants; nil = no session grants, every
 	// gated call asks.
 	Grants *permission.SessionGrants
-	// Snaps es el read-state por sesion que comparten read/write/edit. El
-	// caller lo crea una sola vez para que sobreviva a los re-ensamblados.
+	// Snaps is the per-session read state that read, write and edit share. The
+	// caller creates it once so it survives a re-assembly.
 	Snaps *tool.SessionSnapshots
-	// Bus publica los eventos de permiso de los subagentes en el canal del
-	// padre (ChildPermissionStore), el mismo que ya escucha el frontend.
+	// Bus publishes the subagents' permission events on the parent's channel
+	// (ChildPermissionStore), the same one the frontend already listens to.
 	Bus *event.Bus
 	// LocalPrompt answers, once per turn, whether the provider that will serve it
 	// runs local models (LM Studio, Ollama): then the base system prompt switches
@@ -65,161 +79,145 @@ type Config struct {
 	// question rather than a flag so a live provider switch takes effect on the
 	// next turn without re-assembling anything. nil means never local.
 	LocalPrompt func() bool
-	// NextID genera los assistantMessageID del runner (ver NewIDGen).
+	// NextID generates the runner's assistantMessageIDs (see NewIDGen).
 	NextID func() string
-	// Mode es el hook de modo por sesion (normal/plan) que el runner consulta
-	// cada turno; nil = siempre modo normal.
+	// Mode is the per-session mode hook (normal/plan) the runner consults every
+	// turn; nil = always normal mode. PlanMode below is what the plan half of that
+	// answer is allowed to do.
 	Mode func(sessionID string) session.Mode
-	// MCPTools son las tools descubiertas de servidores MCP ya conectados.
+	// MCPTools are the tools discovered from already-connected MCP servers.
 	MCPTools []tool.Tool
+
+	// OutputLimit caps, in bytes, how much of a tool call's output reaches the
+	// model. The whole output is always kept for the UI to expand
+	// (tool.OutputStore), so this is a context-window budget rather than data
+	// loss.
+	//
+	// Zero is DefaultOutputLimit and deliberately not "no limit", even though a
+	// zero is exactly what tool.NewOutputStore reads as no limit: one runaway
+	// command quietly evicting a conversation from the context window is not
+	// something a caller can mean by leaving a field alone. Saying it out loud is
+	// a negative value, which the store reads as no cap at all.
+	OutputLimit int
+	// Policy builds the ask-before-run classification over the catalog of this
+	// assembly. It is a function of the catalog rather than a permission.Policy
+	// the caller constructs once because a classification is only as good as the
+	// catalog it reads, and that catalog changes with every rewire: an MCP server
+	// that just connected contributes tools the policy has to be able to see, and
+	// a value built before Build could only ever answer for the tools of the
+	// previous assembly.
+	//
+	// It returns the *base* classification, not the final one: Build layers Grants
+	// over whatever comes back. So a caller's own classification inherits "allow
+	// for the rest of the session" without knowing the grant store exists, and
+	// there is exactly one place that can apply grants — the two fields cannot end
+	// up layering them twice, or disagreeing about the order.
+	//
+	// nil is DefaultPolicy.
+	Policy func(catalog tool.Catalog) permission.Policy
+	// SkillDirs is the ordered list of directories skills are discovered in. The
+	// first occurrence of a name wins, so an earlier directory overrides a later
+	// one.
+	//
+	// nil is DefaultSkillDirs(Root). An empty non-nil slice is a different answer
+	// and is honored as one: nothing is scanned and the agent runs with no skills,
+	// which is what an embedder that ships its own set says. Collapsing the two
+	// would be the same mistake every optional capability in this tree avoids —
+	// "said nothing" is not "declared nothing".
+	SkillDirs []string
+	// AgentDirs is the ordered list of directories subagent definitions are
+	// discovered in, first occurrence of a name winning. The built-in subagents
+	// are merged in after them, so a definition may override a built-in by name.
+	//
+	// nil is DefaultAgentDirs(Root); an empty non-nil slice means the built-ins
+	// alone, on the same reading as SkillDirs.
+	AgentDirs []string
+	// PlanMode is plan mode's tool surface: what the runner announces while Mode
+	// reports session.ModePlan and, through PlanMode.Exclusive, what normal mode
+	// therefore hides. nil is DefaultPlanMode().
+	//
+	// It is one field, and a struct rather than the plain permission set, because
+	// the plan set and the normal-mode exclusion are one decision seen from two
+	// sides. As two fields they could contradict each other — a tool excluded from
+	// normal mode but missing from the plan set would be registered, executable
+	// and announced nowhere — and a configuration that can be set to an incoherent
+	// state is worse than the constant it replaced.
+	PlanMode *PlanMode
 }
 
-// Built son las piezas mutables que el caller publica tras el ensamblado: el
-// runner listo para correr, el glob del @-menu y los slash-commands del composer.
-type Built struct {
-	Runner   *runner.Runner
-	Glob     *tool.GlobTool
-	Commands *command.Set
-	// Tools is the catalog the UI asks about a tool it only knows by name: what a
-	// finished call may have changed, what granting one would authorize, how one
-	// should be presented. It is the same registry the runner settles against, so
-	// the answers a user sees are the ones the agent acted on. Rebuilt with every
-	// Build, hence published here for the caller to swap alongside the runner.
-	Tools tool.Catalog
-	// Policy is the ask-before-run classification the assembled agent enforces,
-	// derived from Tools and shared by the main runner and the subagents. Published
-	// so what the agent gates stays answerable from outside the assembly instead of
-	// only from a turn.
-	Policy permission.Policy
+// PlanMode describes plan mode's tool surface. Plan mode announces Tools and
+// Exclusive together; normal mode announces every registered tool except
+// Exclusive.
+//
+// The split is by who else may see the tool, and it is what keeps registration
+// the source of truth for normal mode. Every ordinary tool, and every tool an MCP
+// server contributes, reaches normal mode by being registered — no list names it
+// — and Exclusive is the single declared deviation from that. present_plan is its
+// only member today: the shared registry has to hold it for plan mode to execute
+// it, while announcing it in normal mode would invite the model to present a plan
+// nobody asked for.
+//
+// The set is not derivable from what a tool declares about itself, which is why it
+// is configuration and not a capability: todo_write declares tool.NoEffects and is
+// deliberately outside plan mode, so effects cannot tell the two apart. What plan
+// mode means is a product decision about investigation.
+type PlanMode struct {
+	// Tools are announced in plan mode and left alone in normal mode, where they
+	// arrive by being registered like any other tool.
+	Tools []string
+	// Exclusive are announced in plan mode and hidden from normal mode.
+	Exclusive []string
 }
 
-// Build arma todo el cableado anclado a cfg.Root: las file/exec tools, el glob
-// del @-menu, las skills y sus slash-commands, el catalogo de subagentes y un
-// runner nuevo con el system prompt apuntando a la raiz. No muta estado global:
-// devuelve las piezas para que el caller haga su propio swap.
-func Build(cfg Config) Built {
-	root := cfg.Root
-	// El @-menu de archivos del composer lista el workspace via este glob.
-	// Comparte la raiz con las file tools; reusa el searcher de ripgrep ya
-	// probado (respeta .gitignore, excluye .git).
-	glob := tool.NewGlobTool(root)
-	// Skills al estilo opencode (disclosure progresivo): se descubren bajo las rutas
-	// del proyecto Y las globales del home (skillDirs). Sus metadatos van en el system
-	// prompt (skill.Format), la tool skill carga el cuerpo bajo demanda, y de cada una
-	// se deriva un slash-command. Un fallo de descubrimiento no es fatal: sin skills.
-	skills, err := skill.Discover(skillDirs(root)...)
-	if err != nil {
-		log.Printf("atenea: no se pudieron descubrir las skills: %v", err)
+// permissions is the set plan mode announces: Tools and Exclusive together, so a
+// tool claimed by plan mode is always announced by it.
+func (p PlanMode) permissions() tool.Permissions {
+	perms := make(tool.Permissions, len(p.Tools)+len(p.Exclusive))
+	for _, name := range p.Tools {
+		perms[name] = true
 	}
-	skillsBlock := skill.Format(skills)
-	// Slash-commands del composer, derivados de las skills (un "/<name>" por skill).
-	commands := command.New(command.FromSkills(skills))
-	// Subagentes: catalogo = built-in (explore read-only, general full) mas los .md
-	// del workspace (.atenea/agents propio, .agents/agents estandar; el propio override
-	// al homonimo). Un fallo de descubrimiento no es fatal: quedan los built-in.
-	agentDefs, err := agent.Catalog(
-		filepath.Join(root, ".atenea", "agents"),
-		filepath.Join(root, ".agents", "agents"),
-	)
-	if err != nil {
-		log.Printf("atenea: no se pudieron descubrir los subagentes: %v", err)
+	for _, name := range p.Exclusive {
+		perms[name] = true
 	}
-	// Registry de los subagentes: las mismas tools de archivo/busqueda/exec, acotadas
-	// por def.Tools de cada agente (un explore read-only solo recibe read/grep/glob).
-	// Sin la tool task: los subagentes no anidan en el wiring real.
-	childRegistry := tool.NewRegistry(tool.NewOutputStore(outputLimit),
-		tool.NewReadToolWithSnapshotProvider(root, cfg.Snaps), tool.NewWriteToolWithSnapshotProvider(root, cfg.Snaps),
-		tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, cfg.Snaps),
-		tool.NewGlobTool(root), tool.NewGrepToolWithSnapshotProvider(root, cfg.Snaps),
-		tool.NewBashTool(root))
-	// A def that names a tool the child registry does not have used to lose it
-	// silently: the name never became a permission and the subagent ran with fewer
-	// tools than its author wrote down. Now it is reported, once, against the
-	// registry that actually bounds a subagent.
-	for _, problem := range agent.Validate(agentDefs, childRegistry) {
-		log.Printf("atenea: %v", problem)
-	}
-	// La tool task levanta subagentes hijos. nextID propio (thread-safe) porque
-	// varios subagentes pueden correr en paralelo (cap de concurrencia interno).
-	taskTool := subagent.NewTaskTool(agentDefs, cfg.Provider, childRegistry, NewIDGen())
-	// Surfacing del permiso del subagente en la UI: decora el store del runner hijo
-	// con ChildPermissionStore sobre el MISMO bus, asi los eventos de permiso del hijo
-	// (Tool.Permission.Requested y su resolucion) se publican en el canal del PADRE
-	// (el que ya escucha el frontend), conservando el SessionID del hijo en el payload.
-	// El frontend muestra Aprobar/Denegar y resuelve con (childID, callID) via el gate
-	// compartido, que ya keyea por ese par. Sin esto el hijo bloquea en gate.Ask pero
-	// la UI nunca ve la solicitud.
-	taskTool.SetStoreDecorator(func(parentSessionID string, inner session.Store) session.Store {
-		return event.NewChildPermissionStore(parentSessionID, inner, cfg.Bus)
-	})
-	// present_plan se registra para que el runner pueda ejecutarla, pero NO entra
-	// en los Permissions normales: solo se anuncia en plan-mode (SetPlanMode).
-	registryTools := []tool.Tool{
-		tool.NewReadToolWithSnapshotProvider(root, cfg.Snaps), tool.NewWriteToolWithSnapshotProvider(root, cfg.Snaps),
-		tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, cfg.Snaps),
-		tool.NewGlobTool(root), tool.NewGrepToolWithSnapshotProvider(root, cfg.Snaps),
-		tool.NewBashTool(root), tool.NewPresentPlanTool(root), tool.NewSkillTool(skills), taskTool,
-		tool.NewWebFetchTool(cfg.Provider), tool.TodoWriteTool{},
-	}
-	registryTools = append(registryTools, cfg.MCPTools...)
-	registry := tool.NewRegistry(tool.NewOutputStore(outputLimit), registryTools...)
-	// The effective ask-before-run policy, derived from the registry instead of
-	// from a list of names kept here: each tool is classified by the effects it
-	// declares about itself (permission.EffectsPolicy), with the user's session
-	// grants layered on top when the caller keeps a store for them. It is built
-	// here, after the registry, because a classification is only as good as the
-	// catalog it reads and that catalog changes with every rewire — an MCP server
-	// that just connected contributes tools this policy has to be able to see.
-	policy := permission.NewGrantedPolicy(permission.NewEffectsPolicy(registry), cfg.Grants, registry)
-	// Security: propagate ask-before-run to the child runner with the SAME gate
-	// and the SAME policy as the main chat. Without this a "general" subagent
-	// would run gated tools (bash, write, edit, web_fetch) without the
-	// confirmation the main chat enforces, evading the gate. The policy reads the
-	// main registry, whose tool names are a superset of the child's, so parent and
-	// child classify the same call identically. The gate is keyed by (sessionID,
-	// callID): the child's sessionID is its childID, so the child's permission
-	// resolution finds it. Session grants are keyed by session too, so a subagent
-	// does not inherit the chat's grants: it asks on its own behalf, and a grant
-	// answered on its prompt covers only that child.
-	taskTool.SetPermissionGate(cfg.Gate, policy)
-	permissions := registry.Permissions()
-	// present_plan is executable by the shared registry but is mode-only: normal
-	// mode must not advertise it. Every ordinary and dynamic MCP tool derives
-	// from the registry above; this is the sole explicit normal-mode exclusion.
-	delete(permissions, "present_plan")
-	r := runner.NewRunner(cfg.Store, cfg.Inbox, cfg.Provider, registry,
-		permissions,
-		cfg.NextID)
-	r.SetCompactor(runner.NewContextCompactor(cfg.Store, cfg.Provider))
-	r.SetSystemPrompt(systemPromptBuilder(root, skillsBlock, cfg.LocalPrompt))
-	r.SetPermissionGate(cfg.Gate, policy)
-	// Plan-mode: investigacion de solo lectura mas present_plan (sin write/edit/bash/
-	// echo). El hook de modo decide por sesion; SetMode/SetPlanMode toman efecto solo
-	// cuando cfg.Mode reporta ModePlan (nil = siempre normal, el default del runner).
-	r.SetMode(cfg.Mode)
-	r.SetPlanMode(planSystemPromptBuilder(root, skillsBlock, cfg.LocalPrompt),
-		tool.Permissions{"read": true, "glob": true, "grep": true, "present_plan": true, "skill": true})
-
-	return Built{Runner: r, Glob: glob, Commands: commands, Tools: registry, Policy: policy}
+	return perms
 }
 
-// skillDirs devuelve los directorios donde se buscan skills: primero los del
-// proyecto (root) y despues los globales (el home del usuario), asi una skill
-// del proyecto pisa a una global homonima (skill.Discover es first-wins). Bajo
-// cada base mira .atenea/skills (propio de atenea), .agents/skills (el estandar
-// tool-agnostic compartido entre agentes) y .claude/skills (Claude Code). Las
-// skills globales viven asi en ~/.agents/skills, ~/.claude/skills, etc. Si no se
-// puede resolver el home, quedan solo las del proyecto. Rutas identicas (p.ej.
-// si el root ES el home) se deduplican para no recorrer el mismo arbol dos veces.
-func skillDirs(root string) []string {
+// DefaultOutputLimit is the cap Build applies when Config leaves OutputLimit at
+// zero. 32 KiB is a few hundred lines of a file or of test output: enough for the
+// model to work from, small enough that one call cannot spend the whole context
+// window.
+const DefaultOutputLimit = 32 * 1024
+
+// DefaultPolicy is the classification Build applies when Config leaves Policy
+// nil: every tool judged by the effects it declares about itself, and a tool that
+// declares nothing asked about rather than assumed harmless. See
+// permission.EffectsPolicy for why silence is gated.
+func DefaultPolicy(catalog tool.Catalog) permission.Policy {
+	return permission.NewEffectsPolicy(catalog)
+}
+
+// DefaultSkillDirs returns the directories skills are discovered in when Config
+// leaves SkillDirs nil: first the project's (root) and then the global ones (the
+// user's home), so a project skill overrides a global one of the same name
+// (skill.Discover is first-wins). Under each base it looks at .atenea/skills
+// (atenea's own), .agents/skills (the tool-agnostic standard shared between
+// agents) and .claude/skills (Claude Code), which is how global skills come to
+// live in ~/.agents/skills, ~/.claude/skills and so on. If the home cannot be
+// resolved only the project's remain. Identical paths (root IS the home, say) are
+// deduplicated so the same tree is not walked twice.
+//
+// The slice is fresh on every call, because extending the defaults is done by
+// appending to it and a shared backing array is how one caller's extension shows
+// up in another's list.
+func DefaultSkillDirs(root string) []string {
 	subdirs := []string{
 		filepath.Join(".atenea", "skills"),
 		filepath.Join(".agents", "skills"),
 		filepath.Join(".claude", "skills"),
 	}
 	bases := []string{root}
-	if home, herr := os.UserHomeDir(); herr != nil {
-		log.Printf("atenea: no se pudo resolver el home para skills globales: %v", herr)
+	if home, err := os.UserHomeDir(); err != nil {
+		log.Printf("atenea: could not resolve the home directory for the global skills: %v", err)
 	} else if home != "" {
 		bases = append(bases, home)
 	}
@@ -238,19 +236,209 @@ func skillDirs(root string) []string {
 	return dirs
 }
 
-// promptSetup ancla en root la preparacion compartida del system prompt:
-// detecta si root es un repo git y carga las instrucciones del repo
-// (AGENTS.md/CLAUDE.md) una sola vez, y devuelve una fabrica de Env por llamada
-// (la fecha se calcula en cada llamada para que no envejezca en una sesion
-// larga) mas las instrucciones cargadas. La reusan el builder normal y el de
-// plan-mode; solo difieren en que funcion pura de prompt llaman (prompt.Build
-// vs prompt.BuildPlan).
+// DefaultAgentDirs returns the directories subagent definitions are discovered in
+// when Config leaves AgentDirs nil: .atenea/agents (atenea's own) then
+// .agents/agents (the standard), under the project root, so the project's own
+// definition overrides the standard one of the same name.
+//
+// The two asymmetries with DefaultSkillDirs are preserved rather than chosen:
+// subagents are not looked for in the home and .claude/agents is not read, while
+// skills do both. The audit reads those as probably bugs and R7 is where the one
+// ordered list both derive from resolves them — promoting a value to a field is
+// not the place to change what it promotes.
+//
+// Fresh slice per call, for the reason DefaultSkillDirs states.
+func DefaultAgentDirs(root string) []string {
+	return []string{
+		filepath.Join(root, ".atenea", "agents"),
+		filepath.Join(root, ".agents", "agents"),
+	}
+}
+
+// DefaultPlanMode is the plan surface Build applies when Config leaves PlanMode
+// nil: read-only investigation (read, glob, grep, skill) plus present_plan, which
+// belongs to plan mode alone. No write, no edit, no bash — a plan is proposed, not
+// carried out.
+//
+// Fresh value per call, for the reason DefaultSkillDirs states.
+func DefaultPlanMode() PlanMode {
+	return PlanMode{
+		Tools:     []string{"read", "glob", "grep", "skill"},
+		Exclusive: []string{"present_plan"},
+	}
+}
+
+// resolve fills in atenea's own answers for the policy fields the caller left
+// alone, on the copy Build works from. It is the only place that reads a zero
+// value as a default, so the behavior documented on each field and the behavior
+// Build applies cannot drift apart.
+func (c Config) resolve() Config {
+	if c.OutputLimit == 0 {
+		c.OutputLimit = DefaultOutputLimit
+	}
+	if c.Policy == nil {
+		c.Policy = DefaultPolicy
+	}
+	if c.SkillDirs == nil {
+		c.SkillDirs = DefaultSkillDirs(c.Root)
+	}
+	if c.AgentDirs == nil {
+		c.AgentDirs = DefaultAgentDirs(c.Root)
+	}
+	if c.PlanMode == nil {
+		plan := DefaultPlanMode()
+		c.PlanMode = &plan
+	}
+	return c
+}
+
+// Built are the mutable pieces the caller publishes after the assembly: the
+// runner ready to run, the glob of the @-menu and the composer's slash-commands.
+type Built struct {
+	Runner   *runner.Runner
+	Glob     *tool.GlobTool
+	Commands *command.Set
+	// Tools is the catalog the UI asks about a tool it only knows by name: what a
+	// finished call may have changed, what granting one would authorize, how one
+	// should be presented. It is the same registry the runner settles against, so
+	// the answers a user sees are the ones the agent acted on. Rebuilt with every
+	// Build, hence published here for the caller to swap alongside the runner.
+	Tools tool.Catalog
+	// Policy is the ask-before-run classification the assembled agent enforces,
+	// derived from Tools and shared by the main runner and the subagents. Published
+	// so what the agent gates stays answerable from outside the assembly instead of
+	// only from a turn.
+	Policy permission.Policy
+}
+
+// Build assembles the whole wiring anchored at cfg.Root: the file and exec tools,
+// the @-menu's glob, the skills and their slash-commands, the subagent catalog
+// and a fresh runner with the system prompt pointing at the root. It mutates no
+// global state: it returns the pieces so the caller performs its own swap.
+func Build(cfg Config) Built {
+	cfg = cfg.resolve()
+	root := cfg.Root
+	// The composer's file @-menu lists the workspace through this glob. It shares
+	// the root with the file tools and reuses the already-tested ripgrep searcher
+	// (honors .gitignore, excludes .git).
+	glob := tool.NewGlobTool(root)
+	// Skills in the opencode style (progressive disclosure): discovered under the
+	// configured directories, the project's and the home's global ones by default
+	// (DefaultSkillDirs). Their metadata goes in the system prompt (skill.Format), the
+	// skill tool loads the body on demand, and each one derives a slash-command. A
+	// discovery failure is not fatal: no skills.
+	skills, err := skill.Discover(cfg.SkillDirs...)
+	if err != nil {
+		log.Printf("atenea: could not discover the skills: %v", err)
+	}
+	skillsBlock := skill.Format(skills)
+	// The composer's slash-commands, derived from the skills (one "/<name>" per skill).
+	commands := command.New(command.FromSkills(skills))
+	// Subagents: the catalog is the built-ins (explore read-only, general full) plus the
+	// .md files under the configured directories (.atenea/agents and the standard
+	// .agents/agents by default, the former overriding a namesake in the latter). A
+	// discovery failure is not fatal: the built-ins remain.
+	agentDefs, err := agent.Catalog(cfg.AgentDirs...)
+	if err != nil {
+		log.Printf("atenea: could not discover the subagents: %v", err)
+	}
+	// The subagents' registry: the same file, search and exec tools, narrowed by each
+	// agent's def.Tools (a read-only explore only gets read/grep/glob). Without the task
+	// tool: subagents do not nest in the real wiring.
+	childRegistry := tool.NewRegistry(tool.NewOutputStore(cfg.OutputLimit),
+		tool.NewReadToolWithSnapshotProvider(root, cfg.Snaps), tool.NewWriteToolWithSnapshotProvider(root, cfg.Snaps),
+		tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, cfg.Snaps),
+		tool.NewGlobTool(root), tool.NewGrepToolWithSnapshotProvider(root, cfg.Snaps),
+		tool.NewBashTool(root))
+	// A def that names a tool the child registry does not have used to lose it
+	// silently: the name never became a permission and the subagent ran with fewer
+	// tools than its author wrote down. Now it is reported, once, against the
+	// registry that actually bounds a subagent.
+	for _, problem := range agent.Validate(agentDefs, childRegistry) {
+		log.Printf("atenea: %v", problem)
+	}
+	// The task tool starts child subagents. Its own nextID (thread-safe) because
+	// several subagents can run in parallel (internal concurrency cap).
+	taskTool := subagent.NewTaskTool(agentDefs, cfg.Provider, childRegistry, NewIDGen())
+	// Surfacing a subagent's permission in the UI: decorate the child runner's store
+	// with ChildPermissionStore over the SAME bus, so the child's permission events
+	// (Tool.Permission.Requested and its resolution) are published on the PARENT's
+	// channel (the one the frontend already listens to), keeping the child's SessionID
+	// in the payload. The frontend shows Approve/Deny and resolves with (childID,
+	// callID) through the shared gate, which already keys by that pair. Without this the
+	// child blocks in gate.Ask but the UI never sees the request.
+	taskTool.SetStoreDecorator(func(parentSessionID string, inner session.Store) session.Store {
+		return event.NewChildPermissionStore(parentSessionID, inner, cfg.Bus)
+	})
+	// present_plan is registered so the runner can execute it, but it does not enter
+	// the normal permission set: cfg.PlanMode claims it, and only plan mode announces
+	// it (SetPlanMode below).
+	registryTools := []tool.Tool{
+		tool.NewReadToolWithSnapshotProvider(root, cfg.Snaps), tool.NewWriteToolWithSnapshotProvider(root, cfg.Snaps),
+		tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, cfg.Snaps),
+		tool.NewGlobTool(root), tool.NewGrepToolWithSnapshotProvider(root, cfg.Snaps),
+		tool.NewBashTool(root), tool.NewPresentPlanTool(root), tool.NewSkillTool(skills), taskTool,
+		tool.NewWebFetchTool(cfg.Provider), tool.TodoWriteTool{},
+	}
+	registryTools = append(registryTools, cfg.MCPTools...)
+	registry := tool.NewRegistry(tool.NewOutputStore(cfg.OutputLimit), registryTools...)
+	// The effective ask-before-run policy: cfg.Policy classifies over this
+	// assembly's registry — by default from what each tool declares about itself
+	// (permission.EffectsPolicy) rather than from a list of names kept here — with
+	// the user's session grants layered on top when the caller keeps a store for
+	// them. It is built here, after the registry, because a classification is only
+	// as good as the catalog it reads and that catalog changes with every rewire —
+	// an MCP server that just connected contributes tools this policy has to be
+	// able to see.
+	policy := permission.NewGrantedPolicy(cfg.Policy(registry), cfg.Grants, registry)
+	// Security: propagate ask-before-run to the child runner with the SAME gate
+	// and the SAME policy as the main chat. Without this a "general" subagent
+	// would run gated tools (bash, write, edit, web_fetch) without the
+	// confirmation the main chat enforces, evading the gate. The policy reads the
+	// main registry, whose tool names are a superset of the child's, so parent and
+	// child classify the same call identically. The gate is keyed by (sessionID,
+	// callID): the child's sessionID is its childID, so the child's permission
+	// resolution finds it. Session grants are keyed by session too, so a subagent
+	// does not inherit the chat's grants: it asks on its own behalf, and a grant
+	// answered on its prompt covers only that child.
+	taskTool.SetPermissionGate(cfg.Gate, policy)
+	permissions := registry.Permissions()
+	// What normal mode announces is what is registered, minus the tools plan mode
+	// claims for itself. Every ordinary and dynamic MCP tool arrives from the
+	// registry above; this is the one explicit exclusion, and it is the same field
+	// that puts those tools in plan mode, so the two cannot disagree.
+	for _, name := range cfg.PlanMode.Exclusive {
+		delete(permissions, name)
+	}
+	r := runner.NewRunner(cfg.Store, cfg.Inbox, cfg.Provider, registry,
+		permissions,
+		cfg.NextID)
+	r.SetCompactor(runner.NewContextCompactor(cfg.Store, cfg.Provider))
+	r.SetSystemPrompt(systemPromptBuilder(root, skillsBlock, cfg.LocalPrompt))
+	r.SetPermissionGate(cfg.Gate, policy)
+	// Plan mode: read-only investigation plus present_plan (no write/edit/bash). The
+	// mode hook decides per session; SetMode/SetPlanMode only take effect when
+	// cfg.Mode reports ModePlan (nil = always normal, the runner's default).
+	r.SetMode(cfg.Mode)
+	r.SetPlanMode(planSystemPromptBuilder(root, skillsBlock, cfg.LocalPrompt),
+		cfg.PlanMode.permissions())
+
+	return Built{Runner: r, Glob: glob, Commands: commands, Tools: registry, Policy: policy}
+}
+
+// promptSetup anchors at root the shared preparation of the system prompt: it
+// detects whether root is a git repo and loads the repo instructions
+// (AGENTS.md/CLAUDE.md) exactly once, then returns a factory of Env per call (the
+// date is computed on every call so it does not go stale in a long session) plus
+// the loaded instructions. The normal builder and the plan-mode one reuse it; they
+// differ only in which pure prompt function they call (prompt.Build vs
+// prompt.BuildPlan).
 func promptSetup(root string) (env func() prompt.Env, instructions string) {
 	_, gitErr := os.Stat(filepath.Join(root, ".git"))
 	isGit := gitErr == nil
 	instructions, err := prompt.LoadInstructions(root, root)
 	if err != nil {
-		log.Printf("atenea: no se pudieron cargar las instrucciones del repo: %v", err)
+		log.Printf("atenea: could not load the repo instructions: %v", err)
 	}
 	env = func() prompt.Env {
 		return prompt.Env{
@@ -264,12 +452,12 @@ func promptSetup(root string) (env func() prompt.Env, instructions string) {
 	return env, instructions
 }
 
-// systemPromptBuilder arma el builder del system prompt de modo normal anclado
-// a root: por turno compone el prompt base + el bloque <env> con la fecha del
-// dia + el bloque de skills (descubiertas una vez en el ensamblado y pasadas ya
-// formateadas), sobre el promptSetup compartido. El base sale del prompt local
-// (protocolo de function-calling) cuando local lo reporta en ese turno (LM
-// Studio, Ollama); si no, se elige por familia de modelo.
+// systemPromptBuilder builds the normal-mode system prompt builder anchored at
+// root: per turn it composes the base prompt + the <env> block with the day's date
+// + the skills block (discovered once during the assembly and passed in already
+// formatted), over the shared promptSetup. The base comes from the local prompt
+// (function-calling protocol) when local reports so on that turn (LM Studio,
+// Ollama); otherwise it is chosen by model family.
 func systemPromptBuilder(root, skills string, local func() bool) func(model string) string {
 	env, instructions := promptSetup(root)
 	return func(model string) string {
@@ -280,10 +468,10 @@ func systemPromptBuilder(root, skills string, local func() bool) func(model stri
 	}
 }
 
-// planSystemPromptBuilder arma el builder del system prompt de plan-mode: misma
-// forma que systemPromptBuilder pero agrega el contrato de plan-mode
-// (present_plan) sobre el prompt base, via BuildLocalPlan con local o BuildPlan
-// si no.
+// planSystemPromptBuilder builds the plan-mode system prompt builder: the same
+// shape as systemPromptBuilder, but adding the plan-mode contract (present_plan)
+// on top of the base prompt, through BuildLocalPlan with local or BuildPlan
+// without it.
 func planSystemPromptBuilder(root, skills string, local func() bool) func(model string) string {
 	env, instructions := promptSetup(root)
 	return func(model string) string {
@@ -294,9 +482,10 @@ func planSystemPromptBuilder(root, skills string, local func() bool) func(model 
 	}
 }
 
-// NewIDGen devuelve un generador de assistantMessageID real: un contador atomico
-// con prefijo, unico por proceso (suficiente con MemoryStore, que se reinicia con
-// la app). Un ID estable entre reinicios llega con el store persistente de M10.
+// NewIDGen returns a real generator of assistantMessageIDs: an atomic counter
+// with a prefix. The counter starts over with the process, so an id is unique
+// within a run rather than across runs. It is injected rather than fixed here so
+// tests can stay deterministic.
 func NewIDGen() func() string {
 	var n uint64
 	return func() string {

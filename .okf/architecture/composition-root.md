@@ -1,11 +1,11 @@
 ---
 updated_at: 2026-07-26
-summary: The two-layer composition root — internal/host assembles what both entrypoints share (dotenv, root, store, provider service, sitting) and internal/wiring.Build assembles what a workspace change rebuilds.
+summary: The two-layer composition root — internal/host assembles what both entrypoints share (dotenv, root, store, provider service, sitting), internal/wiring.Build assembles what a workspace change rebuilds, and wiring.Config's policy half is what an embedder varies there.
 ---
 
 # Composition root
 
-> Status: implemented 2026-07-26 (audit recommendation R4.1).
+> Status: implemented 2026-07-26 (audit recommendations R4.1 and R4.2).
 > See the [agnosticism and extensibility audit](../audits/2026-07-24-agnostic-extensibility-audit.md) §3.7 and §4 R4.
 
 atenea composes an agent in two layers, and the split is by lifetime:
@@ -140,6 +140,89 @@ does not have. `permission.NewGrantedPolicy(base, nil, …)` returns the base po
 untouched, which is the honest description of what that UI can do today. The day
 the frontend grows the third button, it is one line.
 
+## What the inner root exposes
+
+`wiring.Config` has two halves. The first is the dependencies — the root, the
+provider, the store and the members of the sitting — which every caller passes and
+none of which has a useful default. The second is the *policy of the assembly*, and
+until R4.2 it was not a caller's business at all: five values written into
+`wiring.go` as constants and inline literals.
+
+| Field | Zero value | Why the zero value is that |
+|---|---|---|
+| `OutputLimit int` | `DefaultOutputLimit` (32 KiB) | `tool.OutputStore` reads a zero as *no* cap, so passing zero through would give a caller who said nothing an uncapped tool output in the model's context. Saying "no cap" out loud is a negative value. |
+| `Policy func(tool.Catalog) permission.Policy` | `DefaultPolicy` — `permission.EffectsPolicy` | A classification is only as good as the catalog it reads, and that catalog is rebuilt by every `Build`. |
+| `SkillDirs []string` | `DefaultSkillDirs(Root)` | The default is derived from `Root`, which only `Build` knows. |
+| `AgentDirs []string` | `DefaultAgentDirs(Root)` | Same. |
+| `PlanMode *PlanMode` | `DefaultPlanMode()` | Plan mode's tool set is a product decision about what investigation means, not something derivable from what a tool declares. |
+
+Both hosts leave all five at zero, and that is the intended steady state rather
+than an omission: every default is derived from the root or from the registry of
+the moment, so spelling them out at the two call sites would put two copies of the
+same list where R4.1 had just finished removing them. `Default*` is exported so an
+embedder can *extend* a default rather than restate it (`append(wiring.DefaultSkillDirs(root), mine)`),
+and each returns a fresh value per call so one caller's append cannot show up in
+another's list — the rule `providerconfig.DefaultCatalog` already follows.
+
+### `Policy` is a function of the catalog, not a policy
+
+The field cannot be a `permission.Policy` the caller builds once. `Build` builds
+the policy *after* the registry on purpose: an MCP server that just connected
+contributes tools the classification has to be able to see, so a value constructed
+before `Build` could only ever answer for the previous assembly's tools. A factory
+over `tool.Catalog` is the smallest shape that still gets to see the registry of
+the moment.
+
+It returns the *base* classification, and `Build` layers `Grants` over whatever
+comes back. That keeps the two fields from overlapping: a caller's own
+classification inherits "allow for the rest of the session" without knowing the
+grant store exists, and there is exactly one place in the tree that can apply a
+grant, so nothing can apply it twice or disagree about the order.
+
+### `PlanMode` is one field because it is one decision
+
+```go
+type PlanMode struct {
+    Tools     []string // announced in plan mode
+    Exclusive []string // announced in plan mode, hidden from normal mode
+}
+```
+
+Plan mode's tool set and the normal-mode exclusion of `present_plan` were two
+literals, and the audit lists them as two fields. They are one decision seen from
+two sides: `present_plan` is registered so plan mode can execute it and hidden from
+normal mode so the model is not invited to present a plan nobody asked for. As two
+fields they could contradict each other — a tool excluded from normal mode but
+missing from the plan set would be registered, executable, and announced nowhere —
+and a configuration that can be put into an incoherent state is worse than the
+constant it replaced. Here that state does not exist: plan mode announces
+`Tools ∪ Exclusive`, normal mode announces everything registered minus `Exclusive`.
+
+This also keeps registration the source of truth for normal mode, which
+[the loop doc](agent-loop.md) states as a rule: every ordinary tool and every tool
+an MCP server contributes reaches normal mode by being registered, and `Exclusive`
+is the single declared deviation.
+
+### The defaults live in `wiring`, not in `host`
+
+Tempting, given R4.1, and wrong. `internal/host` does not construct a
+`wiring.Config` — the two managers do, because the build is rooted at the
+workspace — so defaults owned by the host would have to be either restated at both
+call sites or reached by giving the host a hand in a build it deliberately does not
+own. Worse, they would only apply to callers who went through the host: the
+headless entrypoint of R4.3 that assembled a `wiring.Config` directly would get no
+output cap and no skills. A zero value is only a contract if the function that
+reads it enforces it, so `Build` enforces it, in one `Config.resolve`.
+
+### The two discovery asymmetries were preserved, not chosen
+
+`DefaultSkillDirs` searches the project **and** `$HOME` and honors `.claude/`;
+`DefaultAgentDirs` searches the project only and does not. The audit reads both as
+probably bugs, and R7 is where the one ordered list they should both derive from
+resolves them. Promoting a literal to a field is not the place to change what it
+promotes, so the defaults are byte-for-byte what the literals were, with a test on
+each that will make the R7 change visible instead of silent.
+
 ## The offline demo provider
 
 `host.OfflineProviderID` and the snapshot behind it live here now, in one copy.
@@ -177,7 +260,7 @@ where discovery scans, another asserts `~/.atenea` is never created unless asked
 
 - **The terminal app has the built-in skills.** They are extracted into
   `~/.atenea/skills` at launch, which is one of the global directories
-  `wiring.skillDirs` already scans, so an extracted skill is discovered exactly
+  `wiring.DefaultSkillDirs` already scans, so an extracted skill is discovered exactly
   like one the user wrote and contributes its own slash command. Extraction never
   overwrites an existing file, so it is idempotent and local edits survive.
 - **The demo greeting is English** (`Hello from atenea.`), which is what moving

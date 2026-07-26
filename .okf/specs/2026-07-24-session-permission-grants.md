@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-24
+updated_at: 2026-07-26
 summary: Design specification for session-scoped permission grants ("allow this for the rest of the session") in the TUI, covering the bash command-prefix rule, whole-tool grants for write and edit, and the third action of the permission panel.
 ---
 
@@ -30,8 +30,11 @@ belongs.
   session asks again: a grant never outlives the sitting that justified it and
   there is nothing on disk to audit later. The store is keyed by session id, so
   one session's grants cannot answer for another — and the store is owned by
-  the caller (`wiring.Config.Grants`, built by `wiring.NewSessionGrants`) so a
-  rewire (MCP connect, workspace change) does not drop them mid-session.
+  the caller (`wiring.Config.Grants`, built once by `host.NewSitting`) so a
+  rewire (MCP connect, workspace change) does not drop them mid-session. The
+  policy the grants decorate is `wiring.Config.Policy`, and `Build` is the one
+  place that layers the two, so a host that installs its own classification still
+  gets grants and cannot apply them twice.
 - **Subagents ask on their own behalf.** A subagent runs under its own child
   session id, so the chat's grants do not cover it and a grant answered on a
   subagent's prompt covers only that child. The alternative — inheriting the
