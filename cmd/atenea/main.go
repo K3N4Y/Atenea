@@ -26,31 +26,6 @@ import (
 	"github.com/K3N4Y/atenea/internal/tui/engine"
 )
 
-const (
-	// openRouterBaseURL es el gateway OpenAI-compatible por defecto, el mismo
-	// que usa la app Wails.
-	openRouterBaseURL = "https://openrouter.ai/api/v1"
-	// defaultModel es el modelo por defecto en OpenRouter; override por OPENROUTER_MODEL.
-	defaultModel = "openrouter/free"
-
-	// openAIBaseURL is the official OpenAI API. It reuses the same OpenAI
-	// adapter as OpenRouter, but it is its own wire format
-	// (providerconfig.OpenAI): it answers to prompt_cache_key and rejects
-	// OpenRouter's top-level `reasoning`, so the dialect — not the base URL —
-	// is what the registry keys on.
-	openAIBaseURL = "https://api.openai.com/v1"
-	// openAIDefaultModel es el modelo por defecto de OpenAI; override por OPENAI_MODEL.
-	openAIDefaultModel = "gpt-5.6-terra"
-
-	openCodeZenBaseURL = "https://opencode.ai/zen/v1"
-	openCodeGoBaseURL  = "https://opencode.ai/zen/go/v1"
-	anthropicBaseURL   = "https://api.anthropic.com"
-	// Anthropic recommends Opus 4.8 as the starting point for complex agentic
-	// coding. Keep the moving alias intentionally so the built-in default tracks
-	// compatible model improvements; ANTHROPIC_MODEL can pin a snapshot.
-	anthropicModel = "claude-opus-4-8"
-)
-
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "--version" {
 		fmt.Fprintln(os.Stdout, versionString())
@@ -167,80 +142,21 @@ func displayDir(root string) string {
 	return root
 }
 
-// providerFromEnv elige el provider por entorno, en orden de precedencia:
-// OpenRouter si hay OPENROUTER_API_KEY (modelo por OPENROUTER_MODEL), luego OpenAI,
-// luego Anthropic (modelo por ANTHROPIC_MODEL), y si no el demo sin red para probar
-// la TUI sin configurar nada. Devuelve ademas la etiqueta del modelo para el pie
-// del composer: "demo" con el provider fake, o el modelo real elegido.
-func providerFromEnv() (llm.Provider, string) {
-	snapshot := environmentFallbackSnapshot()
-	return snapshot.Provider, snapshot.Model
-}
-
+// environmentFallbackSnapshot is what the TUI chats with before any provider
+// selection exists: the first provider of the built-in catalog whose API-key
+// variable is set, and otherwise the offline demo so the TUI can be driven
+// without configuring anything.
 func environmentFallbackSnapshot() llm.ProviderSnapshot {
-	if key := os.Getenv("OPENROUTER_API_KEY"); key != "" {
-		model := os.Getenv("OPENROUTER_MODEL")
-		if model == "" {
-			model = defaultModel
-		}
-		return llm.ProviderSnapshot{ProviderID: "openrouter", ProviderName: "OpenRouter", BaseURL: openRouterBaseURL, Model: model, Provider: llm.NewOpenAIProvider(key, openRouterBaseURL, model, llm.WithOpenRouterCompatibility())}
+	if snapshot, ok := providerconfig.EnvironmentFallback(providerconfig.DefaultCatalog(), os.Getenv, nil); ok {
+		return snapshot
 	}
-	// OpenAI no entiende el campo `reasoning` de OpenRouter: se apaga con
-	// WithoutOpenRouterReasoning para no mandar una extension que rechazaria.
-	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
-		model := os.Getenv("OPENAI_MODEL")
-		if model == "" {
-			model = openAIDefaultModel
-		}
-		return llm.ProviderSnapshot{ProviderID: "openai", ProviderName: "OpenAI", BaseURL: openAIBaseURL, Model: model, Provider: llm.NewOpenAIProvider(key, openAIBaseURL, model, llm.WithOpenAICompatibility())}
-	}
-	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
-		model := os.Getenv("ANTHROPIC_MODEL")
-		if model == "" {
-			model = anthropicModel
-		}
-		return llm.ProviderSnapshot{ProviderID: "anthropic", ProviderName: "Anthropic", BaseURL: anthropicBaseURL, Model: model, Provider: llm.NewAnthropicProvider(key, anthropicBaseURL, model)}
-	}
-	log.Print("atenea: sin OPENROUTER_API_KEY, OPENAI_API_KEY ni ANTHROPIC_API_KEY; usando provider de demo (sin red)")
+	log.Print("atenea: no provider API key in the environment; using the offline demo provider")
 	return llm.ProviderSnapshot{ProviderID: "demo", ProviderName: "Demo", BaseURL: "demo://local", Model: "demo", Provider: demoProvider()}
 }
 
 func openProviderService() (*providerconfig.Service, error) {
 	credentials := providerconfig.NewFileCredentialStore(providerconfig.DefaultCredentialsPath())
-	return providerconfig.Open(providerconfig.DefaultPath(), providerconfig.DefaultCachePath(), environmentFallbackSnapshot(), os.Getenv, nil, nil, nil, credentials, defaultProviderConfig())
-}
-
-func defaultProviderConfig() providerconfig.Config {
-	return providerconfig.Config{Providers: []providerconfig.Provider{
-		{
-			ID: "anthropic", Name: "Anthropic", Type: providerconfig.Anthropic,
-			BaseURL: anthropicBaseURL, APIKeyEnv: "ANTHROPIC_API_KEY", DisableModelDiscovery: true,
-			Models: []string{anthropicModel, "claude-fable-5", "claude-sonnet-5", "claude-haiku-4-5"},
-		},
-		{
-			ID: "openrouter", Name: "OpenRouter", Type: providerconfig.OpenRouter,
-			BaseURL: openRouterBaseURL, APIKeyEnv: "OPENROUTER_API_KEY", OpenRouterReasoning: true,
-			// The first curated model doubles as the default /connect activates
-			// when nothing is selected yet; openrouter/free routes to a free
-			// model so a fresh connection always works.
-			Models: []string{defaultModel, "tencent/hy3:free", "poolside/laguna-xs-2.1:free", "cohere/north-mini-code:free"},
-		},
-		{
-			ID: "openai", Name: "OpenAI", Type: providerconfig.OpenAI,
-			BaseURL: openAIBaseURL, APIKeyEnv: "OPENAI_API_KEY", DisableModelDiscovery: true,
-			Models: []string{"gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"},
-		},
-		{
-			ID: "opencode", Name: "OpenCode Zen", Type: providerconfig.OpenAICompatible,
-			BaseURL: openCodeZenBaseURL, APIKeyEnv: "OPENCODE_API_KEY", DisableModelDiscovery: true,
-			Models: []string{"kimi-k2.7-code", "big-pickle", "deepseek-v4-flash-free", "mimo-v2.5-free", "laguna-s-2.1-free", "north-mini-code-free", "nemotron-3-ultra-free", "grok-4.5", "grok-build-0.1", "deepseek-v4-pro", "deepseek-v4-flash", "minimax-m3", "minimax-m2.7", "minimax-m2.5", "glm-5.2", "glm-5.1", "glm-5", "kimi-k2.6", "kimi-k2.5"},
-		},
-		{
-			ID: "opencode-go", Name: "OpenCode Go", Type: providerconfig.OpenAICompatible,
-			BaseURL: openCodeGoBaseURL, APIKeyEnv: "OPENCODE_API_KEY", DisableModelDiscovery: true,
-			Models: []string{"kimi-k2.7-code", "grok-4.5", "glm-5.2", "glm-5.1", "kimi-k3", "kimi-k2.6", "deepseek-v4-pro", "deepseek-v4-flash", "mimo-v2.5", "mimo-v2.5-pro", "hy3"},
-		},
-	}}
+	return providerconfig.Open(providerconfig.DefaultPath(), providerconfig.DefaultCachePath(), environmentFallbackSnapshot(), os.Getenv, nil, nil, nil, credentials, providerconfig.DefaultCatalog())
 }
 
 // demoProvider arma un FakeProvider con un guion corto (texto + Step.Ended) para

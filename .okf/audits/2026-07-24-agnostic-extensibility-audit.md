@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-25
+updated_at: 2026-07-26
 summary: Audit of how agnostic atenea's seams are, and what to change to enable third-party integrations, contributions, and a plugin system.
 ---
 
@@ -54,7 +54,7 @@ of them delete code.
 | Permission policy | **Good** — derived from what each tool declares, not from a name list; decorated by session grants (R2) | `internal/permission/policy.go`, `internal/wiring/wiring.go` |
 | Tool interface | **Good** — 4-method contract plus optional capabilities for effects, grants and presentation (R2) | `agentcore/tool`, `agentcore/permission/grantable.go` |
 | Tool registration | **Partial** — fixed constructor list; `cfg.MCPTools` is the only open slot | `wiring.go:138-142,167-175` |
-| LLM `Provider` | **Good** — neutral domain model, an open factory registry (R3.1) and an optional capability declaration the host derives windows and reserves from (R3.2) | `agentcore/llm/capabilities.go`, `internal/providerconfig/registry.go` |
+| LLM `Provider` | **Good** — neutral domain model, an open factory registry (R3.1), an optional capability declaration the host derives windows and reserves from (R3.2), and a shipped catalog that is embedded data rather than code (R3.3) | `agentcore/llm/capabilities.go`, `internal/providerconfig/registry.go`, `internal/providerconfig/providers.default.json` |
 | Provider identity | **Good** — the declared type is the wire format, resolved through a registry that builds *and* describes it; a provider's id decides nothing (R3.1, R3.2) | `internal/providerconfig/registry.go` |
 | Event taxonomy | **Weak** — open string set, two hand-maintained non-exhaustive switches that already disagree | `internal/tui/transcript.go:59-151`, `frontend/src/features/chat/chat.ts:215-341` |
 | Event payload evolution | **Weak** — no version, 4 hand-synced sites per new field | `internal/session/sqlitestore.go:22-57,134-149,279-369,510-601` |
@@ -109,10 +109,12 @@ The wiring around it is closed:
   the provider's *id*, so the dialect became the type (`openai`, `openrouter`,
   `openai-compatible`) and identity now decides nothing about request shape. See
   [Provider registry](../architecture/provider-registry.md).
-- **Model catalog hardcoded in a `main` package.**
-  `cmd/atenea/main.go:212-243` holds 5 providers with literal base URLs, env-var
-  names and model-ID lists; `cmd/atenea/main.go:29-51` holds the constants.
-  Adding a model is a code change in an unimportable package.
+- ~~**Model catalog hardcoded in a `main` package.**~~ `[done 2026-07-26]` R3.3
+  moved it into an embedded `providers.default.json` owned by `providerconfig`,
+  with the same shape and the same validation as a user's file. The six constants
+  went with it, and so did the second copy of three of them that fed the
+  environment fallback — that fallback is now derived from the catalog, so catalog
+  order is precedence order. See [Provider catalog](../architecture/provider-catalog.md).
 - ~~**Context windows hardcoded.**~~ `[done 2026-07-25]` R3.2 deleted the map.
   Windows are declared per wire format by the adapter that speaks it, so a model
   id is only resolved inside the dialect that names it, and an adapter registered
@@ -150,7 +152,8 @@ Cost to add one new wire format when this was written: **7 files**, two of them
 `connect.go`, `cmd/atenea/main.go`, plus `wailsprovider` for parity). After R3.1
 it is one factory plus one registry entry — and for anything OpenAI-shaped, a
 closure over existing options rather than an adapter. The remaining files on that
-list were R3.2 (`context.go`, now deleted), R3.3 (`cmd/atenea/main.go`) and R3.4
+list were R3.2 (`context.go`, now deleted), R3.3 (`cmd/atenea/main.go`, whose
+catalog is now embedded JSON in `providerconfig`) and R3.4
 (`wailsprovider`).
 
 ### 3.3 Tools cannot describe themselves, so core describes them by name
@@ -558,7 +561,7 @@ Effect: files touched to add a fully first-class tool drops from ~11 to **3**
    rather than a second method on `Provider`, resolved through one
    `CapabilitiesOf` that returns `(value, answered)`: the same idiom R2 used for
    tools, and for the same reason. Documented in
-   [Provider capabilities](provider-capabilities.md). Five decisions worth
+   [Provider capabilities](../architecture/provider-capabilities.md). Five decisions worth
    recording:
    - **The full field list shipped, including six nothing reads yet.** R2's rule
      — a flag exists only where the host has a distinct reaction — would have cut
@@ -590,6 +593,37 @@ Effect: files touched to add a fully first-class tool drops from ~11 to **3**
    embedded `providers.default.json` owned by `providerconfig`. Adding a provider
    or model becomes a data change, reviewable by anyone, and stops living in an
    unimportable `main` package.
+   `[done 2026-07-26]` — the file has the same shape as a user's `providers.json`
+   and is decoded by the same `decodeConfig`, so the shipped default is one
+   instance of the published format rather than a privileged one. Documented in
+   [Provider catalog](../architecture/provider-catalog.md). Four decisions worth
+   recording:
+   - **The environment fallback came along, because leaving it would have kept the
+     duplication R3.3 exists to remove.** `environmentFallbackSnapshot` held a
+     second copy of three base URLs and three default models, plus its own
+     `llm.NewOpenAIProvider` calls with hand-picked options — a fourth place
+     deciding request shape after R3.1 had reduced that to one. It is now
+     `EnvironmentFallback(cfg, getenv, registry)`: walk the catalog, take the first
+     provider whose key is set, build through the registry.
+   - **That made catalog order the precedence order, and changed an answer.** The
+     old chain preferred OpenRouter, then OpenAI, then Anthropic; the catalog leads
+     with Anthropic, which is what the picker already presented as the default.
+     `OPENCODE_API_KEY` now resolves too, instead of dropping a user who holds a
+     valid credential into the offline demo.
+   - **The model override became a declared `model_env` field, not string surgery
+     on `api_key_env`.** Trimming `_API_KEY` and appending `_MODEL` happens to work
+     for the three providers that shipped, and breaks for the first gateway named
+     by another convention. A field is also discoverable; a naming rule inside a
+     loop is not.
+   - **`DefaultCatalog()` panics on a malformed file and returns a fresh `Config`
+     per call.** Panic because an embedded asset that does not parse is a build
+     defect, caught by this package's own test before any binary ships; fresh
+     because callers normalize and merge in place, and a shared backing array is
+     the failure mode `DefaultRegistry()` already avoids.
+   One flakiness hole opened and was closed on the way: the PTY tests blanked three
+   key variables by name, so making `OPENCODE_API_KEY` selectable would have made
+   them depend on the developer's shell. They now derive the list from the catalog,
+   which closes it for the next provider added too.
 4. **Delete `internal/wailsprovider`**; make the desktop app consume
    `providerconfig`. This removes a whole duplicated provider model, its second
    `OPENROUTER_API_KEY` lookup and its second set of URL/model constants.
@@ -788,8 +822,8 @@ right shape. Consolidate the plumbing:
 
 **Phase 1 — agnostic core (weeks).** R2 tool capability interfaces and removal of
 the six name-keyed switches (landed 2026-07-24). R3 provider registry and
-capabilities (both landed 2026-07-25) + data-driven catalog + delete
-`wailsprovider`.
+capabilities (both landed 2026-07-25) + data-driven catalog (landed
+2026-07-26) + delete `wailsprovider`.
 *Outcome: tools and providers become additive instead of invasive; the extension
 security default flips to ask.*
 

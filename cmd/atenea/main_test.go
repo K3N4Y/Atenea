@@ -20,27 +20,83 @@ import (
 	"github.com/K3N4Y/atenea/internal/providerconfig"
 )
 
-func TestEnvironmentFallbackSnapshot_UsesCurrentOpenAIDefault(t *testing.T) {
-	t.Setenv("OPENROUTER_API_KEY", "")
-	t.Setenv("OPENAI_API_KEY", "openai-key")
-	t.Setenv("ANTHROPIC_API_KEY", "")
-	t.Setenv("OPENAI_MODEL", "")
+// providerKeyEnvNames is every API-key variable the built-in catalog reads.
+// Deriving the list keeps a newly shipped provider from silently making these
+// tests depend on whatever the developer happens to have exported.
+func providerKeyEnvNames() []string {
+	seen := map[string]struct{}{}
+	names := make([]string, 0, 4)
+	for _, provider := range providerconfig.DefaultCatalog().Providers {
+		if provider.APIKeyEnv == "" {
+			continue
+		}
+		if _, ok := seen[provider.APIKeyEnv]; ok {
+			continue
+		}
+		seen[provider.APIKeyEnv] = struct{}{}
+		names = append(names, provider.APIKeyEnv)
+	}
+	return names
+}
 
-	got := environmentFallbackSnapshot()
-	if got.ProviderID != "openai" || got.Model != "gpt-5.6-terra" {
-		t.Fatalf("fallback = %#v, want OpenAI gpt-5.6-terra", got)
+// blankProviderKeys renders those variables as empty assignments for a child
+// process, so a launched binary lands on the demo provider instead of on a real
+// gateway the developer's shell had configured.
+func blankProviderKeys() []string {
+	names := providerKeyEnvNames()
+	assignments := make([]string, 0, len(names))
+	for _, name := range names {
+		assignments = append(assignments, name+"=")
+	}
+	return assignments
+}
+
+// The TUI's fallback is the built-in catalog read through the environment: what
+// this pins is the wiring (which key selects which provider, on that provider's
+// curated default), not the catalog data, which providerconfig owns and tests.
+func TestEnvironmentFallbackSnapshot_SelectsTheKeyedCatalogProvider(t *testing.T) {
+	catalog := providerconfig.DefaultCatalog()
+	wantModel := func(id string) string {
+		for _, provider := range catalog.Providers {
+			if provider.ID == id {
+				return provider.Models[0]
+			}
+		}
+		t.Fatalf("the default catalog no longer declares %q", id)
+		return ""
+	}
+
+	for _, tc := range []struct {
+		name string
+		key  string
+		want string
+	}{
+		{"OpenAI", "OPENAI_API_KEY", "openai"},
+		{"Anthropic", "ANTHROPIC_API_KEY", "anthropic"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, name := range append(providerKeyEnvNames(), "OPENAI_MODEL", "ANTHROPIC_MODEL") {
+				t.Setenv(name, "")
+			}
+			t.Setenv(tc.key, "test-key")
+
+			got := environmentFallbackSnapshot()
+			if got.ProviderID != tc.want || got.Model != wantModel(tc.want) {
+				t.Fatalf("fallback = %#v, want %s on %s", got, tc.want, wantModel(tc.want))
+			}
+		})
 	}
 }
 
-func TestEnvironmentFallbackSnapshot_UsesAnthropicSDKProvider(t *testing.T) {
-	t.Setenv("OPENROUTER_API_KEY", "")
-	t.Setenv("OPENAI_API_KEY", "")
-	t.Setenv("ANTHROPIC_API_KEY", "anthropic-key")
-	t.Setenv("ANTHROPIC_MODEL", "")
-
+// With no key anywhere the TUI still has to be usable, so the fallback is the
+// offline demo rather than a provider that cannot reach the network.
+func TestEnvironmentFallbackSnapshot_FallsBackToTheOfflineDemo(t *testing.T) {
+	for _, name := range providerKeyEnvNames() {
+		t.Setenv(name, "")
+	}
 	got := environmentFallbackSnapshot()
-	if got.ProviderID != "anthropic" || got.Model != anthropicModel || got.BaseURL != anthropicBaseURL {
-		t.Fatalf("fallback = %#v, want Anthropic %s", got, anthropicModel)
+	if got.ProviderID != "demo" || got.Provider == nil {
+		t.Fatalf("fallback = %#v, want the offline demo provider", got)
 	}
 }
 
@@ -70,92 +126,6 @@ func TestAteneaVersion_PrintsReleaseMetadataAndExits(t *testing.T) {
 	want := "atenea v1.2.3 (commit abc1234, built 2026-07-21T12:00:00Z)\n"
 	if string(output) != want {
 		t.Fatalf("atenea --version = %q, want %q", output, want)
-	}
-}
-
-func TestDefaultProviderConfig_IncludesAnthropicOpenCodeZenAndGo(t *testing.T) {
-	cfg := defaultProviderConfig()
-	if len(cfg.Providers) != 5 {
-		t.Fatalf("providers = %#v, want Anthropic, OpenRouter, OpenAI, OpenCode Zen, and OpenCode Go", cfg.Providers)
-	}
-	anthropic := cfg.Providers[0]
-	if anthropic.ID != "anthropic" || anthropic.Type != "anthropic" || anthropic.APIKeyEnv != "ANTHROPIC_API_KEY" || !anthropic.DisableModelDiscovery || len(anthropic.Models) == 0 {
-		t.Fatalf("Anthropic = %#v, want native provider with a curated default catalog", anthropic)
-	}
-	wantAnthropic := []string{"claude-opus-4-8", "claude-fable-5", "claude-sonnet-5", "claude-haiku-4-5"}
-	if anthropicModel != wantAnthropic[0] {
-		t.Fatalf("Anthropic default = %q, want coding-agent default %q", anthropicModel, wantAnthropic[0])
-	}
-	if strings.Join(anthropic.Models, ",") != strings.Join(wantAnthropic, ",") {
-		t.Fatalf("Anthropic models = %#v, want current curated catalog %#v", anthropic.Models, wantAnthropic)
-	}
-	openAI := cfg.Providers[2]
-	want := []string{"gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"}
-	if !openAI.DisableModelDiscovery {
-		t.Fatal("OpenAI model discovery must stay disabled because GET /models includes incompatible model types")
-	}
-	if strings.Join(openAI.Models, ",") != strings.Join(want, ",") {
-		t.Fatalf("OpenAI models = %#v, want %#v", openAI.Models, want)
-	}
-
-	zen, goPlan := cfg.Providers[3], cfg.Providers[4]
-	if zen.ID != "opencode" || zen.BaseURL != "https://opencode.ai/zen/v1" || !zen.DisableModelDiscovery {
-		t.Fatalf("OpenCode Zen = %#v, want fixed compatible catalog at the Zen endpoint", zen)
-	}
-	if goPlan.ID != "opencode-go" || goPlan.BaseURL != "https://opencode.ai/zen/go/v1" || !goPlan.DisableModelDiscovery {
-		t.Fatalf("OpenCode Go = %#v, want fixed compatible catalog at the Go endpoint", goPlan)
-	}
-	if len(zen.Models) == 0 || len(goPlan.Models) == 0 {
-		t.Fatal("OpenCode providers need a compatible default model for /connect")
-	}
-}
-
-// TestDefaultProviderConfig_DeclaresBuildableWireFormats: a type that is not
-// registered no longer fails at config load, so a typo here would ship silently
-// and only surface when a user selects that provider.
-func TestDefaultProviderConfig_DeclaresBuildableWireFormats(t *testing.T) {
-	registry := providerconfig.DefaultRegistry()
-	want := map[string]string{
-		"anthropic":   providerconfig.Anthropic,
-		"openrouter":  providerconfig.OpenRouter,
-		"openai":      providerconfig.OpenAI,
-		"opencode":    providerconfig.OpenAICompatible,
-		"opencode-go": providerconfig.OpenAICompatible,
-	}
-	for _, provider := range defaultProviderConfig().Providers {
-		if _, ok := registry[provider.Type]; !ok {
-			t.Fatalf("provider %q declares type %q, which the default registry cannot build", provider.ID, provider.Type)
-		}
-		if got := provider.Type; got != want[provider.ID] {
-			t.Fatalf("provider %q type = %q, want %q", provider.ID, got, want[provider.ID])
-		}
-		if _, ok := registry.Describe(provider); !ok {
-			t.Fatalf("provider %q declares type %q, which the default registry cannot describe: every context label it shows would be an em dash", provider.ID, provider.Type)
-		}
-	}
-}
-
-// TestDefaultProviderConfig_CuratedModelsKeepTheirContextWindows: the models the
-// picker offers out of the box are the ones a user meets first, and a window that
-// silently stops being declared costs both the label and preventive compaction.
-func TestDefaultProviderConfig_CuratedModelsKeepTheirContextWindows(t *testing.T) {
-	registry := providerconfig.DefaultRegistry()
-	want := map[string]map[string]int{
-		"anthropic": {"claude-opus-4-8": 200_000, "claude-fable-5": 200_000, "claude-sonnet-5": 200_000, "claude-haiku-4-5": 200_000},
-		"openai":    {"gpt-5.6-terra": 1_050_000, "gpt-4o": 128_000},
-		"openrouter": {
-			"tencent/hy3:free":            262_144,
-			"poolside/laguna-xs-2.1:free": 262_144,
-			"cohere/north-mini-code:free": 256_000,
-		},
-	}
-	for _, provider := range defaultProviderConfig().Providers {
-		capabilities, _ := registry.Describe(provider)
-		for model, wantWindow := range want[provider.ID] {
-			if got, ok := capabilities.ContextWindow(model); !ok || got != wantWindow {
-				t.Errorf("%s/%s window = (%d, %v), want (%d, true)", provider.ID, model, got, ok, wantWindow)
-			}
-		}
 	}
 }
 
@@ -337,7 +307,7 @@ func TestTUI_ModelSelectorPersistsSelectionUnderPTY(t *testing.T) {
 
 	cmd := exec.Command(binary)
 	cmd.Dir = t.TempDir()
-	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+configRoot, "OPENROUTER_API_KEY=", "OPENAI_API_KEY=", "ANTHROPIC_API_KEY=", "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
+	cmd.Env = append(append(os.Environ(), blankProviderKeys()...), "XDG_CONFIG_HOME="+configRoot, "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
 	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 24})
 	if err != nil {
 		t.Fatal(err)
@@ -381,7 +351,7 @@ func TestTUI_DefaultOpenRouterModelsShowContextUnderPTY(t *testing.T) {
 	}
 	cmd := exec.Command(binary)
 	cmd.Dir = t.TempDir()
-	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+t.TempDir(), "OPENROUTER_API_KEY=test", "OPENAI_API_KEY=", "ANTHROPIC_API_KEY=", "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
+	cmd.Env = append(append(os.Environ(), blankProviderKeys()...), "XDG_CONFIG_HOME="+t.TempDir(), "OPENROUTER_API_KEY=test", "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
 	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 120, Rows: 24})
 	if err != nil {
 		t.Fatal(err)
@@ -426,7 +396,7 @@ func TestTUI_FocusedComposerShowsBlinkingCursorUnderPTY(t *testing.T) {
 			cmd.Env = append(cmd.Env, variable)
 		}
 	}
-	cmd.Env = append(cmd.Env, "TERM=xterm-256color", "CLICOLOR_FORCE=1", "OPENROUTER_API_KEY=", "OPENAI_API_KEY=", "ANTHROPIC_API_KEY=", "XDG_CONFIG_HOME="+t.TempDir(), "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
+	cmd.Env = append(append(cmd.Env, blankProviderKeys()...), "TERM=xterm-256color", "CLICOLOR_FORCE=1", "XDG_CONFIG_HOME="+t.TempDir(), "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
 	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 24})
 	if err != nil {
 		t.Fatal(err)
@@ -610,7 +580,7 @@ func TestTUI_FileTreeMouseWheelAndClickUnderPTY(t *testing.T) {
 	}
 	cmd := exec.Command(binary)
 	cmd.Dir = filepath.Join(repoRoot, "cmd/atenea/testdata/file-tree-mouse/project")
-	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY=", "OPENAI_API_KEY=", "ANTHROPIC_API_KEY=", "XDG_CONFIG_HOME="+t.TempDir(), "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
+	cmd.Env = append(append(os.Environ(), blankProviderKeys()...), "XDG_CONFIG_HOME="+t.TempDir(), "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
 	// Rows: 11 = 8 filas de cuerpo (la geometria del arbol/visor que este test
 	// ejercita) mas las 3 filas del chrome de la top bar; asi el cuerpo conserva
 	// el mismo alto que antes de la barra y los clics de mouse suman 3 a su fila.
@@ -775,7 +745,7 @@ func TestTUI_ConnectCommandFullFlowUnderPTY(t *testing.T) {
 	// Inside the repo so prompt checkpoints find a Git workspace, like the
 	// other PTY tests.
 	cmd.Dir = filepath.Join(repoRoot, "cmd/atenea/testdata/file-viewer/project")
-	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY=", "OPENAI_API_KEY=", "ANTHROPIC_API_KEY=", "XDG_CONFIG_HOME="+configRoot, "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
+	cmd.Env = append(append(os.Environ(), blankProviderKeys()...), "XDG_CONFIG_HOME="+configRoot, "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
 	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 24})
 	if err != nil {
 		t.Fatal(err)
@@ -870,10 +840,10 @@ func startTUIUnderPTY(t *testing.T, binary, workdir, database string) (*exec.Cmd
 	t.Helper()
 	cmd := exec.Command(binary)
 	cmd.Dir = workdir
-	// Los tests dependen del provider demo: se vacian ambas API keys y se aisla
-	// XDG_CONFIG_HOME para que ni el entorno ni el providers.json real del
-	// desarrollador cuelen un provider de red.
-	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY=", "OPENAI_API_KEY=", "ANTHROPIC_API_KEY=", "XDG_CONFIG_HOME="+t.TempDir(), "ATENEA_DB="+database, "ATENEA_CHECKPOINTS="+filepath.Join(filepath.Dir(database), "checkpoints"))
+	// These tests depend on the demo provider: every API key the built-in catalog
+	// reads is blanked and XDG_CONFIG_HOME is isolated, so neither the environment
+	// nor the developer's real providers.json can slip a network provider in.
+	cmd.Env = append(append(os.Environ(), blankProviderKeys()...), "XDG_CONFIG_HOME="+t.TempDir(), "ATENEA_DB="+database, "ATENEA_CHECKPOINTS="+filepath.Join(filepath.Dir(database), "checkpoints"))
 	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 24})
 	if err != nil {
 		t.Fatal(err)

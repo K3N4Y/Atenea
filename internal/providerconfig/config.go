@@ -11,11 +11,16 @@ import (
 )
 
 type Provider struct {
-	ID                    string   `json:"id"`
-	Name                  string   `json:"name"`
-	Type                  string   `json:"type"`
-	BaseURL               string   `json:"base_url"`
-	APIKeyEnv             string   `json:"api_key_env,omitempty"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	BaseURL   string `json:"base_url"`
+	APIKeyEnv string `json:"api_key_env,omitempty"`
+	// ModelEnv names the variable that overrides which model this provider starts
+	// on when it is picked from the environment (see EnvironmentFallback). It is
+	// declared rather than derived from APIKeyEnv so a provider named by any
+	// convention can offer the override.
+	ModelEnv              string   `json:"model_env,omitempty"`
 	OpenRouterReasoning   bool     `json:"openrouter_reasoning,omitempty"`
 	DisableModelDiscovery bool     `json:"disable_model_discovery,omitempty"`
 	Models                []string `json:"models,omitempty"`
@@ -49,7 +54,14 @@ func Load(path string) (Config, error) {
 		return Config{}, err
 	}
 	defer f.Close()
-	decoder := json.NewDecoder(f)
+	return decodeConfig(f)
+}
+
+// decodeConfig reads one provider config whatever its source: the user's file and
+// the embedded default catalog go through the same door, so a stray field or a
+// missing id is caught by the same rules in both.
+func decodeConfig(r io.Reader) (Config, error) {
+	decoder := json.NewDecoder(r)
 	decoder.DisallowUnknownFields()
 	var cfg Config
 	if err := decoder.Decode(&cfg); err != nil {
@@ -91,6 +103,7 @@ func normalizeAndValidate(cfg *Config) error {
 		provider.Type = strings.TrimSpace(provider.Type)
 		provider.BaseURL = strings.TrimRight(strings.TrimSpace(provider.BaseURL), "/")
 		provider.APIKeyEnv = strings.TrimSpace(provider.APIKeyEnv)
+		provider.ModelEnv = strings.TrimSpace(provider.ModelEnv)
 		if provider.ID == "" || provider.Name == "" || provider.Type == "" || provider.BaseURL == "" {
 			return fmt.Errorf("provider %d requires id, name, type, and base_url", i)
 		}

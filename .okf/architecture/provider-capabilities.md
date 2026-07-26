@@ -237,8 +237,9 @@ own, which for Anthropic is 8192 tokens the estimate used to ignore.
   another.
 - **Windows are declared, never discovered.** OpenRouter's `/models` returns
   `context_length` per model and `llm.ListModels` throws it away. Reading it would
-  give hundreds of models a real window instead of an em dash, and it belongs with
-  R3.3's data-driven catalog, where `ModelLister` stops returning bare ids.
+  give hundreds of models a real window instead of an em dash. R3.3 landed the
+  [data-driven catalog](provider-catalog.md) without touching this: `ModelLister`
+  still returns bare ids, so a discovered model has no window to declare.
 - **Six declared fields have no reader.** `Streaming`, `Tools`, `Reasoning`,
   `Vision`, `PromptCaching` and `RetryTelemetry` are facts nothing acts on yet.
   The obvious first consumers are the model picker (a reasoning badge) and the

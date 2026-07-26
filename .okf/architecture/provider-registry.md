@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-25
+updated_at: 2026-07-26
 summary: How a provider's declared wire format resolves to the adapter that speaks it — the factory registry that replaced two closed switches, and why the dialect became the type.
 ---
 
@@ -154,9 +154,12 @@ The rest of R3 is untouched and each part is independent of this one:
   its cache shape, its default output ceiling and the rest through the optional
   `llm.Describing` interface. `internal/llm/context.go`'s hardcoded model map is
   gone. See [Provider capabilities](provider-capabilities.md).
-- **The default catalog still lives in `cmd/atenea/main.go`** (R3.3) — an
-  unimportable `main` package. It now declares its dialects honestly, which is a
-  precondition for moving it to an embedded `providers.default.json`.
+- ~~**The default catalog still lives in `cmd/atenea/main.go`** (R3.3)~~
+  `[done 2026-07-26]` It is an embedded `providers.default.json` owned by
+  `providerconfig`, with the same shape and the same validation as a user's file —
+  which this change's honest dialects were the precondition for. The environment
+  fallback is derived from it instead of rebuilding providers by hand. See
+  [Provider catalog](provider-catalog.md).
 - **`internal/wailsprovider` is still a parallel provider system** (R3.4) with its
   own 3-value `Kind` enum. It does not go through this registry.
 - **`Credential` is still `{Type, APIKey}`** (R3.5) — no `exec` credential, so
