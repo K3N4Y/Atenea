@@ -31,10 +31,12 @@ type Capabilities struct {
 	// anyway — it means a host should not expect them.
 	Reasoning bool
 
-	// Vision: a Message can carry an image or a document, not only text. Until
-	// Message grows content parts this is false for every adapter, and saying so
-	// is the point: it is the flag that flips when that seam lands, rather than a
-	// silence a host has to interpret.
+	// Vision: the adapter translates a Message part that is an image or a
+	// document, not only text. Message carries content parts now, so the seam is
+	// no longer what stands in the way — this is the flag an adapter flips when it
+	// can actually put that content on the wire, and until it does the honest
+	// answer is false. An adapter that says false and then meets such a part
+	// refuses the turn with an UnsupportedPartError rather than dropping it.
 	Vision bool
 
 	// PromptCaching is how, if at all, the adapter gets its endpoint to cache the

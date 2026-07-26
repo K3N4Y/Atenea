@@ -10,6 +10,11 @@
 // provider plus the request to stream, and it drives one turn and reads the shape
 // of what came out.
 //
+// It reads the request in one respect only, and for the same reason: an adapter
+// handed content of a kind it cannot express must say so. That failure leaves no
+// trace in the stream at all if the adapter simply skips the part, which is
+// exactly why a host cannot find it and the kit has to.
+//
 // It says nothing about whether the model answered well, or about how the adapter
 // maps its own SDK — those are the adapter's own tests. It answers the question a
 // host has to answer before it can drive an adapter it did not write: does this
@@ -80,6 +85,7 @@ type check struct {
 var checks = []check{
 	{"StreamBracketsTheTurn", checkBracketing},
 	{"StreamEventsAreWellFormed", checkWellFormed},
+	{"UnspeakableContentIsRefused", checkContentRefusal},
 	{"CancellationClosesTheChannel", checkCancellation},
 	{"StreamIsSafeForConcurrentUse", checkConcurrentUse},
 	{"DeclaredCapabilitiesAreUsable", checkCapabilities},
@@ -267,6 +273,56 @@ func checkWellFormed(r reporter, next fresh) {
 	}
 }
 
+// unspeakableKind is a content part of a kind no build of this contract defines,
+// which is how the kit gets hold of content that every adapter must refuse —
+// including one that has grown to speak images, since there is always a kind
+// newer than the adapter reading it.
+const unspeakableKind = llm.PartKind(1 << 30)
+
+// checkContentRefusal streams a turn whose last message carries content the
+// adapter cannot express, and insists that the adapter says so.
+//
+// The failure this exists for is silent by construction: an adapter that skips
+// the part it does not understand sends the model a conversation with a hole in
+// it, and the answer that comes back is wrong for a reason nothing recorded — not
+// the stream, not the history, not the user's screen. Refusing costs a turn;
+// dropping costs the trust in every answer after it.
+//
+// Either shape of refusal is accepted, because they cost a host the same: Stream
+// declining the request outright (the earliest and cheapest, since no turn opens
+// and no channel exists), or a turn that opens and fails with the cause in Err.
+func checkContentRefusal(r reporter, next fresh) {
+	r.Helper()
+	subject := next()
+
+	unspeakable := llm.Message{Role: "user", Parts: []llm.Part{{Kind: unspeakableKind, Text: "look at this"}}}
+	subject.Request.Messages = append(append([]llm.Message(nil), subject.Request.Messages...), unspeakable)
+
+	out, err := subject.Provider.Stream(context.Background(), subject.Request)
+	if err != nil {
+		return
+	}
+	if out == nil {
+		r.Errorf("Stream returned a nil channel and no error: a consumer ranges over the channel, so nil is a deadlock")
+		return
+	}
+	events, closed := collect(r, out)
+	if !closed {
+		return
+	}
+	for _, ev := range events {
+		if ev.Kind != llm.StepFailed {
+			continue
+		}
+		if ev.Err == nil {
+			r.Errorf("the turn refused a %s part but StepFailed carries no Err: a host classifies with errors.As, and unexpressible content is the one failure it can actually act on by offering another model", unspeakableKind)
+		}
+		return
+	}
+	r.Errorf("a message carrying a %s part produced a turn that did not fail (%s): an adapter that cannot express a part must refuse the turn — skipping it sends the model a conversation with a hole in it, and nothing downstream can tell that is what happened",
+		unspeakableKind, summarize(events))
+}
+
 func checkCancellation(r reporter, next fresh) {
 	r.Helper()
 	subject := next()
@@ -341,6 +397,12 @@ func drain(r reporter, ctx context.Context, subject Subject) (events []llm.Event
 		r.Errorf("Stream returned a nil channel and no error: a consumer ranges over the channel, so nil is a deadlock")
 		return nil, false
 	}
+	return collect(r, out)
+}
+
+// collect reads a turn's channel to the end, reporting one that never closes.
+func collect(r reporter, out <-chan llm.Event) (events []llm.Event, closed bool) {
+	r.Helper()
 
 	deadline := time.After(turnTimeout)
 	for {

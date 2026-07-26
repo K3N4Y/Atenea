@@ -58,7 +58,7 @@ func contractRequest(model string) Request {
 	return Request{
 		Model:    model,
 		System:   "Be exact.",
-		Messages: []Message{{Role: "user", Text: "read foo.go"}},
+		Messages: []Message{TextMessage("user", "read foo.go")},
 		Tools: []ToolDef{{
 			Name:        "read",
 			Description: "Reads a file.",

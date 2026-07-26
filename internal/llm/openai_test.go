@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -919,8 +920,8 @@ func TestOpenAIProvider_StreamSendsMappedRequest(t *testing.T) {
 	out, err := p.Stream(context.Background(), Request{
 		Model: "",
 		Messages: []Message{
-			{Role: "user", Text: "hola"},
-			{Role: "assistant", Text: "hey"},
+			TextMessage("user", "hola"),
+			TextMessage("assistant", "hey"),
 		},
 		Tools: []ToolDef{
 			{Name: "echo", Description: "echoes", Schema: json.RawMessage(`{"type":"object"}`)},
@@ -994,11 +995,11 @@ func TestOpenAIProvider_StreamSerializesToolRoundTrip(t *testing.T) {
 
 	out, err := p.Stream(context.Background(), Request{
 		Messages: []Message{
-			{Role: "user", Text: "lee el archivo"},
-			{Role: "assistant", Text: "", ToolCalls: []ToolCallPart{
+			TextMessage("user", "lee el archivo"),
+			{Role: "assistant", ToolCalls: []ToolCallPart{
 				{ID: "call_1", Name: "read", Arguments: json.RawMessage(`{"path":"foo.go"}`)},
 			}},
-			{Role: "tool", ToolCallID: "call_1", Text: "contenido del archivo"},
+			{Role: "tool", ToolCallID: "call_1", Parts: []Part{{Kind: TextPart, Text: "contenido del archivo"}}},
 		},
 	})
 	if err != nil {
@@ -1254,13 +1255,13 @@ func TestOpenAIProvider_StreamSerializesMultipleToolCallsRoundTrip(t *testing.T)
 
 	out, err := p.Stream(context.Background(), Request{
 		Messages: []Message{
-			{Role: "user", Text: "lee dos archivos"},
-			{Role: "assistant", Text: "", ToolCalls: []ToolCallPart{
+			TextMessage("user", "lee dos archivos"),
+			{Role: "assistant", ToolCalls: []ToolCallPart{
 				{ID: "call_a", Name: "read", Arguments: json.RawMessage(`{"path":"a.go"}`)},
 				{ID: "call_b", Name: "echo", Arguments: json.RawMessage(`{"text":"hi"}`)},
 			}},
-			{Role: "tool", ToolCallID: "call_a", Text: "contenido a"},
-			{Role: "tool", ToolCallID: "call_b", Text: "hi"},
+			{Role: "tool", ToolCallID: "call_a", Parts: []Part{{Kind: TextPart, Text: "contenido a"}}},
+			{Role: "tool", ToolCallID: "call_b", Parts: []Part{{Kind: TextPart, Text: "hi"}}},
 		},
 	})
 	if err != nil {
@@ -1369,11 +1370,11 @@ func TestOpenAIProvider_StreamSerializesAssistantTextAndToolCall(t *testing.T) {
 
 	out, err := p.Stream(context.Background(), Request{
 		Messages: []Message{
-			{Role: "user", Text: "lee foo"},
-			{Role: "assistant", Text: "voy a leer foo", ToolCalls: []ToolCallPart{
+			TextMessage("user", "lee foo"),
+			{Role: "assistant", Parts: []Part{{Kind: TextPart, Text: "voy a leer foo"}}, ToolCalls: []ToolCallPart{
 				{ID: "call_1", Name: "read", Arguments: json.RawMessage(`{"path":"foo"}`)},
 			}},
-			{Role: "tool", ToolCallID: "call_1", Text: "contenido"},
+			{Role: "tool", ToolCallID: "call_1", Parts: []Part{{Kind: TextPart, Text: "contenido"}}},
 		},
 	})
 	if err != nil {
@@ -1477,7 +1478,7 @@ func TestOpenAIProvider_StreamSendsSystemPrompt(t *testing.T) {
 
 	out, err := p.Stream(context.Background(), Request{
 		System:   "you are atenea",
-		Messages: []Message{{Role: "user", Text: "hello"}},
+		Messages: []Message{TextMessage("user", "hello")},
 	})
 	if err != nil {
 		t.Fatalf("Stream returned error: %v", err)
@@ -1519,7 +1520,7 @@ func TestOpenAIProvider_StreamWithoutSystemOmitsSystemMessage(t *testing.T) {
 	p := NewOpenAIProvider("test-key", server.URL, "test-model")
 
 	out, err := p.Stream(context.Background(), Request{
-		Messages: []Message{{Role: "user", Text: "hello"}},
+		Messages: []Message{TextMessage("user", "hello")},
 	})
 	if err != nil {
 		t.Fatalf("Stream returned error: %v", err)
@@ -1532,5 +1533,60 @@ func TestOpenAIProvider_StreamWithoutSystemOmitsSystemMessage(t *testing.T) {
 	}
 	if msgs[0].Role == "system" {
 		t.Fatalf("without Request.System there must be no system message; messages = %+v", msgs)
+	}
+}
+
+// A message's content is every text part in order, joined into the one string
+// this dialect's `content` field takes.
+func TestOpenAIProvider_StreamJoinsTextParts(t *testing.T) {
+	var body []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	out, err := NewOpenAIProvider("test-key", server.URL, "test-model").Stream(context.Background(), Request{
+		Messages: []Message{{Role: "user", Parts: []Part{
+			{Kind: TextPart, Text: "read "},
+			{Kind: TextPart, Text: "foo.go"},
+		}}},
+	})
+	if err != nil {
+		t.Fatalf("Stream returned error: %v", err)
+	}
+	drain(out)
+
+	msgs := systemAndUser(t, body)
+	if len(msgs) != 1 || msgs[0].Role != "user" || msgs[0].Content != `"read foo.go"` {
+		t.Fatalf("messages = %+v, want one user message carrying both parts", msgs)
+	}
+}
+
+// This dialect carries text content only, so a part it does not understand fails
+// the request outright — before a token is spent, and loudly enough for a host to
+// classify. Sending the rest would hand the model a conversation with a hole in it.
+func TestOpenAIProvider_StreamRefusesContentItCannotExpress(t *testing.T) {
+	var called bool
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
+	defer server.Close()
+
+	out, err := NewOpenAIProvider("test-key", server.URL, "test-model").Stream(context.Background(), Request{
+		Messages: []Message{
+			TextMessage("user", "what is in this?"),
+			{Role: "user", Parts: []Part{{Kind: PartKind(1 << 30)}}},
+		},
+	})
+	if out != nil {
+		t.Errorf("Stream returned a channel for content it cannot express")
+	}
+	var unsupported *UnsupportedPartError
+	if !errors.As(err, &unsupported) {
+		t.Fatalf("Stream error = %v, want an *UnsupportedPartError a host can classify", err)
+	}
+	if called {
+		t.Errorf("the request reached the endpoint: the refusal must cost nothing")
 	}
 }

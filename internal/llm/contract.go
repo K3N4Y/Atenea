@@ -12,20 +12,29 @@ import contract "github.com/K3N4Y/atenea/agentcore/llm"
 // implementation detail belongs here and nowhere else.
 
 type (
-	Provider      = contract.Provider
-	Request       = contract.Request
-	Message       = contract.Message
-	ToolCallPart  = contract.ToolCallPart
-	ToolDef       = contract.ToolDef
-	Event         = contract.Event
-	EventKind     = contract.EventKind
-	Usage         = contract.Usage
-	Capabilities  = contract.Capabilities
-	Describing    = contract.Describing
-	PromptCaching = contract.PromptCaching
+	Provider             = contract.Provider
+	Request              = contract.Request
+	Message              = contract.Message
+	Part                 = contract.Part
+	PartKind             = contract.PartKind
+	UnsupportedPartError = contract.UnsupportedPartError
+	ToolCallPart         = contract.ToolCallPart
+	ToolDef              = contract.ToolDef
+	Event                = contract.Event
+	EventKind            = contract.EventKind
+	Usage                = contract.Usage
+	Capabilities         = contract.Capabilities
+	Describing           = contract.Describing
+	PromptCaching        = contract.PromptCaching
 )
 
+// TextMessage is the contract's constructor for a text-only message. Go has no
+// alias for a function, so the re-export is a var; nothing assigns to it.
+var TextMessage = contract.TextMessage
+
 const (
+	TextPart = contract.TextPart
+
 	NoPromptCaching       = contract.NoPromptCaching
 	ImplicitPromptCaching = contract.ImplicitPromptCaching
 	KeyedPromptCaching    = contract.KeyedPromptCaching

@@ -159,8 +159,11 @@ func TestRunner_TurnAfterCompactionIncludesSummaryAndCurrentActivity(t *testing.
 	if !strings.Contains(request.System, "COMPACTED_SESSION_CONTEXT") || !strings.Contains(request.System, "continue current work") {
 		t.Fatalf("system = %q, want compacted summary", request.System)
 	}
-	if len(request.Messages) != 1 || request.Messages[0].Text != "current question" {
+	if len(request.Messages) != 1 {
 		t.Fatalf("messages = %+v, want current activity only", request.Messages)
+	}
+	if text, err := request.Messages[0].TextOnly(); err != nil || text != "current question" {
+		t.Fatalf("messages[0] = (%q, %v), want the current activity as text", text, err)
 	}
 }
 

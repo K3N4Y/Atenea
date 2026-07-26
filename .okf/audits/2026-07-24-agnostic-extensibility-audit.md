@@ -54,7 +54,7 @@ of them delete code.
 | Permission policy | **Good** — derived from what each tool declares, not from a name list; decorated by session grants (R2) | `internal/permission/policy.go`, `internal/wiring/wiring.go` |
 | Tool interface | **Good** — 4-method contract plus optional capabilities for effects, grants and presentation (R2) | `agentcore/tool`, `agentcore/permission/grantable.go` |
 | Tool registration | **Partial** — fixed constructor list; `cfg.MCPTools` is the only open slot | `wiring.go:138-142,167-175` |
-| LLM `Provider` | **Good** — neutral domain model, an open factory registry (R3.1), an optional capability declaration the host derives windows and reserves from (R3.2), a shipped catalog that is embedded data rather than code (R3.3), and one provider system for both hosts, extensible by the user (R3.4) | `agentcore/llm/capabilities.go`, `internal/providerconfig/registry.go`, `internal/providerconfig/providers.default.json` |
+| LLM `Provider` | **Good** — R3 complete: neutral domain model, an open factory registry (R3.1), an optional capability declaration the host derives windows and reserves from (R3.2), a shipped catalog that is embedded data rather than code (R3.3), one provider system for both hosts extensible by the user (R3.4), and message content as parts, so an image is a new kind rather than a breaking change (R3.6) | `agentcore/llm/content.go`, `agentcore/llm/capabilities.go`, `internal/providerconfig/registry.go`, `internal/providerconfig/providers.default.json` |
 | Provider identity | **Good** — the declared type is the wire format, resolved through a registry that builds *and* describes it; a provider's id decides nothing (R3.1, R3.2) | `internal/providerconfig/registry.go` |
 | Provider auth | **Good** — a tagged `Credential` variant with an `api_key` and an `exec` arm, resolved by a `CredentialResolver` separate from the store that persists it (R3.5); a token is still resolved once per selection, not per request | `internal/providerconfig/credentials.go`, `internal/providerconfig/credentialresolver.go` |
 | Event taxonomy | **Weak** — open string set, two hand-maintained non-exhaustive switches that already disagree | `internal/tui/transcript.go:59-151`, `frontend/src/features/chat/chat.ts:215-341` |
@@ -63,7 +63,7 @@ of them delete code.
 | Prompt assembly | **Missing** — fixed string concatenation | `internal/session/prompt/prompt.go:68-81` |
 | Composition root | **Weak** — two outer roots, duplicated provider bootstrap and demo provider | `app.go:76-152` vs `cmd/atenea/main.go:64-130` |
 | CLI / headless | **Missing** | `cmd/atenea/main.go:53-62` |
-| Public API | **Partial** — 5 importable contract packages under `agentcore/` plus 2 contract test kits, boundary enforced by test; the tool capability interfaces landed with R2; implementations still private, no stability promise yet (R1.3, R1.4, R2 done) | `agentcore/`, `agentcore/boundary_test.go`, `agentcore/{tool/tooltest,llm/llmtest}` |
+| Public API | **Partial** — 5 importable contract packages under `agentcore/` plus 2 contract test kits, boundary enforced by test; the tool capability interfaces landed with R2, message content parts with R3.6 (the first breaking change, taken deliberately while nothing promises stability); implementations still private, no stability promise yet (R1.3, R1.4, R2, R3 done) | `agentcore/`, `agentcore/boundary_test.go`, `agentcore/{tool/tooltest,llm/llmtest}` |
 | Branding/paths | **Weak** — `atenea` literal in 6+ path builders, no XDG | §3.6 |
 | MCP as plugin substrate | **Partial** — first-class in the registry and now gated ask-by-default with a session grant (R2), but stdio-only and invisible to subagents | §3.8 |
 | Contributor docs | **Weak** — no CONTRIBUTING; `AGENTS.md` points at two files that do not exist; LICENSE now present (R1.2 done) | §3.9 |
@@ -133,10 +133,18 @@ The wiring around it is closed:
   would be a `Request` field rather than a capability. Context-overflow detection
   stayed out on purpose: it is a classification bug in the OpenAI adapter, not a
   capability.
-- **No multimodal seam.** `Message` has only `Text string`
-  (`provider.go:30-36`); there is no content-part abstraction, so images and
-  documents have nowhere to live. Every adapter now declares `Vision: false`
-  (R3.2), which is the flag this seam flips.
+- ~~**No multimodal seam.**~~ `[done 2026-07-26]` R3.6 replaced `Message.Text`
+  with `Parts []Part`, so a message's content has exactly one representation and
+  an image later is a new `PartKind` rather than a new field on a type third
+  parties compile against. Both adapters join the text parts they are given and
+  refuse — from `Stream`, before a token is spent — a part they cannot express,
+  with a published `*UnsupportedPartError` a host reaches through `errors.As`. The
+  `llmtest` kit checks that refusal, because a dropped part is the one failure
+  that leaves no trace anywhere: not in the stream, not in the history, not on the
+  user's screen. `Vision` stays false for every shipped adapter, now for the
+  honest reason — none can put an image on the wire — rather than because there
+  was nowhere to put one. See
+  [Message content](../architecture/message-content.md).
 - ~~**No auth shape beyond a bearer string.**~~ `[done 2026-07-26]` R3.5 made
   `Credential` a tagged variant and added the second arm: `exec` reads a bearer
   token from a command's standard output, so Bedrock, Vertex and an enterprise
@@ -745,9 +753,60 @@ Effect: files touched to add a fully first-class tool drops from ~11 to **3**
 6. **Add a content-part seam to `Message`** before multimodal is urgent — a
    `Parts []Part` with a text part today, so adding images later is not a
    breaking change to a published contract.
+   `[done 2026-07-26]` — `Text string` was *replaced*, not joined, so a message's
+   content has one representation and one place that answers what it says.
+   Documented in [Message content](../architecture/message-content.md). Five
+   decisions worth recording:
+   - **Keeping `Text` beside `Parts` was the cheap migration and was rejected.**
+     Two ways to say the same thing is a question every adapter answers on its
+     own — concatenate, prefer `Parts`, take whichever is non-empty — and three
+     adapters disagreeing about one history is the divergence this codebase has
+     already refused twice, in R2's "said nothing is not declared nothing" and in
+     R3.2's `SwitchableProvider` not implementing `Describing`. The cost was five
+     production call sites and about thirty test literals, all of them named by
+     the compiler, in the window before `agentcore/` promises anything.
+   - **`Part` is a discriminated struct, not a sealed interface.** The interface
+     wins on making an image part with no image unrepresentable and loses on
+     everything else: it is a fourth spelling next to `Event`,
+     `session.SessionEvent` and `tool.Presentation`; sealing puts construction
+     beyond a host that decoded a part from JSON, and beyond a kit that needs a
+     part of a kind this build does not define; and each future kind costs an
+     exported type instead of a constant.
+   - **An adapter cannot reach a message's text without the reason it is
+     incomplete.** `TextOnly() (string, error)` is R2's `(value, answered)` in
+     its error-shaped form, and it is the enforcement: the failure worth
+     preventing is not the adapter that refuses an image but the one whose
+     `default:` branch skips it and streams a turn as if the conversation were
+     whole. Both shipped adapters translate before the turn opens, so both refuse
+     from `Stream` — no channel, nothing to close, nothing spent.
+     `*UnsupportedPartError` is published because it is the one turn failure a
+     host can act on without knowing which adapter it is talking to: the content
+     is what cannot travel, and the recovery is to offer a model that reads it.
+   - **The kit gained a clause, checked with a kind no build defines.**
+     `UnspeakableContentIsRefused` streams a message carrying
+     `PartKind(1 << 30)` and accepts either honest answer — `Stream` returning an
+     error, or a turn that fails with the cause in `Err`. An undefined kind rather
+     than a real one is what keeps the clause true after images land: there is
+     always a kind newer than the adapter reading it. It is the only clause about
+     something the stream does *not* show, which is exactly why prose was never
+     going to be enough for it. `FakeProvider` gained the same three lines — a
+     fake that swallows content it cannot render hides this from every test
+     written against it.
+   - **An empty text is no parts at all.** `TextMessage(role, "")` returns a
+     message with no content rather than a part carrying nothing, so an assistant
+     turn that only called tools still sends no text block — Anthropic rejects an
+     empty one, and the old `message.Text != ""` guard is the same guard over the
+     concatenation. No message that worked before is shaped differently now.
+   The seam deliberately stops at the provider boundary. `session.Message`, the
+   durable stream, the SQLite schema and both UIs are untouched; that is R5's
+   contract, and `runner.toLLMMessages` is the one place that will have to learn
+   to project an image the day the stream carries one.
 
 Cost to add a wire format after this: **1 new file + 1 registry line + 1 catalog
-entry**.
+entry**. R3 is complete: the file is an adapter, the line names the wire format it
+speaks, the entry is data — and `llmtest` is what decides whether the adapter is
+any good, including whether it refuses content it cannot carry instead of dropping
+it.
 
 ### R4 — Consolidate to one composition root and add the real integration surface
 
@@ -931,12 +990,14 @@ right shape. Consolidate the plumbing:
 `AGENTS.md` pointers; resolve `skills-lock.json`. Delete the dead `replace`.
 *Outcome: the repo becomes legally and technically contributable.*
 
-**Phase 1 — agnostic core (weeks).** R2 tool capability interfaces and removal of
-the six name-keyed switches (landed 2026-07-24). R3 provider registry and
-capabilities (both landed 2026-07-25) + data-driven catalog, the deletion of
-`wailsprovider` and the widened `Credential` (all three landed 2026-07-26).
-*Outcome: tools and providers become additive instead of invasive; the extension
-security default flips to ask.*
+**Phase 1 — agnostic core (weeks). Complete.** R2 tool capability interfaces and
+removal of the six name-keyed switches (landed 2026-07-24). R3 in full: provider
+registry and capabilities (both landed 2026-07-25), then the data-driven catalog,
+the deletion of `wailsprovider`, the widened `Credential` and the content-part
+seam on `Message` (all four landed 2026-07-26).
+*Outcome: tools and providers became additive instead of invasive; the extension
+security default flipped to ask; a wire format is one file plus one registry line
+plus one catalog entry, and multimodal is one more `PartKind` rather than a break.*
 
 **Phase 2 — integration surface.** R4 single host + headless `run` with NDJSON.
 R1 public contract packages and contract test kits (both landed early,

@@ -10,7 +10,7 @@ func TestEstimateRequestTokens_IncludesSystemToolsMessagesAndOutputReserve(t *te
 	req := Request{
 		Model:           "anthropic/claude-opus-4.8",
 		System:          "system text",
-		Messages:        []Message{{Role: "user", Text: "user text"}},
+		Messages:        []Message{TextMessage("user", "user text")},
 		Tools:           []ToolDef{{Name: "read", Description: "read a file", Schema: []byte(`{"type":"object"}`)}},
 		MaxOutputTokens: 4_096,
 	}
@@ -37,7 +37,7 @@ func TestEstimateRequestTokens_IncludesSystemToolsMessagesAndOutputReserve(t *te
 }
 
 func TestEstimateRequestTokens_IncludesAssistantToolCallsAndToolResultCallID(t *testing.T) {
-	base := Request{Messages: []Message{{Role: "assistant"}, {Role: "tool", Text: "result"}}}
+	base := Request{Messages: []Message{{Role: "assistant"}, TextMessage("tool", "result")}}
 	withToolCall := base
 	withToolCall.Messages = append([]Message(nil), base.Messages...)
 	withToolCall.Messages[0].ToolCalls = []ToolCallPart{{ID: "call-1", Name: "read", Arguments: []byte(`{"path":"file.go"}`)}}
@@ -51,6 +51,28 @@ func TestEstimateRequestTokens_IncludesAssistantToolCallsAndToolResultCallID(t *
 	}
 	if got := EstimateRequestTokens(withToolResultCallID); got <= baseEstimate {
 		t.Fatalf("tool result call ID estimate = %d, must exceed base %d", got, baseEstimate)
+	}
+}
+
+// A message weighs every one of its parts, not just the first: an estimate that
+// stopped at one part would under-count a multi-part message and let the request
+// that overflows sail past the preventive-compaction threshold.
+func TestEstimateRequestTokens_WalksEveryContentPart(t *testing.T) {
+	one := Request{Messages: []Message{TextMessage("user", "first")}}
+	two := Request{Messages: []Message{{Role: "user", Parts: []Part{
+		{Kind: TextPart, Text: "first"},
+		{Kind: TextPart, Text: "second"},
+	}}}}
+
+	if EstimateRequestTokens(two) <= EstimateRequestTokens(one) {
+		t.Fatalf("estimate of two parts = %d, must exceed one part = %d",
+			EstimateRequestTokens(two), EstimateRequestTokens(one))
+	}
+	// Splitting the same text across parts must not change what it weighs: the
+	// estimate is about content, not about how the host chose to slice it.
+	whole := Request{Messages: []Message{TextMessage("user", "firstsecond")}}
+	if got, want := EstimateRequestTokens(two), EstimateRequestTokens(whole); got != want {
+		t.Errorf("estimate of split text = %d, want the same as the whole = %d", got, want)
 	}
 }
 

@@ -122,7 +122,7 @@ func (c *contextCompactor) generateSummary(ctx context.Context, provider llm.Pro
 	req := llm.Request{
 		Model:           model,
 		System:          "Summarize the completed conversation prefix as one JSON object. Use exactly these keys: current_goal, constraints_and_instructions, decisions, completed_work, files_and_changes, relevant_tool_results, failures_and_attempts, pending_and_next_step, facts_not_to_reinterpret. current_goal must be a non-empty string and every other field must be an array of strings. Return JSON only.",
-		Messages:        []llm.Message{{Role: "user", Text: string(encoded)}},
+		Messages:        []llm.Message{llm.TextMessage("user", string(encoded))},
 		MaxOutputTokens: summaryMaxOutputTokens,
 	}
 	stream, err := provider.Stream(ctx, req)

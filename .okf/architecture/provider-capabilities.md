@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-25
+updated_at: 2026-07-26
 summary: What an adapter declares about itself beyond streaming a turn — the optional Capabilities interface that replaced the global model-to-context-window table, and why the registry describes a format without building it.
 ---
 
@@ -108,9 +108,11 @@ a declaration is how they stop being invisible:
   read that off the code without going looking.
 - `RetryTelemetry` is false for Anthropic and true for the OpenAI adapter. §3.2
   called this out as an observable asymmetry; now it is an observable *statement*.
-- `Vision` is false everywhere, because `Message` has only `Text`. It is the flag
-  R3.6's content-part seam flips, and declaring it false now is cheaper than
-  adding a field to a published contract later.
+- `Vision` is false everywhere. It used to be false *because* `Message` had only
+  `Text`; since R3.6 gave messages [content parts](message-content.md) it is false
+  for the honest reason instead — no shipped adapter can put an image on the wire,
+  and this is the flag one flips when it can. Declaring it false rather than
+  leaving it out is what made the seam's arrival a change to one comment.
 - `PromptCaching` is the `compatibilityProfile` made explicit, which was R3.2's
   second stated goal. It answers the question a host actually has — *is
   `Request.SessionKey` worth anything here?* — rather than "does caching happen".
@@ -244,6 +246,9 @@ own, which for Anthropic is 8192 tokens the estimate used to ignore.
   `Vision`, `PromptCaching` and `RetryTelemetry` are facts nothing acts on yet.
   The obvious first consumers are the model picker (a reasoning badge) and the
   turn UI (saying "no retry telemetry" rather than showing an unexplained pause).
+  `Vision` has the clearest one now that `Message` carries content parts: a host
+  that knows the selected adapter cannot read an image can refuse the attachment
+  where the user made it, instead of letting the turn fail at the wire.
 - **No capability is negotiated, only declared.** A host cannot ask Anthropic to
   stop caching, or ask an OpenAI-dialect provider for reasoning at request time.
   That would be a `Request` field, not a `Capabilities` one.

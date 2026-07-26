@@ -251,7 +251,7 @@ func (wf *WebFetchTool) distill(ctx context.Context, prompt, source, content str
 	user := fmt.Sprintf("Instruccion: %s\n\nFuente: %s\n\nContenido:\n%s", prompt, source, content)
 	out, err := wf.provider.Stream(ctx, llm.Request{
 		System:   webFetchSystemPrompt,
-		Messages: []llm.Message{{Role: "user", Text: user}},
+		Messages: []llm.Message{llm.TextMessage("user", user)},
 	})
 	if err != nil {
 		return "", fmt.Errorf("web_fetch: destilado fallo: %w", err)

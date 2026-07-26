@@ -32,7 +32,14 @@ func NeedsPreventiveCompaction(estimatedTokens, contextWindow int) bool {
 func EstimateRequestTokens(req Request) int {
 	bytes := len(req.System)
 	for _, message := range req.Messages {
-		bytes += len(message.Role) + len(message.Text) + len(message.ToolCallID) + 12
+		bytes += len(message.Role) + len(message.ToolCallID) + 12
+		// A message weighs what its parts weigh. A part kind that carries bytes
+		// anywhere other than Text has to be sized here as well: what the estimate
+		// omits it under-counts, and an under-count is preventive compaction not
+		// firing on the request that then overflows.
+		for _, part := range message.Parts {
+			bytes += len(part.Text)
+		}
 		for _, call := range message.ToolCalls {
 			bytes += len(call.ID) + len(call.Name) + len(call.Arguments) + 12
 		}

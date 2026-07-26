@@ -261,10 +261,16 @@ func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Ev
 	return needsContinuation, nil
 }
 
-// toLLMMessages convierte el historial proyectado al formato del proveedor.
-// Propaga las partes ricas que el proveedor necesita para emparejar: las tool
-// calls del assistant (mapeadas a llm.ToolCallPart con Arguments como
-// json.RawMessage) y el tool_call_id del resultado de la tool.
+// toLLMMessages projects the durable history into the provider's format. It
+// carries over the pairing the provider needs: the assistant's tool calls (as
+// llm.ToolCallPart, with Arguments kept as raw JSON) and the tool_call_id its
+// result answers.
+//
+// A durable message is text, so it becomes a message whose content is one text
+// part — and one with nothing to say, an assistant turn that only called tools,
+// becomes a message with no content at all rather than an empty block. The day
+// the durable stream carries an image (audit R5), this is the one place that has
+// to learn to project it.
 func toLLMMessages(msgs []session.Message) []llm.Message {
 	out := make([]llm.Message, len(msgs))
 	for i, m := range msgs {
@@ -275,7 +281,11 @@ func toLLMMessages(msgs []session.Message) []llm.Message {
 				calls[j] = llm.ToolCallPart{ID: tc.ID, Name: tc.Name, Arguments: json.RawMessage(tc.Arguments)}
 			}
 		}
-		out[i] = llm.Message{Role: string(m.Role), Text: m.Text, ToolCalls: calls, ToolCallID: m.ToolCallID, IsError: m.IsError}
+		message := llm.TextMessage(string(m.Role), m.Text)
+		message.ToolCalls = calls
+		message.ToolCallID = m.ToolCallID
+		message.IsError = m.IsError
+		out[i] = message
 	}
 	return out
 }

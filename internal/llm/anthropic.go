@@ -215,12 +215,21 @@ func isAnthropicContextOverflow(err error) bool {
 	return strings.Contains(message, "prompt is too long") || strings.Contains(message, "context window")
 }
 
+// toAnthropicMessages projects the history into Anthropic's content blocks. This
+// adapter speaks text and tool blocks only, so a message carrying content of any
+// other kind fails the whole request here — before the turn opens and before a
+// token is spent. Skipping the part instead would put a conversation with a hole
+// in it in front of the model.
 func toAnthropicMessages(messages []Message) ([]anthropic.MessageParam, error) {
 	out := make([]anthropic.MessageParam, 0, len(messages))
 	for _, message := range messages {
+		text, err := message.TextOnly()
+		if err != nil {
+			return nil, fmt.Errorf("anthropic: %w", err)
+		}
 		blocks := make([]anthropic.ContentBlockParamUnion, 0, 1+len(message.ToolCalls))
-		if message.Text != "" {
-			blocks = append(blocks, anthropic.NewTextBlock(message.Text))
+		if text != "" {
+			blocks = append(blocks, anthropic.NewTextBlock(text))
 		}
 		switch message.Role {
 		case "user":
@@ -235,7 +244,7 @@ func toAnthropicMessages(messages []Message) ([]anthropic.MessageParam, error) {
 			}
 			out = append(out, anthropic.NewAssistantMessage(blocks...))
 		case "tool":
-			out = append(out, anthropic.NewUserMessage(anthropic.NewToolResultBlock(message.ToolCallID, message.Text, message.IsError)))
+			out = append(out, anthropic.NewUserMessage(anthropic.NewToolResultBlock(message.ToolCallID, text, message.IsError)))
 		default:
 			return nil, fmt.Errorf("anthropic: unsupported message role %q", message.Role)
 		}

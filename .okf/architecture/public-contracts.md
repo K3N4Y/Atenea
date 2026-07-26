@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-24
+updated_at: 2026-07-26
 summary: The agentcore/ boundary — which types atenea publishes as contracts, which stay private under internal/, the test kits that make them checkable, and the rules that keep the split honest.
 ---
 
@@ -28,7 +28,7 @@ audit](../audits/2026-07-24-agnostic-extensibility-audit.md) §4 R1.
 | Package | Contract | Implemented or consumed by |
 |---|---|---|
 | `agentcore/tool` | `Tool`, `Call`, `Result`; the optional capabilities `Declaring`/`Effects` and `Presenter`/`Presentation`/`PresentationKind`, with their resolvers `EffectsOf` and `PresentationOf` | anyone shipping a tool |
-| `agentcore/llm` | `Provider`, `Request`, `Message`, `ToolCallPart`, `ToolDef`, `Event`, `EventKind`, `Usage`; the optional capability `Describing`/`Capabilities`/`PromptCaching`, with its resolver `CapabilitiesOf` | anyone shipping a model adapter |
+| `agentcore/llm` | `Provider`, `Request`, `Message`, `Part`/`PartKind` with `TextMessage`, `TextOnly` and `UnsupportedPartError`, `ToolCallPart`, `ToolDef`, `Event`, `EventKind`, `Usage`; the optional capability `Describing`/`Capabilities`/`PromptCaching`, with its resolver `CapabilitiesOf` | anyone shipping a model adapter |
 | `agentcore/session` | `SessionEvent`, `EventKind`, `Seq`, `Role`, `Message`, `ToolCall`, `Usage`, `ContextEpoch`, `CompactionCheckpoint`, `StructuredSummary`, `CompactionReason`, `PromptCheckpoint` | anyone reading or emitting the durable event stream |
 | `agentcore/permission` | `Policy`, `Gate`, `Decision`, `Verdict`, `Request`, `Rule`; the optional capability `Grantable` with its resolver `GrantRuleFor` | anyone replacing the ask-before-run behavior, or shipping a tool that can be granted for a session |
 
@@ -58,6 +58,14 @@ R3.2 applied the same idiom to the provider contract: `Describing` is optional, 
 answer for the context windows of its own models instead of core keeping a table.
 See [Provider capabilities](provider-capabilities.md).
 
+R3.6 changed `Message` itself, which is the first and so far only *breaking*
+change to a published type: `Text string` became `Parts []Part`, so content has
+one representation and an image is a new `PartKind` rather than a new field on a
+type third parties compile against. `TextMessage` builds the text-only case,
+`TextOnly` reads it back and hands the caller an `*UnsupportedPartError` instead
+of letting it silently drop what it cannot express. See
+[Message content](message-content.md).
+
 ## What stayed private, and why
 
 - **The registry** (`internal/tool`): `Registry`, `Catalog`, `Materialized`,
@@ -68,8 +76,10 @@ See [Provider capabilities](provider-capabilities.md).
   middleware chain (R6) makes it one.
 - **The adapters and the catalog** (`internal/llm`): `OpenAIProvider`,
   `AnthropicProvider`, `SwitchableProvider`, `FakeProvider`, `ProviderSnapshot`,
-  the context-window table, `ListModels`. `Capabilities` (R3) is the contract
-  that will replace the construction-time compatibility profile.
+  the per-dialect context-window tables, `ListModels`. R3.2 published the
+  `Capabilities` contract those tables now answer through, so what stays here is
+  the answers themselves — this build's adapters and the models they happen to
+  serve.
 - **The store and the projections** (`internal/session`): `Store`, `MemoryStore`,
   `SQLiteStore`, `Session`, `Inbox`, `EffectiveCheckpoint`, `RunnerContext`,
   `ValidateCompactionCheckpoint`, `DecodeStructuredSummary`. The *shape* of the
@@ -162,6 +172,7 @@ claim it cannot verify.
 | `Usage` only on `StepEnded` | the turn's tokens are accounted once |
 | text, reasoning and per-call tool inputs are bracketed | a delta with no open block, or a block never closed, leaves a UI waiting |
 | `ToolCall` carries an id, a name and the complete input | a call without them is unanswerable |
+| content the adapter cannot express is refused, not dropped | a skipped part leaves no trace anywhere, so the model answers about an image it never received and nothing downstream can tell that is what happened |
 | cancellation closes the channel | interrupting a turn must not leak the goroutine behind it |
 | safe for concurrent use | a main turn and its subagents share one provider |
 
@@ -239,9 +250,12 @@ it: a tool implements an interface declared where it is consumed. No
 R1.3 makes the contracts importable and R1.4 makes them checkable. Neither, by
 itself, makes the module usable:
 
-- **No stability promise or version tag.** Nothing under `agentcore/` is v1 yet;
-  R3 and R5 will each add to these packages, and the additive shape of the types is
-  what keeps that from breaking a consumer. R2 was the first such addition and it
-  broke nothing: every new type is optional, discovered by type assertion.
+- **No stability promise or version tag.** Nothing under `agentcore/` is v1 yet,
+  and R3.6 is why that still matters: R2 and R3.2 only ever *added* — every new
+  type optional, discovered by type assertion — but replacing `Message.Text` with
+  `Parts` would have broken an outside adapter had one existed. It was done now
+  precisely because none does, and because the seam it lands is what keeps the
+  next such change from being necessary. R5 will add to `agentcore/session` and is
+  expected to be additive again.
 - **No headless entrypoint** to drive the loop with (audit R4.3). The Go contracts
   are for extending atenea, not for driving it; driving it is the CLI's job.

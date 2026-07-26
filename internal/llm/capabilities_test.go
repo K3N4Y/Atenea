@@ -127,7 +127,7 @@ func TestAnthropicProvider_DeclaredDefaultMaxOutputIsWhatItSends(t *testing.T) {
 	defer server.Close()
 
 	p := NewAnthropicProvider("key", server.URL, "claude-test")
-	out, err := p.Stream(context.Background(), Request{Model: "claude-test", Messages: []Message{{Role: "user", Text: "hi"}}})
+	out, err := p.Stream(context.Background(), Request{Model: "claude-test", Messages: []Message{TextMessage("user", "hi")}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -44,14 +44,33 @@ func (r *recorder) reported() []string {
 
 // scripted replays a fixed turn and closes the channel when it ends, honoring
 // cancellation on every send. It is the smallest thing that behaves like an
-// adapter, so the shape of its script is the only thing under test.
+// adapter, so the shape of its script is the only thing under test — except for
+// the content it is handed, where being text-only is a claim it has to back:
+// TextOnly is the whole of what such an adapter owes the content clause.
 type scripted struct{ turn []llm.Event }
 
-func (s scripted) Stream(ctx context.Context, _ llm.Request) (<-chan llm.Event, error) {
+func (s scripted) Stream(ctx context.Context, req llm.Request) (<-chan llm.Event, error) {
+	for _, message := range req.Messages {
+		if _, err := message.TextOnly(); err != nil {
+			return nil, err
+		}
+	}
+	return replay(ctx, s.turn), nil
+}
+
+// dropsUnspeakableContent answers as if every message were text it understood,
+// which is the failure the content clause exists for.
+type dropsUnspeakableContent struct{ turn []llm.Event }
+
+func (d dropsUnspeakableContent) Stream(ctx context.Context, _ llm.Request) (<-chan llm.Event, error) {
+	return replay(ctx, d.turn), nil
+}
+
+func replay(ctx context.Context, turn []llm.Event) <-chan llm.Event {
 	out := make(chan llm.Event)
 	go func() {
 		defer close(out)
-		for _, ev := range s.turn {
+		for _, ev := range turn {
 			select {
 			case <-ctx.Done():
 				return
@@ -59,7 +78,7 @@ func (s scripted) Stream(ctx context.Context, _ llm.Request) (<-chan llm.Event, 
 			}
 		}
 	}()
-	return out, nil
+	return out
 }
 
 // compliantTurn covers everything the checks have an opinion about: a bracketed
@@ -146,6 +165,18 @@ type refusesTheRequest struct{}
 
 func (refusesTheRequest) Stream(context.Context, llm.Request) (<-chan llm.Event, error) {
 	return nil, errors.New("nope")
+}
+
+// failsWithoutACause refuses content it cannot express, but leaves the cause out
+// of the event: the host is handed a sentence where it needed something errors.As
+// can read.
+type failsWithoutACause struct{}
+
+func (failsWithoutACause) Stream(ctx context.Context, _ llm.Request) (<-chan llm.Event, error) {
+	return replay(ctx, []llm.Event{
+		{Kind: llm.StepStarted},
+		{Kind: llm.StepFailed, Text: "cannot read that"},
+	}), nil
 }
 
 func TestChecks_CatchAViolatingProvider(t *testing.T) {
@@ -258,6 +289,10 @@ func TestChecks_CatchAViolatingProvider(t *testing.T) {
 			llm.Event{Kind: llm.ToolInputStarted},
 			llm.Event{Kind: llm.StepEnded},
 		)},
+		{"a turn that ignores content it cannot express", "UnspeakableContentIsRefused", provider(
+			dropsUnspeakableContent{turn: compliantTurn()})},
+		{"a refusal that carries no cause", "UnspeakableContentIsRefused", provider(failsWithoutACause{})},
+		{"a channel that is never closed", "UnspeakableContentIsRefused", provider(neverCloses{})},
 		{"a channel that outlives its cancelled context", "CancellationClosesTheChannel", provider(neverCloses{})},
 		{"a nil channel and no error", "CancellationClosesTheChannel", provider(nilChannel{})},
 		{"a channel that is never closed", "StreamIsSafeForConcurrentUse", provider(neverCloses{})},
@@ -306,6 +341,29 @@ func TestCheckCapabilities_AcceptsAUsableDeclaration(t *testing.T) {
 	checkByName(t, "DeclaredCapabilitiesAreUsable")(r, subject)
 	if reported := r.reported(); len(reported) > 0 {
 		t.Errorf("a usable declaration was reported:\n%s", strings.Join(reported, "\n"))
+	}
+}
+
+// failsTheTurn refuses content it cannot express the other legal way: the turn
+// opens and closes on StepFailed with the cause in Err, which is what an adapter
+// that only finds out mid-stream has to do.
+type failsTheTurn struct{}
+
+func (failsTheTurn) Stream(ctx context.Context, _ llm.Request) (<-chan llm.Event, error) {
+	return replay(ctx, []llm.Event{
+		{Kind: llm.StepStarted},
+		{Kind: llm.StepFailed, Err: &llm.UnsupportedPartError{Kind: unspeakableKind}, Text: "cannot read that"},
+	}), nil
+}
+
+// TestCheckContentRefusal_AcceptsAFailedTurn is the other half of the clause:
+// refusing up front is not the only honest answer, so a bracketed failure carrying
+// its cause must pass too.
+func TestCheckContentRefusal_AcceptsAFailedTurn(t *testing.T) {
+	r := &recorder{}
+	checkByName(t, "UnspeakableContentIsRefused")(r, func() Subject { return Subject{Provider: failsTheTurn{}} })
+	if reported := r.reported(); len(reported) > 0 {
+		t.Errorf("a turn that failed with its cause was reported:\n%s", strings.Join(reported, "\n"))
 	}
 }
 

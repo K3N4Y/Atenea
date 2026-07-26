@@ -446,7 +446,11 @@ func TestRunner_BuildsRequestFromHistoryAndMaterializedTools(t *testing.T) {
 	// El Request refleja el historial: al menos un mensaje user con Text "hola".
 	var foundUser bool
 	for _, m := range req.Messages {
-		if m.Role == string(session.RoleUser) && m.Text == "hola" {
+		text, err := m.TextOnly()
+		if err != nil {
+			t.Fatalf("mensaje %+v: %v", m, err)
+		}
+		if m.Role == string(session.RoleUser) && text == "hola" {
 			foundUser = true
 		}
 	}
@@ -582,46 +586,66 @@ func TestRunner_ProviderExecutedToolIsOnlyPersisted(t *testing.T) {
 	}
 }
 
-// TestToLLMMessages_CarriesToolCallsAndToolCallID fija que la proyeccion
-// session.Message -> llm.Message propaga las partes ricas: el assistant con tool
-// calls cruza con sus ToolCalls mapeadas a []llm.ToolCallPart (Arguments como
-// json.RawMessage), y el resultado de la tool cruza con su ToolCallID. Hoy
-// toLLMMessages solo copia Role/Text, asi que el emparejamiento que el proveedor
-// necesita se pierde al armar el Request.
+// TestToLLMMessages_CarriesToolCallsAndToolCallID pins the projection
+// session.Message -> llm.Message: a durable message's text crosses as the
+// message's content, and so does the pairing the provider needs — the assistant's
+// tool calls as []llm.ToolCallPart with Arguments kept as raw JSON, and the tool
+// result's ToolCallID.
 func TestToLLMMessages_CarriesToolCallsAndToolCallID(t *testing.T) {
 	msgs := []session.Message{
-		{Role: session.RoleAssistant, Text: "voy a leer", ToolCalls: []session.ToolCall{{ID: "call_1", Name: "read", Arguments: `{"path":"foo.go"}`}}},
-		{Role: session.RoleTool, Text: "contenido", ToolCallID: "call_1"},
+		{Role: session.RoleAssistant, Text: "reading it", ToolCalls: []session.ToolCall{{ID: "call_1", Name: "read", Arguments: `{"path":"foo.go"}`}}},
+		{Role: session.RoleTool, Text: "contents", ToolCallID: "call_1"},
 	}
 	got := toLLMMessages(msgs)
 
 	if len(got) != 2 {
-		t.Fatalf("toLLMMessages devolvio %d mensajes, quiero 2", len(got))
+		t.Fatalf("toLLMMessages returned %d messages, want 2", len(got))
 	}
 
 	asst := got[0]
 	if asst.Role != "assistant" {
-		t.Errorf("got[0].Role = %q, quiero %q", asst.Role, "assistant")
+		t.Errorf("got[0].Role = %q, want %q", asst.Role, "assistant")
 	}
-	if asst.Text != "voy a leer" {
-		t.Errorf("got[0].Text = %q, quiero %q", asst.Text, "voy a leer")
+	wantParts := []llm.Part{{Kind: llm.TextPart, Text: "reading it"}}
+	if !reflect.DeepEqual(asst.Parts, wantParts) {
+		t.Errorf("got[0].Parts = %+v, want the text as one part (%+v)", asst.Parts, wantParts)
 	}
 	if len(asst.ToolCalls) != 1 {
-		t.Fatalf("got[0].ToolCalls = %+v, quiero 1 tool call", asst.ToolCalls)
+		t.Fatalf("got[0].ToolCalls = %+v, want 1 tool call", asst.ToolCalls)
 	}
-	wantPart := llm.ToolCallPart{ID: "call_1", Name: "read", Arguments: json.RawMessage(`{"path":"foo.go"}`)}
-	if !reflect.DeepEqual(asst.ToolCalls[0], wantPart) {
-		t.Errorf("got[0].ToolCalls[0] = %+v, quiero %+v", asst.ToolCalls[0], wantPart)
+	wantCall := llm.ToolCallPart{ID: "call_1", Name: "read", Arguments: json.RawMessage(`{"path":"foo.go"}`)}
+	if !reflect.DeepEqual(asst.ToolCalls[0], wantCall) {
+		t.Errorf("got[0].ToolCalls[0] = %+v, want %+v", asst.ToolCalls[0], wantCall)
 	}
 
-	tool := got[1]
-	if tool.Role != "tool" {
-		t.Errorf("got[1].Role = %q, quiero %q", tool.Role, "tool")
+	result := got[1]
+	if result.Role != "tool" {
+		t.Errorf("got[1].Role = %q, want %q", result.Role, "tool")
 	}
-	if tool.Text != "contenido" {
-		t.Errorf("got[1].Text = %q, quiero %q", tool.Text, "contenido")
+	if text, err := result.TextOnly(); err != nil || text != "contents" {
+		t.Errorf("got[1].TextOnly() = (%q, %v), want the result text", text, err)
 	}
-	if tool.ToolCallID != "call_1" {
-		t.Errorf("got[1].ToolCallID = %q, quiero %q", tool.ToolCallID, "call_1")
+	if result.ToolCallID != "call_1" {
+		t.Errorf("got[1].ToolCallID = %q, want %q", result.ToolCallID, "call_1")
+	}
+}
+
+// A durable message with nothing to say — an assistant turn that was only tool
+// calls — must project to no content at all. A part carrying the empty string
+// would reach Anthropic as an empty content block, which it rejects.
+func TestToLLMMessages_AMessageWithNoTextHasNoContent(t *testing.T) {
+	msgs := []session.Message{
+		{Role: session.RoleAssistant, ToolCalls: []session.ToolCall{{ID: "call_1", Name: "read", Arguments: `{}`}}},
+	}
+	got := toLLMMessages(msgs)
+
+	if len(got) != 1 {
+		t.Fatalf("toLLMMessages returned %d messages, want 1", len(got))
+	}
+	if len(got[0].Parts) != 0 {
+		t.Errorf("got[0].Parts = %+v, want none", got[0].Parts)
+	}
+	if len(got[0].ToolCalls) != 1 {
+		t.Errorf("got[0].ToolCalls = %+v, want the tool call to survive", got[0].ToolCalls)
 	}
 }

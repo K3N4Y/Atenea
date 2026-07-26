@@ -124,7 +124,7 @@ func ProviderTitler(providerAndModel func() (llm.Provider, string)) Titler {
 		provider, model := providerAndModel()
 		ctx, cancel := context.WithTimeout(context.Background(), auxTurnTimeout)
 		defer cancel()
-		out, err := provider.Stream(ctx, llm.Request{Model: model, System: titleSystemPrompt, Messages: []llm.Message{{Role: "user", Text: message}}})
+		out, err := provider.Stream(ctx, llm.Request{Model: model, System: titleSystemPrompt, Messages: []llm.Message{llm.TextMessage("user", message)}})
 		if err != nil {
 			return ""
 		}

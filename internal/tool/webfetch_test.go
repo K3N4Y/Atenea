@@ -96,10 +96,7 @@ func TestWebFetch_FetchesConvertsAndDistills(t *testing.T) {
 	if prov.got.System == "" {
 		t.Errorf("falta el system prompt de extraccion")
 	}
-	if len(prov.got.Messages) == 0 {
-		t.Fatalf("el destilado no recibio mensajes")
-	}
-	user := prov.got.Messages[len(prov.got.Messages)-1].Text
+	user := lastUserText(t, prov.got)
 	if !strings.Contains(user, "Wails") {
 		t.Errorf("el destilado no recibio el contenido de la pagina: %q", user)
 	}
@@ -125,7 +122,7 @@ func TestWebFetch_NonHTMLPassesThrough(t *testing.T) {
 	if _, err := wf.Execute(context.Background(), webFetchInput(t, srv.URL, "que version?")); err != nil {
 		t.Fatalf("Execute error: %v", err)
 	}
-	user := prov.got.Messages[len(prov.got.Messages)-1].Text
+	user := lastUserText(t, prov.got)
 	if !strings.Contains(user, body) {
 		t.Errorf("el destilado no recibio el texto plano crudo: %q", user)
 	}
@@ -243,7 +240,7 @@ func TestWebFetch_FollowsRedirectToAllowedHost(t *testing.T) {
 	if res.Output != "ok" {
 		t.Errorf("Output = %q, quiero la respuesta destilada del destino", res.Output)
 	}
-	user := prov.got.Messages[len(prov.got.Messages)-1].Text
+	user := lastUserText(t, prov.got)
 	if !strings.Contains(user, "destino final") {
 		t.Errorf("el destilado no recibio el cuerpo del destino: %q", user)
 	}
@@ -317,4 +314,19 @@ func TestNormalizeWebFetchURL(t *testing.T) {
 	if _, err := normalizeWebFetchURL("file:///etc/passwd"); err == nil {
 		t.Errorf("esperaba rechazo de esquema no-web")
 	}
+}
+
+// lastUserText is the text of the last message the distillation sent. It reads it
+// through TextOnly rather than off a field, so content the provider could not have
+// carried fails the test instead of quietly leaving the assertion.
+func lastUserText(t *testing.T, req llm.Request) string {
+	t.Helper()
+	if len(req.Messages) == 0 {
+		t.Fatalf("the distillation received no messages")
+	}
+	text, err := req.Messages[len(req.Messages)-1].TextOnly()
+	if err != nil {
+		t.Fatalf("last message: %v", err)
+	}
+	return text
 }

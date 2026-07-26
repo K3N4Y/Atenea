@@ -23,7 +23,7 @@ func commitMessageFromProvider(p llm.Provider, model, diff string) string {
 	out, err := p.Stream(ctx, llm.Request{
 		Model:    model,
 		System:   commitSystemPrompt,
-		Messages: []llm.Message{{Role: "user", Text: diff}},
+		Messages: []llm.Message{llm.TextMessage("user", diff)},
 	})
 	if err != nil {
 		return ""

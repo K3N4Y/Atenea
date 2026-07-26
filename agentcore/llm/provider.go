@@ -41,9 +41,14 @@ type Request struct {
 // Message is one history message projected into the provider's format. The
 // host builds it from its durable history; the adapter translates it to the
 // blocks of its SDK.
+//
+// Its content is Parts, and only Parts. A Text field beside them would be a
+// second way to say the same thing, which leaves every adapter deciding which of
+// the two wins and lets the two disagree — so there is exactly one answer to what
+// a message says. TextMessage builds the text-only case, TextOnly reads it back.
 type Message struct {
 	Role       string
-	Text       string
+	Parts      []Part         // the message's content, in order
 	ToolCalls  []ToolCallPart // role=assistant: tool calls the model asked for
 	ToolCallID string         // role=tool: matches the assistant tool call this result answers
 	IsError    bool           // role=tool: the result represents an execution failure

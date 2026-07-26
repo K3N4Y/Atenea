@@ -102,7 +102,11 @@ func TestManager_SetRootPublishesFilesCommandsAndRunnerTogether(t *testing.T) {
 	if !strings.Contains(req.System, root2) {
 		t.Fatalf("runner system prompt does not contain new root %q", root2)
 	}
-	if got := req.Messages[len(req.Messages)-1].Text; !strings.Contains(got, `skill "beta"`) {
+	got, err := req.Messages[len(req.Messages)-1].TextOnly()
+	if err != nil {
+		t.Fatalf("last message: %v", err)
+	}
+	if !strings.Contains(got, `skill "beta"`) {
 		t.Fatalf("expanded prompt = %q, want beta command", got)
 	}
 }

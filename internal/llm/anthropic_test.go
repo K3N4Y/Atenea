@@ -45,9 +45,9 @@ func TestAnthropicProvider_StreamMapsNativeMessagesRequestAndEvents(t *testing.T
 	out, err := p.Stream(context.Background(), Request{
 		Model: "claude-test", System: "Be exact", MaxOutputTokens: 321,
 		Messages: []Message{
-			{Role: "user", Text: "open it"},
-			{Role: "assistant", Text: "calling", ToolCalls: []ToolCallPart{{ID: "toolu_1", Name: "read", Arguments: json.RawMessage(`{"path":"old.go"}`)}}},
-			{Role: "tool", ToolCallID: "toolu_1", Text: "contents", IsError: true},
+			TextMessage("user", "open it"),
+			{Role: "assistant", Parts: []Part{{Kind: TextPart, Text: "calling"}}, ToolCalls: []ToolCallPart{{ID: "toolu_1", Name: "read", Arguments: json.RawMessage(`{"path":"old.go"}`)}}},
+			{Role: "tool", ToolCallID: "toolu_1", Parts: []Part{{Kind: TextPart, Text: "contents"}}, IsError: true},
 		},
 		Tools: []ToolDef{{Name: "read", Description: "Read a file", Schema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}`)}},
 	})
@@ -117,7 +117,7 @@ func TestAnthropicProvider_StreamEnablesFiveMinutePromptCaching(t *testing.T) {
 	defer server.Close()
 
 	out, err := NewAnthropicProvider("key", server.URL, "claude-test").Stream(context.Background(), Request{
-		Messages: []Message{{Role: "user", Text: "hello"}},
+		Messages: []Message{TextMessage("user", "hello")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -136,6 +136,81 @@ func TestAnthropicProvider_StreamEnablesFiveMinutePromptCaching(t *testing.T) {
 	}
 }
 
+// A message's content is every text part in order, joined into the one text block
+// Anthropic takes — and a message with nothing to say sends no block at all,
+// because Anthropic rejects an empty one.
+func TestAnthropicProvider_StreamJoinsTextPartsAndOmitsEmptyContent(t *testing.T) {
+	requestBodies := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		requestBodies <- body
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "event: message\ndata: {\"type\":\"message_stop\"}\n\n")
+	}))
+	defer server.Close()
+
+	out, err := NewAnthropicProvider("key", server.URL, "claude-test").Stream(context.Background(), Request{
+		Messages: []Message{
+			{Role: "user", Parts: []Part{{Kind: TextPart, Text: "read "}, {Kind: TextPart, Text: "foo.go"}}},
+			{Role: "assistant", ToolCalls: []ToolCallPart{{ID: "toolu_1", Name: "read", Arguments: json.RawMessage(`{"path":"foo.go"}`)}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drain(out)
+
+	var body struct {
+		Messages []struct {
+			Content []map[string]any `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(<-requestBodies, &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Messages) != 2 {
+		t.Fatalf("messages = %#v, want 2", body.Messages)
+	}
+	user := body.Messages[0].Content
+	if len(user) != 1 || user[0]["type"] != "text" || user[0]["text"] != "read foo.go" {
+		t.Errorf("user content = %#v, want one text block carrying both parts", user)
+	}
+	assistant := body.Messages[1].Content
+	if len(assistant) != 1 || assistant[0]["type"] != "tool_use" {
+		t.Errorf("assistant content = %#v, want the tool use alone and no empty text block", assistant)
+	}
+}
+
+// This adapter cannot put anything but text on the wire, so a part it does not
+// understand fails the request outright — before a token is spent, and loudly
+// enough for a host to classify. Sending the rest would hand the model a
+// conversation with a hole in it.
+func TestAnthropicProvider_StreamRefusesContentItCannotExpress(t *testing.T) {
+	var called bool
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
+	defer server.Close()
+
+	out, err := NewAnthropicProvider("key", server.URL, "claude-test").Stream(context.Background(), Request{
+		Messages: []Message{
+			TextMessage("user", "what is in this?"),
+			{Role: "user", Parts: []Part{{Kind: PartKind(1 << 30)}}},
+		},
+	})
+	if out != nil {
+		t.Errorf("Stream returned a channel for content it cannot express")
+	}
+	var unsupported *UnsupportedPartError
+	if !errors.As(err, &unsupported) {
+		t.Fatalf("Stream error = %v, want an *UnsupportedPartError a host can classify", err)
+	}
+	if called {
+		t.Errorf("the request reached the endpoint: the refusal must cost nothing")
+	}
+}
+
 func TestAnthropicProvider_StreamReportsAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -143,7 +218,7 @@ func TestAnthropicProvider_StreamReportsAPIError(t *testing.T) {
 		io.WriteString(w, `{"type":"error","error":{"type":"authentication_error","message":"bad key"}}`)
 	}))
 	defer server.Close()
-	out, err := NewAnthropicProvider("bad", server.URL, "model").Stream(context.Background(), Request{Messages: []Message{{Role: "user", Text: "hi"}}})
+	out, err := NewAnthropicProvider("bad", server.URL, "model").Stream(context.Background(), Request{Messages: []Message{TextMessage("user", "hi")}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +238,7 @@ func TestAnthropicProvider_StreamClassifiesContextOverflow(t *testing.T) {
 	defer server.Close()
 
 	out, err := NewAnthropicProvider("key", server.URL, "claude-test").Stream(context.Background(), Request{
-		Messages: []Message{{Role: "user", Text: "oversized prompt"}},
+		Messages: []Message{TextMessage("user", "oversized prompt")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -200,7 +275,7 @@ func TestAnthropicProvider_StreamRejectsInvalidParallelToolInput(t *testing.T) {
 	defer server.Close()
 
 	out, err := NewAnthropicProvider("key", server.URL, "claude-test").Stream(context.Background(), Request{
-		Messages: []Message{{Role: "user", Text: "use tools"}},
+		Messages: []Message{TextMessage("user", "use tools")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -234,7 +309,7 @@ func TestAnthropicProvider_StreamCancellationClosesChannel(t *testing.T) {
 	defer server.Close()
 	defer close(release)
 	ctx, cancel := context.WithCancel(context.Background())
-	out, err := NewAnthropicProvider("key", server.URL, "model").Stream(ctx, Request{Messages: []Message{{Role: "user", Text: "hi"}}})
+	out, err := NewAnthropicProvider("key", server.URL, "model").Stream(ctx, Request{Messages: []Message{TextMessage("user", "hi")}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -163,8 +163,6 @@ func retryTiming(req *http.Request, next option.MiddlewareNext) (*http.Response,
 // en el stream) y emite el bracketing del turno por el channel respetando la
 // cancelacion del ctx. Cierra el channel al terminar.
 func (p *OpenAIProvider) Stream(ctx context.Context, req Request) (<-chan Event, error) {
-	out := make(chan Event)
-
 	model := req.Model
 	if model == "" {
 		model = p.model
@@ -172,7 +170,10 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request) (<-chan Event,
 
 	// The system prompt (turn baseline) goes as the first message with role system,
 	// before the history. Empty = not prepended (no empty system message is sent).
-	msgs := toOpenAIMessages(req.Messages)
+	msgs, err := toOpenAIMessages(req.Messages)
+	if err != nil {
+		return nil, err
+	}
 	if req.System != "" {
 		msgs = append([]openai.ChatCompletionMessageParamUnion{openai.SystemMessage(req.System)}, msgs...)
 	}
@@ -204,6 +205,7 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request) (<-chan Event,
 		params.SetExtraFields(extraFields)
 	}
 
+	out := make(chan Event)
 	go func() {
 		defer close(out)
 
@@ -423,38 +425,45 @@ func reasoningText(delta openai.ChatCompletionChunkChoiceDelta) string {
 	return ""
 }
 
-// toOpenAIMessages proyecta el historial al formato del SDK segun el Role. El
-// assistant lleva su texto opcional mas los tool_calls (id, function.name y
-// function.arguments como string JSON crudo) que la API requiere para el
-// round-trip multi-paso; el rol "tool" se mapea a un tool result con su
-// tool_call_id, que debe emparejar con el id de la tool call del assistant. Un
-// Role desconocido se trata como user (defensivo: el modelo siempre recibe algo
-// valido).
-func toOpenAIMessages(msgs []Message) []openai.ChatCompletionMessageParamUnion {
+// toOpenAIMessages projects the history into the SDK's format, by Role. An
+// assistant carries its optional text plus the tool_calls (id, function.name and
+// function.arguments as raw JSON) the API requires for the multi-step round trip;
+// role "tool" becomes a tool result with its tool_call_id, which has to match the
+// id of the assistant's call. An unknown Role is treated as user, defensively:
+// the model always receives something valid.
+//
+// This dialect carries text content only, so a message with a part of any other
+// kind fails the whole request rather than losing the part: an unspoken drop puts
+// a conversation with a hole in it in front of the model.
+func toOpenAIMessages(msgs []Message) ([]openai.ChatCompletionMessageParamUnion, error) {
 	out := make([]openai.ChatCompletionMessageParamUnion, 0, len(msgs))
 	for _, m := range msgs {
+		text, err := m.TextOnly()
+		if err != nil {
+			return nil, fmt.Errorf("openai: %w", err)
+		}
 		switch m.Role {
 		case "assistant":
-			asst := toAssistantMessage(m)
+			asst := toAssistantMessage(m, text)
 			out = append(out, openai.ChatCompletionMessageParamUnion{OfAssistant: &asst})
 		case "tool":
-			out = append(out, openai.ToolMessage(m.Text, m.ToolCallID))
+			out = append(out, openai.ToolMessage(text, m.ToolCallID))
 		case "system":
-			out = append(out, openai.SystemMessage(m.Text))
+			out = append(out, openai.SystemMessage(text))
 		default:
-			out = append(out, openai.UserMessage(m.Text))
+			out = append(out, openai.UserMessage(text))
 		}
 	}
-	return out
+	return out, nil
 }
 
-// toAssistantMessage proyecta un Message del assistant al param del SDK: el texto
-// opcional mas los tool_calls (id, function.name y function.arguments JSON crudo)
-// que la API requiere para el round-trip multi-paso.
-func toAssistantMessage(m Message) openai.ChatCompletionAssistantMessageParam {
+// toAssistantMessage projects an assistant Message into the SDK's param: the
+// optional text plus the tool_calls (id, function.name and function.arguments as
+// raw JSON) the API requires for the multi-step round trip.
+func toAssistantMessage(m Message, text string) openai.ChatCompletionAssistantMessageParam {
 	asst := openai.ChatCompletionAssistantMessageParam{}
-	if m.Text != "" {
-		asst.Content.OfString = param.NewOpt(m.Text)
+	if text != "" {
+		asst.Content.OfString = param.NewOpt(text)
 	}
 	for _, tc := range m.ToolCalls {
 		asst.ToolCalls = append(asst.ToolCalls, openai.ChatCompletionMessageToolCallUnionParam{
