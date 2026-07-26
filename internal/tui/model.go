@@ -21,6 +21,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/K3N4Y/atenea/internal/command"
+	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/permission"
 	"github.com/K3N4Y/atenea/internal/providerconfig"
 	"github.com/K3N4Y/atenea/internal/session"
@@ -128,6 +129,29 @@ func (m Model) tools() tool.Catalog {
 		return nil
 	}
 	return agent.ToolCatalog()
+}
+
+// capabilityAgent is the optional surface an Agent implements to expose what the
+// adapter serving the current model declares about itself. It is the same shape
+// as catalogAgent and for the same reason: /model swaps the adapter, so the
+// answer is asked for on every use instead of being copied into the Model.
+type capabilityAgent interface {
+	ModelCapabilities() (llm.Capabilities, bool)
+}
+
+// contextWindow is the active model's total token window, and whether anything
+// knows it. Unknown is shown as absent, never as a guess: the window is what
+// every usage figure is read against, so a wrong one is worse than none.
+func (m Model) contextWindow(model string) (int, bool) {
+	agent, ok := m.agent.(capabilityAgent)
+	if !ok {
+		return 0, false
+	}
+	capabilities, ok := agent.ModelCapabilities()
+	if !ok {
+		return 0, false
+	}
+	return capabilities.ContextWindow(model)
 }
 
 // presentationOf is how the entry's tool call should read: what the tool says

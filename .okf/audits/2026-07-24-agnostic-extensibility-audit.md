@@ -54,8 +54,8 @@ of them delete code.
 | Permission policy | **Good** — derived from what each tool declares, not from a name list; decorated by session grants (R2) | `internal/permission/policy.go`, `internal/wiring/wiring.go` |
 | Tool interface | **Good** — 4-method contract plus optional capabilities for effects, grants and presentation (R2) | `agentcore/tool`, `agentcore/permission/grantable.go` |
 | Tool registration | **Partial** — fixed constructor list; `cfg.MCPTools` is the only open slot | `wiring.go:138-142,167-175` |
-| LLM `Provider` | **Partial** — genuinely neutral domain model and an open factory registry (R3.1), but still no capabilities | `internal/llm/provider.go:14-16`, `internal/providerconfig/registry.go` |
-| Provider identity | **Good** — the declared type is the wire format, resolved through a registry; a provider's id decides nothing (R3.1) | `internal/providerconfig/registry.go` |
+| LLM `Provider` | **Good** — neutral domain model, an open factory registry (R3.1) and an optional capability declaration the host derives windows and reserves from (R3.2) | `agentcore/llm/capabilities.go`, `internal/providerconfig/registry.go` |
+| Provider identity | **Good** — the declared type is the wire format, resolved through a registry that builds *and* describes it; a provider's id decides nothing (R3.1, R3.2) | `internal/providerconfig/registry.go` |
 | Event taxonomy | **Weak** — open string set, two hand-maintained non-exhaustive switches that already disagree | `internal/tui/transcript.go:59-151`, `frontend/src/features/chat/chat.ts:215-341` |
 | Event payload evolution | **Weak** — no version, 4 hand-synced sites per new field | `internal/session/sqlitestore.go:22-57,134-149,279-369,510-601` |
 | Tool-use hooks | **Missing** — no pre/post seam; gate + repair + capping hardcoded in the loop | `runner/turn.go:214-235` |
@@ -113,25 +113,27 @@ The wiring around it is closed:
   `cmd/atenea/main.go:212-243` holds 5 providers with literal base URLs, env-var
   names and model-ID lists; `cmd/atenea/main.go:29-51` holds the constants.
   Adding a model is a code change in an unimportable package.
-- **Context windows hardcoded.** `internal/llm/context.go:10-39` maps ~28 literal
-  model IDs to window sizes; an unknown model silently loses compaction hints
-  and top-bar/model-picker context display.
+- ~~**Context windows hardcoded.**~~ `[done 2026-07-25]` R3.2 deleted the map.
+  Windows are declared per wire format by the adapter that speaks it, so a model
+  id is only resolved inside the dialect that names it, and an adapter registered
+  from outside can answer for its own models. The TUI's second table
+  (`curatedModelContext`) went with it.
 - **`/connect` allowlist hardcoded twice.** `connectableProviderIDs`
   (`internal/providerconfig/connect.go:15-20`) and `defaultKeyValidator`
   (`connect.go:36-50`).
-- **No capability negotiation.** `Provider` has one method. Reasoning support,
-  cache field shape, system-prompt placement, retry behavior and
-  context-overflow detection are all resolved at *construction* time via a
-  private `compatibilityProfile` (`internal/llm/openai.go:46-82`) or by which
-  concrete type got built. Observable asymmetries follow: only the OpenAI adapter
-  emits `StepRetrying` (`provider.go:63`, `openai.go:216-219`) though it is a
-  first-class neutral event kind; only the Anthropic adapter ever constructs
-  `ContextOverflowError`, via message-substring sniffing
-  (`anthropic.go:209-216`); Anthropic caching is applied unconditionally on every
-  request (`anthropic.go:78`) with no opt-out.
+- ~~**No capability negotiation.**~~ `[done 2026-07-25]` R3.2 added the optional
+  `llm.Describing` interface. The `compatibilityProfile` is now observable rather
+  than construction-implicit, and the asymmetries listed here are *declared*:
+  Anthropic says it does not report retries and caches implicitly, the OpenAI
+  dialects say they key the cache on `SessionKey`. What is still true is that
+  nothing is *negotiated* — a host cannot ask Anthropic to stop caching, which
+  would be a `Request` field rather than a capability. Context-overflow detection
+  stayed out on purpose: it is a classification bug in the OpenAI adapter, not a
+  capability.
 - **No multimodal seam.** `Message` has only `Text string`
   (`provider.go:30-36`); there is no content-part abstraction, so images and
-  documents have nowhere to live.
+  documents have nowhere to live. Every adapter now declares `Vision: false`
+  (R3.2), which is the flag this seam flips.
 - **No auth shape beyond a bearer string.** `Credential` is
   `{Type, APIKey}` (`internal/providerconfig/credentials.go:16-21`). Bedrock
   (SigV4), Vertex (ADC) and subscription OAuth have no home. The code comment
@@ -148,7 +150,7 @@ Cost to add one new wire format when this was written: **7 files**, two of them
 `connect.go`, `cmd/atenea/main.go`, plus `wailsprovider` for parity). After R3.1
 it is one factory plus one registry entry — and for anything OpenAI-shaped, a
 closure over existing options rather than an adapter. The remaining files on that
-list are R3.2 (`context.go`), R3.3 (`cmd/atenea/main.go`) and R3.4
+list were R3.2 (`context.go`, now deleted), R3.3 (`cmd/atenea/main.go`) and R3.4
 (`wailsprovider`).
 
 ### 3.3 Tools cannot describe themselves, so core describes them by name
@@ -552,6 +554,38 @@ Effect: files touched to add a fully first-class tool drops from ~11 to **3**
    `compatibilityProfile` explicit instead of construction-implicit, and lets the
    UI stop guessing (e.g. it can show "no retry telemetry" rather than silence
    for Anthropic).
+   `[done 2026-07-25]` — shipped as an **optional** interface (`llm.Describing`)
+   rather than a second method on `Provider`, resolved through one
+   `CapabilitiesOf` that returns `(value, answered)`: the same idiom R2 used for
+   tools, and for the same reason. Documented in
+   [Provider capabilities](provider-capabilities.md). Five decisions worth
+   recording:
+   - **The full field list shipped, including six nothing reads yet.** R2's rule
+     — a flag exists only where the host has a distinct reaction — would have cut
+     this to `ContextWindows` and `DefaultMaxOutputTokens`. It was overruled
+     deliberately: the other six *are* the asymmetries §3.2 catalogued as
+     invisible, and declaring them is what makes them visible. `Reasoning: false`
+     for Anthropic is the example that justifies the call — the adapter never
+     sends the `thinking` parameter, which nobody could read off the code.
+   - **Windows are declared per dialect, not in one table keyed by model id.**
+     `claude-opus-4-8` and `anthropic/claude-opus-4.8` are the same family under
+     two adapters, and the old map had to hold both without being able to say
+     which was which — so it answered for adapters the caller was not talking to.
+   - **The registry describes as well as builds.** `Registry` became
+     `map[string]Format{Build, Describe}` because the model picker labels every
+     configured provider and all but the selected one are never constructed. Both
+     halves close over the same `llm.Option` values, so a description cannot drift
+     from the provider it describes — a test asserts the equality. `Open`'s
+     factory parameter became a `Registry` as a consequence.
+   - **`SwitchableProvider` does not implement `Describing`.** Answering for a
+     delegate that declared nothing would turn "said nothing" into "declared the
+     zero value". `llm.ActiveCapabilities` unwraps through the existing `Acquire`
+     seam instead, and the TUI resolves it on every use — `/model` swaps the
+     adapter, exactly as a rewire swaps the tool registry.
+   - **Preventive compaction gained a fix on the way.** A request that leaves
+     `MaxOutputTokens` at zero still gets the adapter's own ceiling on the wire,
+     so the estimate now reserves it: for Anthropic that is 8192 tokens the
+     threshold used to ignore.
 3. **Data-driven default catalog.** Move `cmd/atenea/main.go:212-243` into an
    embedded `providers.default.json` owned by `providerconfig`. Adding a provider
    or model becomes a data change, reviewable by anyone, and stops living in an
@@ -753,8 +787,9 @@ right shape. Consolidate the plumbing:
 *Outcome: the repo becomes legally and technically contributable.*
 
 **Phase 1 — agnostic core (weeks).** R2 tool capability interfaces and removal of
-the six name-keyed switches (landed 2026-07-24). R3 provider registry (landed
-2026-07-25) + capabilities + data-driven catalog + delete `wailsprovider`.
+the six name-keyed switches (landed 2026-07-24). R3 provider registry and
+capabilities (both landed 2026-07-25) + data-driven catalog + delete
+`wailsprovider`.
 *Outcome: tools and providers become additive instead of invasive; the extension
 security default flips to ask.*
 

@@ -61,12 +61,26 @@ type fakeAgent struct {
 	acceptErr      error
 	nextRunID      uint64
 	tools          tool.Catalog
+	// capabilities is what the adapter serving the current model declares;
+	// declared == false is the agent that says nothing, which the UI must treat
+	// as "unknown" rather than as "no window".
+	capabilities llm.Capabilities
+	declared     bool
 }
 
 func (f *fakeAgent) ModelCatalog() []providerconfig.ProviderModels {
 	return providerconfig.CloneProviderModels(f.models)
 }
 func (f *fakeAgent) CurrentModel() providerconfig.Active { return f.active }
+func (f *fakeAgent) ModelCapabilities() (llm.Capabilities, bool) {
+	return f.capabilities, f.declared
+}
+
+// declaringAgent is the agent whose adapter declares one model's context window,
+// which is what any context label in the UI now depends on.
+func declaringAgent(model string, window int) *fakeAgent {
+	return &fakeAgent{declared: true, capabilities: llm.Capabilities{ContextWindows: map[string]int{model: window}}}
+}
 func (f *fakeAgent) SelectModel(providerID, model string) (providerconfig.Active, error) {
 	f.selected = append(f.selected, struct{ providerID, model string }{providerID, model})
 	for _, provider := range f.models {
@@ -1363,7 +1377,10 @@ func TestModel_ModelPickerUsesSingleBorderedPanel(t *testing.T) {
 
 func TestModel_ModelPickerShowsContextBeforePrice(t *testing.T) {
 	agent := &fakeAgent{
-		models: []providerconfig.ProviderModels{{ID: "openai", Name: "OpenAI", Models: []string{"gpt-4.1"}}},
+		models: []providerconfig.ProviderModels{{
+			ID: "openai", Name: "OpenAI", Models: []string{"gpt-4.1"},
+			Capabilities: llm.Capabilities{ContextWindows: map[string]int{"gpt-4.1": 1_047_576}},
+		}},
 		active: providerconfig.Active{ProviderID: "openai", Model: "gpt-4.1"},
 	}
 	m := NewModel(agent, "s1", nil)
@@ -1392,7 +1409,15 @@ func TestModel_ModelPopupKeepsDistinctProviderNameAndID(t *testing.T) {
 }
 
 func TestModel_OpenRouterCuratedModelsShowContext(t *testing.T) {
-	agent := &fakeAgent{models: []providerconfig.ProviderModels{{ID: "openrouter", Name: "OpenRouter", Models: []string{"tencent/hy3:free", "poolside/laguna-xs-2.1:free", "cohere/north-mini-code:free"}}}}
+	agent := &fakeAgent{models: []providerconfig.ProviderModels{{
+		ID: "openrouter", Name: "OpenRouter",
+		Models: []string{"tencent/hy3:free", "poolside/laguna-xs-2.1:free", "cohere/north-mini-code:free"},
+		Capabilities: llm.Capabilities{ContextWindows: map[string]int{
+			"tencent/hy3:free":            262_144,
+			"poolside/laguna-xs-2.1:free": 262_144,
+			"cohere/north-mini-code:free": 256_000,
+		}},
+	}}}
 	m := NewModel(agent, "s1", nil)
 	m = typeRunes(t, m, "/model ")
 	view := m.View()
@@ -4789,7 +4814,7 @@ func TestModel_ComposerGrowthStopsAtFiveLines(t *testing.T) {
 }
 
 func TestModel_ComposerTopBorderShowsTokenUsage(t *testing.T) {
-	m := NewModel(nil, "s1", nil).WithStatus("build", "anthropic/claude-sonnet-4.5")
+	m := NewModel(declaringAgent("anthropic/claude-sonnet-4.5", 200_000), "s1", nil).WithStatus("build", "anthropic/claude-sonnet-4.5")
 	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 12})
 	m = apply(t, m, EventMsg{
 		Kind: session.KindStepEnded,
@@ -4819,7 +4844,7 @@ func TestModel_ComposerTopBorderShowsTokenUsage(t *testing.T) {
 }
 
 func TestModel_ComposerTokenUsageUpdatesDuringStreaming(t *testing.T) {
-	m := NewModel(nil, "s1", nil).WithStatus("build", "anthropic/claude-sonnet-4.5")
+	m := NewModel(declaringAgent("anthropic/claude-sonnet-4.5", 200_000), "s1", nil).WithStatus("build", "anthropic/claude-sonnet-4.5")
 	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 12})
 	m = apply(t, m, EventMsg{
 		Kind:  session.KindStepStarted,
@@ -4903,7 +4928,7 @@ func TestEstimatedTokens(t *testing.T) {
 }
 
 func TestModel_ComposerDistinguishesEstimatedAndExactInputUsage(t *testing.T) {
-	m := NewModel(nil, "s1", nil).WithStatus("build", "anthropic/claude-sonnet-4.5")
+	m := NewModel(declaringAgent("anthropic/claude-sonnet-4.5", 200_000), "s1", nil).WithStatus("build", "anthropic/claude-sonnet-4.5")
 	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 12})
 	m = apply(t, m, EventMsg{
 		Kind:  session.KindStepStarted,

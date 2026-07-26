@@ -16,7 +16,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 
-	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/tool"
 	"github.com/K3N4Y/atenea/internal/tui/theme"
@@ -1772,7 +1771,7 @@ func (m Model) tokenUsageLabel() string {
 	}
 	label := "↑ " + input + " ↓ " + output
 	label += m.cacheStatsUsageLabel()
-	if window, ok := llm.ContextWindow(m.model); ok {
+	if window, ok := m.contextWindow(m.model); ok {
 		label += " ctx " + input + "/" + formatTokenCount(window)
 	}
 	return label

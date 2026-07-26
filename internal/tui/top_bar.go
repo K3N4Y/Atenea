@@ -6,7 +6,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/tui/theme"
 )
 
@@ -98,16 +97,10 @@ func (m Model) topBarContext() string {
 }
 
 // contextWindowLabel devuelve la ventana de contexto del modelo activo como
-// etiqueta ("256k"), o "" si es desconocida. Prefiere el registro canonico de
-// llm.ContextWindow; si ahi no esta (los modelos de OpenRouter no lo estan),
-// cae al contexto curado del menu de modelos (curatedModelContext), en
-// minusculas para casar con el formato de formatTokenCount ("256K" -> "256k").
+// etiqueta ("256k"), o "" si el adaptador que lo sirve no la declara.
 func (m Model) contextWindowLabel() string {
-	if window, ok := llm.ContextWindow(m.model); ok {
+	if window, ok := m.contextWindow(m.model); ok {
 		return formatTokenCount(window)
-	}
-	if curated := curatedModelContext[m.model]; curated != "" {
-		return strings.ToLower(curated)
 	}
 	return ""
 }

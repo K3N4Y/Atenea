@@ -17,6 +17,11 @@ type ProviderModels struct {
 	ID     string
 	Name   string
 	Models []string
+	// Capabilities is what the adapter for this provider's wire format declares,
+	// resolved without building it — the model picker has to label every model it
+	// offers, not only the one currently selected. Zero when this build cannot
+	// speak the type, which reads as "nothing known", never as "nothing there".
+	Capabilities llm.Capabilities
 }
 
 type CachedProvider struct {
@@ -41,6 +46,7 @@ type Catalog struct {
 	getenv      func(string) string
 	credentials CredentialStore
 	list        ModelLister
+	registry    Registry
 	refreshMu   sync.Mutex
 	inflight    *catalogRefresh
 }
@@ -51,14 +57,17 @@ type catalogRefresh struct {
 	err       error
 }
 
-func NewCatalog(cfg Config, cachePath string, getenv func(string) string, list ModelLister, credentials CredentialStore) *Catalog {
+func NewCatalog(cfg Config, cachePath string, getenv func(string) string, list ModelLister, credentials CredentialStore, registry Registry) *Catalog {
 	if getenv == nil {
 		getenv = os.Getenv
 	}
 	if list == nil {
 		list = llm.ListModels
 	}
-	c := &Catalog{config: cfg, cachePath: cachePath, cached: map[string][]string{}, remote: map[string][]string{}, getenv: getenv, credentials: credentials, list: list}
+	if registry == nil {
+		registry = DefaultRegistry()
+	}
+	c := &Catalog{config: cfg, cachePath: cachePath, cached: map[string][]string{}, remote: map[string][]string{}, getenv: getenv, credentials: credentials, list: list, registry: registry}
 	if cachePath != "" {
 		if data, err := os.ReadFile(cachePath); err == nil && json.Unmarshal(data, &c.cache) == nil {
 			for _, entry := range c.cache.Providers {
@@ -100,7 +109,8 @@ func (c *Catalog) Snapshot() []ProviderModels {
 		sort.Strings(remote)
 		add(remote...)
 		add(c.cached[provider.ID]...)
-		result = append(result, ProviderModels{ID: provider.ID, Name: provider.Name, Models: models})
+		capabilities, _ := c.registry.Describe(provider)
+		result = append(result, ProviderModels{ID: provider.ID, Name: provider.Name, Models: models, Capabilities: capabilities})
 	}
 	return result
 }
@@ -174,13 +184,20 @@ func cachedFetchedAt(cache Cache, providerID, baseURL string) time.Time {
 }
 
 // CloneProviderModels deep-copies a catalog snapshot (each entry's Models slice
-// too), so callers that keep or mutate the result never touch the slice another
-// owner still holds.
+// and declared context windows too), so callers that keep or mutate the result
+// never touch what another owner still holds.
 func CloneProviderModels(in []ProviderModels) []ProviderModels {
 	out := make([]ProviderModels, len(in))
 	for i, provider := range in {
 		out[i] = provider
 		out[i].Models = append([]string(nil), provider.Models...)
+		if provider.Capabilities.ContextWindows != nil {
+			windows := make(map[string]int, len(provider.Capabilities.ContextWindows))
+			for model, window := range provider.Capabilities.ContextWindows {
+				windows[model] = window
+			}
+			out[i].Capabilities.ContextWindows = windows
+		}
 	}
 	return out
 }

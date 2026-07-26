@@ -24,9 +24,27 @@ func NewContextCompactor(store session.Store, provider llm.Provider) Compactor {
 	return &contextCompactor{store: compactionStore, provider: provider}
 }
 
+// NeedsCompaction asks the adapter that would serve the turn, since only it
+// knows the window of the model it is about to be sent. An adapter that says
+// nothing, or one that does not know this model, means no preventive
+// compaction: guessing a window is how a turn gets compacted for no reason, or
+// sails past a real limit.
 func (c *contextCompactor) NeedsCompaction(req llm.Request) bool {
-	window, ok := llm.ContextWindow(req.Model)
-	return ok && llm.NeedsPreventiveCompaction(llm.EstimateRequestTokens(req), window)
+	capabilities, ok := llm.ActiveCapabilities(c.provider)
+	if !ok {
+		return false
+	}
+	window, ok := capabilities.ContextWindow(req.Model)
+	if !ok {
+		return false
+	}
+	// A request that leaves MaxOutputTokens at zero still gets whatever ceiling
+	// the adapter applies on its own, so the estimate has to reserve it — without
+	// this the turn is under-counted by exactly the output about to be asked for.
+	if req.MaxOutputTokens <= 0 {
+		req.MaxOutputTokens = capabilities.DefaultMaxOutputTokens
+	}
+	return llm.NeedsPreventiveCompaction(llm.EstimateRequestTokens(req), window)
 }
 
 func (c *contextCompactor) Compact(ctx context.Context, sessionID string) error {

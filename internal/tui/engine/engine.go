@@ -254,6 +254,15 @@ func (e *Engine) ModelCatalog() []providerconfig.ProviderModels {
 	return providerconfig.CloneProviderModels(providers)
 }
 
+// ModelCapabilities is what the adapter currently serving turns declares about
+// itself — above all the context window of the model it is running. It resolves
+// through the switchable provider on every call rather than caching: /model
+// swaps the adapter underneath, and a cached answer would describe the one that
+// is gone. e.wiring.Provider is written once in New, so it needs no lock.
+func (e *Engine) ModelCapabilities() (llm.Capabilities, bool) {
+	return llm.ActiveCapabilities(e.wiring.Provider)
+}
+
 func (e *Engine) CurrentModel() providerconfig.Active {
 	if e.models == nil {
 		return providerconfig.Active{}

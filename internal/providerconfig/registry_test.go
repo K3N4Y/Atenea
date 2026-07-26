@@ -94,7 +94,7 @@ func TestRegistry_BuildUnknownTypeNamesRegisteredTypes(t *testing.T) {
 
 func TestRegistry_DefaultRegistryCopiesAreIndependent(t *testing.T) {
 	extended := DefaultRegistry()
-	extended["bedrock"] = func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil }
+	extended["bedrock"] = Format{Build: func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil }}
 	if _, ok := DefaultRegistry()["bedrock"]; ok {
 		t.Fatal("extending one registry reached the defaults")
 	}
@@ -111,12 +111,12 @@ func TestRegistry_ExtraTypeIsUsableEndToEnd(t *testing.T) {
 	}
 	registry := DefaultRegistry()
 	built := ""
-	registry["bedrock"] = func(def Provider, model, _ string) (llm.Provider, error) {
+	registry["bedrock"] = Format{Build: func(def Provider, model, _ string) (llm.Provider, error) {
 		built = def.ID + ":" + model
 		return inertProvider{}, nil
-	}
+	}}
 
-	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, registry.Build, nil, nil, nil)
+	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, registry, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,5 +150,52 @@ func TestRegistry_UnknownTypeSurfacesOnlyOnTheProviderThatDeclaresIt(t *testing.
 	}
 	if _, err := s.Select(context.Background(), "b", "nova"); err == nil || !strings.Contains(err.Error(), "bedrock") {
 		t.Fatalf("Select err = %v, want it to name the unsupported type", err)
+	}
+}
+
+// TestRegistry_DescribesWithoutBuilding is what the model picker depends on: it
+// labels every model of every configured provider, and all but the selected one
+// are never constructed.
+func TestRegistry_DescribesWithoutBuilding(t *testing.T) {
+	registry := DefaultRegistry()
+
+	anthropic, ok := registry.Describe(Provider{ID: "anthropic", Type: Anthropic})
+	if !ok {
+		t.Fatal("the anthropic format must describe itself")
+	}
+	if window, known := anthropic.ContextWindow("claude-opus-4-8"); !known || window != 200_000 {
+		t.Fatalf("anthropic window = (%d, %v), want (200000, true)", window, known)
+	}
+
+	openAI, _ := registry.Describe(Provider{ID: "openai", Type: OpenAI})
+	if _, known := openAI.ContextWindow("claude-opus-4-8"); known {
+		t.Error("a format must only answer for the model ids its own dialect names")
+	}
+}
+
+// TestRegistry_DescribeReadsTheProviderDefinition: OpenRouter's reasoning is a
+// per-provider opt-out, so the description has to be of this provider, not of the
+// format in the abstract.
+func TestRegistry_DescribeReadsTheProviderDefinition(t *testing.T) {
+	registry := DefaultRegistry()
+	with, _ := registry.Describe(Provider{ID: "openrouter", Type: OpenRouter, OpenRouterReasoning: true})
+	without, _ := registry.Describe(Provider{ID: "openrouter", Type: OpenRouter})
+	if !with.Reasoning || without.Reasoning {
+		t.Fatalf("Reasoning with=%v without=%v, want true then false", with.Reasoning, without.Reasoning)
+	}
+}
+
+// TestRegistry_DescribeIsSilentForWhatItCannotSpeak: an unknown type, or a format
+// registered with a factory and no description, says nothing — which a host reads
+// as "unknown", never as "declares nothing".
+func TestRegistry_DescribeIsSilentForWhatItCannotSpeak(t *testing.T) {
+	registry := DefaultRegistry()
+	registry["bedrock"] = Format{Build: func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil }}
+
+	if _, ok := registry.Describe(Provider{ID: "x", Type: "vertex"}); ok {
+		t.Error("a type this build does not know cannot be described")
+	}
+	if _, ok := registry.Describe(Provider{ID: "b", Type: "bedrock"}); ok {
+		t.Error("a format registered without a Describe declared nothing")
 	}
 }

@@ -99,7 +99,8 @@ func NewOpenAIProvider(apiKey, baseURL, model string, opts ...Option) *OpenAIPro
 
 // newOpenAIProviderWithTimeout es el constructor real, con el timeout por request
 // inyectable para que los tests verifiquen el corte sin esperar el default largo.
-// reasoning arranca en true (OpenRouter) y las opts pueden apagarlo para locales.
+// The zero provider is the neutral dialect with reasoning off; the dialect the
+// registry picked turns on whatever its endpoint understands.
 func newOpenAIProviderWithTimeout(apiKey, baseURL, model string, timeout time.Duration, opts ...Option) *OpenAIProvider {
 	client := openai.NewClient(
 		option.WithAPIKey(apiKey),

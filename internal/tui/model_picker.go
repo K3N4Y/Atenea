@@ -226,7 +226,7 @@ func (m Model) modelPickerView() string {
 			} else if selectedProvider.ID == m.modelPicker.active.ProviderID && model == m.modelPicker.active.Model {
 				prefix = "● "
 			}
-			row := modelPickerModelRow(prefix, model, rightWidth)
+			row := modelPickerModelRow(prefix, model, selectedProvider.Capabilities, rightWidth)
 			if m.modelPicker.modelsFocused && index == m.modelPicker.modelList.selected {
 				row = accentStyle.Render(row)
 			}
@@ -351,10 +351,10 @@ func modelPickerModelHeader(title string, width int) string {
 	return overlayCell(title, nameWidth) + overlayCell("Context", contextWidth) + overlayRightCell("Price $/1M", priceWidth)
 }
 
-func modelPickerModelRow(prefix, model string, width int) string {
+func modelPickerModelRow(prefix, model string, capabilities llm.Capabilities, width int) string {
 	nameWidth, contextWidth, priceWidth := modelPickerMetadataWidths(width)
 	return overlayCell(prefix+sanitizeTerminalText(model), nameWidth) +
-		overlayCell(modelContextLabel(model), contextWidth) +
+		overlayCell(modelContextLabel(capabilities, model), contextWidth) +
 		overlayRightCell(modelPriceLabel(model), priceWidth)
 }
 
@@ -364,21 +364,32 @@ func modelPickerMetadataWidths(width int) (int, int, int) {
 	return max(width-contextWidth-priceWidth, 0), contextWidth, priceWidth
 }
 
-func modelContextLabel(model string) string {
-	if window, ok := llm.ContextWindow(model); ok {
-		if window >= 1_000_000 {
-			value := strconv.FormatFloat(float64(window)/1_000_000, 'f', 2, 64)
-			return strings.TrimRight(strings.TrimRight(value, "0"), ".") + "M"
-		}
-		if window >= 1_000 {
-			return strconv.Itoa((window+500)/1_000) + "K"
-		}
-		return strconv.Itoa(window)
-	}
-	if context := curatedModelContext[model]; context != "" {
-		return context
+// modelContextLabel is the Context column of one model row: the window the
+// provider's adapter declares for it, or an em dash when it declares none. Only
+// the provider that serves a model can answer, which is why the row is rendered
+// from that provider's capabilities rather than from a table of every model.
+func modelContextLabel(capabilities llm.Capabilities, model string) string {
+	if label := formatContextWindow(capabilities, model); label != "" {
+		return label
 	}
 	return "—"
+}
+
+// formatContextWindow renders a declared window compactly ("262K", "1.05M"), or
+// "" when the model's window is unknown.
+func formatContextWindow(capabilities llm.Capabilities, model string) string {
+	window, ok := capabilities.ContextWindow(model)
+	if !ok {
+		return ""
+	}
+	if window >= 1_000_000 {
+		value := strconv.FormatFloat(float64(window)/1_000_000, 'f', 2, 64)
+		return strings.TrimRight(strings.TrimRight(value, "0"), ".") + "M"
+	}
+	if window >= 1_000 {
+		return strconv.Itoa((window+500)/1_000) + "K"
+	}
+	return strconv.Itoa(window)
 }
 
 func modelPriceLabel(model string) string {

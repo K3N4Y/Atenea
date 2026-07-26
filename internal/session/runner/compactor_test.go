@@ -219,3 +219,71 @@ func TestRunner_AutomaticCompactionWithoutCompactablePrefixStillStreams(t *testi
 		t.Fatalf("compactor calls = %d, provider calls = %d", compactor.calls, provider.callCount())
 	}
 }
+
+// declaringProvider is an adapter that answers for its own models, which is what
+// preventive compaction now depends on.
+type declaringProvider struct {
+	llm.Provider
+	capabilities llm.Capabilities
+}
+
+func (p declaringProvider) Capabilities() llm.Capabilities { return p.capabilities }
+
+func newDeclaringProvider(capabilities llm.Capabilities) declaringProvider {
+	return declaringProvider{Provider: llm.NewFakeProvider(), capabilities: capabilities}
+}
+
+// TestContextCompactor_NeedsCompactionAsksTheAdapterServingTheModel: the window
+// comes from whoever is about to receive the request, so an adapter that does not
+// serve this model leaves preventive compaction off rather than guessing.
+func TestContextCompactor_NeedsCompactionAsksTheAdapterServingTheModel(t *testing.T) {
+	store := session.NewMemoryStore()
+	big := llm.Request{Model: "served", System: strings.Repeat("x", 300_000)}
+
+	served := NewContextCompactor(store, newDeclaringProvider(llm.Capabilities{
+		ContextWindows: map[string]int{"served": 100_000},
+	}))
+	if !served.NeedsCompaction(big) {
+		t.Fatal("a request past 80% of the declared window must compact")
+	}
+
+	unserved := NewContextCompactor(store, newDeclaringProvider(llm.Capabilities{
+		ContextWindows: map[string]int{"other": 100_000},
+	}))
+	if unserved.NeedsCompaction(big) {
+		t.Fatal("a model the adapter does not serve has no window; preventive compaction must stay off")
+	}
+}
+
+// TestContextCompactor_NeedsCompactionIsOffWhenTheAdapterDeclaresNothing: silence
+// is not "no limits". A provider that never implemented the optional interface
+// must not be read as one that declared an empty catalog.
+func TestContextCompactor_NeedsCompactionIsOffWhenTheAdapterDeclaresNothing(t *testing.T) {
+	compactor := NewContextCompactor(session.NewMemoryStore(), llm.NewFakeProvider())
+	if compactor.NeedsCompaction(llm.Request{Model: "served", System: strings.Repeat("x", 300_000)}) {
+		t.Fatal("an adapter that declares nothing gives no window to compact against")
+	}
+}
+
+// TestContextCompactor_NeedsCompactionReservesTheAdapterDefaultOutput: a request
+// that leaves MaxOutputTokens at zero still gets the adapter's own ceiling on the
+// wire, so the estimate has to include it or the turn is under-counted by exactly
+// the output about to be asked for.
+func TestContextCompactor_NeedsCompactionReservesTheAdapterDefaultOutput(t *testing.T) {
+	store := session.NewMemoryStore()
+	// Just under 80% of the window on its own; the reserved output is what tips it.
+	request := llm.Request{Model: "served", System: strings.Repeat("x", 236_000)}
+	windows := map[string]int{"served": 100_000}
+
+	withoutCeiling := NewContextCompactor(store, newDeclaringProvider(llm.Capabilities{ContextWindows: windows}))
+	if withoutCeiling.NeedsCompaction(request) {
+		t.Fatal("precondition: the request alone must sit under the preventive threshold")
+	}
+
+	withCeiling := NewContextCompactor(store, newDeclaringProvider(llm.Capabilities{
+		ContextWindows: windows, DefaultMaxOutputTokens: 8192,
+	}))
+	if !withCeiling.NeedsCompaction(request) {
+		t.Fatal("the ceiling the adapter applies on its own must be reserved in the estimate")
+	}
+}

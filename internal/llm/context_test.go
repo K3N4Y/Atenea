@@ -6,53 +6,6 @@ import (
 	"testing"
 )
 
-func TestContextWindow_KnownAndUnknownModels(t *testing.T) {
-	if got, ok := ContextWindow("claude-opus-4-8"); !ok || got != 200_000 {
-		t.Fatalf("ContextWindow known = (%d, %v), want (200000, true)", got, ok)
-	}
-	if got, ok := ContextWindow("totally/unknown"); ok || got != 0 {
-		t.Fatalf("ContextWindow unknown = (%d, %v), want (0, false)", got, ok)
-	}
-}
-
-func TestContextWindow_CurrentNativeAnthropicModels(t *testing.T) {
-	models := []string{"claude-opus-4-8", "claude-fable-5", "claude-sonnet-5", "claude-haiku-4-5"}
-	for _, model := range models {
-		if got, ok := ContextWindow(model); !ok || got != 200_000 {
-			t.Errorf("ContextWindow(%q) = (%d, %v), want (200000, true)", model, got, ok)
-		}
-	}
-}
-
-func TestCurrentNativeAnthropicModelsCanTriggerPreventiveCompaction(t *testing.T) {
-	models := []string{"claude-opus-4-8", "claude-fable-5", "claude-sonnet-5", "claude-haiku-4-5"}
-	for _, model := range models {
-		window, ok := ContextWindow(model)
-		if !ok {
-			t.Errorf("ContextWindow(%q) is unknown; preventive compaction would be disabled", model)
-			continue
-		}
-		if !NeedsPreventiveCompaction(160_000, window) {
-			t.Errorf("%q must compact at 80%% of its context window", model)
-		}
-	}
-}
-
-func TestContextWindow_CurrentOpenAIModels(t *testing.T) {
-	tests := map[string]int{
-		"gpt-5.6":       1_050_000,
-		"gpt-5.6-terra": 1_050_000,
-		"gpt-5.6-luna":  1_050_000,
-		"gpt-5.4-mini":  400_000,
-		"gpt-5.4-nano":  400_000,
-	}
-	for model, want := range tests {
-		if got, ok := ContextWindow(model); !ok || got != want {
-			t.Errorf("ContextWindow(%q) = (%d, %v), want (%d, true)", model, got, ok, want)
-		}
-	}
-}
-
 func TestEstimateRequestTokens_IncludesSystemToolsMessagesAndOutputReserve(t *testing.T) {
 	req := Request{
 		Model:           "anthropic/claude-opus-4.8",

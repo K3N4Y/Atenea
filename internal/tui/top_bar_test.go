@@ -86,7 +86,7 @@ func TestModel_TopBarRefreshesBranchFromHomeAbbreviatedWorkspace(t *testing.T) {
 // listo el modelo, la primera linea de View() es la barra superior con la rama
 // git, el directorio de trabajo y el uso de contexto (usado / ventana).
 func TestModel_TopBarShowsBranchDirectoryAndContextUsage(t *testing.T) {
-	m := NewModel(nil, "s1", nil).
+	m := NewModel(declaringAgent("anthropic/claude-opus-4.8", 200_000), "s1", nil).
 		WithWorkspace("main", "~/dev/atenea").
 		WithStatus("build", "anthropic/claude-opus-4.8")
 
@@ -142,23 +142,19 @@ func TestModel_TopBarKeepsTotalHeight(t *testing.T) {
 	}
 }
 
-// TestModel_TopBarContextFallsBackToCuratedWindow verifica que, cuando el modelo
-// no esta en el registro canonico de llm.ContextWindow (p.ej. los modelos de
-// OpenRouter), la barra usa la ventana curada del menu de modelos
-// (curatedModelContext) y la muestra en minusculas ("9k / 256k"), en vez de
-// mostrar solo los tokens usados.
-func TestModel_TopBarContextFallsBackToCuratedWindow(t *testing.T) {
-	const curatedModel = "cohere/north-mini-code:free"
-	if _, ok := llm.ContextWindow(curatedModel); ok {
-		t.Fatalf("precondicion: %q no debe estar en llm.ContextWindow (debe caer al curado)", curatedModel)
-	}
-	if curatedModelContext[curatedModel] == "" {
-		t.Fatalf("precondicion: %q debe tener contexto curado registrado", curatedModel)
+// TestModel_TopBarContextUsesTheWindowTheAdapterDeclares verifica que la barra
+// lee la ventana del adaptador que sirve el modelo activo — no de una tabla
+// propia de la TUI — y la muestra como "usado / ventana" ("9k / 256k").
+func TestModel_TopBarContextUsesTheWindowTheAdapterDeclares(t *testing.T) {
+	const model = "cohere/north-mini-code:free"
+	agent := &fakeAgent{
+		declared:     true,
+		capabilities: llm.Capabilities{ContextWindows: map[string]int{model: 256_000}},
 	}
 
-	m := NewModel(nil, "s1", nil).
+	m := NewModel(agent, "s1", nil).
 		WithWorkspace("main", "~/x").
-		WithStatus("build", curatedModel)
+		WithStatus("build", model)
 
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 20})
 	m = apply(t, m, EventMsg{Kind: session.KindStepEnded, Usage: &session.Usage{InputTokens: 9000}})
@@ -166,7 +162,7 @@ func TestModel_TopBarContextFallsBackToCuratedWindow(t *testing.T) {
 	first := lineWith(t, ansi.Strip(m.View()), "256k")
 
 	if !strings.Contains(first, "9k / 256k") {
-		t.Fatalf("con ventana curada la barra debe mostrar %q; primera linea = %q", "9k / 256k", first)
+		t.Fatalf("con ventana declarada la barra debe mostrar %q; primera linea = %q", "9k / 256k", first)
 	}
 }
 
@@ -177,11 +173,9 @@ func TestModel_TopBarContextFallsBackToCuratedWindow(t *testing.T) {
 // concatene ciegamente " / ".
 func TestModel_TopBarContextShowsUsedOnlyWhenWindowUnknown(t *testing.T) {
 	const unknownModel = "demo"
-	if _, ok := llm.ContextWindow(unknownModel); ok {
-		t.Fatalf("precondicion: %q debe tener ventana desconocida (ContextWindow ok=false)", unknownModel)
-	}
+	agent := &fakeAgent{declared: true, capabilities: llm.Capabilities{ContextWindows: map[string]int{"other": 200_000}}}
 
-	m := NewModel(nil, "s1", nil).
+	m := NewModel(agent, "s1", nil).
 		WithWorkspace("main", "~/x").
 		WithStatus("build", unknownModel)
 
@@ -195,6 +189,26 @@ func TestModel_TopBarContextShowsUsedOnlyWhenWindowUnknown(t *testing.T) {
 	}
 	if strings.Contains(first, "16k /") {
 		t.Fatalf("con ventana desconocida la barra NO debe mostrar la forma %q (no hay ventana); primera linea = %q", "16k /", first)
+	}
+}
+
+// TestModel_TopBarContextTreatsSilenceAsUnknown: un agente que no declara nada
+// (el adaptador no implementa llm.Describing) no es un adaptador sin ventanas.
+// La barra debe mostrar solo lo usado, nunca inventar una ventana.
+func TestModel_TopBarContextTreatsSilenceAsUnknown(t *testing.T) {
+	const model = "cohere/north-mini-code:free"
+	agent := &fakeAgent{capabilities: llm.Capabilities{ContextWindows: map[string]int{model: 256_000}}}
+
+	m := NewModel(agent, "s1", nil).
+		WithWorkspace("main", "~/x").
+		WithStatus("build", model)
+
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 20})
+	m = apply(t, m, EventMsg{Kind: session.KindStepEnded, Usage: &session.Usage{InputTokens: 9000}})
+
+	first := lineWith(t, ansi.Strip(m.View()), "9k")
+	if strings.Contains(first, "9k /") {
+		t.Fatalf("sin declaracion no hay ventana que mostrar; primera linea = %q", first)
 	}
 }
 
@@ -252,7 +266,7 @@ func TestModel_TopBarWithoutBranchOrDirStillFillsWidth(t *testing.T) {
 // implementacion que recorte por la derecha o deje la barra mas ancha que la
 // terminal.
 func TestModel_TopBarTruncatesLeftToFitContextOnNarrowWidth(t *testing.T) {
-	m := NewModel(nil, "s1", nil).
+	m := NewModel(declaringAgent("anthropic/claude-opus-4.8", 200_000), "s1", nil).
 		WithWorkspace("main", "~/some/very/long/working/directory/path/that/will/not/fit").
 		WithStatus("build", "anthropic/claude-opus-4.8")
 

@@ -12,14 +12,23 @@ import contract "github.com/K3N4Y/atenea/agentcore/llm"
 // implementation detail belongs here and nowhere else.
 
 type (
-	Provider     = contract.Provider
-	Request      = contract.Request
-	Message      = contract.Message
-	ToolCallPart = contract.ToolCallPart
-	ToolDef      = contract.ToolDef
-	Event        = contract.Event
-	EventKind    = contract.EventKind
-	Usage        = contract.Usage
+	Provider      = contract.Provider
+	Request       = contract.Request
+	Message       = contract.Message
+	ToolCallPart  = contract.ToolCallPart
+	ToolDef       = contract.ToolDef
+	Event         = contract.Event
+	EventKind     = contract.EventKind
+	Usage         = contract.Usage
+	Capabilities  = contract.Capabilities
+	Describing    = contract.Describing
+	PromptCaching = contract.PromptCaching
+)
+
+const (
+	NoPromptCaching       = contract.NoPromptCaching
+	ImplicitPromptCaching = contract.ImplicitPromptCaching
+	KeyedPromptCaching    = contract.KeyedPromptCaching
 )
 
 const (

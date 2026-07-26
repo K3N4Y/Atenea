@@ -28,7 +28,7 @@ audit](../audits/2026-07-24-agnostic-extensibility-audit.md) §4 R1.
 | Package | Contract | Implemented or consumed by |
 |---|---|---|
 | `agentcore/tool` | `Tool`, `Call`, `Result`; the optional capabilities `Declaring`/`Effects` and `Presenter`/`Presentation`/`PresentationKind`, with their resolvers `EffectsOf` and `PresentationOf` | anyone shipping a tool |
-| `agentcore/llm` | `Provider`, `Request`, `Message`, `ToolCallPart`, `ToolDef`, `Event`, `EventKind`, `Usage` | anyone shipping a model adapter |
+| `agentcore/llm` | `Provider`, `Request`, `Message`, `ToolCallPart`, `ToolDef`, `Event`, `EventKind`, `Usage`; the optional capability `Describing`/`Capabilities`/`PromptCaching`, with its resolver `CapabilitiesOf` | anyone shipping a model adapter |
 | `agentcore/session` | `SessionEvent`, `EventKind`, `Seq`, `Role`, `Message`, `ToolCall`, `Usage`, `ContextEpoch`, `CompactionCheckpoint`, `StructuredSummary`, `CompactionReason`, `PromptCheckpoint` | anyone reading or emitting the durable event stream |
 | `agentcore/permission` | `Policy`, `Gate`, `Decision`, `Verdict`, `Request`, `Rule`; the optional capability `Grantable` with its resolver `GrantRuleFor` | anyone replacing the ask-before-run behavior, or shipping a tool that can be granted for a session |
 
@@ -40,7 +40,7 @@ Each of the two contracts a third party *implements* ships with its test kit:
 | Kit | Runs the contract of | Applied to |
 |---|---|---|
 | `agentcore/tool/tooltest` | `tool.Tool` | every builtin, the MCP tools, the subagent `task` tool |
-| `agentcore/llm/llmtest` | `llm.Provider` | `FakeProvider`, `SwitchableProvider`, the OpenAI and Anthropic adapters (happy path and failed turn) |
+| `agentcore/llm/llmtest` | `llm.Provider`, plus `Describing` when the adapter implements it | `FakeProvider`, `SwitchableProvider`, the OpenAI and Anthropic adapters (happy path and failed turn) |
 | `internal/session/sessiontest` | `session.Store` (private) | `MemoryStore`, `SQLiteStore` (`:memory:` and file), `EmittingStore`, `ChildPermissionStore` |
 
 Two additions beyond the audit's literal list, both for coherence: `Policy` and
@@ -51,6 +51,12 @@ The optional capability interfaces arrived with R2 and are what make a tool
 first-class rather than merely runnable. What each one is for, why `Effects` is a
 set of flags rather than an ordered scale, and how the host resolves them is in
 [Tool capabilities](tool-capabilities.md).
+
+R3.2 applied the same idiom to the provider contract: `Describing` is optional, so
+`Provider` stays a one-method interface, and `CapabilitiesOf` returns
+`(value, answered)` so silence never reads as a denial. It is what lets an adapter
+answer for the context windows of its own models instead of core keeping a table.
+See [Provider capabilities](provider-capabilities.md).
 
 ## What stayed private, and why
 

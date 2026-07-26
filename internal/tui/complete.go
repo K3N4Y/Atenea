@@ -98,7 +98,7 @@ func filterModels(providers []providerconfig.ProviderModels, query string, limit
 			if !strings.EqualFold(strings.ReplaceAll(provider.Name, " ", ""), strings.ReplaceAll(provider.ID, "-", "")) {
 				description = fmt.Sprintf("%s · %s", provider.Name, provider.ID)
 			}
-			if context := curatedModelContext[model]; context != "" {
+			if context := formatContextWindow(provider.Capabilities, model); context != "" {
 				description += " · " + context + " context"
 			}
 			items = append(items, menuItem{label: model, description: description, providerID: provider.ID, model: model})
@@ -108,12 +108,6 @@ func filterModels(providers []providerconfig.ProviderModels, query string, limit
 		}
 	}
 	return items
-}
-
-var curatedModelContext = map[string]string{
-	"tencent/hy3:free":            "262K",
-	"poolside/laguna-xs-2.1:free": "262K",
-	"cohere/north-mini-code:free": "256K",
 }
 
 func isCanonicalModelCommand(text string, providers []providerconfig.ProviderModels) bool {

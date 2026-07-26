@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -81,6 +82,7 @@ var checks = []check{
 	{"StreamEventsAreWellFormed", checkWellFormed},
 	{"CancellationClosesTheChannel", checkCancellation},
 	{"StreamIsSafeForConcurrentUse", checkConcurrentUse},
+	{"DeclaredCapabilitiesAreUsable", checkCapabilities},
 }
 
 // turnTimeout bounds how long the kit waits for a turn to close. It is generous
@@ -88,6 +90,33 @@ var checks = []check{
 // wait forever for a channel that will never close. It is a variable so this
 // package's own tests can lower it and still cover the hang they have to provoke.
 var turnTimeout = 60 * time.Second
+
+// checkCapabilities reads what the adapter declares, if it declares anything.
+// Describing is optional, so saying nothing is not a failure here — but a
+// declaration a host cannot use is, because it fails silently: a zero window
+// disables preventive compaction without a word, and an answer that changes
+// between two reads makes a UI flicker between two truths.
+func checkCapabilities(r reporter, next fresh) {
+	r.Helper()
+	provider := next().Provider
+
+	first, declared := llm.CapabilitiesOf(provider)
+	if !declared {
+		return
+	}
+	for model, window := range first.ContextWindows {
+		if window <= 0 {
+			r.Errorf("model %q declares a context window of %d: a host reads that as unknown and silently stops compacting for it — leave the model out instead of declaring a window it cannot divide by", model, window)
+		}
+	}
+	if first.DefaultMaxOutputTokens < 0 {
+		r.Errorf("DefaultMaxOutputTokens is %d: a host reserves it in its context estimate, so a negative one under-counts the request. Zero means the adapter imposes no ceiling", first.DefaultMaxOutputTokens)
+	}
+	second, _ := llm.CapabilitiesOf(provider)
+	if !reflect.DeepEqual(first, second) {
+		r.Errorf("two reads of Capabilities disagree (%#v then %#v): it is read on every frame, so a host has no way to show a value that moves under it", first, second)
+	}
+}
 
 func checkBracketing(r reporter, next fresh) {
 	r.Helper()

@@ -28,6 +28,7 @@ uses Markdown and begins with `updated_at` and `summary` YAML metadata.
 - [OpenCode agent loop](architecture/opencode-agent-loop.md)
 - [OpenCode architecture](architecture/opencode-architecture.md)
 - [MCP servers](architecture/mcp.md)
+- [Provider capabilities](architecture/provider-capabilities.md)
 - [Provider registry](architecture/provider-registry.md)
 - [Published contracts (`agentcore/`)](architecture/public-contracts.md)
 - [Read and edit tools](architecture/read-edit-tools.md)

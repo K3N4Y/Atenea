@@ -26,7 +26,7 @@ type Service struct {
 	catalog     *Catalog
 	switcher    *llm.SwitchableProvider
 	getenv      func(string) string
-	factory     Factory
+	registry    Registry
 	save        SaveConfig
 	credentials CredentialStore
 	// validateKey guards Connect: nil means defaultKeyValidator (real network
@@ -34,12 +34,12 @@ type Service struct {
 	validateKey KeyValidator
 }
 
-func Open(path, cachePath string, fallback llm.ProviderSnapshot, getenv func(string) string, factory Factory, save SaveConfig, list ModelLister, credentials CredentialStore, defaults ...Config) (*Service, error) {
+func Open(path, cachePath string, fallback llm.ProviderSnapshot, getenv func(string) string, registry Registry, save SaveConfig, list ModelLister, credentials CredentialStore, defaults ...Config) (*Service, error) {
 	if getenv == nil {
 		getenv = os.Getenv
 	}
-	if factory == nil {
-		factory = DefaultRegistry().Build
+	if registry == nil {
+		registry = DefaultRegistry()
 	}
 	if save == nil {
 		save = Save
@@ -48,7 +48,7 @@ func Open(path, cachePath string, fallback llm.ProviderSnapshot, getenv func(str
 	if err != nil {
 		return nil, err
 	}
-	s := &Service{path: path, switcher: switcher, getenv: getenv, factory: factory, save: save, credentials: credentials}
+	s := &Service{path: path, switcher: switcher, getenv: getenv, registry: registry, save: save, credentials: credentials}
 	cfg, loadErr := Load(path)
 	if loadErr != nil {
 		if errors.Is(loadErr, os.ErrNotExist) {
@@ -58,7 +58,7 @@ func Open(path, cachePath string, fallback llm.ProviderSnapshot, getenv func(str
 					return s, fmt.Errorf("validate default provider config: %w", err)
 				}
 				s.config = cfg
-				s.catalog = NewCatalog(cfg, cachePath, getenv, list, credentials)
+				s.catalog = NewCatalog(cfg, cachePath, getenv, list, credentials, registry)
 			}
 			return s, nil
 		}
@@ -72,7 +72,7 @@ func Open(path, cachePath string, fallback llm.ProviderSnapshot, getenv func(str
 		cfg = mergeMissingProviders(cfg, defaultConfig)
 	}
 	s.config = cfg
-	s.catalog = NewCatalog(cfg, cachePath, getenv, list, credentials)
+	s.catalog = NewCatalog(cfg, cachePath, getenv, list, credentials, registry)
 	provider, ok := findProvider(cfg, cfg.Selected.Provider)
 	if !ok || cfg.Selected.Model == "" {
 		return s, errors.New("provider config has no active selection")
@@ -81,7 +81,7 @@ func Open(path, cachePath string, fallback llm.ProviderSnapshot, getenv func(str
 	if err != nil {
 		return s, err
 	}
-	delegate, err := factory(provider, cfg.Selected.Model, apiKey)
+	delegate, err := registry.Build(provider, cfg.Selected.Model, apiKey)
 	if err != nil {
 		return s, err
 	}
@@ -145,7 +145,7 @@ func (s *Service) selectLocked(providerID, model string) (Active, error) {
 	if err != nil {
 		return s.Active(), err
 	}
-	delegate, err := s.factory(provider, model, apiKey)
+	delegate, err := s.registry.Build(provider, model, apiKey)
 	if err != nil {
 		return s.Active(), err
 	}
@@ -157,7 +157,7 @@ func (s *Service) selectLocked(providerID, model string) (Active, error) {
 	}
 	s.switcher.Swap(snapshot(provider, model, delegate))
 	s.config = next
-	s.catalog = NewCatalog(next, s.catalogPath(), s.getenv, s.catalogLister(), s.credentials)
+	s.catalog = NewCatalog(next, s.catalogPath(), s.getenv, s.catalogLister(), s.credentials, s.registry)
 	return s.Active(), nil
 }
 func (s *Service) catalogLister() ModelLister {

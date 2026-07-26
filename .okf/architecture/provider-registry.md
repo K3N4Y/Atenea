@@ -42,12 +42,16 @@ neither could be extended from outside:
 
 ```go
 type Factory func(def Provider, model, apiKey string) (llm.Provider, error)
-type Registry map[string]Factory
+type Registry map[string]Format
 
 func DefaultRegistry() Registry
 func (r Registry) Build(def Provider, model, apiKey string) (llm.Provider, error)
 func (r Registry) Types() []string
 ```
+
+> R3.2 widened the map's value from a bare `Factory` to a `Format` that also
+> describes the wire format without building it. See
+> [Provider capabilities](provider-capabilities.md#the-registry-describes-a-format-without-building-it).
 
 A plain map, not a package-level table mutated from `init()`. Registration by
 `init()` buys nothing here — there is one composition root and it can name what
@@ -62,8 +66,9 @@ providerconfig.Open(..., registry.Build, ...)
 
 `Open` already took an injectable factory, so nothing in its signature moved:
 `registry.Build` *is* a `Factory`. What changed is that extending went from
-replacing the whole factory to adding one entry, and `nil` now means
-`DefaultRegistry().Build`.
+replacing the whole factory to adding one entry, and `nil` now means the default
+registry. (R3.2 later changed the parameter itself from `Factory` to `Registry`,
+so that a format could be described as well as built.)
 
 `DefaultRegistry()` returns a **fresh map on every call**, so extending one copy
 can never reach another — the failure mode of a shared package-level registry.
@@ -143,11 +148,12 @@ adapter: a new dialect is a `Factory` closure over existing `llm.Option`s.
 
 The rest of R3 is untouched and each part is independent of this one:
 
-- **No capability negotiation** (R3.2). `Provider` still has one method.
-  Reasoning support, cache shape, retry-event support and context windows are
-  resolved at construction or read from `internal/llm/context.go`'s hardcoded
-  model map. This is what would let the registry describe a format rather than
-  just build it.
+- ~~**No capability negotiation** (R3.2)~~ `[done 2026-07-25]` The registry now
+  describes a format as well as building it: `Registry` maps a type to a
+  `Format{Build, Describe}`, and an adapter declares its context windows,
+  its cache shape, its default output ceiling and the rest through the optional
+  `llm.Describing` interface. `internal/llm/context.go`'s hardcoded model map is
+  gone. See [Provider capabilities](provider-capabilities.md).
 - **The default catalog still lives in `cmd/atenea/main.go`** (R3.3) — an
   unimportable `main` package. It now declares its dialects honestly, which is a
   precondition for moving it to an embedded `providers.default.json`.

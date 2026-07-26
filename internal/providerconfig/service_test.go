@@ -19,6 +19,23 @@ func (inertProvider) Stream(context.Context, llm.Request) (<-chan llm.Event, err
 	return ch, nil
 }
 
+// everyType is a Registry that answers with build for every wire format these
+// tests declare, so a test that only cares about "some provider got built" does
+// not have to enumerate formats it is not testing.
+func everyType(build Factory) Registry {
+	registry := Registry{}
+	for _, format := range append(DefaultRegistry().Types(), "bedrock") {
+		registry[format] = Format{Build: build}
+	}
+	return registry
+}
+
+// inertRegistry builds a provider that streams nothing, for the tests whose
+// subject is the config round trip rather than the adapter.
+func inertRegistry() Registry {
+	return everyType(func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil })
+}
+
 func fallbackSnapshot() llm.ProviderSnapshot {
 	return llm.ProviderSnapshot{ProviderID: "demo", ProviderName: "Demo", BaseURL: "demo://local", Model: "demo", Provider: inertProvider{}}
 }
@@ -28,7 +45,7 @@ func TestService_OpenUsesPersistedSelection(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"providers":[{"id":"p","name":"Provider","type":"openai-compatible","base_url":"http://p","models":["m"]}],"selected":{"provider":"p","model":"m"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil }, nil, nil, nil)
+	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, inertRegistry(), nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +57,7 @@ func TestService_OpenUsesPersistedSelection(t *testing.T) {
 func TestService_OpenUsesDefaultCatalogWhenConfigIsAbsent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "providers.json")
 	defaults := Config{Providers: []Provider{{ID: "openrouter", Name: "OpenRouter", Type: OpenAICompatible, BaseURL: "https://openrouter.ai/api/v1", APIKeyEnv: "OPENROUTER_API_KEY", Models: []string{"tencent/hy3:free", "poolside/laguna-xs-2.1:free", "cohere/north-mini-code:free"}}}}
-	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil }, nil, nil, nil, defaults)
+	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, inertRegistry(), nil, nil, nil, defaults)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +79,7 @@ func TestService_OpenMergesMissingDefaultProvidersIntoPersistedConfig(t *testing
 		{ID: "openrouter", Name: "OpenRouter", Type: OpenAICompatible, BaseURL: "https://openrouter.ai/api/v1", Models: []string{"default-model"}},
 		{ID: "openai", Name: "OpenAI", Type: OpenAICompatible, BaseURL: "https://api.openai.com/v1", Models: []string{"gpt-5.6-terra"}},
 	}}
-	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil }, nil, nil, nil, defaults)
+	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, inertRegistry(), nil, nil, nil, defaults)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +111,7 @@ func TestService_LegacyDialectSurvivesTheRoundTripToDisk(t *testing.T) {
 		built = append(built, def.Type)
 		return inertProvider{}, nil
 	}
-	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, factory, nil, nil, nil)
+	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, everyType(factory), nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +147,7 @@ func TestService_OpenResolvesKeyFromCredentialStoreWhenEnvIsEmpty(t *testing.T) 
 		gotKey = apiKey
 		return inertProvider{}, nil
 	}
-	s, err := Open(path, "", fallbackSnapshot(), func(string) string { return "" }, factory, nil, nil, credentials)
+	s, err := Open(path, "", fallbackSnapshot(), func(string) string { return "" }, everyType(factory), nil, nil, credentials)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +181,7 @@ func TestService_EnvironmentKeyWinsOverStoredCredential(t *testing.T) {
 		}
 		return ""
 	}
-	if _, err := Open(path, "", fallbackSnapshot(), getenv, factory, nil, nil, credentials); err != nil {
+	if _, err := Open(path, "", fallbackSnapshot(), getenv, everyType(factory), nil, nil, credentials); err != nil {
 		t.Fatal(err)
 	}
 	if gotKey != "env-key" {
@@ -183,7 +200,7 @@ func TestService_ConnectStoresKeyAndActivatesDefaultModelWhenNothingSelected(t *
 	dir := t.TempDir()
 	credentials := NewFileCredentialStore(filepath.Join(dir, "credentials.json"))
 	factory := func(_ Provider, _ string, apiKey string) (llm.Provider, error) { return inertProvider{}, nil }
-	s, err := Open(filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, factory, nil, nil, credentials, openRouterDefaults())
+	s, err := Open(filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, everyType(factory), nil, nil, credentials, openRouterDefaults())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +243,7 @@ func TestService_ConnectAnthropicStoresKeyAndActivatesNativeProvider(t *testing.
 		built = provider
 		return inertProvider{}, nil
 	}
-	s, err := Open(filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, factory, nil, nil, credentials, defaults)
+	s, err := Open(filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, everyType(factory), nil, nil, credentials, defaults)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +266,7 @@ func TestService_ConnectAnthropicStoresKeyAndActivatesNativeProvider(t *testing.
 func TestService_ConnectRejectsInvalidKeyWithoutPersisting(t *testing.T) {
 	dir := t.TempDir()
 	credentials := NewFileCredentialStore(filepath.Join(dir, "credentials.json"))
-	s, err := Open(filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil }, nil, nil, credentials, openRouterDefaults())
+	s, err := Open(filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, inertRegistry(), nil, nil, credentials, openRouterDefaults())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +299,7 @@ func TestService_ConnectRotatesKeyOfSelectedProviderLive(t *testing.T) {
 		keys = append(keys, apiKey)
 		return inertProvider{}, nil
 	}
-	s, err := Open(path, "", fallbackSnapshot(), func(string) string { return "" }, factory, nil, nil, credentials)
+	s, err := Open(path, "", fallbackSnapshot(), func(string) string { return "" }, everyType(factory), nil, nil, credentials)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +325,7 @@ func TestService_ConnectLeavesOtherSelectedProviderAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	credentials := NewFileCredentialStore(filepath.Join(dir, "credentials.json"))
-	s, err := Open(path, "", fallbackSnapshot(), func(string) string { return "" }, func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil }, nil, nil, credentials)
+	s, err := Open(path, "", fallbackSnapshot(), func(string) string { return "" }, inertRegistry(), nil, nil, credentials)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +346,7 @@ func TestService_ConnectLeavesOtherSelectedProviderAlone(t *testing.T) {
 func TestService_ConnectableListsOnlyOpenRouterWithConnectionState(t *testing.T) {
 	dir := t.TempDir()
 	credentials := NewFileCredentialStore(filepath.Join(dir, "credentials.json"))
-	s, err := Open(filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil }, nil, nil, credentials, openRouterDefaults())
+	s, err := Open(filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, inertRegistry(), nil, nil, credentials, openRouterDefaults())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,7 +366,7 @@ func TestService_ConnectableListsOnlyOpenRouterWithConnectionState(t *testing.T)
 func TestService_ConnectRejectsUnsupportedProviderAndEmptyKey(t *testing.T) {
 	dir := t.TempDir()
 	credentials := NewFileCredentialStore(filepath.Join(dir, "credentials.json"))
-	s, err := Open(filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil }, nil, nil, credentials, openRouterDefaults())
+	s, err := Open(filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, inertRegistry(), nil, nil, credentials, openRouterDefaults())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +384,7 @@ func TestService_SelectSaveFailureKeepsPreviousSelection(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"providers":[{"id":"p","name":"Provider","type":"openai-compatible","base_url":"http://p","models":["one","two"]}],"selected":{"provider":"p","model":"one"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil }, func(string, Config) error { return errors.New("disk full") }, nil, nil)
+	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, inertRegistry(), func(string, Config) error { return errors.New("disk full") }, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

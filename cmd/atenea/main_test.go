@@ -129,6 +129,33 @@ func TestDefaultProviderConfig_DeclaresBuildableWireFormats(t *testing.T) {
 		if got := provider.Type; got != want[provider.ID] {
 			t.Fatalf("provider %q type = %q, want %q", provider.ID, got, want[provider.ID])
 		}
+		if _, ok := registry.Describe(provider); !ok {
+			t.Fatalf("provider %q declares type %q, which the default registry cannot describe: every context label it shows would be an em dash", provider.ID, provider.Type)
+		}
+	}
+}
+
+// TestDefaultProviderConfig_CuratedModelsKeepTheirContextWindows: the models the
+// picker offers out of the box are the ones a user meets first, and a window that
+// silently stops being declared costs both the label and preventive compaction.
+func TestDefaultProviderConfig_CuratedModelsKeepTheirContextWindows(t *testing.T) {
+	registry := providerconfig.DefaultRegistry()
+	want := map[string]map[string]int{
+		"anthropic": {"claude-opus-4-8": 200_000, "claude-fable-5": 200_000, "claude-sonnet-5": 200_000, "claude-haiku-4-5": 200_000},
+		"openai":    {"gpt-5.6-terra": 1_050_000, "gpt-4o": 128_000},
+		"openrouter": {
+			"tencent/hy3:free":            262_144,
+			"poolside/laguna-xs-2.1:free": 262_144,
+			"cohere/north-mini-code:free": 256_000,
+		},
+	}
+	for _, provider := range defaultProviderConfig().Providers {
+		capabilities, _ := registry.Describe(provider)
+		for model, wantWindow := range want[provider.ID] {
+			if got, ok := capabilities.ContextWindow(model); !ok || got != wantWindow {
+				t.Errorf("%s/%s window = (%d, %v), want (%d, true)", provider.ID, model, got, ok, wantWindow)
+			}
+		}
 	}
 }
 

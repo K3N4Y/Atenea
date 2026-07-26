@@ -127,6 +127,20 @@ func (nilChannel) Stream(context.Context, llm.Request) (<-chan llm.Event, error)
 	return nil, nil
 }
 
+// describing is a compliant turn plus a declaration, so the capability check has
+// something to read. capabilities is a function because one violation is an
+// adapter that answers differently on the second read.
+type describing struct {
+	scripted
+	capabilities func() llm.Capabilities
+}
+
+func (d describing) Capabilities() llm.Capabilities { return d.capabilities() }
+
+func declaring(capabilities llm.Capabilities) llm.Provider {
+	return describing{scripted{turn: compliantTurn()}, func() llm.Capabilities { return capabilities }}
+}
+
 // refusesTheRequest rejects the request the subject declares as valid.
 type refusesTheRequest struct{}
 
@@ -247,6 +261,13 @@ func TestChecks_CatchAViolatingProvider(t *testing.T) {
 		{"a channel that outlives its cancelled context", "CancellationClosesTheChannel", provider(neverCloses{})},
 		{"a nil channel and no error", "CancellationClosesTheChannel", provider(nilChannel{})},
 		{"a channel that is never closed", "StreamIsSafeForConcurrentUse", provider(neverCloses{})},
+		{"a declared context window of zero", "DeclaredCapabilitiesAreUsable", provider(
+			declaring(llm.Capabilities{ContextWindows: map[string]int{"m": 0}}))},
+		{"a declared context window that is negative", "DeclaredCapabilitiesAreUsable", provider(
+			declaring(llm.Capabilities{ContextWindows: map[string]int{"m": -1}}))},
+		{"a negative default output ceiling", "DeclaredCapabilitiesAreUsable", provider(
+			declaring(llm.Capabilities{DefaultMaxOutputTokens: -1}))},
+		{"capabilities that change between reads", "DeclaredCapabilitiesAreUsable", provider(unstable())},
 	}
 
 	for _, c := range cases {
@@ -258,6 +279,33 @@ func TestChecks_CatchAViolatingProvider(t *testing.T) {
 				t.Errorf("%s accepted a provider with %s", c.check, c.violation)
 			}
 		})
+	}
+}
+
+// unstable answers a different window every time it is asked, which is the one
+// violation a single read cannot see.
+func unstable() llm.Provider {
+	reads := 0
+	return describing{scripted{turn: compliantTurn()}, func() llm.Capabilities {
+		reads++
+		return llm.Capabilities{ContextWindows: map[string]int{"m": 1000 * reads}}
+	}}
+}
+
+// TestCheckCapabilities_AcceptsAUsableDeclaration is the other half: the check
+// must stay quiet for an adapter that answers, not only for one that is silent.
+func TestCheckCapabilities_AcceptsAUsableDeclaration(t *testing.T) {
+	subject := func() Subject {
+		return Subject{Provider: declaring(llm.Capabilities{
+			Streaming: true, Tools: true, PromptCaching: llm.KeyedPromptCaching,
+			DefaultMaxOutputTokens: 8192,
+			ContextWindows:         map[string]int{"m": 200_000},
+		})}
+	}
+	r := &recorder{}
+	checkByName(t, "DeclaredCapabilitiesAreUsable")(r, subject)
+	if reported := r.reported(); len(reported) > 0 {
+		t.Errorf("a usable declaration was reported:\n%s", strings.Join(reported, "\n"))
 	}
 }
 
