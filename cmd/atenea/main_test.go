@@ -16,6 +16,8 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/creack/pty"
+
+	"github.com/K3N4Y/atenea/internal/providerconfig"
 )
 
 func TestEnvironmentFallbackSnapshot_UsesCurrentOpenAIDefault(t *testing.T) {
@@ -105,6 +107,28 @@ func TestDefaultProviderConfig_IncludesAnthropicOpenCodeZenAndGo(t *testing.T) {
 	}
 	if len(zen.Models) == 0 || len(goPlan.Models) == 0 {
 		t.Fatal("OpenCode providers need a compatible default model for /connect")
+	}
+}
+
+// TestDefaultProviderConfig_DeclaresBuildableWireFormats: a type that is not
+// registered no longer fails at config load, so a typo here would ship silently
+// and only surface when a user selects that provider.
+func TestDefaultProviderConfig_DeclaresBuildableWireFormats(t *testing.T) {
+	registry := providerconfig.DefaultRegistry()
+	want := map[string]string{
+		"anthropic":   providerconfig.Anthropic,
+		"openrouter":  providerconfig.OpenRouter,
+		"openai":      providerconfig.OpenAI,
+		"opencode":    providerconfig.OpenAICompatible,
+		"opencode-go": providerconfig.OpenAICompatible,
+	}
+	for _, provider := range defaultProviderConfig().Providers {
+		if _, ok := registry[provider.Type]; !ok {
+			t.Fatalf("provider %q declares type %q, which the default registry cannot build", provider.ID, provider.Type)
+		}
+		if got := provider.Type; got != want[provider.ID] {
+			t.Fatalf("provider %q type = %q, want %q", provider.ID, got, want[provider.ID])
+		}
 	}
 }
 
@@ -212,10 +236,14 @@ func TestTUI_ResumeCommandOpensPreviousWorkspaceSessionUnderPTY(t *testing.T) {
 
 	firstCmd, firstTerminal, firstOutput, firstDone := startTUIUnderPTY(t, binary, workdir, database)
 	waitForPTYText(t, firstOutput, " demo ─╯")
+	// A session is titled after its first user message, so the wait has to be
+	// on the reply — the composer echoes the text a frame before Enter is
+	// handled, and quitting on that frame leaves an untitled session behind.
+	beforeFirstSubmit := firstOutput.String()
 	if _, err := firstTerminal.Write([]byte("\tsesion anterior\r")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYText(t, firstOutput, "sesion anterior")
+	waitForPTYTextAfter(t, firstOutput, beforeFirstSubmit, "Hola desde atenea.")
 	if _, err := firstTerminal.Write([]byte("\x03")); err != nil {
 		t.Fatal(err)
 	}
@@ -227,10 +255,11 @@ func TestTUI_ResumeCommandOpensPreviousWorkspaceSessionUnderPTY(t *testing.T) {
 	// resumable session without needing /new.
 	secondCmd, secondTerminal, secondOutput, secondDone := startTUIUnderPTY(t, binary, workdir, database)
 	waitForPTYText(t, secondOutput, " demo ─╯")
+	beforeSecondSubmit := secondOutput.String()
 	if _, err := secondTerminal.Write([]byte("sesion actual\r")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYText(t, secondOutput, "sesion actual")
+	waitForPTYTextAfter(t, secondOutput, beforeSecondSubmit, "Hola desde atenea.")
 	if _, err := secondTerminal.Write([]byte("\x03")); err != nil {
 		t.Fatal(err)
 	}

@@ -2,67 +2,14 @@ package providerconfig
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/K3N4Y/atenea/internal/llm"
 )
-
-func TestDefaultProviderFactorySelectsExplicitCompatibilityProfile(t *testing.T) {
-	tests := []struct {
-		id            string
-		wantField     string
-		wantReasoning bool
-	}{
-		{id: "openai", wantField: "prompt_cache_key"},
-		{id: "openrouter", wantField: "session_id", wantReasoning: true},
-		{id: "custom"},
-		{id: "opencode"},
-		{id: "opencode-go"},
-	}
-	for _, test := range tests {
-		t.Run(test.id, func(t *testing.T) {
-			var body []byte
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				body, _ = io.ReadAll(r.Body)
-				w.Header().Set("Content-Type", "text/event-stream")
-				io.WriteString(w, "data: [DONE]\n\n")
-			}))
-			defer server.Close()
-
-			provider, err := defaultProviderFactory(Provider{ID: test.id, Type: OpenAICompatible, BaseURL: server.URL, OpenRouterReasoning: test.wantReasoning}, "model", "key")
-			if err != nil {
-				t.Fatal(err)
-			}
-			stream, err := provider.Stream(context.Background(), llm.Request{SessionKey: "opaque-key"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			for range stream {
-			}
-			var sent map[string]any
-			if err := json.Unmarshal(body, &sent); err != nil {
-				t.Fatal(err)
-			}
-			for _, field := range []string{"prompt_cache_key", "session_id"} {
-				_, exists := sent[field]
-				if (field == test.wantField) != exists {
-					t.Fatalf("field %q presence = %v, want %v; body=%s", field, exists, field == test.wantField, body)
-				}
-			}
-			_, reasoning := sent["reasoning"]
-			if reasoning != test.wantReasoning {
-				t.Fatalf("reasoning presence = %v, want %v; body=%s", reasoning, test.wantReasoning, body)
-			}
-		})
-	}
-}
 
 type inertProvider struct{}
 
@@ -129,6 +76,41 @@ func TestService_OpenMergesMissingDefaultProvidersIntoPersistedConfig(t *testing
 	}
 	if got[1].ID != "openai" || got[1].Models[0] != "gpt-5.6-terra" {
 		t.Fatalf("missing default provider was not appended: %#v", got[1])
+	}
+}
+
+// TestService_LegacyDialectSurvivesTheRoundTripToDisk is the upgrade path a real
+// user walks: a config written before the dialect became the type must still
+// build the OpenAI dialect, and the next selection must persist the resolved
+// type so the migration shim stops being load-bearing.
+func TestService_LegacyDialectSurvivesTheRoundTripToDisk(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "providers.json")
+	legacy := `{"providers":[{"id":"openai","name":"OpenAI","type":"openai-compatible","base_url":"https://api.openai.com/v1","models":["gpt-5.6","gpt-4.1"]}],"selected":{"provider":"openai","model":"gpt-5.6"}}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var built []string
+	factory := func(def Provider, _ string, _ string) (llm.Provider, error) {
+		built = append(built, def.Type)
+		return inertProvider{}, nil
+	}
+	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, factory, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(built) != 1 || built[0] != OpenAI {
+		t.Fatalf("built types = %#v, want the OpenAI dialect resolved from the id", built)
+	}
+
+	if _, err := s.Select(context.Background(), "openai", "gpt-4.1"); err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(persisted), `"type": "openai"`) || strings.Contains(string(persisted), "openai-compatible") {
+		t.Fatalf("selection did not rewrite the legacy type: %s", persisted)
 	}
 }
 

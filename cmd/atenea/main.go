@@ -33,10 +33,11 @@ const (
 	// defaultModel es el modelo por defecto en OpenRouter; override por OPENROUTER_MODEL.
 	defaultModel = "openrouter/free"
 
-	// openAIBaseURL es la API oficial de OpenAI, tambien OpenAI-compatible: entra
-	// por la misma abstraccion (providerconfig.OpenAICompatible) apuntando el base
-	// URL aca, sin adaptador nuevo. A diferencia de OpenRouter NO entiende el campo
-	// top-level `reasoning`, asi que su provider se arma con OpenRouterReasoning=false.
+	// openAIBaseURL is the official OpenAI API. It reuses the same OpenAI
+	// adapter as OpenRouter, but it is its own wire format
+	// (providerconfig.OpenAI): it answers to prompt_cache_key and rejects
+	// OpenRouter's top-level `reasoning`, so the dialect — not the base URL —
+	// is what the registry keys on.
 	openAIBaseURL = "https://api.openai.com/v1"
 	// openAIDefaultModel es el modelo por defecto de OpenAI; override por OPENAI_MODEL.
 	openAIDefaultModel = "gpt-5.6-terra"
@@ -217,7 +218,7 @@ func defaultProviderConfig() providerconfig.Config {
 			Models: []string{anthropicModel, "claude-fable-5", "claude-sonnet-5", "claude-haiku-4-5"},
 		},
 		{
-			ID: "openrouter", Name: "OpenRouter", Type: providerconfig.OpenAICompatible,
+			ID: "openrouter", Name: "OpenRouter", Type: providerconfig.OpenRouter,
 			BaseURL: openRouterBaseURL, APIKeyEnv: "OPENROUTER_API_KEY", OpenRouterReasoning: true,
 			// The first curated model doubles as the default /connect activates
 			// when nothing is selected yet; openrouter/free routes to a free
@@ -225,7 +226,7 @@ func defaultProviderConfig() providerconfig.Config {
 			Models: []string{defaultModel, "tencent/hy3:free", "poolside/laguna-xs-2.1:free", "cohere/north-mini-code:free"},
 		},
 		{
-			ID: "openai", Name: "OpenAI", Type: providerconfig.OpenAICompatible,
+			ID: "openai", Name: "OpenAI", Type: providerconfig.OpenAI,
 			BaseURL: openAIBaseURL, APIKeyEnv: "OPENAI_API_KEY", DisableModelDiscovery: true,
 			Models: []string{"gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"},
 		},

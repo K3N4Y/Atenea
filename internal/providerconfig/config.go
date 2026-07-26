@@ -10,11 +10,6 @@ import (
 	"strings"
 )
 
-const (
-	OpenAICompatible = "openai-compatible"
-	Anthropic        = "anthropic"
-)
-
 type Provider struct {
 	ID                    string   `json:"id"`
 	Name                  string   `json:"name"`
@@ -96,12 +91,14 @@ func normalizeAndValidate(cfg *Config) error {
 		provider.Type = strings.TrimSpace(provider.Type)
 		provider.BaseURL = strings.TrimRight(strings.TrimSpace(provider.BaseURL), "/")
 		provider.APIKeyEnv = strings.TrimSpace(provider.APIKeyEnv)
-		if provider.ID == "" || provider.Name == "" || provider.BaseURL == "" {
-			return fmt.Errorf("provider %d requires id, name, and base_url", i)
+		if provider.ID == "" || provider.Name == "" || provider.Type == "" || provider.BaseURL == "" {
+			return fmt.Errorf("provider %d requires id, name, type, and base_url", i)
 		}
-		if provider.Type != OpenAICompatible && provider.Type != Anthropic {
-			return fmt.Errorf("provider %q has unsupported type %q", provider.ID, provider.Type)
-		}
+		// A type this build cannot speak is not a config error: the file is
+		// shared with builds that register other factories, and rejecting it
+		// here would drop every other provider in it too. The registry answers
+		// when the provider is actually built.
+		provider.Type = migrateLegacyDialect(provider.ID, provider.Type)
 		if _, ok := seen[provider.ID]; ok {
 			return fmt.Errorf("duplicate provider id %q", provider.ID)
 		}
@@ -132,4 +129,28 @@ func normalizeAndValidate(cfg *Config) error {
 		}
 	}
 	return nil
+}
+
+// legacyDialects are the provider ids whose OpenAI dialect used to be inferred
+// from the id inside the provider factory, back when every OpenAI-ish endpoint
+// declared the same type. A config written by such a build says
+// "openai-compatible" for both, and reading it literally would silently drop
+// OpenAI's prompt_cache_key and OpenRouter's routing and reasoning fields.
+var legacyDialects = map[string]string{
+	"openai":     OpenAI,
+	"openrouter": OpenRouter,
+}
+
+// migrateLegacyDialect reproduces that id switch exactly once, at the config
+// boundary, so nothing downstream ever looks at an id again. It is bounded and
+// dated: the map only knows the two ids the default catalog ever shipped, and
+// the first model selection rewrites the file with the resolved type.
+func migrateLegacyDialect(id, providerType string) string {
+	if providerType != OpenAICompatible {
+		return providerType
+	}
+	if dialect, ok := legacyDialects[id]; ok {
+		return dialect
+	}
+	return providerType
 }

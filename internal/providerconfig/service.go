@@ -17,7 +17,6 @@ type Active struct {
 	Model        string
 }
 
-type ProviderFactory func(def Provider, model, apiKey string) (llm.Provider, error)
 type SaveConfig func(path string, cfg Config) error
 
 type Service struct {
@@ -27,7 +26,7 @@ type Service struct {
 	catalog     *Catalog
 	switcher    *llm.SwitchableProvider
 	getenv      func(string) string
-	factory     ProviderFactory
+	factory     Factory
 	save        SaveConfig
 	credentials CredentialStore
 	// validateKey guards Connect: nil means defaultKeyValidator (real network
@@ -35,12 +34,12 @@ type Service struct {
 	validateKey KeyValidator
 }
 
-func Open(path, cachePath string, fallback llm.ProviderSnapshot, getenv func(string) string, factory ProviderFactory, save SaveConfig, list ModelLister, credentials CredentialStore, defaults ...Config) (*Service, error) {
+func Open(path, cachePath string, fallback llm.ProviderSnapshot, getenv func(string) string, factory Factory, save SaveConfig, list ModelLister, credentials CredentialStore, defaults ...Config) (*Service, error) {
 	if getenv == nil {
 		getenv = os.Getenv
 	}
 	if factory == nil {
-		factory = defaultProviderFactory
+		factory = DefaultRegistry().Build
 	}
 	if save == nil {
 		save = Save
@@ -215,20 +214,4 @@ func resolveAPIKey(provider Provider, getenv func(string) string, credentials Cr
 		return value, nil
 	}
 	return "", fmt.Errorf("no API key for provider %q: set %s or run /connect", provider.ID, provider.APIKeyEnv)
-}
-func defaultProviderFactory(def Provider, model, apiKey string) (llm.Provider, error) {
-	if def.Type == Anthropic {
-		return llm.NewAnthropicProvider(apiKey, def.BaseURL, model), nil
-	}
-	opts := []llm.Option{llm.WithoutOpenRouterReasoning()}
-	switch def.ID {
-	case "openai":
-		opts = []llm.Option{llm.WithOpenAICompatibility()}
-	case "openrouter":
-		opts = []llm.Option{llm.WithOpenRouterCompatibility()}
-		if !def.OpenRouterReasoning {
-			opts = append(opts, llm.WithoutOpenRouterReasoning())
-		}
-	}
-	return llm.NewOpenAIProvider(apiKey, def.BaseURL, model, opts...), nil
 }

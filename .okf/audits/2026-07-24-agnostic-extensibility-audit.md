@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-24
+updated_at: 2026-07-25
 summary: Audit of how agnostic atenea's seams are, and what to change to enable third-party integrations, contributions, and a plugin system.
 ---
 
@@ -54,8 +54,8 @@ of them delete code.
 | Permission policy | **Good** — derived from what each tool declares, not from a name list; decorated by session grants (R2) | `internal/permission/policy.go`, `internal/wiring/wiring.go` |
 | Tool interface | **Good** — 4-method contract plus optional capabilities for effects, grants and presentation (R2) | `agentcore/tool`, `agentcore/permission/grantable.go` |
 | Tool registration | **Partial** — fixed constructor list; `cfg.MCPTools` is the only open slot | `wiring.go:138-142,167-175` |
-| LLM `Provider` | **Partial** — genuinely neutral domain model, but no registry and no capabilities | `internal/llm/provider.go:14-16` |
-| Provider identity | **Weak** — closed 2-value type enum, 7 files to add a wire format | see §3.2 |
+| LLM `Provider` | **Partial** — genuinely neutral domain model and an open factory registry (R3.1), but still no capabilities | `internal/llm/provider.go:14-16`, `internal/providerconfig/registry.go` |
+| Provider identity | **Good** — the declared type is the wire format, resolved through a registry; a provider's id decides nothing (R3.1) | `internal/providerconfig/registry.go` |
 | Event taxonomy | **Weak** — open string set, two hand-maintained non-exhaustive switches that already disagree | `internal/tui/transcript.go:59-151`, `frontend/src/features/chat/chat.ts:215-341` |
 | Event payload evolution | **Weak** — no version, 4 hand-synced sites per new field | `internal/session/sqlitestore.go:22-57,134-149,279-369,510-601` |
 | Tool-use hooks | **Missing** — no pre/post seam; gate + repair + capping hardcoded in the loop | `runner/turn.go:214-235` |
@@ -101,12 +101,14 @@ adapter. That is the right shape and worth preserving.
 
 The wiring around it is closed:
 
-- **Closed type enum.** `providerconfig.Type` has exactly two legal values,
-  enforced in `normalizeAndValidate` (`internal/providerconfig/config.go:13-16,102-104`).
-  A third wire format cannot even be *declared* in config.
-- **Switch, not registry.** `defaultProviderFactory`
-  (`internal/providerconfig/service.go:219-234`) dispatches with `if`/`switch`
-  on `Type` then `ID`. Injectable wholesale, closed internally.
+- ~~**Closed type enum.**~~ ~~**Switch, not registry.**~~ `[done 2026-07-25]` R3.1
+  replaced both. A `providerconfig.Registry` (`map[string]Factory`) resolves the
+  declared type to the adapter that speaks it, the type is a free string, and an
+  unknown one errors naming the registered types instead of failing the whole
+  config load. The second switch went with it: the OpenAI dialect was keyed by
+  the provider's *id*, so the dialect became the type (`openai`, `openrouter`,
+  `openai-compatible`) and identity now decides nothing about request shape. See
+  [Provider registry](../architecture/provider-registry.md).
 - **Model catalog hardcoded in a `main` package.**
   `cmd/atenea/main.go:212-243` holds 5 providers with literal base URLs, env-var
   names and model-ID lists; `cmd/atenea/main.go:29-51` holds the constants.
@@ -141,9 +143,13 @@ The wiring around it is closed:
   (`manager.go:130`), sharing nothing with `providerconfig` except the
   credentials file.
 
-Cost to add one new wire format today: **7 files**, two of them `main` packages
-(`config.go`, `service.go`, new `internal/llm/*.go`, `context.go`, `connect.go`,
-`cmd/atenea/main.go`, plus `wailsprovider` for parity).
+Cost to add one new wire format when this was written: **7 files**, two of them
+`main` packages (`config.go`, `service.go`, new `internal/llm/*.go`, `context.go`,
+`connect.go`, `cmd/atenea/main.go`, plus `wailsprovider` for parity). After R3.1
+it is one factory plus one registry entry — and for anything OpenAI-shaped, a
+closure over existing options rather than an adapter. The remaining files on that
+list are R3.2 (`context.go`), R3.3 (`cmd/atenea/main.go`) and R3.4
+(`wailsprovider`).
 
 ### 3.3 Tools cannot describe themselves, so core describes them by name
 
@@ -514,6 +520,31 @@ Effect: files touched to add a fully first-class tool drops from ~11 to **3**
    `Type` field becomes a free string resolved through the registry; an unknown
    value errors with the list of registered types instead of being rejected by a
    closed enum.
+   `[done 2026-07-25]` — an explicit map, not `init()` registration: there is one
+   composition root and it can name what it wants, so `init()` would cost
+   determinism and testability for nothing. Documented in
+   [Provider registry](../architecture/provider-registry.md). Three decisions
+   worth recording:
+   - **Both switches went, not one.** Keying only on `Type` would have left the
+     `ID` switch alive *inside* the `openai-compatible` factory — a registry with
+     a switch in it, and the same name-keyed disease R2 cured for tools. So the
+     OpenAI dialect became the type: `openai`, `openrouter` and
+     `openai-compatible` are three wire formats, and a provider's identity now
+     decides nothing about how a request is shaped.
+   - **A bounded, dated migration pays for that.** A config written before this
+     says `openai-compatible` for `openai` and `openrouter`; read literally it
+     would silently drop `prompt_cache_key` and OpenRouter's routing fields.
+     `migrateLegacyDialect` reproduces the old id switch exactly once, at the
+     config boundary, and the first `/model` selection rewrites the file.
+   - **An unknown type stopped being a config error.** `providers.json` is shared
+     between builds with different factories registered; rejecting the file over
+     one entry took every other provider down with it. Now it loads, the
+     speakable providers work, and only selecting the unspeakable one fails —
+     with an error naming what this build does have. Without this the registry
+     would be extensible in theory and unusable in practice.
+   `/connect`'s id-keyed allowlist and validator were deliberately left alone:
+   OpenRouter and OpenCode share a wire format and validate differently, so key
+   validation is per-provider, not per-type.
 2. **`Provider.Capabilities() Capabilities`** — streaming, tools, reasoning,
    vision, cache shape, retry-event support, default max output,
    `ContextWindow(model) (int, bool)`. This kills `internal/llm/context.go`'s
@@ -722,8 +753,8 @@ right shape. Consolidate the plumbing:
 *Outcome: the repo becomes legally and technically contributable.*
 
 **Phase 1 — agnostic core (weeks).** R2 tool capability interfaces and removal of
-the six name-keyed switches (landed 2026-07-24). R3 provider registry +
-capabilities + data-driven catalog + delete `wailsprovider`.
+the six name-keyed switches (landed 2026-07-24). R3 provider registry (landed
+2026-07-25) + capabilities + data-driven catalog + delete `wailsprovider`.
 *Outcome: tools and providers become additive instead of invasive; the extension
 security default flips to ask.*
 
