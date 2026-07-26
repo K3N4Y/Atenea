@@ -116,7 +116,7 @@ func TestRegistry_ExtraTypeIsUsableEndToEnd(t *testing.T) {
 		return inertProvider{}, nil
 	}}
 
-	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, registry, nil, nil, nil)
+	s, err := Open(context.Background(), path, "", fallbackSnapshot(), os.Getenv, registry, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestRegistry_UnknownTypeSurfacesOnlyOnTheProviderThatDeclaresIt(t *testing.
 		t.Fatal(err)
 	}
 
-	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, nil, nil, nil, nil)
+	s, err := Open(context.Background(), path, "", fallbackSnapshot(), os.Getenv, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

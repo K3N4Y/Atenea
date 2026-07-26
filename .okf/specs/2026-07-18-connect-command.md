@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-18
+updated_at: 2026-07-26
 summary: Design specification for the /connect command, the shared credential store, and the production gating of .env loading.
 ---
 
@@ -35,6 +35,14 @@ directory it runs from.
   migration). Decoding is lenient so older binaries read files written by
   newer ones. `Put` refuses to overwrite a corrupt file; `Get` degrades to
   "not connected". Secrets never enter `providers.json`.
+  `[updated 2026-07-26]` The discriminator became a real tagged variant with a
+  second arm: `exec` reads a bearer token from a command's standard output
+  (R3.5). Resolution moved out of the store into a `CredentialResolver`, because
+  a store persists and must not execute. `/connect` is unchanged and stays
+  API-key-only — its masked input and its per-provider network check mean nothing
+  for a credential whose answer is ephemeral — and `Connectable()` still reports
+  "a credential is stored", whichever arm it declares. See
+  [Provider credentials](../architecture/provider-credentials.md).
 - **Scope (v1).** Only OpenRouter is connectable, only by API key. The flow,
   storage, and resolution are generic: adding a provider means whitelisting
   its id and giving it a validation strategy. The `/connect` UX exists only in
@@ -64,8 +72,10 @@ directory it runs from.
 
 ## Touch points
 
-- `internal/providerconfig/credentials.go` — `CredentialStore`,
+- `internal/providerconfig/credentials.go` — `Credential`, `CredentialStore`,
   `FileCredentialStore`, `DefaultCredentialsPath`.
+- `internal/providerconfig/credentialresolver.go` — `CredentialResolver`, the
+  `exec` arm's runner, its guardrails and its token cache.
 - `internal/providerconfig/service.go` — env-then-credential resolution
   (`apiKeyFor`/`resolveAPIKey`) used by selection and the model catalog.
 - `internal/providerconfig/connect.go` — `Connect`, `Connectable`, the

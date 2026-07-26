@@ -154,7 +154,7 @@ func openProviderService() (*providerconfig.Service, error) {
 	if !fromEnvironment {
 		log.Print("atenea: no provider API key in the environment; using the stored selection or the offline demo provider")
 	}
-	return providerconfig.OpenDefault(fallback)
+	return providerconfig.OpenDefault(context.Background(), fallback)
 }
 
 // offlineSnapshot is the fake the TUI lands on with no credential anywhere,

@@ -38,9 +38,14 @@ type Service struct {
 	// because there may not be one yet: a host that passed no defaults and has no
 	// config file gets its first catalog from a Declare, and fishing the lister out
 	// of a nil catalog would silently substitute the real network one.
-	cachePath   string
-	list        ModelLister
+	cachePath string
+	list      ModelLister
+	// credentials persists secrets and tokens resolves them. They are two fields
+	// because they are two jobs: Connect and Connectable read and write the store,
+	// while everything that needs an actual bearer string goes through the
+	// resolver, which is the only thing allowed to run a command for one.
 	credentials CredentialStore
+	tokens      *CredentialResolver
 	// builtIn are the ids of the catalog this build ships, so Forget can tell a
 	// provider the user declared from one that would be merged back at the next
 	// launch. Empty when the host passed no defaults: then nothing is built in.
@@ -50,7 +55,13 @@ type Service struct {
 	validateKey KeyValidator
 }
 
-func Open(path, cachePath string, fallback llm.ProviderSnapshot, getenv func(string) string, registry Registry, save SaveConfig, list ModelLister, credentials CredentialStore, defaults ...Config) (*Service, error) {
+// Open loads the provider configuration and activates the persisted selection.
+//
+// ctx bounds the credential resolution that activation needs: a selected
+// provider may authenticate with an exec credential, and running its command is
+// the one part of opening this service that can block on something other than
+// the local disk.
+func Open(ctx context.Context, path, cachePath string, fallback llm.ProviderSnapshot, getenv func(string) string, registry Registry, save SaveConfig, list ModelLister, credentials CredentialStore, defaults ...Config) (*Service, error) {
 	if getenv == nil {
 		getenv = os.Getenv
 	}
@@ -64,7 +75,7 @@ func Open(path, cachePath string, fallback llm.ProviderSnapshot, getenv func(str
 	if err != nil {
 		return nil, err
 	}
-	s := &Service{path: path, switcher: switcher, getenv: getenv, registry: registry, save: save, cachePath: cachePath, list: list, credentials: credentials}
+	s := &Service{path: path, switcher: switcher, getenv: getenv, registry: registry, save: save, cachePath: cachePath, list: list, credentials: credentials, tokens: NewCredentialResolver(credentials)}
 	var shipped Config
 	if len(defaults) > 0 {
 		shipped = defaults[0]
@@ -93,7 +104,7 @@ func Open(path, cachePath string, fallback llm.ProviderSnapshot, getenv func(str
 	if !ok || cfg.Selected.Model == "" {
 		return s, errors.New("provider config has no active selection")
 	}
-	apiKey, err := resolveAPIKey(provider, getenv, credentials)
+	apiKey, err := resolveAPIKey(ctx, provider, getenv, s.tokens)
 	if err != nil {
 		return s, err
 	}
@@ -178,13 +189,11 @@ func (s *Service) markBuiltIn(providers []ProviderModels) []ProviderModels {
 	return providers
 }
 
-func (s *Service) Select(_ context.Context, providerID, model string) (Active, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *Service) Select(ctx context.Context, providerID, model string) (Active, error) {
 	if model == "" {
-		return s.activeLocked(), errors.New("model is required")
+		return s.Active(), errors.New("model is required")
 	}
-	return s.selectLocked(providerID, model)
+	return s.applySelection(ctx, providerID, model)
 }
 
 // Declare adds or replaces a provider the user declared themselves — a local
@@ -268,18 +277,37 @@ func (s *Service) publishLocked(next Config) error {
 // newCatalog builds a catalog over cfg with this service's own dependencies, so
 // every catalog it ever publishes discovers models the same way.
 func (s *Service) newCatalog(cfg Config) *Catalog {
-	return NewCatalog(cfg, s.cachePath, s.getenv, s.list, s.credentials, s.registry)
+	return NewCatalog(cfg, s.cachePath, s.getenv, s.list, s.tokens, s.registry)
 }
 
-// selectLocked applies a provider/model selection; the caller holds s.mu.
-func (s *Service) selectLocked(providerID, model string) (Active, error) {
+// applySelection resolves the provider's credential and then activates the
+// selection. The resolution runs outside s.mu on purpose: an exec credential
+// runs a command, and holding the write lock for its timeout would freeze every
+// reader — the model picker, the composer footer, the running turn's view of
+// what it is talking to. Connect validates outside the lock for the same reason.
+func (s *Service) applySelection(ctx context.Context, providerID, model string) (Active, error) {
+	s.mu.RLock()
+	provider, ok := findProvider(s.config, providerID)
+	s.mu.RUnlock()
+	if !ok {
+		return s.Active(), fmt.Errorf("provider %q is not configured", providerID)
+	}
+	apiKey, err := resolveAPIKey(ctx, provider, s.getenv, s.tokens)
+	if err != nil {
+		return s.Active(), err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.selectLocked(providerID, model, apiKey)
+}
+
+// selectLocked applies a provider/model selection with an already-resolved key;
+// the caller holds s.mu. It re-reads the provider under the lock because the
+// configuration may have changed while the credential was resolving.
+func (s *Service) selectLocked(providerID, model, apiKey string) (Active, error) {
 	provider, ok := findProvider(s.config, providerID)
 	if !ok {
 		return s.activeLocked(), fmt.Errorf("provider %q is not configured", providerID)
-	}
-	apiKey, err := resolveAPIKey(provider, s.getenv, s.credentials)
-	if err != nil {
-		return s.activeLocked(), err
 	}
 	delegate, err := s.registry.Build(provider, model, apiKey)
 	if err != nil {
@@ -306,33 +334,55 @@ func snapshot(provider Provider, model string, delegate llm.Provider) llm.Provid
 	return llm.ProviderSnapshot{ProviderID: provider.ID, ProviderName: provider.Name, BaseURL: provider.BaseURL, Model: model, Provider: delegate}
 }
 
-// apiKeyFor resolves a provider's API key without judging absence: the
-// environment override wins, then the stored credential from /connect. Empty
-// means "no key" — fine for keyless local endpoints and for catalog listing.
-func apiKeyFor(provider Provider, getenv func(string) string, credentials CredentialStore) string {
+// keylessAPIKey is what a provider that declares no API-key variable and stores
+// no credential is built with. Local endpoints ignore the header entirely.
+const keylessAPIKey = "atenea-keyless-provider"
+
+// apiKeyFor resolves a provider's key for *listing* models, without judging
+// absence: the environment override wins, then the stored credential. Empty
+// means "no key", which is fine for a keyless local endpoint.
+//
+// It goes through the token cache. Listing walks every configured provider, so
+// resolving fresh here would run one command per exec-credentialed provider on
+// every refresh. A credential that cannot be honored is still an error — a
+// broken token command deserves a warning in the picker, not a silent 401.
+func apiKeyFor(ctx context.Context, provider Provider, getenv func(string) string, credentials *CredentialResolver) (string, error) {
+	if value := environmentKey(provider, getenv); value != "" {
+		return value, nil
+	}
+	return credentials.CachedToken(ctx, provider.ID)
+}
+
+// resolveAPIKey is apiKeyFor for a *selection* rather than a listing: the string
+// it returns is baked into the adapter that carries the conversation, so an exec
+// credential runs now instead of being served from the cache. A provider that
+// needs no key at all gets a placeholder, and a missing key is an error that
+// names both ways to supply one.
+//
+// The stored credential is consulted whether or not the provider declares an
+// API-key variable: a provider authenticated by a command has no variable to
+// name, and handing it the keyless placeholder while a credential sits in the
+// file would be a silently wrong answer.
+func resolveAPIKey(ctx context.Context, provider Provider, getenv func(string) string, credentials *CredentialResolver) (string, error) {
+	if value := environmentKey(provider, getenv); value != "" {
+		return value, nil
+	}
+	value, err := credentials.Token(ctx, provider.ID)
+	if err != nil {
+		return "", err
+	}
+	if value != "" {
+		return value, nil
+	}
+	if provider.APIKeyEnv == "" {
+		return keylessAPIKey, nil
+	}
+	return "", fmt.Errorf("no API key for provider %q: set %s or run /connect", provider.ID, provider.APIKeyEnv)
+}
+
+func environmentKey(provider Provider, getenv func(string) string) string {
 	if provider.APIKeyEnv == "" {
 		return ""
 	}
-	if value := getenv(provider.APIKeyEnv); value != "" {
-		return value
-	}
-	if credentials != nil {
-		if credential, ok := credentials.Get(provider.ID); ok && credential.Type == CredentialTypeAPIKey {
-			return credential.APIKey
-		}
-	}
-	return ""
-}
-
-// resolveAPIKey is apiKeyFor for providers that require a key: a provider
-// without APIKeyEnv gets a placeholder (local endpoints ignore it), and a
-// missing key is an error that names both ways to supply one.
-func resolveAPIKey(provider Provider, getenv func(string) string, credentials CredentialStore) (string, error) {
-	if provider.APIKeyEnv == "" {
-		return "atenea-keyless-provider", nil
-	}
-	if value := apiKeyFor(provider, getenv, credentials); value != "" {
-		return value, nil
-	}
-	return "", fmt.Errorf("no API key for provider %q: set %s or run /connect", provider.ID, provider.APIKeyEnv)
+	return getenv(provider.APIKeyEnv)
 }

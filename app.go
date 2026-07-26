@@ -181,7 +181,7 @@ func openProviderService() *providerconfig.Service {
 	if !fromEnvironment {
 		log.Print("atenea: no provider API key in the environment; falling back to the stored selection or the offline demo")
 	}
-	providers, err := providerconfig.OpenDefault(fallback)
+	providers, err := providerconfig.OpenDefault(context.Background(), fallback)
 	if err != nil {
 		log.Printf("atenea: provider config: %v", err)
 	}

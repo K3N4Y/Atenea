@@ -67,7 +67,7 @@ func TestCatalog_RefreshUsesStoredCredentialWhenEnvIsEmpty(t *testing.T) {
 		func(_ context.Context, _ string, apiKey string) ([]string, error) {
 			gotKey = apiKey
 			return []string{"remote"}, nil
-		}, credentials, nil)
+		}, NewCredentialResolver(credentials), nil)
 	if _, err := c.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}

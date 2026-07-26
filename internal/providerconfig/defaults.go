@@ -2,6 +2,7 @@ package providerconfig
 
 import (
 	"bytes"
+	"context"
 	_ "embed"
 	"fmt"
 	"os"
@@ -61,9 +62,9 @@ func DefaultCatalog() Config {
 //
 // fallback is what the host chats with until a selection exists; see
 // DefaultFallback. A host with a reason to differ still has Open.
-func OpenDefault(fallback llm.ProviderSnapshot) (*Service, error) {
+func OpenDefault(ctx context.Context, fallback llm.ProviderSnapshot) (*Service, error) {
 	credentials := NewFileCredentialStore(DefaultCredentialsPath())
-	return Open(DefaultPath(), DefaultCachePath(), fallback, os.Getenv, nil, nil, nil, credentials, DefaultCatalog())
+	return Open(ctx, DefaultPath(), DefaultCachePath(), fallback, os.Getenv, nil, nil, nil, credentials, DefaultCatalog())
 }
 
 // DefaultFallback is the provider a bare environment can speak, taken from the

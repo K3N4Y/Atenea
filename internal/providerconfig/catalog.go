@@ -49,7 +49,7 @@ type Catalog struct {
 	cached      map[string][]string
 	remote      map[string][]string
 	getenv      func(string) string
-	credentials CredentialStore
+	credentials *CredentialResolver
 	list        ModelLister
 	registry    Registry
 	refreshMu   sync.Mutex
@@ -62,12 +62,15 @@ type catalogRefresh struct {
 	err       error
 }
 
-func NewCatalog(cfg Config, cachePath string, getenv func(string) string, list ModelLister, credentials CredentialStore, registry Registry) *Catalog {
+func NewCatalog(cfg Config, cachePath string, getenv func(string) string, list ModelLister, credentials *CredentialResolver, registry Registry) *Catalog {
 	if getenv == nil {
 		getenv = os.Getenv
 	}
 	if list == nil {
 		list = llm.ListModels
+	}
+	if credentials == nil {
+		credentials = NewCredentialResolver(nil)
 	}
 	if registry == nil {
 		registry = DefaultRegistry()
@@ -154,7 +157,7 @@ func (c *Catalog) refresh(ctx context.Context) ([]ProviderModels, error) {
 		if provider.DisableModelDiscovery {
 			continue
 		}
-		models, err := c.list(ctx, provider.BaseURL, apiKeyFor(provider, c.getenv, c.credentials))
+		models, err := c.listModels(ctx, provider)
 		if err != nil {
 			warnings = append(warnings, fmt.Errorf("refresh %s: %w", provider.ID, err))
 			c.mu.RLock()
@@ -177,6 +180,18 @@ func (c *Catalog) refresh(ctx context.Context) ([]ProviderModels, error) {
 		}
 	}
 	return c.Snapshot(), errors.Join(warnings...)
+}
+
+// listModels asks one endpoint what it serves. A credential that cannot be
+// resolved fails here rather than being flattened into an empty key, so the
+// refresh reports "your token command failed" instead of the 401 it would have
+// caused — and skips a request that could only have been rejected.
+func (c *Catalog) listModels(ctx context.Context, provider Provider) ([]string, error) {
+	apiKey, err := apiKeyFor(ctx, provider, c.getenv, c.credentials)
+	if err != nil {
+		return nil, err
+	}
+	return c.list(ctx, provider.BaseURL, apiKey)
 }
 
 func cachedFetchedAt(cache Cache, providerID, baseURL string) time.Time {

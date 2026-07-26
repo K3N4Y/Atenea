@@ -105,18 +105,23 @@ func (s *Service) Connect(ctx context.Context, providerID, apiKey string) (Activ
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.credentials.Put(providerID, Credential{Type: CredentialTypeAPIKey, APIKey: apiKey}); err != nil {
-		return s.activeLocked(), err
+	err := s.credentials.Put(providerID, Credential{Type: CredentialTypeAPIKey, APIKey: apiKey})
+	selected := s.config.Selected
+	provider, _ = findProvider(s.config, providerID)
+	s.mu.Unlock()
+	if err != nil {
+		return s.Active(), err
 	}
+
+	// The selection goes through applySelection rather than the locked path: it
+	// resolves the credential, and resolution is what must not happen under s.mu.
 	switch {
-	case s.config.Selected.Provider == providerID:
-		return s.selectLocked(providerID, s.config.Selected.Model)
-	case s.config.Selected.Provider == "":
-		provider, ok := findProvider(s.config, providerID)
-		if ok && len(provider.Models) > 0 {
-			return s.selectLocked(providerID, provider.Models[0])
+	case selected.Provider == providerID:
+		return s.applySelection(ctx, providerID, selected.Model)
+	case selected.Provider == "":
+		if len(provider.Models) > 0 {
+			return s.applySelection(ctx, providerID, provider.Models[0])
 		}
 	}
-	return s.activeLocked(), nil
+	return s.Active(), nil
 }

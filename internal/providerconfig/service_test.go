@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/K3N4Y/atenea/internal/llm"
 )
@@ -45,7 +46,7 @@ func TestService_OpenUsesPersistedSelection(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"providers":[{"id":"p","name":"Provider","type":"openai-compatible","base_url":"http://p","models":["m"]}],"selected":{"provider":"p","model":"m"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, inertRegistry(), nil, nil, nil)
+	s, err := Open(context.Background(), path, "", fallbackSnapshot(), os.Getenv, inertRegistry(), nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +58,7 @@ func TestService_OpenUsesPersistedSelection(t *testing.T) {
 func TestService_OpenUsesDefaultCatalogWhenConfigIsAbsent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "providers.json")
 	defaults := Config{Providers: []Provider{{ID: "openrouter", Name: "OpenRouter", Type: OpenAICompatible, BaseURL: "https://openrouter.ai/api/v1", APIKeyEnv: "OPENROUTER_API_KEY", Models: []string{"tencent/hy3:free", "poolside/laguna-xs-2.1:free", "cohere/north-mini-code:free"}}}}
-	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, inertRegistry(), nil, nil, nil, defaults)
+	s, err := Open(context.Background(), path, "", fallbackSnapshot(), os.Getenv, inertRegistry(), nil, nil, nil, defaults)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +80,7 @@ func TestService_OpenMergesMissingDefaultProvidersIntoPersistedConfig(t *testing
 		{ID: "openrouter", Name: "OpenRouter", Type: OpenAICompatible, BaseURL: "https://openrouter.ai/api/v1", Models: []string{"default-model"}},
 		{ID: "openai", Name: "OpenAI", Type: OpenAICompatible, BaseURL: "https://api.openai.com/v1", Models: []string{"gpt-5.6-terra"}},
 	}}
-	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, inertRegistry(), nil, nil, nil, defaults)
+	s, err := Open(context.Background(), path, "", fallbackSnapshot(), os.Getenv, inertRegistry(), nil, nil, nil, defaults)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +112,7 @@ func TestService_LegacyDialectSurvivesTheRoundTripToDisk(t *testing.T) {
 		built = append(built, def.Type)
 		return inertProvider{}, nil
 	}
-	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, everyType(factory), nil, nil, nil)
+	s, err := Open(context.Background(), path, "", fallbackSnapshot(), os.Getenv, everyType(factory), nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +148,7 @@ func TestService_OpenResolvesKeyFromCredentialStoreWhenEnvIsEmpty(t *testing.T) 
 		gotKey = apiKey
 		return inertProvider{}, nil
 	}
-	s, err := Open(path, "", fallbackSnapshot(), func(string) string { return "" }, everyType(factory), nil, nil, credentials)
+	s, err := Open(context.Background(), path, "", fallbackSnapshot(), func(string) string { return "" }, everyType(factory), nil, nil, credentials)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +182,7 @@ func TestService_EnvironmentKeyWinsOverStoredCredential(t *testing.T) {
 		}
 		return ""
 	}
-	if _, err := Open(path, "", fallbackSnapshot(), getenv, everyType(factory), nil, nil, credentials); err != nil {
+	if _, err := Open(context.Background(), path, "", fallbackSnapshot(), getenv, everyType(factory), nil, nil, credentials); err != nil {
 		t.Fatal(err)
 	}
 	if gotKey != "env-key" {
@@ -200,7 +201,7 @@ func TestService_ConnectStoresKeyAndActivatesDefaultModelWhenNothingSelected(t *
 	dir := t.TempDir()
 	credentials := NewFileCredentialStore(filepath.Join(dir, "credentials.json"))
 	factory := func(_ Provider, _ string, apiKey string) (llm.Provider, error) { return inertProvider{}, nil }
-	s, err := Open(filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, everyType(factory), nil, nil, credentials, openRouterDefaults())
+	s, err := Open(context.Background(), filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, everyType(factory), nil, nil, credentials, openRouterDefaults())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +244,7 @@ func TestService_ConnectAnthropicStoresKeyAndActivatesNativeProvider(t *testing.
 		built = provider
 		return inertProvider{}, nil
 	}
-	s, err := Open(filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, everyType(factory), nil, nil, credentials, defaults)
+	s, err := Open(context.Background(), filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, everyType(factory), nil, nil, credentials, defaults)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +267,7 @@ func TestService_ConnectAnthropicStoresKeyAndActivatesNativeProvider(t *testing.
 func TestService_ConnectRejectsInvalidKeyWithoutPersisting(t *testing.T) {
 	dir := t.TempDir()
 	credentials := NewFileCredentialStore(filepath.Join(dir, "credentials.json"))
-	s, err := Open(filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, inertRegistry(), nil, nil, credentials, openRouterDefaults())
+	s, err := Open(context.Background(), filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, inertRegistry(), nil, nil, credentials, openRouterDefaults())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +300,7 @@ func TestService_ConnectRotatesKeyOfSelectedProviderLive(t *testing.T) {
 		keys = append(keys, apiKey)
 		return inertProvider{}, nil
 	}
-	s, err := Open(path, "", fallbackSnapshot(), func(string) string { return "" }, everyType(factory), nil, nil, credentials)
+	s, err := Open(context.Background(), path, "", fallbackSnapshot(), func(string) string { return "" }, everyType(factory), nil, nil, credentials)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +326,7 @@ func TestService_ConnectLeavesOtherSelectedProviderAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	credentials := NewFileCredentialStore(filepath.Join(dir, "credentials.json"))
-	s, err := Open(path, "", fallbackSnapshot(), func(string) string { return "" }, inertRegistry(), nil, nil, credentials)
+	s, err := Open(context.Background(), path, "", fallbackSnapshot(), func(string) string { return "" }, inertRegistry(), nil, nil, credentials)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +347,7 @@ func TestService_ConnectLeavesOtherSelectedProviderAlone(t *testing.T) {
 func TestService_ConnectableListsOnlyOpenRouterWithConnectionState(t *testing.T) {
 	dir := t.TempDir()
 	credentials := NewFileCredentialStore(filepath.Join(dir, "credentials.json"))
-	s, err := Open(filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, inertRegistry(), nil, nil, credentials, openRouterDefaults())
+	s, err := Open(context.Background(), filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, inertRegistry(), nil, nil, credentials, openRouterDefaults())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +367,7 @@ func TestService_ConnectableListsOnlyOpenRouterWithConnectionState(t *testing.T)
 func TestService_ConnectRejectsUnsupportedProviderAndEmptyKey(t *testing.T) {
 	dir := t.TempDir()
 	credentials := NewFileCredentialStore(filepath.Join(dir, "credentials.json"))
-	s, err := Open(filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, inertRegistry(), nil, nil, credentials, openRouterDefaults())
+	s, err := Open(context.Background(), filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, inertRegistry(), nil, nil, credentials, openRouterDefaults())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -384,7 +385,7 @@ func TestService_SelectSaveFailureKeepsPreviousSelection(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"providers":[{"id":"p","name":"Provider","type":"openai-compatible","base_url":"http://p","models":["one","two"]}],"selected":{"provider":"p","model":"one"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	s, err := Open(path, "", fallbackSnapshot(), os.Getenv, inertRegistry(), func(string, Config) error { return errors.New("disk full") }, nil, nil)
+	s, err := Open(context.Background(), path, "", fallbackSnapshot(), os.Getenv, inertRegistry(), func(string, Config) error { return errors.New("disk full") }, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -412,7 +413,7 @@ func offlineLister() ModelLister {
 func shippedService(t *testing.T) (*Service, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "providers.json")
-	s, err := Open(path, "", fallbackSnapshot(), envFrom(nil), inertRegistry(), nil, offlineLister(), nil, DefaultCatalog())
+	s, err := Open(context.Background(), path, "", fallbackSnapshot(), envFrom(nil), inertRegistry(), nil, offlineLister(), nil, DefaultCatalog())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -455,7 +456,7 @@ func TestService_DeclareMakesAUserEndpointSelectableAndPersistsIt(t *testing.T) 
 		t.Fatalf("active = %#v, want LocalModels: a host shaping a turn around it has nowhere else to read it", active)
 	}
 
-	reopened, err := Open(path, "", fallbackSnapshot(), envFrom(nil), inertRegistry(), nil, offlineLister(), nil, DefaultCatalog())
+	reopened, err := Open(context.Background(), path, "", fallbackSnapshot(), envFrom(nil), inertRegistry(), nil, offlineLister(), nil, DefaultCatalog())
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
@@ -551,7 +552,7 @@ func TestService_ForgetRemovesADeclaredEndpoint(t *testing.T) {
 	if entry, ok := catalogEntry(s.Catalog(), "lmstudio"); ok {
 		t.Fatalf("catalog still offers %#v after forgetting it", entry)
 	}
-	reopened, err := Open(path, "", fallbackSnapshot(), envFrom(nil), inertRegistry(), nil, offlineLister(), nil, DefaultCatalog())
+	reopened, err := Open(context.Background(), path, "", fallbackSnapshot(), envFrom(nil), inertRegistry(), nil, offlineLister(), nil, DefaultCatalog())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -607,7 +608,7 @@ func TestService_CatalogMarksWhatShipsWithAtenea(t *testing.T) {
 // the service itself can forget any provider in its own config.
 func TestService_WithoutADefaultCatalogNothingIsBuiltIn(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "providers.json")
-	s, err := Open(path, "", fallbackSnapshot(), envFrom(nil), inertRegistry(), nil, offlineLister(), nil)
+	s, err := Open(context.Background(), path, "", fallbackSnapshot(), envFrom(nil), inertRegistry(), nil, offlineLister(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -622,5 +623,160 @@ func TestService_WithoutADefaultCatalogNothingIsBuiltIn(t *testing.T) {
 	}
 	if err := s.Forget("anthropic"); err != nil {
 		t.Fatalf("Forget: %v", err)
+	}
+}
+
+// execProviderService opens a service over one provider that authenticates with
+// an exec credential, and hands back the resolver's runner seam so a test can
+// count runs or hold one open. Nothing here spawns a process: the subject of
+// these tests is the wiring around resolution, not the running of a command.
+func execProviderService(t *testing.T, run CommandRunner) *Service {
+	t.Helper()
+	dir := t.TempDir()
+	credentials := NewFileCredentialStore(filepath.Join(dir, "credentials.json"))
+	if err := credentials.Put("p", Credential{Type: CredentialTypeExec, Exec: &ExecCredential{Command: []string{"print-token"}}}); err != nil {
+		t.Fatal(err)
+	}
+	defaults := Config{Providers: []Provider{{ID: "p", Name: "Provider", Type: OpenAICompatible, BaseURL: "http://p", APIKeyEnv: "P_KEY", Models: []string{"one", "two"}}}}
+	s, err := Open(context.Background(), filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), envFrom(nil), inertRegistry(), nil, offlineLister(), credentials, defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.tokens.run = run
+	return s
+}
+
+// A selection is where an exec credential has to pay off: the token the command
+// prints is what the adapter is built with, and it is resolved again on the next
+// selection so a user whose token expired recovers by re-picking the model.
+func TestService_SelectBuildsTheAdapterWithTheTokenTheCommandPrinted(t *testing.T) {
+	runs := 0
+	tokens := []string{"first-token", "second-token"}
+	s := execProviderService(t, func(context.Context, []string) ([]byte, error) {
+		token := tokens[runs]
+		runs++
+		return []byte(token + "\n"), nil
+	})
+	var built []string
+	s.registry = everyType(func(_ Provider, _ string, apiKey string) (llm.Provider, error) {
+		built = append(built, apiKey)
+		return inertProvider{}, nil
+	})
+
+	if _, err := s.Select(context.Background(), "p", "one"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Select(context.Background(), "p", "two"); err != nil {
+		t.Fatal(err)
+	}
+	if len(built) != 2 || built[0] != "first-token" || built[1] != "second-token" {
+		t.Fatalf("adapter keys = %#v, want each selection resolved fresh", built)
+	}
+}
+
+func TestService_SelectReportsAFailingCredentialCommandAndKeepsTheSelection(t *testing.T) {
+	s := execProviderService(t, func(context.Context, []string) ([]byte, error) {
+		return nil, errors.New("not logged in")
+	})
+	before := s.Active()
+	_, err := s.Select(context.Background(), "p", "one")
+	if err == nil || !strings.Contains(err.Error(), "not logged in") {
+		t.Fatalf("err = %v, want the command's failure surfaced", err)
+	}
+	if got := s.Active(); got != before {
+		t.Fatalf("active = %#v, want the previous selection kept when resolution fails", got)
+	}
+}
+
+// The environment override still wins, and it wins before anything is executed:
+// a user who exports the variable must not pay for a subprocess, let alone one
+// that fails.
+func TestService_EnvironmentKeyWinsOverAnExecCredentialWithoutRunningIt(t *testing.T) {
+	s := execProviderService(t, func(context.Context, []string) ([]byte, error) {
+		t.Error("the command ran even though the environment supplied a key")
+		return nil, errors.New("should not run")
+	})
+	s.getenv = func(name string) string {
+		if name == "P_KEY" {
+			return "env-key"
+		}
+		return ""
+	}
+	gotKey := ""
+	s.registry = everyType(func(_ Provider, _ string, apiKey string) (llm.Provider, error) {
+		gotKey = apiKey
+		return inertProvider{}, nil
+	})
+	if _, err := s.Select(context.Background(), "p", "one"); err != nil {
+		t.Fatal(err)
+	}
+	if gotKey != "env-key" {
+		t.Fatalf("adapter key = %q, want the environment override", gotKey)
+	}
+}
+
+// Model listing walks every provider, so a refresh that resolved fresh would run
+// one command per exec-credentialed provider every time the picker opens.
+func TestService_CatalogRefreshReusesOneCommandRunAcrossRefreshes(t *testing.T) {
+	runs := 0
+	s := execProviderService(t, func(context.Context, []string) ([]byte, error) {
+		runs++
+		return []byte("exec-token\n"), nil
+	})
+	for i := 0; i < 3; i++ {
+		if _, err := s.Refresh(context.Background()); err == nil {
+			t.Fatal("the offline lister must still report its warning")
+		}
+	}
+	if runs != 1 {
+		t.Fatalf("runs = %d, want three refreshes to share one resolved token", runs)
+	}
+}
+
+// A credential that cannot be resolved is a refresh warning naming the command,
+// not a silent unauthenticated request that comes back 401.
+func TestService_CatalogRefreshReportsACredentialFailureAsAWarning(t *testing.T) {
+	s := execProviderService(t, func(context.Context, []string) ([]byte, error) {
+		return nil, errors.New("not logged in")
+	})
+	_, err := s.Refresh(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "not logged in") {
+		t.Fatalf("refresh error = %v, want the credential failure reported", err)
+	}
+}
+
+// Resolution runs outside s.mu. A command that takes its full timeout must not
+// freeze the model picker, the composer footer or anything else that only reads.
+func TestService_SelectDoesNotHoldTheLockWhileTheCommandRuns(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	s := execProviderService(t, func(context.Context, []string) ([]byte, error) {
+		close(started)
+		<-release
+		return []byte("exec-token\n"), nil
+	})
+
+	selected := make(chan error, 1)
+	go func() {
+		_, err := s.Select(context.Background(), "p", "one")
+		selected <- err
+	}()
+	<-started
+
+	read := make(chan struct{})
+	go func() {
+		s.Active()
+		s.Catalog()
+		close(read)
+	}()
+	select {
+	case <-read:
+	case <-time.After(5 * time.Second):
+		t.Fatal("readers blocked while a credential command was running")
+	}
+
+	close(release)
+	if err := <-selected; err != nil {
+		t.Fatal(err)
 	}
 }

@@ -56,6 +56,7 @@ of them delete code.
 | Tool registration | **Partial** — fixed constructor list; `cfg.MCPTools` is the only open slot | `wiring.go:138-142,167-175` |
 | LLM `Provider` | **Good** — neutral domain model, an open factory registry (R3.1), an optional capability declaration the host derives windows and reserves from (R3.2), a shipped catalog that is embedded data rather than code (R3.3), and one provider system for both hosts, extensible by the user (R3.4) | `agentcore/llm/capabilities.go`, `internal/providerconfig/registry.go`, `internal/providerconfig/providers.default.json` |
 | Provider identity | **Good** — the declared type is the wire format, resolved through a registry that builds *and* describes it; a provider's id decides nothing (R3.1, R3.2) | `internal/providerconfig/registry.go` |
+| Provider auth | **Good** — a tagged `Credential` variant with an `api_key` and an `exec` arm, resolved by a `CredentialResolver` separate from the store that persists it (R3.5); a token is still resolved once per selection, not per request | `internal/providerconfig/credentials.go`, `internal/providerconfig/credentialresolver.go` |
 | Event taxonomy | **Weak** — open string set, two hand-maintained non-exhaustive switches that already disagree | `internal/tui/transcript.go:59-151`, `frontend/src/features/chat/chat.ts:215-341` |
 | Event payload evolution | **Weak** — no version, 4 hand-synced sites per new field | `internal/session/sqlitestore.go:22-57,134-149,279-369,510-601` |
 | Tool-use hooks | **Missing** — no pre/post seam; gate + repair + capping hardcoded in the loop | `runner/turn.go:214-235` |
@@ -136,10 +137,18 @@ The wiring around it is closed:
   (`provider.go:30-36`); there is no content-part abstraction, so images and
   documents have nowhere to live. Every adapter now declares `Vision: false`
   (R3.2), which is the flag this seam flips.
-- **No auth shape beyond a bearer string.** `Credential` is
-  `{Type, APIKey}` (`internal/providerconfig/credentials.go:16-21`). Bedrock
-  (SigV4), Vertex (ADC) and subscription OAuth have no home. The code comment
-  already anticipates this.
+- ~~**No auth shape beyond a bearer string.**~~ `[done 2026-07-26]` R3.5 made
+  `Credential` a tagged variant and added the second arm: `exec` reads a bearer
+  token from a command's standard output, so Bedrock, Vertex and an enterprise
+  gateway all get a home by borrowing the CLI the user already has installed,
+  without atenea implementing anyone's auth protocol. Resolution left the store —
+  a store persists, and persisting must not mean executing — for a
+  `CredentialResolver` that dispatches on the declared type, times the command
+  out, refuses one whose file anyone can write, and caches for listing while
+  resolving fresh for a selection. What is still true is that the token is
+  resolved once per selection and baked into the adapter: a conversation that
+  outlives its token fails at the wire and `/model` is the recovery. See
+  [Provider credentials](../architecture/provider-credentials.md).
 - ~~**A second, parallel provider system exists.**~~ `[done 2026-07-26]` R3.4
   deleted `internal/wailsprovider`. The desktop app holds the same
   `providerconfig.Service` the TUI does, opened through the same
@@ -681,6 +690,58 @@ Effect: files touched to add a fully first-class tool drops from ~11 to **3**
    (run a command, read a token from stdout). That covers Bedrock/Vertex/enterprise
    gateways without building OAuth, and establishes the variant shape the existing
    comment already plans for.
+   `[done 2026-07-26]` — the arm's payload is nested (`{type, api_key}` /
+   `{type, exec:{command, timeout_seconds, ttl_seconds}}`) and `Credential.Validate`
+   enforces that exactly the arm `Type` names is populated, so the type cannot
+   degenerate into a bag of optional fields the way it would have flat.
+   Documented in [Provider credentials](../architecture/provider-credentials.md).
+   Six decisions worth recording:
+   - **The store persists, the resolver executes, and they are two types.**
+     Putting resolution on `CredentialStore` would have made an OS-keyring backend
+     — the whole reason that interface exists — responsible for knowing what a
+     subprocess is. `CredentialResolver` owns the dispatch, the timeout, the
+     guardrails and the cache; `Service` holds both, as two fields, because they
+     are two jobs.
+   - **Two entry points, because a listing and a conversation want different
+     freshness.** `CachedToken` serves model listing, which walks *every*
+     configured provider and would otherwise spawn one subprocess per
+     exec-credentialed provider each time the picker opens. `Token` resolves fresh
+     and is what a selection uses, because the string it returns is baked into the
+     adapter a whole conversation runs on — and because re-selecting a model has
+     to be the way a user recovers from an expired token. A single TTL split
+     between the two cases would have been wrong for both.
+   - **Validation at both ends, never in the middle.** `Put` refuses a malformed
+     credential and so does resolution, but decoding stays lenient with no type
+     check: `credentials.json` is shared between builds and versions, and
+     rejecting the file over one entry would take every other provider's
+     credential down with it — R3.1's stance on an unknown wire format, applied to
+     an unknown credential type. An *absent* type is its own error rather than a
+     silent `api_key`, which is R2's "said nothing is not declared nothing" in
+     this package.
+   - **argv, never a shell.** No quoting rules, no word splitting, no injection
+     semantics to reason about in a file that already grants code execution.
+     `["sh", "-lc", "..."]` still expresses a pipeline, and puts the shell where a
+     reader can see it.
+   - **Resolution had to come out from under `s.mu`.** `Select` used to resolve
+     while holding the write lock; with a command in the path that freezes the
+     picker, the footer and a running turn for the whole timeout.
+     `applySelection` resolves first and locks only to persist and swap — what
+     `Connect` already did with its network validation, and what `Connect` now
+     also does with its selection. `Open` grew a `context.Context` for the same
+     reason: activating the persisted selection can run a command, and the caller
+     must be able to bound it.
+   - **`/connect` deliberately did not grow an exec path.** Its masked input and
+     its per-provider network check mean nothing for a credential whose answer is
+     ephemeral: "the command produced a token just now" validates nothing about
+     the next run. An exec credential is declared by editing the file the spec
+     already treats as user-editable, and `Connectable()`'s notion of connected —
+     a credential is stored — is unchanged for both arms.
+   One behaviour changed on the way, and is the honest reading rather than a
+   side effect: a provider that declares no `api_key_env` now uses a stored
+   credential instead of the keyless placeholder. A provider authenticated by a
+   command has no variable to name, and ignoring its credential would have been a
+   silently wrong answer. The environment override still wins, and wins before
+   anything is executed.
 6. **Add a content-part seam to `Message`** before multimodal is urgent — a
    `Parts []Part` with a text part today, so adding images later is not a
    breaking change to a published contract.
@@ -872,8 +933,8 @@ right shape. Consolidate the plumbing:
 
 **Phase 1 — agnostic core (weeks).** R2 tool capability interfaces and removal of
 the six name-keyed switches (landed 2026-07-24). R3 provider registry and
-capabilities (both landed 2026-07-25) + data-driven catalog and the deletion of
-`wailsprovider` (both landed 2026-07-26).
+capabilities (both landed 2026-07-25) + data-driven catalog, the deletion of
+`wailsprovider` and the widened `Credential` (all three landed 2026-07-26).
 *Outcome: tools and providers become additive instead of invasive; the extension
 security default flips to ask.*
 

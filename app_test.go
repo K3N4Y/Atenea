@@ -103,7 +103,7 @@ func newApp(t *testing.T, provider llm.Provider, emit event.EmitFunc) *App {
 // justo el provider que estos tests inyectan.
 func inertProviderService(t *testing.T, provider llm.Provider) *providerconfig.Service {
 	t.Helper()
-	service, err := providerconfig.Open("", "", testSnapshot(provider), envNothing, nil, nil, nil, nil)
+	service, err := providerconfig.Open(context.Background(), "", "", testSnapshot(provider), envNothing, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("open inert provider service: %v", err)
 	}
@@ -129,7 +129,7 @@ func newAppWithProviders(t *testing.T, provider llm.Provider, catalog providerco
 	dir := t.TempDir()
 	credentials := providerconfig.NewFileCredentialStore(filepath.Join(dir, "credentials.json"))
 	service, err := providerconfig.Open(
-		filepath.Join(dir, "providers.json"), "", testSnapshot(provider),
+		context.Background(), filepath.Join(dir, "providers.json"), "", testSnapshot(provider),
 		envWithKeys(catalog), registry, nil, offline, credentials, catalog,
 	)
 	if err != nil {

@@ -165,8 +165,11 @@ The rest of R3 is untouched and each part is independent of this one:
   `providerconfig.Service` the TUI does, so every provider either build constructs
   now goes through this registry. See
   [Wails provider surface](wails-provider.md).
-- **`Credential` is still `{Type, APIKey}`** (R3.5) — no `exec` credential, so
-  Bedrock/Vertex/gateway auth has nowhere to live even with a factory registered.
+- ~~**`Credential` is still `{Type, APIKey}`** (R3.5)~~ `[done 2026-07-26]` It is
+  a tagged variant with an `exec` arm that reads a bearer token from a command's
+  standard output, so a registered Bedrock/Vertex/gateway factory now has
+  somewhere to get its credential from. See
+  [Provider credentials](provider-credentials.md).
 - **`/connect` is still keyed by provider id** (`connectableProviderIDs`,
   `defaultKeyValidator`). Deliberately not folded into the registry: OpenRouter
   and OpenCode share a wire format and validate differently, so key validation is

@@ -216,6 +216,8 @@ the two used to end up reading different files.
   adapter.
 - [Provider capabilities](provider-capabilities.md) — what that adapter declares
   about the models this catalog lists.
+- [Provider credentials](provider-credentials.md) — how a provider in this
+  catalog gets the bearer token it authenticates with.
 - [`/connect` command and credential store](../specs/2026-07-18-connect-command.md)
   — the allowlist that decides which catalog providers `/connect` manages, and
   which stays keyed by id on purpose.
