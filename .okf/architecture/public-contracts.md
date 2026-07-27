@@ -35,6 +35,12 @@ audit](../audits/2026-07-24-agnostic-extensibility-audit.md) §4 R1.
 `agentcore` itself is a documentation-only package: no code, just the rule and
 the test that enforces it.
 
+The durable `EventKind` constants are also the taxonomy source for the frontend.
+Running `go generate ./agentcore/session` regenerates its checked-in TypeScript
+union, and the generator's test fails when that file drifts from the published
+Go contract. The TypeScript consumer remains open to unknown string kinds, as
+required by the forward-compatible event interface.
+
 Each of the two contracts a third party *implements* ships with its test kit:
 
 | Kit | Runs the contract of | Applied to |

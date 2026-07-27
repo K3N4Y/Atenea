@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-24
+updated_at: 2026-07-27
 summary: Ownership, seams, and internal structure of the durable session module.
 ---
 
@@ -16,6 +16,13 @@ payloads live in `agentcore/session` and are re-exported here by `contract.go`,
 so the durable stream is readable by an integration while the store that writes
 it stays private. See [Published
 contracts](public-contracts.md).
+
+The `EventKind` constants in `agentcore/session/event.go` are the single source
+of truth for the durable event taxonomy. `go generate ./agentcore/session`
+produces the frontend TypeScript union; a Go test compares the generated output
+with the checked-in file so CI catches drift. The frontend event shape combines
+that known union with an open string type because a newer producer may emit a
+kind an older consumer does not yet know.
 
 ## Persistence seam
 

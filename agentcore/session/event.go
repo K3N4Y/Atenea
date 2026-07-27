@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+//go:generate go run ../../internal/cmd/eventkindgen -source event.go -output ../../frontend/src/features/chat/eventKinds.generated.ts
+
 // Seq is the monotonic sequence a store assigns to every event of a session. It
 // starts at 1 and grows by 1 per session, defining the total durable order of
 // the history. Every "since" filter in the projections is expressed against it.

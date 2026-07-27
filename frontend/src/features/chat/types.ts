@@ -1,3 +1,5 @@
+import type { EventKind } from './eventKinds.generated'
+
 export type ToolStatus = 'pending' | 'running' | 'success' | 'failed'
 
 export interface UserItem {
@@ -71,7 +73,9 @@ export interface Usage {
 
 // Durable session event shape serialized by the Wails adapter.
 export interface SessionEvent {
-  Kind?: string
+  // The intersection keeps the published taxonomy discoverable while allowing
+  // events from a newer producer to cross this forward-compatible seam.
+  Kind?: EventKind | (string & {})
   Text?: string
   Error?: string
   CallID?: string
