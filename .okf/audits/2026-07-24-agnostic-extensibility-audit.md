@@ -1,6 +1,6 @@
 ---
 updated_at: 2026-07-27
-summary: Audit of how agnostic atenea's seams are, and what to change to enable third-party integrations, contributions, and a plugin system. R1 through R5 are done — Phase 2 is complete — and the durable event stream is forward-compatible.
+summary: Audit of how agnostic atenea's seams are, and what to change to enable third-party integrations, contributions, and a plugin system. R1 through R5 and R7 are done; R6 remains open.
 ---
 
 # Agnosticism and extensibility audit — atenea
@@ -1295,10 +1295,11 @@ is ever needed), or a pluggable compaction policy beyond the existing
 Create `internal/paths` (later public) as the only place that knows the product
 name and the filesystem layout:
 
-- `ConfigDir()`, `DataDir()`, `CacheDir()` honoring `XDG_CONFIG_HOME`/
-  `XDG_DATA_HOME`/`XDG_CACHE_HOME` with `os.UserConfigDir()` as fallback
-- `DB()`, `Checkpoints()`, `Credentials()`, `Providers()`, `ModelsCache()`,
-  `MCPConfig()`
+- ~~`ConfigDir()`, `DataDir()`, `CacheDir()` honoring `XDG_CONFIG_HOME`/
+  `XDG_DATA_HOME`/`XDG_CACHE_HOME` with platform-appropriate fallbacks~~
+  `[done 2026-07-27]`
+- ~~`DB()`, `Checkpoints()`, `Credentials()`, `Providers()`, `ModelsCache()`,
+  `MCPConfig()`~~ `[done 2026-07-27]`
 - ~~`SkillDirs(root)`, `AgentDirs(root)` from one ordered, documented list — since
   R4.2 those two lists live as `wiring.DefaultSkillDirs`/`DefaultAgentDirs`, which
   is where they are documented and tested today, and they are what this package
@@ -1317,12 +1318,19 @@ name and the filesystem layout:
 While consolidating, ~~fix the two discovery asymmetries: agents should search
 `$HOME` and honor `.claude/agents` exactly as skills do.~~ `[done 2026-07-27]` ~~`ExtractBuiltins`
 should run from the shared host (R4) so the TUI gets built-in skills too.~~
-`[done 2026-07-26]` with R4.1 — but the destination path is still assembled from
-`os.UserHomeDir()` inside `internal/host`, which is one more caller for this
-package to take over.
+  `[done 2026-07-26]` with R4.1. ~~The destination path was still assembled from
+`os.UserHomeDir()` inside `internal/host`, which was one more caller for this
+package to take over.~~ `[done 2026-07-27]` `paths.BuiltinSkillDir` now owns the
+destination and guarantees it is part of global native skill discovery.
 
-Document the `.claude/` + `.agents/` + `.mcp.json` compatibility as an explicit,
-tested contract — it is a real differentiator and should not be allowed to rot.
+~~Document the `.claude/` + `.agents/` + `.mcp.json` compatibility as an explicit,
+tested contract — it is a real differentiator and should not be allowed to rot.~~
+`[done 2026-07-27]` [Filesystem and compatibility contract](../architecture/filesystem-compatibility.md)
+now specifies XDG roots and artifact ownership, environment precedence, identity
+propagation, both project/home discovery scopes and first-wins ordering, and the
+workspace MCP overlay. A wiring-level contract exercises all six discovery
+locations for both skills and agents; the MCP config contract pins workspace
+precedence and shadow reporting.
 
 ### R8 — Make MCP the one and only third-party code boundary
 

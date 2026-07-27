@@ -74,7 +74,12 @@ func TestDefaultAgentDirs_ProjectBeforeGlobal(t *testing.T) {
 // whose result depends on who runs it is worse than no test.
 func buildWith(t *testing.T, cfg Config) Built {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	return buildWithHome(t, cfg, t.TempDir())
+}
+
+func buildWithHome(t *testing.T, cfg Config, home string) Built {
+	t.Helper()
+	t.Setenv("HOME", home)
 	if cfg.Root == "" {
 		cfg.Root = t.TempDir()
 	}
@@ -358,11 +363,15 @@ func TestBuild_EmptySkillDirsDiscoversNothing(t *testing.T) {
 // writeSkill materializes a discoverable skill: a SKILL.md with the frontmatter
 // discovery requires, in its own directory.
 func writeSkill(t *testing.T, dir, name string) {
+	writeSkillWithDescription(t, dir, name, "the "+name+" skill")
+}
+
+func writeSkillWithDescription(t *testing.T, dir, name, description string) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	body := "---\nname: " + name + "\ndescription: the " + name + " skill\n---\n\nBody.\n"
+	body := "---\nname: " + name + "\ndescription: " + description + "\n---\n\nBody.\n"
 	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -377,6 +386,64 @@ func TestBuild_ZeroAgentDirsDiscoversTheProjectSubagents(t *testing.T) {
 
 	if agents := subagentCatalog(t, buildWith(t, Config{Root: root})); !strings.Contains(agents, "reviewer") {
 		t.Errorf("the project subagent is not in the task tool's catalog:\n%s", agents)
+	}
+}
+
+// This is the compatibility contract at the assembly boundary, where discovery
+// becomes model-visible behavior. It deliberately covers every supported layout
+// at both scopes for both extension kinds; path-list and parser unit tests alone
+// would not catch one of those layouts being dropped between resolution and Build.
+func TestBuild_DefaultDiscoverySupportsAteneaAgentsAndClaudeLayouts(t *testing.T) {
+	home := t.TempDir()
+	root := t.TempDir()
+	layouts := []string{".atenea", ".agents", ".claude"}
+	for scope, base := range map[string]string{"project": root, "home": home} {
+		for _, layout := range layouts {
+			name := strings.TrimPrefix(layout, ".") + "-" + scope
+			writeSkill(t, filepath.Join(base, layout, "skills", name), name)
+			writeAgent(t, filepath.Join(base, layout, "agents"), name)
+		}
+	}
+
+	// A single name in all six locations pins the complete first-wins rule:
+	// project before home, then .atenea before .agents before .claude.
+	for _, base := range []string{root, home} {
+		for _, layout := range layouts {
+			scope := "home"
+			if base == root {
+				scope = "project"
+			}
+			description := scope + " " + strings.TrimPrefix(layout, ".") + " compatibility winner"
+			writeSkillWithDescription(t, filepath.Join(base, layout, "skills", "winner"), "winner", description)
+			writeAgentWithDescription(t, filepath.Join(base, layout, "agents"), "winner", description)
+		}
+	}
+
+	built := buildWithHome(t, Config{Root: root}, home)
+	agents := subagentCatalog(t, built)
+	for scope := range map[string]string{"project": root, "home": home} {
+		for _, layout := range layouts {
+			name := strings.TrimPrefix(layout, ".") + "-" + scope
+			if _, ok := built.Commands.Resolve("/" + name); !ok {
+				t.Errorf("skill %q from %s/%s did not reach commands", name, scope, layout)
+			}
+			if !strings.Contains(agents, name) {
+				t.Errorf("agent %q from %s/%s did not reach the task catalog:\n%s", name, scope, layout, agents)
+			}
+		}
+	}
+
+	var winnerDescription string
+	for _, command := range built.Commands.List() {
+		if command.Name == "winner" {
+			winnerDescription = command.Description
+		}
+	}
+	if winnerDescription != "project atenea compatibility winner" {
+		t.Errorf("skill compatibility winner description = %q, want project .atenea definition", winnerDescription)
+	}
+	if !strings.Contains(agents, "winner: project atenea compatibility winner") {
+		t.Errorf("agent compatibility winner is not the project .atenea definition:\n%s", agents)
 	}
 }
 
@@ -404,11 +471,15 @@ func TestBuild_AgentDirsFieldReplacesDiscovery(t *testing.T) {
 
 // writeAgent materializes a discoverable subagent definition.
 func writeAgent(t *testing.T, dir, name string) {
+	writeAgentWithDescription(t, dir, name, "the "+name+" subagent")
+}
+
+func writeAgentWithDescription(t *testing.T, dir, name, description string) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	body := "---\nname: " + name + "\ndescription: the " + name + " subagent\ntools: read\n---\n\nPrompt.\n"
+	body := "---\nname: " + name + "\ndescription: " + description + "\ntools: read\n---\n\nPrompt.\n"
 	if err := os.WriteFile(filepath.Join(dir, name+".md"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}

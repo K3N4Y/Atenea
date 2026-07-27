@@ -25,6 +25,7 @@ uses Markdown and begins with `updated_at` and `summary` YAML metadata.
 - [Composition root](architecture/composition-root.md)
 - [Continuous integration and automated review](architecture/continuous-integration.md)
 - [Durable event stream](architecture/event-stream.md)
+- [Filesystem and compatibility contract](architecture/filesystem-compatibility.md)
 - [CLI distribution](architecture/distribution.md)
 - [Headless CLI](architecture/headless-cli.md)
 - [OpenCode/OpenAI LLM integration](architecture/llm-opencode-openai.md)
