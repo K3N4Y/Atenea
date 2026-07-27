@@ -1,6 +1,6 @@
 ---
-updated_at: 2026-07-26
-summary: Audit of how agnostic atenea's seams are, and what to change to enable third-party integrations, contributions, and a plugin system. R1, R2, R3 and R4 are done — Phase 2 is complete — and the CLI (`atenea run`, `mcp`, `skill`) is the programmatic surface.
+updated_at: 2026-07-27
+summary: Audit of how agnostic atenea's seams are, and what to change to enable third-party integrations, contributions, and a plugin system. R1 through R5 are done — Phase 2 is complete — and the durable event stream is forward-compatible.
 ---
 
 # Agnosticism and extensibility audit — atenea
@@ -1225,6 +1225,19 @@ it.
    parse error was about to be the output of `atenea skill validate`.
 
 ### R5 — Make the event stream a stable, forward-compatible contract
+
+> `[done 2026-07-27]` The durable event stream is now explicitly open and
+> forward-compatible. Both UI projections preserve unknown kinds as generic
+> entries and log the fallback; extensions have reserved `ext.` and `x-`
+> namespaces. Go constants generate the checked-in TypeScript known-kind union,
+> while its open string arm preserves compatibility. `SessionEvent.Attrs` gives
+> new producers an additive payload escape hatch that round-trips through memory,
+> SQLite, Wails JSON and headless NDJSON. Older readers ignore unknown structured
+> summary fields while retaining strict validation for known fields. R5.5 was
+> resolved deliberately in favor of documented open-set semantics rather than an
+> exhaustive-switch linter, because exhaustive checking would contradict unknown
+> extension kinds. See [Durable event stream](../architecture/event-stream.md)
+> and [Session module](../architecture/session.md).
 
 1. **Add `default:` to both projections** (`transcript.go`, `chat.ts`) with a
    generic pass-through for unknown kinds and a debug log. Reserve a `x-` /
