@@ -20,6 +20,16 @@ func TestDefaultPath_UsesUserConfigDir(t *testing.T) {
 	}
 }
 
+func TestDefaultCachePath_UsesXDGCacheHome(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", root)
+
+	want := filepath.Join(root, "atenea", "models-cache.json")
+	if got := DefaultCachePath(); got != want {
+		t.Fatalf("DefaultCachePath() = %q, want %q", got, want)
+	}
+}
+
 func TestLoad_ParsesValidatedProviderSelection(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "providers.json")
 	err := os.WriteFile(path, []byte(`{

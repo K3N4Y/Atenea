@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/K3N4Y/atenea/internal/paths"
 )
 
 type Provider struct {
@@ -45,15 +47,19 @@ type Config struct {
 }
 
 func DefaultPath() string {
-	dir, err := os.UserConfigDir()
+	path, err := paths.Providers()
 	if err != nil {
 		return filepath.Join(".", "atenea", "providers.json")
 	}
-	return filepath.Join(dir, "atenea", "providers.json")
+	return path
 }
 
 func DefaultCachePath() string {
-	return filepath.Join(filepath.Dir(DefaultPath()), "models-cache.json")
+	path, err := paths.ModelsCache()
+	if err != nil {
+		return filepath.Join(".", "atenea", "models-cache.json")
+	}
+	return path
 }
 
 func Load(path string) (Config, error) {

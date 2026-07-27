@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/K3N4Y/atenea/internal/paths"
 )
 
 // The credential types this build honors. Type names which arm of [Credential]
@@ -142,7 +144,11 @@ func NewFileCredentialStore(path string) *FileCredentialStore {
 
 // DefaultCredentialsPath stores credentials next to the provider config.
 func DefaultCredentialsPath() string {
-	return filepath.Join(filepath.Dir(DefaultPath()), "credentials.json")
+	path, err := paths.Credentials()
+	if err != nil {
+		return filepath.Join(".", "atenea", "credentials.json")
+	}
+	return path
 }
 
 // CredentialPath implements [CredentialFile]: it is the file whose permissions

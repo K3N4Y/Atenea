@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+
+	"github.com/K3N4Y/atenea/internal/paths"
 )
 
 // ConfigFile is the workspace file that declares MCP servers for the TUI,
@@ -22,11 +24,11 @@ type configFile struct {
 // settings (~/.config/atenea/mcp.json on Linux). Empty when the user config
 // directory cannot be resolved: only workspace servers remain.
 func GlobalConfigPath() string {
-	dir, err := os.UserConfigDir()
+	path, err := paths.MCPConfig()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(dir, "atenea", "mcp.json")
+	return path
 }
 
 // Scope is the file a declaration came from.
