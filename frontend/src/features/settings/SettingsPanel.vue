@@ -95,6 +95,7 @@ async function connectMCP() {
   try {
     const config = {
       name: serverName.value.trim(),
+      type: 'stdio',
       command: command.value.trim(),
       args: args.value
         .split('\n')

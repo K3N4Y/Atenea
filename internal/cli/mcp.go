@@ -135,7 +135,7 @@ func mcpAddCommand(env Env, args []string) int {
 		return ExitFailure
 	}
 
-	config := mcpclient.ServerConfig{Name: name, Command: command, Args: arguments, Env: environment.values}
+	config := mcpclient.ServerConfig{Name: name, Type: "stdio", Command: command, Args: arguments, Env: environment.values}
 	if err := mcpclient.UpsertGlobalConfig(config); err != nil {
 		// The same validation Connect enforces — the name charset, a non-empty
 		// command — so a config this command writes is a config a host can start.
@@ -271,6 +271,9 @@ func (e *envPairs) Set(raw string) error {
 
 // commandLine renders a declaration's command as a reader would type it.
 func commandLine(declaration mcpclient.Declaration) string {
+	if declaration.URL != "" {
+		return oneLine(declaration.URL, commandLimit)
+	}
 	parts := append([]string{declaration.Command}, declaration.Args...)
 	return oneLine(strings.Join(parts, " "), commandLimit)
 }

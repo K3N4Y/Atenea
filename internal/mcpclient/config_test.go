@@ -176,6 +176,29 @@ func TestLoadConfig_RejectsEmptyCommand(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_LoadsRemoteServerAndDefaultsLegacyConfigToStdio(t *testing.T) {
+	isolateGlobalConfig(t)
+	root := t.TempDir()
+	writeConfig(t, root, `{"mcpServers": {
+		"hosted": {"type": "streamable-http", "url": "https://example.com/mcp"},
+		"legacy": {"command": "npx", "args": ["legacy-mcp"]}
+	}}`)
+
+	configs, err := LoadConfig(root)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if len(configs) != 2 {
+		t.Fatalf("configs = %+v, want two servers", configs)
+	}
+	if configs[0].Type != "streamable-http" || configs[0].URL != "https://example.com/mcp" {
+		t.Fatalf("remote config = %+v", configs[0])
+	}
+	if configs[1].Type != "" || configs[1].Command != "npx" {
+		t.Fatalf("legacy config must remain valid and implicit stdio: %+v", configs[1])
+	}
+}
+
 func TestMerge_OverlaysConnectedStatusAndKeepsUnconfiguredServers(t *testing.T) {
 	configs := []ServerConfig{
 		{Name: "alpha", Command: "npx"},

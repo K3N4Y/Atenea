@@ -1,4 +1,4 @@
-// Package mcpclient connects Atenea to local MCP servers over stdio.
+// Package mcpclient connects Atenea to MCP servers over local and remote transports.
 package mcpclient
 
 import (
@@ -27,14 +27,16 @@ const connectTimeout = 30 * time.Second
 
 var serverName = regexp.MustCompile(`^[A-Za-z0-9_-]{1,48}$`)
 
-// ServerConfig describes a local MCP server process. Command and Args map
-// directly to the stdio process; Env is the only source of server secrets.
+// ServerConfig describes one MCP transport. An empty Type is legacy stdio;
+// remote transports use URL, while stdio uses Command, Args, Env, and Cwd.
 type ServerConfig struct {
 	Name    string            `json:"name,omitempty"`
-	Command string            `json:"command"`
-	Args    []string          `json:"args"`
+	Type    string            `json:"type,omitempty"`
+	Command string            `json:"command,omitempty"`
+	Args    []string          `json:"args,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
 	Cwd     string            `json:"cwd,omitempty"`
+	URL     string            `json:"url,omitempty"`
 }
 
 // ServerStatus is the safe, serializable connection state exposed to the UI.
@@ -102,15 +104,17 @@ func (m *Manager) Connect(ctx context.Context, config ServerConfig) (ServerStatu
 
 	client := mcp.NewClient(&mcp.Implementation{Name: m.identity.Product, Version: m.identity.Version}, nil)
 	client.AddRoots(&mcp.Root{URI: rootURI(root), Name: filepath.Base(root)})
-	command := exec.Command(config.Command, config.Args...)
-	command.Dir = config.Cwd
-	if command.Dir == "" {
-		command.Dir = root
+	transport, err := transportFor(config, root)
+	if err != nil {
+		return ServerStatus{}, err
 	}
-	command.Env = mergeEnv(baseEnv(), config.Env)
-	connectCtx, cancel := context.WithTimeout(ctx, connectTimeout)
+	connectCtx := ctx
+	cancel := func() {}
+	if transportType(config) == "stdio" {
+		connectCtx, cancel = context.WithTimeout(ctx, connectTimeout)
+	}
 	defer cancel()
-	session, err := client.Connect(connectCtx, &mcp.CommandTransport{Command: command}, nil)
+	session, err := client.Connect(connectCtx, transport, nil)
 	if err != nil {
 		return ServerStatus{}, fmt.Errorf("connect MCP %q: %w", config.Name, err)
 	}
@@ -142,7 +146,12 @@ func (m *Manager) Connect(ctx context.Context, config ServerConfig) (ServerStatu
 	}
 	m.servers[config.Name] = srv
 	m.mu.Unlock()
-	go m.removeWhenSessionEnds(config.Name, srv)
+	// The legacy SDK SSE connection reports EOF from Wait while its split GET/POST
+	// session is still usable. Monitoring it would tear down a healthy session.
+	// Streamable HTTP and stdio have a single connection whose Wait is reliable.
+	if transportType(config) != "sse" {
+		go m.removeWhenSessionEnds(config.Name, srv)
+	}
 	return ServerStatus{ServerConfig: config, Connected: true, Tools: len(srv.tools)}, nil
 }
 
@@ -210,10 +219,55 @@ func validate(config ServerConfig) error {
 	if !serverName.MatchString(config.Name) {
 		return fmt.Errorf("invalid MCP name %q: use up to 48 letters, digits, _ or -", config.Name)
 	}
-	if strings.TrimSpace(config.Command) == "" {
-		return fmt.Errorf("an MCP server needs a command to run")
+	switch transportType(config) {
+	case "stdio":
+		if strings.TrimSpace(config.Command) == "" {
+			return fmt.Errorf("a stdio MCP server needs a command to run")
+		}
+		if strings.TrimSpace(config.URL) != "" {
+			return fmt.Errorf("a stdio MCP server cannot declare a URL")
+		}
+	case "http", "streamable-http", "sse":
+		if strings.TrimSpace(config.URL) == "" {
+			return fmt.Errorf("an %s MCP server needs a URL", transportType(config))
+		}
+		parsed, err := url.ParseRequestURI(config.URL)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			return fmt.Errorf("invalid MCP URL %q: use an absolute http or https URL", config.URL)
+		}
+		if strings.TrimSpace(config.Command) != "" || len(config.Args) != 0 || len(config.Env) != 0 || strings.TrimSpace(config.Cwd) != "" {
+			return fmt.Errorf("an %s MCP server cannot declare stdio process settings", transportType(config))
+		}
+	default:
+		return fmt.Errorf("unsupported MCP transport type %q: use stdio, http, streamable-http, or sse", config.Type)
 	}
 	return nil
+}
+
+func transportType(config ServerConfig) string {
+	if config.Type == "" {
+		return "stdio"
+	}
+	return strings.ToLower(strings.TrimSpace(config.Type))
+}
+
+func transportFor(config ServerConfig, root string) (mcp.Transport, error) {
+	switch transportType(config) {
+	case "stdio":
+		command := exec.Command(config.Command, config.Args...)
+		command.Dir = config.Cwd
+		if command.Dir == "" {
+			command.Dir = root
+		}
+		command.Env = mergeEnv(baseEnv(), config.Env)
+		return &mcp.CommandTransport{Command: command}, nil
+	case "http", "streamable-http":
+		return &mcp.StreamableClientTransport{Endpoint: config.URL}, nil
+	case "sse":
+		return &mcp.SSEClientTransport{Endpoint: config.URL}, nil
+	default:
+		return nil, fmt.Errorf("unsupported MCP transport type %q", config.Type)
+	}
 }
 
 func rootURI(root string) string {

@@ -1,11 +1,12 @@
 ---
-updated_at: 2026-07-26
-summary: Local MCP server integration for the Wails application, the TUI, the `atenea mcp` subcommand, and the agent tool registry.
+updated_at: 2026-07-27
+summary: Stdio, Streamable HTTP, and legacy SSE MCP integration shared by both hosts and the command-line configuration surface.
 ---
 
 # MCP servers
 
-Atenea connects to **local MCP servers over stdio**. Server definitions live in
+Atenea connects to local MCP servers over stdio and hosted servers over
+Streamable HTTP or legacy HTTP+SSE. Server definitions live in
 shared JSON config files — the single source of truth for the desktop app, the
 TUI and the `atenea mcp` subcommand (see "Configuration files" below). Opening
 Atenea never launches a configured process: every configured server starts only
@@ -27,8 +28,9 @@ to open connects what it finds.
    and deletes a global entry (workspace-declared servers are edited in their
    file instead). Configs saved by older versions in the frontend localStorage
    are migrated to the global file on the first refresh.
-2. `internal/mcpclient.Manager` starts the command with the official
-   `github.com/modelcontextprotocol/go-sdk` `CommandTransport`.
+2. `internal/mcpclient.Manager` selects the official
+   `github.com/modelcontextprotocol/go-sdk` transport from the declaration:
+   `CommandTransport`, `StreamableClientTransport`, or `SSEClientTransport`.
 3. The client advertises the current workspace as an MCP root, initializes the
    session, and paginates `tools/list`.
 4. Each discovered tool is adapted to `internal/tool.Tool` and named
@@ -69,7 +71,7 @@ list minus the shadowed entries. That is what lets `atenea mcp list` show an
 override that would otherwise be invisible without it being able to disagree with
 what actually starts.
 
-MCP subprocesses inherit only the operational environment needed to launch
+Stdio subprocesses inherit only the operational environment needed to launch
 portable local commands (`PATH`, home/temp, locale, timezone, and Windows
 process variables). Provider tokens and other application secrets are passed
 only when explicitly declared in the server's `env` map.
@@ -77,10 +79,28 @@ only when explicitly declared in the server's `env` map.
 ```json
 {
   "mcpServers": {
-    "playwright": { "command": "npx", "args": ["@playwright/mcp@latest"] }
+    "playwright": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"]
+    },
+    "hosted": {
+      "type": "streamable-http",
+      "url": "https://example.com/mcp"
+    },
+    "legacy-hosted": {
+      "type": "sse",
+      "url": "https://example.com/sse"
+    }
   }
 }
 ```
+
+`type` accepts `stdio`, `http`, `streamable-http`, and `sse`; `http` is a short
+alias for `streamable-http`. An omitted type remains `stdio`, preserving existing
+`.mcp.json` files. Stdio declarations require `command` and may use `args`, `env`,
+and `cwd`. Remote declarations require an absolute HTTP(S) `url` and reject
+process-only fields, so an ambiguous mixed declaration fails at load time.
 
 ## TUI
 
@@ -123,10 +143,11 @@ the refusals and the exit codes are in
 
 ## Scope
 
-This implementation supports stdio only. HTTP transports and OAuth are deferred:
-they require durable credential storage, redirect/callback handling, and explicit
-remote-server trust UX. The protocol client also does not expose MCP tools to
-subagents yet; the initial scope is the primary agent registry.
+Remote transports currently support unauthenticated endpoints. OAuth and custom
+request headers remain deferred because they require durable credential storage,
+redirect/callback handling, and explicit remote-server trust UX. The protocol
+client also does not expose MCP tools to subagents yet; the current scope is the
+primary agent registry.
 
 ## References
 

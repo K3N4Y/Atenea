@@ -264,7 +264,11 @@ func (m Model) mcpPickerRow(server mcpclient.ServerStatus, selected bool, nameWi
 	if server.Connected {
 		tools = strconv.Itoa(server.Tools) + " tools"
 	}
-	command := sanitizeTerminalText(strings.TrimSpace(server.Command + " " + strings.Join(server.Args, " ")))
+	command := server.URL
+	if command == "" {
+		command = strings.TrimSpace(server.Command + " " + strings.Join(server.Args, " "))
+	}
+	command = sanitizeTerminalText(command)
 
 	row := overlayCell(prefix+glyph+sanitizeTerminalText(server.Name), nameWidth) +
 		overlayCell(status, statusWidth) + overlayCell(tools, toolsWidth)

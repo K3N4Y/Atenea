@@ -13,7 +13,8 @@ import (
 // ConfigFile is the workspace file that declares MCP servers for the TUI,
 // using the de-facto standard format shared by other agent CLIs:
 //
-//	{"mcpServers": {"<name>": {"command": "npx", "args": ["..."], "env": {...}, "cwd": "..."}}}
+//	{"mcpServers": {"<name>": {"type": "stdio", "command": "npx", "args": ["..."]}}}
+//	{"mcpServers": {"<name>": {"type": "http", "url": "https://example.com/mcp"}}}
 const ConfigFile = ".mcp.json"
 
 type configFile struct {

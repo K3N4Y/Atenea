@@ -1,6 +1,6 @@
 ---
 updated_at: 2026-07-27
-summary: Audit of how agnostic atenea's seams are, and what to change to enable third-party integrations, contributions, and a plugin system. R1 through R5 and R7 are done; R6 remains open.
+summary: Audit of how agnostic atenea's seams are, and what to change to enable third-party integrations, contributions, and a plugin system. R1 through R5, R7, and R8.1 are done; the remaining recommendations stay open.
 ---
 
 # Agnosticism and extensibility audit — atenea
@@ -1342,9 +1342,12 @@ and OpenCode are converging.
 
 Work to make it a genuine plugin substrate:
 
-1. **Transports.** Add a `type` discriminator to `ServerConfig` and support
+1. ~~**Transports.** Add a `type` discriminator to `ServerConfig` and support
    `http`/`streamable-http`/`sse` alongside `stdio`. Without this, hosted
-   extensions are impossible.
+   extensions are impossible.~~ `[done 2026-07-27]` `ServerConfig` now selects
+   the official SDK's stdio, Streamable HTTP, or legacy SSE adapter. Empty
+   `type` remains stdio for existing files; remote declarations use an absolute
+   `url`, and validation rejects mixed process/remote settings.
 2. **Permissions.** Ship with R2's ask-by-default, plus per-server declared
    sensitivity and a persisted per-server/per-tool allowlist. This is the
    security precondition of an ecosystem.

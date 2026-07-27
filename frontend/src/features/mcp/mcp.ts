@@ -136,10 +136,12 @@ export const useMcpStore = defineStore('mcp', () => {
       if (!config) throw new Error(`No MCP server named "${name}"`)
       await ConnectMCP({
         name: config.name,
+        type: config.type,
         command: config.command,
         args: config.args ?? [],
         env: config.env,
         cwd: config.cwd,
+        url: config.url,
       })
       await refresh()
       return true

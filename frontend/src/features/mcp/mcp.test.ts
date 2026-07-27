@@ -115,6 +115,30 @@ describe('mcp store', () => {
     expect(DisconnectMCP).not.toHaveBeenCalled()
   })
 
+  it('toggle conserva el transporte y URL de un server remoto', async () => {
+    ListMCPs.mockResolvedValue([
+      {
+        name: 'hosted',
+        type: 'streamable-http',
+        url: 'https://example.com/mcp',
+        connected: false,
+        tools: 0,
+      },
+    ])
+    const mcp = useMcpStore()
+    await mcp.refresh()
+
+    await mcp.toggle('hosted')
+
+    expect(ConnectMCP).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'hosted',
+        type: 'streamable-http',
+        url: 'https://example.com/mcp',
+      }),
+    )
+  })
+
   it('toggle desconecta un server conectado', async () => {
     ListMCPs.mockResolvedValue([declared('github', true, 1)])
     const mcp = useMcpStore()

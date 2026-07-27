@@ -68,10 +68,12 @@ export namespace mcpclient {
 	
 	export class ServerConfig {
 	    name?: string;
-	    command: string;
-	    args: string[];
+	    type?: string;
+	    command?: string;
+	    args?: string[];
 	    env?: Record<string, string>;
 	    cwd?: string;
+	    url?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ServerConfig(source);
@@ -80,18 +82,22 @@ export namespace mcpclient {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
+	        this.type = source["type"];
 	        this.command = source["command"];
 	        this.args = source["args"];
 	        this.env = source["env"];
 	        this.cwd = source["cwd"];
+	        this.url = source["url"];
 	    }
 	}
 	export class ServerStatus {
 	    name?: string;
-	    command: string;
-	    args: string[];
+	    type?: string;
+	    command?: string;
+	    args?: string[];
 	    env?: Record<string, string>;
 	    cwd?: string;
+	    url?: string;
 	    connected: boolean;
 	    tools: number;
 	
@@ -102,10 +108,12 @@ export namespace mcpclient {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
+	        this.type = source["type"];
 	        this.command = source["command"];
 	        this.args = source["args"];
 	        this.env = source["env"];
 	        this.cwd = source["cwd"];
+	        this.url = source["url"];
 	        this.connected = source["connected"];
 	        this.tools = source["tools"];
 	    }
@@ -456,4 +464,3 @@ export namespace workspacegit {
 	}
 
 }
-

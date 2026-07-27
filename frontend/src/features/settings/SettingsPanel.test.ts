@@ -111,6 +111,7 @@ describe('SettingsPanel', () => {
     await flushPromises()
     expect(App.ConnectMCP).toHaveBeenCalledWith({
       name: 'github',
+      type: 'stdio',
       command: 'npx',
       args: ['-y', '@modelcontextprotocol/server-github'],
     })
@@ -118,6 +119,7 @@ describe('SettingsPanel', () => {
     // la TUI), no en localStorage.
     expect(App.SaveMCPConfig).toHaveBeenCalledWith({
       name: 'github',
+      type: 'stdio',
       command: 'npx',
       args: ['-y', '@modelcontextprotocol/server-github'],
     })
