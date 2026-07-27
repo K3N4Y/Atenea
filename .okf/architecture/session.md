@@ -36,6 +36,12 @@ Contract suites exercise both adapters through `Store`, `CompactionStore`, and
 events after undo, pending tools, session summaries, runner context, and
 compaction validity are projections of that log.
 
+Structured compaction summaries are strict about the fields this version knows:
+all known fields remain required and retain their declared JSON types. The
+decoder ignores additional fields, allowing an older Atenea reader to consume
+a checkpoint written by a newer version without weakening validation of its
+own schema.
+
 The adapters intentionally remain in the `session` package. They share private
 projection, compaction-validation, and cloning rules. Moving them to a sibling
 package would require exporting those implementation details or duplicating

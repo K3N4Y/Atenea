@@ -80,13 +80,17 @@ func TestStructuredSummary_TrimsGoal(t *testing.T) {
 	}
 }
 
-func TestStructuredSummary_RejectsUnknownFields(t *testing.T) {
+func TestStructuredSummary_OldReaderIgnoresFieldsFromNewWriter(t *testing.T) {
 	raw := validSummaryJSON(t)
-	raw = append(raw[:len(raw)-1], []byte(`,"unexpected":true}`)...)
+	raw = append(raw[:len(raw)-1], []byte(`,"new_writer_metadata":{"schema_version":2}}`)...)
 
-	err := DecodeStructuredSummary(raw, &StructuredSummary{})
-	if !errors.Is(err, ErrInvalidSummary) {
-		t.Fatalf("error = %v, want ErrInvalidSummary", err)
+	want := validSummary()
+	var got StructuredSummary
+	if err := DecodeStructuredSummary(raw, &got); err != nil {
+		t.Fatalf("decode summary with a newer field: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("decoded summary = %+v, want %+v", got, want)
 	}
 }
 

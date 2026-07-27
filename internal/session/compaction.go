@@ -18,9 +18,10 @@ var (
 	ErrCompactionRequiresCommit    = errors.New("compaction events must use CommitCompaction")
 )
 
-// summaryFields is the closed set of StructuredSummary fields keyed by whether
-// the field is a list. It drives both the presence check and the "must be an
-// array" check, so the decoder never trusts a summary the model shortened.
+// summaryFields contains the StructuredSummary fields known to this reader,
+// keyed by whether the field is a list. It drives both the presence check and
+// the "must be an array" check, so the decoder never trusts a summary the model
+// shortened.
 var summaryFields = map[string]bool{
 	"current_goal":                 false,
 	"constraints_and_instructions": true,
@@ -79,17 +80,17 @@ func decodeSummaryFields(raw []byte) (map[string]json.RawMessage, error) {
 		if !ok {
 			return nil, fmt.Errorf("%w: field name is not a string", ErrInvalidSummary)
 		}
-		if _, known := summaryFields[name]; !known {
-			return nil, fmt.Errorf("%w: unknown field %s", ErrInvalidSummary, name)
-		}
-		if _, duplicate := fields[name]; duplicate {
+		_, known := summaryFields[name]
+		if _, duplicate := fields[name]; known && duplicate {
 			return nil, fmt.Errorf("%w: duplicate field %s", ErrInvalidSummary, name)
 		}
 		var value json.RawMessage
 		if err := decoder.Decode(&value); err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrInvalidSummary, err)
 		}
-		fields[name] = value
+		if known {
+			fields[name] = value
+		}
 	}
 	if _, err := decoder.Token(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidSummary, err)
