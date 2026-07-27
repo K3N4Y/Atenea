@@ -6,12 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/K3N4Y/atenea/internal/frontmatter"
+	"go.yaml.in/yaml/v4"
 )
 
-// Def es la definicion de un subagente: sus metadatos (Name, Description, Model,
-// Tools) mas su Prompt (el cuerpo Markdown sin el frontmatter) y Location (ruta
-// absoluta del archivo). Location no lo fija Parse (lo pone Discover), igual que
-// skill.Info.
+// Def is a subagent definition: its metadata, Markdown prompt, and source path.
 type Def struct {
 	Name        string
 	Description string
@@ -21,64 +21,49 @@ type Def struct {
 	Location    string
 }
 
-// Parse separa el frontmatter de la definicion de un subagente de su cuerpo. El
-// frontmatter es el bloque delimitado por "---" al inicio del archivo; de el se
-// leen name, description, model (una por linea, "clave: valor") y tools (una sola
-// linea con valores separados por comas). El resto es Prompt. Un archivo sin
-// frontmatter, o sin name, es un error: un subagente sin nombre no es
-// referenciable. Location no lo fija Parse (lo pone Discover).
+// Parse decodes a subagent's YAML frontmatter and separates it from its prompt.
+// Location is left unset for Discover to populate.
 func Parse(raw []byte) (Def, error) {
-	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
-
-	rest, ok := strings.CutPrefix(text, "---\n")
-	if !ok {
-		return Def{}, fmt.Errorf("agent: falta el frontmatter (--- al inicio)")
+	var manifest struct {
+		Name        string   `yaml:"name"`
+		Description string   `yaml:"description"`
+		Tools       toolList `yaml:"tools"`
+		Model       string   `yaml:"model"`
 	}
-	end := strings.Index(rest, "\n---")
-	if end < 0 {
-		return Def{}, fmt.Errorf("agent: frontmatter sin cierre (---)")
+	body, err := frontmatter.Parse(raw, &manifest)
+	if err != nil {
+		return Def{}, fmt.Errorf("agent: %w", err)
 	}
-	front := rest[:end]
-	body := strings.TrimPrefix(rest[end+len("\n---"):], "\n")
-
-	var def Def
-	for _, line := range strings.Split(front, "\n") {
-		key, val, found := strings.Cut(line, ":")
-		if !found {
-			continue
-		}
-		val = strings.Trim(strings.TrimSpace(val), `"'`)
-		switch strings.TrimSpace(key) {
-		case "name":
-			def.Name = val
-		case "description":
-			def.Description = val
-		case "model":
-			def.Model = val
-		case "tools":
-			for _, t := range strings.Split(val, ",") {
-				if t = strings.TrimSpace(t); t != "" {
-					def.Tools = append(def.Tools, t)
-				}
-			}
-		}
+	def := Def{
+		Name:        manifest.Name,
+		Description: strings.Join(strings.Fields(manifest.Description), " "),
+		Tools:       []string(manifest.Tools),
+		Model:       manifest.Model,
+		Prompt:      string(body),
 	}
 	if def.Name == "" {
-		return Def{}, fmt.Errorf("agent: frontmatter sin 'name'")
+		return Def{}, fmt.Errorf("agent: the frontmatter declares no 'name'")
 	}
-	def.Prompt = body
 	return def, nil
 }
 
-// Discover escanea recursivamente cada agentsDir en busca de definiciones de
-// subagente y devuelve una Def por cada archivo *.md que parsea (con Location
-// apuntando al archivo). A diferencia de skill.Discover, el archivo no tiene un
-// nombre fijo (SKILL.md): cualquier *.md es candidato. Acepta varios directorios
-// (p.ej. el propio .atenea/agents y el estandar .agents/agents) y los fusiona en
-// orden: ante un nombre duplicado gana la PRIMERA ocurrencia, asi que un
-// directorio listado antes tiene prioridad sobre los siguientes. Un directorio
-// inexistente no es error (no aporta defs); un *.md que no parsea se omite, para
-// que una def rota no tumbe a las demas.
+type toolList []string
+
+func (t *toolList) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		for _, name := range strings.Split(node.Value, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				*t = append(*t, name)
+			}
+		}
+		return nil
+	}
+	return node.Decode((*[]string)(t))
+}
+
+// Discover recursively scans agent directories for Markdown definitions. The
+// first definition of a name wins; missing directories and malformed files are
+// skipped so one broken definition cannot prevent discovery of the others.
 func Discover(agentsDirs ...string) ([]Def, error) {
 	var out []Def
 	seen := make(map[string]bool)
@@ -86,23 +71,23 @@ func Discover(agentsDirs ...string) ([]Def, error) {
 		err := filepath.WalkDir(agentsDir, func(path string, d fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				if os.IsNotExist(walkErr) {
-					return nil // dir base ausente: no hay defs aqui
+					return nil // A missing base directory contributes no definitions.
 				}
 				return walkErr
 			}
 			if d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
 				return nil
 			}
-			raw, rerr := os.ReadFile(path)
-			if rerr != nil {
-				return rerr
+			raw, readErr := os.ReadFile(path)
+			if readErr != nil {
+				return readErr
 			}
-			def, perr := Parse(raw)
-			if perr != nil {
-				return nil // def ilegible: se omite sin romper el resto
+			def, parseErr := Parse(raw)
+			if parseErr != nil {
+				return nil // Skip a malformed definition without breaking discovery.
 			}
 			if seen[def.Name] {
-				return nil // duplicado: gana la primera ocurrencia
+				return nil // The first occurrence wins.
 			}
 			seen[def.Name] = true
 			def.Location = path

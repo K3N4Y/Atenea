@@ -69,6 +69,22 @@ func TestParse_ExtractsNameDescriptionAndBody(t *testing.T) {
 	}
 }
 
+func TestParse_UsesYAMLQuotingRules(t *testing.T) {
+	info, err := Parse([]byte("---\nname: demo\ndescription: 'Reviews: code safely'\n---\nbody\n"))
+	if err != nil {
+		t.Fatalf("Parse: unexpected error: %v", err)
+	}
+	if info.Description != "Reviews: code safely" {
+		t.Fatalf("Description = %q, want YAML-decoded value", info.Description)
+	}
+}
+
+func TestParse_RejectsInvalidYAML(t *testing.T) {
+	if _, err := Parse([]byte("---\nname: [demo\n---\nbody\n")); err == nil {
+		t.Fatal("Parse with invalid YAML: want an error, got none")
+	}
+}
+
 // Parse supports folded YAML block descriptions ('>'): the indented lines that
 // follow are joined into one line (whitespace collapsed) for the menu and the
 // prompt. Many global skills (~/.claude/skills, say) are written this way.

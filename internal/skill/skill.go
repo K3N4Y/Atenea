@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/K3N4Y/atenea/internal/frontmatter"
 )
 
 // Info is a discovered skill: its metadata (Name, Description) plus its Content
@@ -37,62 +39,22 @@ func (i Info) Announced() bool { return i.Description != "" }
 // because that is where they surface: `atenea skill validate` prints them next to
 // the file that produced them.
 func Parse(raw []byte) (Info, error) {
-	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
-
-	rest, ok := strings.CutPrefix(text, "---\n")
-	if !ok {
-		return Info{}, fmt.Errorf("no frontmatter: a skill starts with a --- line")
+	var manifest struct {
+		Name        string `yaml:"name"`
+		Description string `yaml:"description"`
 	}
-	end := strings.Index(rest, "\n---")
-	if end < 0 {
-		return Info{}, fmt.Errorf("the frontmatter is never closed: no --- line ends it")
+	body, err := frontmatter.Parse(raw, &manifest)
+	if err != nil {
+		return Info{}, err
 	}
-	front := rest[:end]
-	body := strings.TrimPrefix(rest[end+len("\n---"):], "\n")
-
-	var info Info
-	lines := strings.Split(front, "\n")
-	for i := 0; i < len(lines); i++ {
-		key, val, found := strings.Cut(lines[i], ":")
-		if !found {
-			continue
-		}
-		// Top-level keys only (unindented); an indented line with a ":" is the
-		// continuation of a block value, not a new key.
-		if strings.TrimLeft(key, " \t") != key {
-			continue
-		}
-		key = strings.TrimSpace(key)
-		val = strings.TrimSpace(val)
-		// A YAML block ('>' folded or '|' literal): the real value is the indented
-		// lines that follow. They are joined and collapsed into a single line, which
-		// is what the menu and the system prompt need (a description is one line).
-		if val != "" && (val[0] == '>' || val[0] == '|') {
-			var b strings.Builder
-			for i+1 < len(lines) {
-				next := lines[i+1]
-				if strings.TrimSpace(next) != "" && strings.TrimLeft(next, " \t") == next {
-					break // a non-empty unindented line: the block ends here
-				}
-				b.WriteByte(' ')
-				b.WriteString(next)
-				i++
-			}
-			val = strings.Join(strings.Fields(b.String()), " ")
-		} else {
-			val = strings.Trim(val, `"'`)
-		}
-		switch key {
-		case "name":
-			info.Name = val
-		case "description":
-			info.Description = val
-		}
+	info := Info{
+		Name:        manifest.Name,
+		Description: strings.Join(strings.Fields(manifest.Description), " "),
+		Content:     string(body),
 	}
 	if info.Name == "" {
 		return Info{}, fmt.Errorf("the frontmatter declares no 'name'")
 	}
-	info.Content = body
 	return info, nil
 }
 

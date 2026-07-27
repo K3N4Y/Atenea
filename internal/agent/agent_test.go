@@ -70,6 +70,26 @@ func TestParse_ExtractsFrontmatterAndPrompt(t *testing.T) {
 	}
 }
 
+func TestParse_AcceptsYAMLToolListAndBlockDescription(t *testing.T) {
+	raw := []byte("---\nname: reviewer\ndescription: >\n  Reviews code with\n  careful attention.\ntools:\n  - read\n  - grep\n---\nprompt\n")
+	def, err := Parse(raw)
+	if err != nil {
+		t.Fatalf("Parse: unexpected error: %v", err)
+	}
+	if def.Description != "Reviews code with careful attention." {
+		t.Fatalf("Description = %q, want folded YAML value", def.Description)
+	}
+	if !slices.Equal(def.Tools, []string{"read", "grep"}) {
+		t.Fatalf("Tools = %v, want YAML sequence", def.Tools)
+	}
+}
+
+func TestParse_RejectsInvalidYAML(t *testing.T) {
+	if _, err := Parse([]byte("---\nname: [reviewer\n---\nprompt\n")); err == nil {
+		t.Fatal("Parse with invalid YAML: want an error, got none")
+	}
+}
+
 // TRIANGULATE: un frontmatter sin name es error; un subagente sin nombre no es
 // referenciable.
 func TestParse_MissingName(t *testing.T) {

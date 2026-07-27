@@ -1399,9 +1399,13 @@ Explicitly rejected alternatives, so they are not revisited by accident:
 Skills, subagents and commands are already extensible without code, which is the
 right shape. Consolidate the plumbing:
 
-1. **One `frontmatter` package** with a real YAML parser, replacing the two
+1. ~~**One `frontmatter` package** with a real YAML parser, replacing the two
    hand-rolled parsers (`skill.go:22-85`, `agent.go:24-71`) whose capabilities
-   already diverge (block scalars vs. comma lists).
+   already diverge (block scalars vs. comma lists).~~ `[done 2026-07-27]`
+   `internal/frontmatter` now owns delimiter handling, newline normalization and
+   YAML decoding for both manifest types. Skill descriptions retain their
+   one-line presentation, while agent tools accept both the legacy comma scalar
+   and native YAML sequences.
 2. **Add a `version` field** to skill and agent manifests, and make unknown keys
    tolerated *by design* (documented) rather than by accident.
 3. ~~**`atenea skill validate`**~~ / **`atenea agent validate`** (part of R4's CLI)
