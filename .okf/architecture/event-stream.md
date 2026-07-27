@@ -21,3 +21,18 @@ Core owns the existing title-cased taxonomy such as `Text.Delta` and
 `session.IsExtensionEventKind` is the shared classifier and rejects the bare
 prefixes. These namespaces prevent extensions from accidentally claiming a core
 kind while keeping the stream open to independent evolution.
+
+## Exhaustiveness policy
+
+`EventKind` switches are intentionally **not** subject to an exhaustive-switch
+linter. Exhaustiveness would make the constants a closed enum and would conflict
+with both extension namespaces and the requirement that an older consumer accept
+a kind introduced by a newer producer.
+
+Forward compatibility is enforced at the projection boundary instead. The TUI
+and desktop projection tests pass an event kind absent from the core constants
+and require it to survive as a generic entry. Any new projection must provide
+the same behavior: handle known kinds richly, preserve unknown kinds generically,
+and log the fallback for diagnosis. The generated TypeScript taxonomy is useful
+for known-kind editor support, but it must retain its open `string` arm; it is not
+an exhaustive enum.
