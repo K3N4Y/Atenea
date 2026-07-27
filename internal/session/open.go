@@ -11,7 +11,7 @@ import (
 // ATENEA_DB takes precedence. Otherwise it creates the data directory and falls
 // back to "atenea.db" in the working directory when that is not possible.
 func DefaultDBPath() string {
-	if p := os.Getenv("ATENEA_DB"); p != "" {
+	if p := os.Getenv(paths.DatabaseEnv); p != "" {
 		return p
 	}
 	path, err := paths.DB()
@@ -25,7 +25,7 @@ func DefaultDBPath() string {
 }
 
 func DefaultCheckpointPath() string {
-	if path := os.Getenv("ATENEA_CHECKPOINTS"); path != "" {
+	if path := os.Getenv(paths.CheckpointsEnv); path != "" {
 		return path
 	}
 	path, err := paths.Checkpoints()

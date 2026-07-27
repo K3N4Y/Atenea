@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/K3N4Y/atenea/internal/paths"
 )
 
 // These tests define the shared opening contract used by the TUI and Wails app.
@@ -13,7 +15,7 @@ import (
 func TestDefaultDBPath_UsesEnvOverride(t *testing.T) {
 	// ATENEA_DB always takes precedence and is returned unchanged.
 	want := filepath.Join(t.TempDir(), "custom.db")
-	t.Setenv("ATENEA_DB", want)
+	t.Setenv(paths.DatabaseEnv, want)
 
 	if got := DefaultDBPath(); got != want {
 		t.Fatalf("DefaultDBPath() = %q, want ATENEA_DB unchanged: %q", got, want)
@@ -23,7 +25,7 @@ func TestDefaultDBPath_UsesEnvOverride(t *testing.T) {
 func TestDefaultDBPath_DefaultsToXDGDataHome(t *testing.T) {
 	// The default database belongs under the durable XDG data root.
 	xdg := t.TempDir()
-	t.Setenv("ATENEA_DB", "")
+	t.Setenv(paths.DatabaseEnv, "")
 	t.Setenv("XDG_DATA_HOME", xdg)
 
 	want := filepath.Join(xdg, "atenea", "atenea.db")
@@ -42,7 +44,7 @@ func TestDefaultDBPath_DefaultsToXDGDataHome(t *testing.T) {
 
 func TestDefaultCheckpointPath_UsesEnvOverride(t *testing.T) {
 	want := filepath.Join(t.TempDir(), "custom-checkpoints")
-	t.Setenv("ATENEA_CHECKPOINTS", want)
+	t.Setenv(paths.CheckpointsEnv, want)
 	if got := DefaultCheckpointPath(); got != want {
 		t.Fatalf("DefaultCheckpointPath() = %q, want %q", got, want)
 	}
@@ -50,7 +52,7 @@ func TestDefaultCheckpointPath_UsesEnvOverride(t *testing.T) {
 
 func TestDefaultCheckpointPath_DefaultsToXDGDataHome(t *testing.T) {
 	xdg := t.TempDir()
-	t.Setenv("ATENEA_CHECKPOINTS", "")
+	t.Setenv(paths.CheckpointsEnv, "")
 	t.Setenv("XDG_DATA_HOME", xdg)
 	want := filepath.Join(xdg, "atenea", "checkpoints")
 	if got := DefaultCheckpointPath(); got != want {

@@ -61,9 +61,10 @@ atenea
 `atenea` uses the current directory as its workspace and supports a local
 `/model` command. Type `/model ` followed by any
 provider or model fragment, select a result from the normal composer popup,
-then press Enter again to apply it. Provider definitions are read
-from `providers.json` inside the Atenea directory returned by
-`os.UserConfigDir()` (typically `~/.config/atenea/providers.json` on Linux).
+then press Enter again to apply it. Provider definitions are read from
+`providers.json` under Atenea's config root. Set `ATENEA_CONFIG_DIR` to override
+that root directly; otherwise it is `$XDG_CONFIG_HOME/atenea` when set, then the
+platform user config directory (typically `~/.config/atenea` on Linux).
 
 ```json
 {

@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-26
+updated_at: 2026-07-27
 summary: The two-layer composition root — internal/host assembles what both entrypoints share (dotenv, root, store, provider service, sitting), internal/wiring.Build assembles what a workspace change rebuilds, and wiring.Config's policy half is what an embedder varies there.
 ---
 
@@ -79,8 +79,9 @@ It is not a container and must not become one: nothing is registered, nothing is
 looked up by type, nothing is reflected over. §6 of the audit forbids the
 alternative explicitly, and the value of `New` is precisely that the order is
 fixed and readable — the `.env` lands before anything reads the environment,
-because `ATENEA_DB`, `ATENEA_CHECKPOINTS` and every provider key can come from
-it.
+because `ATENEA_DB`, `ATENEA_CHECKPOINTS`, `ATENEA_CONFIG_DIR` and every
+provider key can come from it. `ATENEA_CONFIG_DIR` is a direct override of the
+Atenea config root and takes precedence over `XDG_CONFIG_HOME`.
 
 `ctx` is a parameter rather than a `Config` field because provider startup is not
 all local: activating a persisted selection whose credential is an `exec` command

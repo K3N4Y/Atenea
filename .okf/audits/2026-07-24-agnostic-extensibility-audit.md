@@ -1303,8 +1303,10 @@ name and the filesystem layout:
   R4.2 those two lists live as `wiring.DefaultSkillDirs`/`DefaultAgentDirs`, which
   is where they are documented and tested today, and they are what this package
   takes over~~ `[done 2026-07-27]`
-- One `EnvPrefix = "ATENEA_"` constant so `ATENEA_DB`, `ATENEA_CHECKPOINTS`,
-  `ATENEA_CONFIG_DIR` are derived, not re-typed
+- ~~One `EnvPrefix = "ATENEA_"` constant so `ATENEA_DB`, `ATENEA_CHECKPOINTS`,
+  `ATENEA_CONFIG_DIR` are derived, not re-typed~~ `[done 2026-07-27]`.
+  `ATENEA_CONFIG_DIR` names the Atenea config root directly and takes precedence
+  over `XDG_CONFIG_HOME`; provider credential names remain catalog-owned data.
 - One `Product` / `Version` pair, wired from `cmd/atenea/version.go`, and passed
   to the MCP client identity (`manager.go:93` currently hardcodes `"dev"`)
 

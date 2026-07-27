@@ -9,6 +9,7 @@ import (
 )
 
 func TestConfigDir_UsesXDGConfigHome(t *testing.T) {
+	t.Setenv(ConfigDirEnv, "")
 	root := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", root)
 
@@ -21,7 +22,22 @@ func TestConfigDir_UsesXDGConfigHome(t *testing.T) {
 	}
 }
 
+func TestConfigDir_AteneaOverrideTakesPrecedenceOverXDGConfigHome(t *testing.T) {
+	want := filepath.Join(t.TempDir(), "custom-config")
+	t.Setenv(ConfigDirEnv, want)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "xdg-config"))
+
+	got, err := ConfigDir()
+	if err != nil {
+		t.Fatalf("ConfigDir() error = %v", err)
+	}
+	if got != want {
+		t.Fatalf("ConfigDir() = %q, want %s override unchanged: %q", got, ConfigDirEnv, want)
+	}
+}
+
 func TestConfigDir_FallsBackToUserConfigDir(t *testing.T) {
+	t.Setenv(ConfigDirEnv, "")
 	t.Setenv("XDG_CONFIG_HOME", "")
 
 	root, err := os.UserConfigDir()

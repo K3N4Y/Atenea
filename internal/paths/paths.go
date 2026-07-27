@@ -9,6 +9,16 @@ import (
 
 const productDirectory = "atenea"
 
+// EnvPrefix namespaces environment variables owned by Atenea. Provider
+// credential variables are catalog data and intentionally do not use it.
+const EnvPrefix = "ATENEA_"
+
+const (
+	DatabaseEnv    = EnvPrefix + "DB"
+	CheckpointsEnv = EnvPrefix + "CHECKPOINTS"
+	ConfigDirEnv   = EnvPrefix + "CONFIG_DIR"
+)
+
 // compatibilityDirectories is ordered by ownership: Atenea's native layout,
 // the agent-agnostic convention, then Claude Code compatibility. Discovery is
 // first-wins, so this order is part of the interface and must remain identical
@@ -26,6 +36,9 @@ const (
 
 // ConfigDir returns the directory for user-specific configuration.
 func ConfigDir() (string, error) {
+	if root := os.Getenv(ConfigDirEnv); root != "" {
+		return root, nil
+	}
 	if root := os.Getenv("XDG_CONFIG_HOME"); root != "" {
 		return filepath.Join(root, productDirectory), nil
 	}
