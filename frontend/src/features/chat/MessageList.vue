@@ -8,6 +8,7 @@ import UserMessage from './UserMessage.vue'
 import AssistantMessage from './AssistantMessage.vue'
 import ThinkingBlock from './ThinkingBlock.vue'
 import ToolCall from './ToolCall.vue'
+import GenericEvent from './GenericEvent.vue'
 
 // Flujo continuo y plano de la conversacion (identidad §8). Despacha cada item
 // del log a su componente segun el tipo. Recibe los items del store via prop
@@ -23,6 +24,7 @@ const registry: Record<TurnItem['kind'], Component> = {
   assistant: AssistantMessage,
   reasoning: ThinkingBlock,
   tool: ToolCall,
+  event: GenericEvent,
 }
 
 const scroller = ref<HTMLElement | null>(null)

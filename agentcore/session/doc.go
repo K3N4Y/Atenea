@@ -14,6 +14,9 @@
 //   - EventKind is a string, so the set is open. A consumer that switches on it
 //     must have a default branch: an unknown kind is something newer than the
 //     consumer, not an error.
+//   - Extensions use ext.<vendor>.<event> for stable event kinds and x-<name>
+//     for private or experimental kinds. Core event names do not use either
+//     reserved namespace. IsExtensionEventKind enforces that distinction.
 //   - The payload fields are additive. A field that is zero means "not carried
 //     by this Kind", never "false".
 package session

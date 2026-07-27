@@ -1,6 +1,9 @@
 package session
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // Seq is the monotonic sequence a store assigns to every event of a session. It
 // starts at 1 and grows by 1 per session, defining the total durable order of
@@ -15,6 +18,22 @@ type Seq int64
 // because an unknown kind means the producer is newer than the consumer. Events
 // with no taxonomy carry "".
 type EventKind string
+
+const (
+	// ExtensionEventPrefix is the preferred namespace for stable extension
+	// events. Extension authors should use ext.<vendor>.<event>.
+	ExtensionEventPrefix = "ext."
+	// ExperimentalEventPrefix is reserved for private or experimental events.
+	ExperimentalEventPrefix = "x-"
+)
+
+// IsExtensionEventKind reports whether kind uses one of the namespaces reserved
+// for extension-emitted events. A bare namespace is not an event kind.
+func IsExtensionEventKind(kind EventKind) bool {
+	value := string(kind)
+	return strings.HasPrefix(value, ExtensionEventPrefix) && len(value) > len(ExtensionEventPrefix) ||
+		strings.HasPrefix(value, ExperimentalEventPrefix) && len(value) > len(ExperimentalEventPrefix)
+}
 
 const (
 	KindStepStarted  EventKind = "Step.Started"
@@ -103,7 +122,6 @@ type SessionEvent struct {
 	// tool). It does not enter Message, so the model neither sees it nor pays
 	// tokens for it; it is persisted and replayed when the session is rehydrated.
 	Diff string
-
 	Compaction *CompactionCheckpoint
 	Checkpoint *PromptCheckpoint
 }

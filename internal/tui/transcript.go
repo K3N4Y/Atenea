@@ -18,6 +18,7 @@ package tui
 // Model's own — the same idiom the overlay pickers use with overlayList.
 
 import (
+	"log/slog"
 	"time"
 	"unicode/utf8"
 
@@ -141,14 +142,46 @@ func (t Transcript) foldEvent(ev EventMsg, sessionID string) Transcript {
 		t = t.updateLiveUsage()
 	case session.KindContextCompacted:
 		t = t.resolveCompaction("Context compacted", false, sessionID)
+	case session.KindTextEnded,
+		session.KindToolInputStarted,
+		session.KindToolInputEnded,
+		session.KindSessionTitle,
+		session.KindSessionCwd,
+		session.KindComposerPrompt,
+		session.KindSessionMode,
+		session.KindPromptCheckpointStarted,
+		session.KindPromptCheckpointFinished,
+		session.KindPromptCheckpointReverted:
+		// Known durable events that do not materialize a transcript entry.
 	case "":
 		// Event without taxonomy: the runner promotes the user's prompt as
 		// Message{Role: user} with no Kind.
 		if ev.Message != nil && ev.Message.Role == session.RoleUser {
 			t.entries = append(t.entries, entry{kind: entryUser, text: ev.Message.Text})
 		}
+	default:
+		slog.Debug("projecting unknown session event", "kind", ev.Kind)
+		t.entries = append(t.entries, entry{
+			kind: entryEvent, eventKind: string(ev.Kind), text: genericEventText(ev),
+		})
 	}
 	return t
+}
+
+func genericEventText(ev EventMsg) string {
+	if ev.Text != "" {
+		return ev.Text
+	}
+	if ev.Error != "" {
+		return ev.Error
+	}
+	if ev.Message != nil && ev.Message.Text != "" {
+		return ev.Message.Text
+	}
+	if len(ev.Input) != 0 {
+		return string(ev.Input)
+	}
+	return "Event received"
 }
 
 func (t Transcript) setRetryStatus(text string) Transcript {

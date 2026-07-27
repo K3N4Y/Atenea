@@ -185,6 +185,7 @@ const (
 	entryRetry                         // espera transitoria de un reintento del provider
 	entryCompaction                    // estado transitorio o resultado de compactacion manual
 	entryNotice                        // informational line (connected provider, first-run hint)
+	entryEvent                         // forward-compatible pass-through for an unknown event kind
 )
 
 const historyLimit = engine.HistoryLimit
@@ -225,7 +226,10 @@ const (
 type entry struct {
 	kind entryKind
 	text string
-	live bool // true mientras el streaming del bloque sigue abierto
+	// eventKind is set only on entryEvent and preserves the durable taxonomy
+	// value so a newer producer remains visible to an older UI.
+	eventKind string
+	live      bool // true mientras el streaming del bloque sigue abierto
 
 	// revealed es cuantas runas de text ya revelo el smooth streaming (la
 	// vista muestra solo ese prefijo mientras quede backlog; ver reveal.go).

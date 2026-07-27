@@ -46,6 +46,26 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
+describe('chat store: forward-compatible events', () => {
+  it('preserves an unknown event as a generic log item', () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {})
+    const store = useChatStore()
+
+    store.applyEvent({ Kind: 'ext.acme.progress', Text: 'indexing 3/5' })
+
+    expect(store.items).toHaveLength(1)
+    expect(store.items[0]).toMatchObject({
+      kind: 'event',
+      eventKind: 'ext.acme.progress',
+      text: 'indexing 3/5',
+    })
+    expect(debug).toHaveBeenCalledWith(
+      '[chat] projecting unknown session event',
+      expect.objectContaining({ Kind: 'ext.acme.progress' }),
+    )
+  })
+})
+
 describe('chat store: texto de la IA (Text.*)', () => {
   it('coalesce un mensaje de IA a partir de Text.Started/Delta/Ended', () => {
     const store = useChatStore()
@@ -581,15 +601,18 @@ describe('chat store: borrar sesion', () => {
 })
 
 describe('chat store: extensibilidad (forward-compat)', () => {
-  it('ignora eventos con Kind desconocido sin romper ni ensuciar el log', () => {
+  it('preserva eventos con Kind desconocido como items genericos', () => {
     const store = useChatStore()
 
     // Una capacidad futura del agente puede emitir un Kind que la UI aun no
-    // entiende; debe degradar con elegancia hasta que se le de soporte.
+    // entiende; debe degradar con elegancia sin perder el evento.
     store.applyEvent({ Kind: 'Plan.Updated', Text: 'algo nuevo' })
     store.applyEvent({ Kind: 'Future.Whatever' })
 
-    expect(store.items).toHaveLength(0)
+    expect(store.items).toMatchObject([
+      { kind: 'event', eventKind: 'Plan.Updated', text: 'algo nuevo' },
+      { kind: 'event', eventKind: 'Future.Whatever', text: 'Event received' },
+    ])
   })
 })
 

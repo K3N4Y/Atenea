@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-26
+updated_at: 2026-07-27
 summary: The agentcore/ boundary — which types atenea publishes as contracts, which stay private under internal/, the test kits that make them checkable, and the rules that keep the split honest.
 ---
 
@@ -65,6 +65,11 @@ type third parties compile against. `TextMessage` builds the text-only case,
 `TextOnly` reads it back and hands the caller an `*UnsupportedPartError` instead
 of letting it silently drop what it cannot express. See
 [Message content](message-content.md).
+
+The session taxonomy is an open set. Consumers preserve unknown kinds through a
+generic projection instead of dropping them, while extension producers use the
+reserved `ext.<vendor>.<event>` or experimental `x-<name>` namespaces. See
+[Durable event stream](event-stream.md).
 
 ## What stayed private, and why
 

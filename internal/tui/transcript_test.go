@@ -34,6 +34,17 @@ func TestTranscript_FoldsUserPromptWithoutKind(t *testing.T) {
 	}
 }
 
+func TestTranscript_PreservesUnknownEventAsGenericEntry(t *testing.T) {
+	var tr Transcript
+	tr = fold(tr, EventMsg{Kind: session.EventKind("ext.acme.progress"), Text: "indexing 3/5"})
+	if len(tr.entries) != 1 {
+		t.Fatalf("entries = %d, want one generic event entry", len(tr.entries))
+	}
+	if got := tr.entries[0]; got.kind != entryEvent || got.eventKind != "ext.acme.progress" || got.text != "indexing 3/5" {
+		t.Fatalf("entry = %+v, want preserved extension kind and payload", got)
+	}
+}
+
 func TestTranscript_StreamsAssistantTextIntoOneLiveBlock(t *testing.T) {
 	var tr Transcript
 	tr = fold(tr, EventMsg{Kind: session.KindTextStarted})

@@ -88,6 +88,18 @@ function todosFromInput(input: unknown): TodoItem[] {
   })
 }
 
+function genericEventText(event: SessionEvent): string {
+  if (event.Text) return event.Text
+  if (event.Error) return event.Error
+  if (event.Message?.Text) return event.Message.Text
+  if (event.Input !== undefined) {
+    return typeof event.Input === 'string'
+      ? event.Input
+      : JSON.stringify(event.Input)
+  }
+  return 'Event received'
+}
+
 // Uso de tokens de la sesion (ocupacion de contexto). camelCase para la UI; el
 // backend lo emite en PascalCase dentro de Step.Ended. Solo tokens, sin costos.
 export const useChatStore = defineStore(
@@ -217,6 +229,18 @@ export const useChatStore = defineStore(
 
     function applyEvent(ev: SessionEvent): void {
       switch (ev.Kind) {
+        case 'Step.Started':
+        case 'Tool.Input.Started':
+        case 'Tool.Input.Delta':
+        case 'Tool.Input.Ended':
+        case 'Session.Cwd':
+        case 'Composer.Prompt':
+        case 'Session.Mode':
+        case 'Prompt.Checkpoint.Started':
+        case 'Prompt.Checkpoint.Finished':
+        case 'Prompt.Checkpoint.Reverted':
+        case 'Context.Compacted':
+          break
         case 'Text.Started':
           startAssistant()
           break
@@ -342,6 +366,17 @@ export const useChatStore = defineStore(
           // refresca la sidebar para que reemplace al primer prompt. Fire-and-forget.
           void loadSessions()
           break
+        default:
+          if (ev.Kind) {
+            console.debug('[chat] projecting unknown session event', ev)
+            pushItem({
+              kind: 'event',
+              id: nextId(),
+              eventKind: ev.Kind,
+              text: genericEventText(ev),
+              event: ev,
+            })
+          }
       }
 
       // El prompt del usuario se promueve como Message{Role:user} (Kind vacio).

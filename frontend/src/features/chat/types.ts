@@ -33,7 +33,20 @@ export interface ToolItem {
   diff: string
 }
 
-export type TurnItem = UserItem | AssistantItem | ReasoningItem | ToolItem
+export interface EventItem {
+  kind: 'event'
+  id: string
+  eventKind: string
+  text: string
+  event: SessionEvent
+}
+
+export type TurnItem =
+  | UserItem
+  | AssistantItem
+  | ReasoningItem
+  | ToolItem
+  | EventItem
 
 export interface PlanState {
   callID: string

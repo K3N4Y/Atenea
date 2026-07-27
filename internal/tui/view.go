@@ -233,6 +233,8 @@ func (e entry) render(width int, p tool.Presentation) string {
 		return statusStyle.Render("[context] " + sanitizeTerminalText(e.text))
 	case entryNotice:
 		return statusStyle.Render(sanitizeTerminalText(e.text))
+	case entryEvent:
+		return statusStyle.Render("[" + sanitizeTerminalText(e.eventKind) + "] " + sanitizeTerminalText(e.text))
 	default: // entryAssistant: texto plano sin marcador
 		// Los bloques asentados se rinden completos; durante el streaming se
 		// rinde solo el prefijo revelado para no filtrar el backlog pendiente.
