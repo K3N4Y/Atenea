@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/K3N4Y/atenea/internal/paths"
+	"github.com/K3N4Y/atenea/internal/permission"
 	"github.com/K3N4Y/atenea/internal/tool"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -50,6 +51,38 @@ func TestManager_ConnectsToStdioServerAndExecutesDiscoveredTool(t *testing.T) {
 	}
 	if statuses := manager.Status(); len(statuses) != 0 {
 		t.Fatalf("Status after disconnect = %+v, want empty", statuses)
+	}
+}
+
+func TestManager_PermissionsKeepLegacyAskAndScopePersistentRules(t *testing.T) {
+	connect := func(t *testing.T, config ServerConfig) (*Manager, tool.Tool) {
+		t.Helper()
+		manager := NewManager(t.TempDir())
+		t.Cleanup(manager.Close)
+		config.Name = "server"
+		config.Command = os.Args[0]
+		config.Args = []string{"-test.run=TestMCPHelperProcess"}
+		config.Env = map[string]string{"ATENEA_MCP_HELPER": "1"}
+		if _, err := manager.Connect(context.Background(), config); err != nil {
+			t.Fatalf("Connect: %v", err)
+		}
+		return manager, manager.Tools()[0]
+	}
+
+	legacy, legacyTool := connect(t, ServerConfig{})
+	if _, declared := tool.EffectsOf(legacyTool); declared {
+		t.Fatal("legacy MCP config declared effects; it must remain ask-by-default")
+	}
+	if rules := legacy.PermissionRules(); len(rules) != 0 {
+		t.Fatalf("legacy rules = %+v, want none", rules)
+	}
+
+	trusted, classified := connect(t, ServerConfig{Sensitivity: "reaches-network", AllowedTools: []string{"echo"}})
+	if effects, declared := tool.EffectsOf(classified); !declared || effects != tool.ReachesNetwork {
+		t.Fatalf("EffectsOf = (%v, %v), want reaches-network declaration", effects, declared)
+	}
+	if rules := trusted.PermissionRules(); len(rules) != 1 || rules[0] != (permission.Rule{Tool: "mcp_server_echo"}) {
+		t.Fatalf("PermissionRules = %+v, want the namespaced tool only", rules)
 	}
 }
 

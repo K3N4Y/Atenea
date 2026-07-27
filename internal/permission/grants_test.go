@@ -109,6 +109,20 @@ func TestGrantedPolicy_DoNotOverruleTheBase(t *testing.T) {
 	}
 }
 
+func TestRulePolicy_PersistedRulesApplyAcrossSessionsButOnlyToAsk(t *testing.T) {
+	c := gatedCatalog(t)
+	p := NewRulePolicy(NewEffectsPolicy(c), []Rule{{Tool: "write"}}, c)
+	for _, session := range []string{"s1", "s2", ""} {
+		if got := p.Decide(session, tool.Call{Name: "write"}); got != Allow {
+			t.Errorf("Decide(%q, write) = %v, want Allow", session, got)
+		}
+	}
+	denied := NewRulePolicy(policyFunc(func(string, tool.Call) Decision { return Deny }), []Rule{{Tool: "write"}}, c)
+	if got := denied.Decide("s1", tool.Call{Name: "write"}); got != Deny {
+		t.Errorf("persisted grant overruled Deny: %v", got)
+	}
+}
+
 // TestSessionGrants_IgnoresUngrantableInput keeps the store clean: a zero rule
 // (the call was not grantable) or an empty session records nothing, so nothing
 // can be allowed by accident.

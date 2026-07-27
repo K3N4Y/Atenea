@@ -74,6 +74,36 @@ type GrantedPolicy struct {
 	catalog tool.Catalog
 }
 
+// NewRulePolicy layers durable, caller-owned grants over base. Unlike
+// SessionGrants these rules have no session key: their lifetime and persistence
+// are owned by the configuration that supplied them. They only upgrade Ask and
+// are revalidated through the live catalog on every call.
+func NewRulePolicy(base Policy, rules []Rule, catalog tool.Catalog) Policy {
+	if len(rules) == 0 {
+		return base
+	}
+	return rulePolicy{base: base, rules: slices.Clone(rules), catalog: catalog}
+}
+
+type rulePolicy struct {
+	base    Policy
+	rules   []Rule
+	catalog tool.Catalog
+}
+
+func (p rulePolicy) Decide(sessionID string, call tool.Call) Decision {
+	decision := p.base.Decide(sessionID, call)
+	if decision != Ask {
+		return decision
+	}
+	for _, rule := range p.rules {
+		if covers(rule, p.catalog, call) {
+			return Allow
+		}
+	}
+	return Ask
+}
+
 // NewGrantedPolicy wraps base so the grants recorded in the store can skip its
 // questions. A nil store yields the base untouched, which is how a UI without
 // the "allow for the session" affordance gates exactly as it would without one.

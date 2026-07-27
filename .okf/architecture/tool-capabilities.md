@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-26
+updated_at: 2026-07-27
 summary: How a tool declares what it affects, what granting it authorizes and how it should read — the optional capability interfaces that replaced six name-keyed switches, and the ask-by-default security flip that came with them.
 ---
 
@@ -182,8 +182,11 @@ Two details that are easy to get wrong:
 
 The flip is livable because R2 also makes every gated tool grantable: an MCP tool
 asks once and "Allow *mcp_x* this session" stops the questions for that sitting.
-The persisted per-server allowlist ("trust this server") stays with R8.2, where
-the audit puts it.
+R8.2 adds the durable layer without changing this default. An MCP declaration
+may classify a server with `sensitivity`; omitting it still means undeclared and
+therefore `Ask`. Its `allowedTools` list becomes namespaced permission rules
+composed over `EffectsPolicy`, before session grants. Persisted trust is a host
+policy decision, not a false `NoEffects` declaration, and cannot overrule Deny.
 
 ## The catalog seam
 

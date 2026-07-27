@@ -1,6 +1,6 @@
 ---
 updated_at: 2026-07-27
-summary: Audit of how agnostic atenea's seams are, and what to change to enable third-party integrations, contributions, and a plugin system. R1 through R5, R7, and R8.1 are done; the remaining recommendations stay open.
+summary: Audit of how agnostic atenea's seams are, and what to change to enable third-party integrations, contributions, and a plugin system. R1 through R5, R7, R8.1, and R8.2 are done; the remaining recommendations stay open.
 ---
 
 # Agnosticism and extensibility audit — atenea
@@ -1348,9 +1348,13 @@ Work to make it a genuine plugin substrate:
    the official SDK's stdio, Streamable HTTP, or legacy SSE adapter. Empty
    `type` remains stdio for existing files; remote declarations use an absolute
    `url`, and validation rejects mixed process/remote settings.
-2. **Permissions.** Ship with R2's ask-by-default, plus per-server declared
+2. ~~**Permissions.** Ship with R2's ask-by-default, plus per-server declared
    sensitivity and a persisted per-server/per-tool allowlist. This is the
-   security precondition of an ecosystem.
+   security precondition of an ecosystem.~~ `[done 2026-07-27]` Silent and
+   legacy declarations still ask; `sensitivity` maps a server to the shared
+   effects vocabulary, while `allowedTools` persists remote names (or `*`) as
+   server-namespaced rules. Both hosts compose durable rules separately from
+   session grants, so trust never masquerades as no effects.
 3. **Expose MCP tools to subagents** (`childRegistry`, `wiring.go:138-142`) — a
    subagent that cannot use the servers the main chat can is a surprising hole.
 4. **Beyond tools**: map MCP *prompts* to slash commands and MCP *resources* to

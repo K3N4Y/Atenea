@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -99,6 +100,9 @@ func mcpAddCommand(env Env, args []string) int {
 	cwd := fs.String("cwd", "", "the workspace whose .mcp.json is checked for a conflicting name")
 	environment := &envPairs{}
 	fs.Var(environment, "env", "an environment variable for the server process, KEY=VALUE; repeatable")
+	sensitivity := fs.String("sensitivity", "", "effects of every tool: read-only, writes-files, runs-commands, or reaches-network")
+	allowedTools := &stringList{}
+	fs.Var(allowedTools, "allow-tool", "persistently allow a remote tool name, or *; repeatable")
 	if code, ok := parseFlags(fs, args); !ok {
 		return code
 	}
@@ -135,7 +139,10 @@ func mcpAddCommand(env Env, args []string) int {
 		return ExitFailure
 	}
 
-	config := mcpclient.ServerConfig{Name: name, Type: "stdio", Command: command, Args: arguments, Env: environment.values}
+	config := mcpclient.ServerConfig{
+		Name: name, Type: "stdio", Command: command, Args: arguments, Env: environment.values,
+		Sensitivity: *sensitivity, AllowedTools: allowedTools.values,
+	}
 	if err := mcpclient.UpsertGlobalConfig(config); err != nil {
 		// The same validation Connect enforces — the name charset, a non-empty
 		// command — so a config this command writes is a config a host can start.
@@ -245,6 +252,21 @@ type envPairs struct {
 	keys   []string
 }
 
+type stringList struct{ values []string }
+
+func (s *stringList) String() string { return strings.Join(s.values, ",") }
+
+func (s *stringList) Set(value string) error {
+	if value == "" {
+		return fmt.Errorf("expected a non-empty value")
+	}
+	if slices.Contains(s.values, value) {
+		return fmt.Errorf("%q was given twice", value)
+	}
+	s.values = append(s.values, value)
+	return nil
+}
+
 func (e *envPairs) String() string { return strings.Join(e.keys, ",") }
 
 func (e *envPairs) Set(raw string) error {
@@ -318,6 +340,7 @@ Usage:
 Examples:
   atenea mcp add playwright -- npx @playwright/mcp@latest
   atenea mcp add --env GITHUB_TOKEN=$TOKEN github -- npx github-mcp
+  atenea mcp add --sensitivity reaches-network --allow-tool search github -- npx github-mcp
 
 The server is written to the global config, so every workspace and both hosts
 see it. atenea's own flags go before NAME; everything after NAME (or after --)

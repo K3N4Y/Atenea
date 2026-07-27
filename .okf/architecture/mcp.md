@@ -1,6 +1,6 @@
 ---
 updated_at: 2026-07-27
-summary: Stdio, Streamable HTTP, and legacy SSE MCP integration shared by both hosts and the command-line configuration surface.
+summary: MCP transports, declarations, permission classification, and persisted tool trust shared by both hosts and the command-line configuration surface.
 ---
 
 # MCP servers
@@ -101,6 +101,25 @@ alias for `streamable-http`. An omitted type remains `stdio`, preserving existin
 `.mcp.json` files. Stdio declarations require `command` and may use `args`, `env`,
 and `cwd`. Remote declarations require an absolute HTTP(S) `url` and reject
 process-only fields, so an ambiguous mixed declaration fails at load time.
+
+### Permissions
+
+MCP retains R2's safe default: a server that omits `sensitivity` declares
+nothing, so every discovered tool asks before each call (and can still receive
+an in-memory session grant). Existing configuration files therefore migrate
+without a rewrite and do not become more permissive.
+
+`sensitivity` classifies every tool discovered from one server using the shared
+tool-effects vocabulary: `read-only`, `writes-files`, `runs-commands`, or
+`reaches-network`. Only `read-only` runs without asking by classification; the
+other declarations document why the normal gate asks.
+
+`allowedTools` is a durable trust decision, separate from sensitivity. Entries
+use the server's original MCP tool names; `"*"` trusts every current and future
+tool of that server. A listed tool skips `Ask` in every session but cannot
+overrule `Deny`. Rules are namespaced with the server when loaded, so equal tool
+names from different servers never share trust. Both hosts compose these rules
+over the effects policy and then layer the existing session grants on top.
 
 ## TUI
 

@@ -26,7 +26,8 @@ func TestMCPAdd_WritesTheConfigListAndTheHostsRead(t *testing.T) {
 	isolateConfig(t)
 	root := t.TempDir()
 
-	added := invoke(t, "mcp", "add", "--cwd", root, "--env", "GITHUB_TOKEN=secret", "github", "--", "npx", "github-mcp")
+	added := invoke(t, "mcp", "add", "--cwd", root, "--env", "GITHUB_TOKEN=secret",
+		"--sensitivity", "reaches-network", "--allow-tool", "search", "github", "--", "npx", "github-mcp")
 	if added.code != ExitOK {
 		t.Fatalf("exit code = %d, want %d\nstderr: %s", added.code, ExitOK, added.stderr)
 	}
@@ -50,6 +51,9 @@ func TestMCPAdd_WritesTheConfigListAndTheHostsRead(t *testing.T) {
 	}
 	if got.Env["GITHUB_TOKEN"] != "secret" {
 		t.Errorf("the env did not round-trip: %+v", got.Env)
+	}
+	if got.Sensitivity != "reaches-network" || len(got.AllowedTools) != 1 || got.AllowedTools[0] != "search" {
+		t.Errorf("the permission declaration did not round-trip: %+v", got)
 	}
 
 	listed := invoke(t, "mcp", "list", "--cwd", root)

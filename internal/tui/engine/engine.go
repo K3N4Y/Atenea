@@ -209,6 +209,7 @@ func New(cfg Config) *Engine {
 func (e *Engine) rewire() {
 	cfg := e.wiring
 	cfg.MCPTools = e.mcp.Tools()
+	cfg.PersistentGrants = e.mcp.PermissionRules()
 	built := wiring.Build(cfg)
 	e.lifecycleMu.Lock()
 	e.mu.Lock()

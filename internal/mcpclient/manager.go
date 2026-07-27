@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -37,6 +38,12 @@ type ServerConfig struct {
 	Env     map[string]string `json:"env,omitempty"`
 	Cwd     string            `json:"cwd,omitempty"`
 	URL     string            `json:"url,omitempty"`
+	// Sensitivity declares what every tool from this server may affect. Empty
+	// remains unknown (and therefore ask-by-default) for existing configs.
+	Sensitivity string `json:"sensitivity,omitempty"`
+	// AllowedTools persistently trusts remote tool names from this server. "*"
+	// trusts every tool, including tools discovered after the declaration.
+	AllowedTools []string `json:"allowedTools,omitempty"`
 }
 
 // ServerStatus is the safe, serializable connection state exposed to the UI.
@@ -51,6 +58,7 @@ type server struct {
 	client  *mcp.Client
 	session *mcp.ClientSession
 	tools   []tool.Tool
+	rules   []permission.Rule
 }
 
 // Manager owns the subprocesses and MCP sessions for one application instance.
@@ -126,7 +134,7 @@ func (m *Manager) Connect(ctx context.Context, config ServerConfig) (ServerStatu
 	}
 	names := make(map[string]struct{}, len(definitions))
 	for _, definition := range definitions {
-		adapter, err := newTool(config.Name, session, definition)
+		adapter, err := newTool(config, session, definition)
 		if err != nil {
 			_ = session.Close()
 			return ServerStatus{}, fmt.Errorf("tool %q of MCP %q: %w", definition.Name, config.Name, err)
@@ -137,6 +145,9 @@ func (m *Manager) Connect(ctx context.Context, config ServerConfig) (ServerStatu
 		}
 		names[adapter.Name()] = struct{}{}
 		srv.tools = append(srv.tools, adapter)
+		if toolAllowed(config.AllowedTools, definition.Name) {
+			srv.rules = append(srv.rules, permission.Rule{Tool: adapter.Name()})
+		}
 	}
 	m.mu.Lock()
 	if _, exists := m.servers[config.Name]; exists {
@@ -215,6 +226,20 @@ func (m *Manager) Tools() []tool.Tool {
 	return tools
 }
 
+// PermissionRules returns the persisted per-server/per-tool approvals for the
+// currently connected tool set. Rules use the namespaced host name, so two
+// servers exposing the same remote name never share trust.
+func (m *Manager) PermissionRules() []permission.Rule {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var rules []permission.Rule
+	for _, srv := range m.servers {
+		rules = append(rules, srv.rules...)
+	}
+	sort.Slice(rules, func(i, j int) bool { return rules[i].Tool < rules[j].Tool })
+	return rules
+}
+
 func validate(config ServerConfig) error {
 	if !serverName.MatchString(config.Name) {
 		return fmt.Errorf("invalid MCP name %q: use up to 48 letters, digits, _ or -", config.Name)
@@ -241,7 +266,41 @@ func validate(config ServerConfig) error {
 	default:
 		return fmt.Errorf("unsupported MCP transport type %q: use stdio, http, streamable-http, or sse", config.Type)
 	}
+	if _, err := sensitivityEffects(config.Sensitivity); err != nil {
+		return err
+	}
+	seenAllowed := make(map[string]bool, len(config.AllowedTools))
+	for _, name := range config.AllowedTools {
+		if name == "" {
+			return fmt.Errorf("allowedTools cannot contain an empty tool name")
+		}
+		if seenAllowed[name] {
+			return fmt.Errorf("allowedTools contains duplicate %q", name)
+		}
+		seenAllowed[name] = true
+	}
 	return nil
+}
+
+func sensitivityEffects(value string) (tool.Effects, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "":
+		return tool.NoEffects, nil
+	case "read-only":
+		return tool.NoEffects, nil
+	case "writes-files":
+		return tool.WritesFiles, nil
+	case "runs-commands":
+		return tool.RunsCommands, nil
+	case "reaches-network":
+		return tool.ReachesNetwork, nil
+	default:
+		return tool.NoEffects, fmt.Errorf("unsupported MCP sensitivity %q: use read-only, writes-files, runs-commands, or reaches-network", value)
+	}
+}
+
+func toolAllowed(allowed []string, name string) bool {
+	return slices.Contains(allowed, "*") || slices.Contains(allowed, name)
 }
 
 func transportType(config ServerConfig) string {
@@ -322,7 +381,14 @@ type mcpTool struct {
 	session     *mcp.ClientSession
 }
 
-func newTool(serverName string, session *mcp.ClientSession, definition *mcp.Tool) (*mcpTool, error) {
+type classifiedMCPTool struct {
+	*mcpTool
+	effects tool.Effects
+}
+
+func (t *classifiedMCPTool) Effects() tool.Effects { return t.effects }
+
+func newTool(config ServerConfig, session *mcp.ClientSession, definition *mcp.Tool) (tool.Tool, error) {
 	schema, err := json.Marshal(definition.InputSchema)
 	if err != nil {
 		return nil, fmt.Errorf("serialize the input schema: %w", err)
@@ -334,13 +400,21 @@ func newTool(serverName string, session *mcp.ClientSession, definition *mcp.Tool
 	if object == nil {
 		return nil, fmt.Errorf("the input schema must be a JSON object")
 	}
-	return &mcpTool{
-		name:        toolName(serverName, definition.Name),
+	effects, err := sensitivityEffects(config.Sensitivity)
+	if err != nil {
+		return nil, err
+	}
+	adapter := &mcpTool{
+		name:        toolName(config.Name, definition.Name),
 		description: definition.Description,
 		schema:      schema,
 		remoteName:  definition.Name,
 		session:     session,
-	}, nil
+	}
+	if strings.TrimSpace(config.Sensitivity) == "" {
+		return adapter, nil
+	}
+	return &classifiedMCPTool{mcpTool: adapter, effects: effects}, nil
 }
 
 func listTools(ctx context.Context, session *mcp.ClientSession) ([]*mcp.Tool, error) {
@@ -366,14 +440,6 @@ func listTools(ctx context.Context, session *mcp.ClientSession) ([]*mcp.Tool, er
 func (t *mcpTool) Name() string            { return t.name }
 func (t *mcpTool) Description() string     { return t.description }
 func (t *mcpTool) Schema() json.RawMessage { return t.schema }
-
-// mcpTool deliberately does NOT implement tool.Declaring. MCP carries no
-// statement of what a tool affects, and this side of the wire cannot find out:
-// the same protocol serves a docs lookup and a production deploy. Silence is the
-// honest answer, and it is also the safe one — an undeclared tool is asked about
-// (see permission.EffectsPolicy), so a server the user just connected does not
-// get unattended execution. If MCP or .mcp.json grows a way to declare effects,
-// this is the method that reads it.
 
 // GrantRule grants the tool as a whole, which is exactly what the panel showed:
 // this tool, from this server. Narrowing it would mean interpreting the

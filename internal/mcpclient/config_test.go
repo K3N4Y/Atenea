@@ -15,8 +15,8 @@ func writeConfig(t *testing.T, root, content string) {
 	}
 }
 
-// isolateGlobalConfig apunta el config global a un directorio vacio del test,
-// para que un ~/.config/atenea/mcp.json de la maquina no contamine el resultado.
+// isolateGlobalConfig points the global config at an empty test directory so a
+// machine's real ~/.config/atenea/mcp.json cannot contaminate the result.
 func isolateGlobalConfig(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -196,6 +196,40 @@ func TestLoadConfig_LoadsRemoteServerAndDefaultsLegacyConfigToStdio(t *testing.T
 	}
 	if configs[1].Type != "" || configs[1].Command != "npx" {
 		t.Fatalf("legacy config must remain valid and implicit stdio: %+v", configs[1])
+	}
+}
+
+func TestLoadConfig_PreservesPermissionDeclarationsAndLegacyAskDefault(t *testing.T) {
+	isolateGlobalConfig(t)
+	root := t.TempDir()
+	writeConfig(t, root, `{"mcpServers": {
+		"declared": {"command": "npx", "sensitivity": "read-only", "allowedTools": ["search", "*"]},
+		"legacy": {"command": "npx"}
+	}}`)
+	configs, err := LoadConfig(root)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if configs[0].Sensitivity != "read-only" || len(configs[0].AllowedTools) != 2 {
+		t.Fatalf("permission declarations were not preserved: %+v", configs[0])
+	}
+	if configs[1].Sensitivity != "" || configs[1].AllowedTools != nil {
+		t.Fatalf("legacy config must retain the ask-by-default zero value: %+v", configs[1])
+	}
+}
+
+func TestLoadConfig_RejectsInvalidPermissionDeclarations(t *testing.T) {
+	isolateGlobalConfig(t)
+	for _, entry := range []string{
+		`{"command":"npx","sensitivity":"safe"}`,
+		`{"command":"npx","allowedTools":[""]}`,
+		`{"command":"npx","allowedTools":["echo","echo"]}`,
+	} {
+		root := t.TempDir()
+		writeConfig(t, root, `{"mcpServers":{"server":`+entry+`}}`)
+		if _, err := LoadConfig(root); err == nil {
+			t.Errorf("LoadConfig accepted invalid declaration %s", entry)
+		}
 	}
 }
 

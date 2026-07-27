@@ -177,6 +177,7 @@ func (m *Manager) rebuildLocked(root string) {
 		Root: root, Provider: m.provider, Store: m.store, Inbox: m.sitting.Inbox,
 		Gate: m.sitting.Gate, Snaps: m.sitting.Snapshots, Bus: m.bus, LocalPrompt: m.localPrompt,
 		NextID: wiring.NewIDGen(), Mode: m.sitting.Agent.Mode, MCPTools: m.mcp.Tools(),
+		PersistentGrants: m.mcp.PermissionRules(),
 	})
 	m.mu.Lock()
 	m.root = root

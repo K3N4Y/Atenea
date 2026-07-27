@@ -88,6 +88,9 @@ type Config struct {
 	Mode func(sessionID string) session.Mode
 	// MCPTools are the tools discovered from already-connected MCP servers.
 	MCPTools []tool.Tool
+	// PersistentGrants are approvals loaded from durable configuration. They are
+	// composed before session grants, and can only turn Ask into Allow.
+	PersistentGrants []permission.Rule
 
 	// OutputLimit caps, in bytes, how much of a tool call's output reaches the
 	// model. The whole output is always kept for the UI to expand
@@ -344,7 +347,8 @@ func Build(cfg Config) Built {
 	// as good as the catalog it reads and that catalog changes with every rewire —
 	// an MCP server that just connected contributes tools this policy has to be
 	// able to see.
-	policy := permission.NewGrantedPolicy(cfg.Policy(registry), cfg.Grants, registry)
+	policy := permission.NewRulePolicy(cfg.Policy(registry), cfg.PersistentGrants, registry)
+	policy = permission.NewGrantedPolicy(policy, cfg.Grants, registry)
 	// Security: propagate ask-before-run to the child runner with the SAME gate
 	// and the SAME policy as the main chat. Without this a "general" subagent
 	// would run gated tools (bash, write, edit, web_fetch) without the
