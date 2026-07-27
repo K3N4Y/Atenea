@@ -164,9 +164,15 @@ the refusals and the exit codes are in
 
 Remote transports currently support unauthenticated endpoints. OAuth and custom
 request headers remain deferred because they require durable credential storage,
-redirect/callback handling, and explicit remote-server trust UX. The protocol
-client also does not expose MCP tools to subagents yet; the current scope is the
-primary agent registry.
+redirect/callback handling, and explicit remote-server trust UX.
+
+Connected tools enter both the primary and subagent registries from the same
+snapshot on every assembly. A subagent definition must still name each tool it
+may use; merely connecting a server grants no child new authority. Its calls use
+the primary runner's policy and gate, keyed to the child session, so remote tools
+retain ask-by-default and durable-rule behavior. Since both Wails and the TUI
+rewire through `wiring.Build`, connecting or disconnecting replaces both
+registries together and new child runs cannot retain stale adapters.
 
 ## References
 

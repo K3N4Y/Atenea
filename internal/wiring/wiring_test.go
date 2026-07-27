@@ -469,6 +469,94 @@ func TestBuild_AgentDirsFieldReplacesDiscovery(t *testing.T) {
 	}
 }
 
+// TestBuild_ConnectedMCPToolsReachOnlySubagentsThatDeclareThem exercises the
+// assembly seam end to end: discovery names a connected remote tool, task starts
+// a real child runner, and the provider sees it. A definition that omits the
+// name remains narrowed, so connecting a server does not widen child authority.
+func TestBuild_ConnectedMCPToolsReachOnlySubagentsThatDeclareThem(t *testing.T) {
+	root := t.TempDir()
+	agents := filepath.Join(root, ".atenea", "agents")
+	writeAgentWithTools(t, agents, "remote-worker", "mcp_docs_search")
+	writeAgentWithTools(t, agents, "local-worker", "read")
+	provider := &recordingProvider{FakeProvider: llm.NewFakeProvider(
+		llm.Event{Kind: llm.TextDelta, Text: "done"},
+		llm.Event{Kind: llm.StepEnded},
+	)}
+	built := buildWith(t, Config{Root: root, Provider: provider, MCPTools: []tool.Tool{undeclaredTool{name: "mcp_docs_search"}}})
+	task, _ := built.Tools.Lookup("task")
+
+	if _, err := task.Execute(context.Background(), json.RawMessage(`{"subagent_type":"remote-worker","prompt":"search"}`)); err != nil {
+		t.Fatalf("remote subagent: %v", err)
+	}
+	if got := provider.announced(); !slices.Contains(got, "mcp_docs_search") {
+		t.Fatalf("remote subagent tools = %v, want connected MCP tool", got)
+	}
+	if _, err := task.Execute(context.Background(), json.RawMessage(`{"subagent_type":"local-worker","prompt":"read"}`)); err != nil {
+		t.Fatalf("local subagent: %v", err)
+	}
+	if got := provider.announced(); slices.Contains(got, "mcp_docs_search") {
+		t.Fatalf("local subagent tools = %v; undeclared MCP tool widened its authority", got)
+	}
+}
+
+// TestBuild_SubagentMCPCallUsesSharedPolicy proves the newly reachable remote
+// adapter does not bypass authorization. Deny is resolved before Execute, and
+// the child can continue from the recorded denial.
+func TestBuild_SubagentMCPCallUsesSharedPolicy(t *testing.T) {
+	root := t.TempDir()
+	agents := filepath.Join(root, ".atenea", "agents")
+	writeAgentWithTools(t, agents, "remote-worker", "mcp_docs_search")
+	remote := &countingTool{name: "mcp_docs_search"}
+	provider := &turnProvider{turns: [][]llm.Event{
+		{{Kind: llm.ToolCall, CallID: "remote-1", ToolName: remote.name}, {Kind: llm.StepEnded}},
+		{{Kind: llm.StepStarted}, {Kind: llm.TextStarted}, {Kind: llm.TextDelta, Text: "denied safely"}, {Kind: llm.TextEnded}, {Kind: llm.StepEnded}},
+	}}
+	built := buildWith(t, Config{
+		Root: root, Provider: provider, MCPTools: []tool.Tool{remote},
+		Policy: func(tool.Catalog) permission.Policy { return denyAll{} },
+	})
+	task, _ := built.Tools.Lookup("task")
+	_, err := task.Execute(context.Background(), json.RawMessage(`{"subagent_type":"remote-worker","prompt":"search"}`))
+	if err != nil {
+		t.Fatalf("remote subagent: %v", err)
+	}
+	if remote.calls != 0 {
+		t.Fatalf("denied MCP adapter executed %d times", remote.calls)
+	}
+}
+
+// TestBuild_RewireDropsDisconnectedMCPToolsFromSubagents mirrors both hosts'
+// connect/disconnect lifecycle: a new Build receives a fresh manager snapshot,
+// and neither its primary nor child registry retains an adapter from the prior
+// assembly.
+func TestBuild_RewireDropsDisconnectedMCPToolsFromSubagents(t *testing.T) {
+	root := t.TempDir()
+	agents := filepath.Join(root, ".atenea", "agents")
+	writeAgentWithTools(t, agents, "remote-worker", "mcp_docs_search")
+	connectedProvider := &recordingProvider{FakeProvider: llm.NewFakeProvider(llm.Event{Kind: llm.StepEnded})}
+	connected := buildWith(t, Config{Root: root, Provider: connectedProvider, MCPTools: []tool.Tool{undeclaredTool{name: "mcp_docs_search"}}})
+	task, _ := connected.Tools.Lookup("task")
+	if _, err := task.Execute(context.Background(), json.RawMessage(`{"subagent_type":"remote-worker","prompt":"search"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(connectedProvider.announced(), "mcp_docs_search") {
+		t.Fatal("connected child did not receive MCP tool")
+	}
+
+	disconnectedProvider := &recordingProvider{FakeProvider: llm.NewFakeProvider(llm.Event{Kind: llm.StepEnded})}
+	disconnected := buildWith(t, Config{Root: root, Provider: disconnectedProvider})
+	task, _ = disconnected.Tools.Lookup("task")
+	if _, err := task.Execute(context.Background(), json.RawMessage(`{"subagent_type":"remote-worker","prompt":"search"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(disconnectedProvider.announced(), "mcp_docs_search") {
+		t.Fatal("rewired child retained disconnected MCP tool")
+	}
+	if _, ok := disconnected.Tools.Lookup("mcp_docs_search"); ok {
+		t.Fatal("rewired primary registry retained disconnected MCP tool")
+	}
+}
+
 // writeAgent materializes a discoverable subagent definition.
 func writeAgent(t *testing.T, dir, name string) {
 	writeAgentWithDescription(t, dir, name, "the "+name+" subagent")
@@ -480,6 +568,17 @@ func writeAgentWithDescription(t *testing.T, dir, name, description string) {
 		t.Fatal(err)
 	}
 	body := "---\nname: " + name + "\ndescription: " + description + "\ntools: read\n---\n\nPrompt.\n"
+	if err := os.WriteFile(filepath.Join(dir, name+".md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeAgentWithTools(t *testing.T, dir, name, tools string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "---\nname: " + name + "\ndescription: the " + name + " subagent\ntools: " + tools + "\n---\n\nPrompt.\n"
 	if err := os.WriteFile(filepath.Join(dir, name+".md"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -600,6 +699,32 @@ func (p *recordingProvider) announced() []string {
 type undeclaredTool struct {
 	name   string
 	output string
+}
+
+type countingTool struct {
+	name  string
+	calls int
+}
+
+func (t *countingTool) Name() string            { return t.name }
+func (t *countingTool) Description() string     { return t.name + " (remote)" }
+func (t *countingTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (t *countingTool) Execute(context.Context, json.RawMessage) (tool.Result, error) {
+	t.calls++
+	return tool.Result{Output: "remote result"}, nil
+}
+
+type turnProvider struct {
+	mu    sync.Mutex
+	turns [][]llm.Event
+}
+
+func (p *turnProvider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Event, error) {
+	p.mu.Lock()
+	turn := append([]llm.Event(nil), p.turns[0]...)
+	p.turns = p.turns[1:]
+	p.mu.Unlock()
+	return llm.NewFakeProvider(turn...).Stream(ctx, req)
 }
 
 func (u undeclaredTool) Name() string        { return u.name }

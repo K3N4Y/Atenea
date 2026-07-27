@@ -299,14 +299,18 @@ func Build(cfg Config) Built {
 	if err != nil {
 		log.Printf("atenea: could not discover the subagents: %v", err)
 	}
-	// The subagents' registry: the same file, search and exec tools, narrowed by each
-	// agent's def.Tools (a read-only explore only gets read/grep/glob). Without the task
-	// tool: subagents do not nest in the real wiring.
-	childRegistry := tool.NewRegistry(tool.NewOutputStore(cfg.OutputLimit),
+	// The subagents' registry: the same file, search, exec and connected MCP tools,
+	// narrowed by each agent's def.Tools. Rebuilding it from cfg.MCPTools on every
+	// assembly makes connect and disconnect visible to new child runs, while the
+	// definition remains the authority over which tools a child may use.
+	childTools := []tool.Tool{
 		tool.NewReadToolWithSnapshotProvider(root, cfg.Snaps), tool.NewWriteToolWithSnapshotProvider(root, cfg.Snaps),
 		tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, cfg.Snaps),
 		tool.NewGlobTool(root), tool.NewGrepToolWithSnapshotProvider(root, cfg.Snaps),
-		tool.NewBashTool(root))
+		tool.NewBashTool(root),
+	}
+	childTools = append(childTools, cfg.MCPTools...)
+	childRegistry := tool.NewRegistry(tool.NewOutputStore(cfg.OutputLimit), childTools...)
 	// A def that names a tool the child registry does not have used to lose it
 	// silently: the name never became a permission and the subagent ran with fewer
 	// tools than its author wrote down. Now it is reported, once, against the
