@@ -1,6 +1,6 @@
 ---
 updated_at: 2026-07-27
-summary: Audit of how agnostic atenea's seams are, and what to change to enable third-party integrations, contributions, and a plugin system. R1 through R5, R7, and R8.1 through R8.3 are done; the remaining recommendations stay open.
+summary: Audit of how agnostic atenea's seams are, and what to change to enable third-party integrations, contributions, and a plugin system. R1 through R5, R7, and R8.1 through R8.4 are done; the remaining recommendations stay open.
 ---
 
 # Agnosticism and extensibility audit — atenea
@@ -76,7 +76,7 @@ of them delete code.
 | CLI / headless | **Good** — the complete R4 surface over a two-level stdlib-`flag` dispatch and no CLI framework: `atenea run` (NDJSON of the durable stream, a result document, six exit codes, three effect-derived permission modes, `--session` on the shared store) plus `atenea mcp list\|add\|remove` and `atenea skill list\|validate`, which declare and inspect what a run reads and need no provider to do it (R4.3, R4.4) | `internal/cli`, `internal/permission/unattended.go`, `cmd/atenea/main.go` |
 | Public API | **Partial** — 5 importable contract packages under `agentcore/` plus 2 contract test kits, boundary enforced by test; the tool capability interfaces landed with R2, message content parts with R3.6 (the first breaking change, taken deliberately while nothing promises stability); implementations still private, no stability promise yet (R1.3, R1.4, R2, R3 done) | `agentcore/`, `agentcore/boundary_test.go`, `agentcore/{tool/tooltest,llm/llmtest}` |
 | Branding/paths | **Weak** — `atenea` literal in 6+ path builders, no XDG | §3.6 |
-| MCP as plugin substrate | **Partial** — first-class in both primary and subagent registries, with remote transports and durable, effect-aware trust; prompts, resources, sampling, and lifecycle hardening remain | §3.8 |
+| MCP as plugin substrate | **Partial** — tools, namespaced composer prompts/resources, opt-in host-model sampling, remote transports, and durable trust are shared by both hosts; lifecycle hardening remains | §3.8 |
 | Contributor docs | **Weak** — no CONTRIBUTING; `AGENTS.md` points at two files that do not exist; LICENSE now present (R1.2 done) | §3.9 |
 
 ## 3. Findings
@@ -393,8 +393,10 @@ Gaps that keep it from being a plugin substrate:
   to name a remote tool, so connection does not widen its authority, and its
   calls cross the same policy and gate as primary calls. Rewiring after connect
   or disconnect replaces both catalogs together in either host.
-- **Tools only** — no prompts (→ slash commands), no resources (→ `@` mentions),
-  no sampling (server borrowing the host model).
+- ~~**Tools only.**~~ `[done 2026-07-27]` R8.4 discovers namespaced MCP prompts
+  as `/server:prompt`, resources as `@server:resource`, and permits sampling only
+  for a server whose declaration explicitly sets `allowSampling`. Both UIs use
+  the same dynamic command/mention substrate and replace it on reconnect.
 
 ### 3.9 Contribution-facing gaps
 
@@ -1364,9 +1366,13 @@ Work to make it a genuine plugin substrate:
    primary registry. Definitions remain the least-authority filter, shared
    permission policy and gating apply at execution, and a host rewire adds or
    removes the adapters from both registries atomically.
-4. **Beyond tools**: map MCP *prompts* to slash commands and MCP *resources* to
-   `@` mentions, and support *sampling* so a server can borrow the host model.
-   This is the difference between "tool bridge" and "plugin".
+4. ~~**Beyond tools**: map MCP *prompts* to slash commands and MCP *resources* to
+   `@` mentions, and support *sampling* so a server can borrow the host model.~~
+   `[done 2026-07-27]` The MCP manager owns discovery and invocation behind the
+   existing composer command seam. Prompt and resource identities are
+   server-namespaced, reconnect replaces the whole snapshot, content failures
+   stop admission, and sampling is advertised only after durable per-server
+   authorization. This is the difference between "tool bridge" and "plugin".
 5. **Lifecycle**: opt-in auto-connect for declared servers (today always manual),
    per-server connect/call timeouts, health and restart-with-backoff, and stable
    tool names across reconnects.

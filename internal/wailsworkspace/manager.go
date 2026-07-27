@@ -62,7 +62,7 @@ func New(cfg Config) *Manager {
 		store:       cfg.Store,
 		bus:         cfg.Bus,
 		sitting:     cfg.Sitting,
-		mcp:         mcpclient.NewManagerWithIdentity(cfg.Root, cfg.Identity),
+		mcp:         mcpclient.NewManagerWithRuntime(cfg.Root, cfg.Identity, cfg.Provider, nil),
 	}
 	m.lifecycleMu.Lock()
 	m.rebuildLocked(cfg.Root)
@@ -122,6 +122,7 @@ func (m *Manager) Files(ctx context.Context) ([]string, error) {
 	g := m.glob
 	m.mu.Unlock()
 	files, _, err := g.Files(ctx, "", ".", g.MaxLimit)
+	files = append(files, m.mcp.ResourceNames()...)
 	return files, err
 }
 
@@ -183,5 +184,6 @@ func (m *Manager) rebuildLocked(root string) {
 	m.root = root
 	m.glob = built.Glob
 	m.mu.Unlock()
-	m.sitting.Agent.Configure(built.Runner, built.Commands)
+	commands := append(built.Commands.List(), m.mcp.Commands()...)
+	m.sitting.Agent.Configure(built.Runner, command.New(commands, m.mcp.Mentions()...))
 }

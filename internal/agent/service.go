@@ -178,8 +178,15 @@ func (s *Service) send(sessionID, text string, mode session.Mode, hooks Hooks) (
 		}
 	}
 	if commands != nil {
-		if expanded, ok := commands.Resolve(text); ok {
+		if expanded, ok, err := commands.ResolveContext(context.Background(), text); err != nil {
+			return RunHandle{}, err
+		} else if ok {
 			text = expanded
+		}
+		var err error
+		text, err = commands.ExpandMentions(context.Background(), text)
+		if err != nil {
+			return RunHandle{}, err
 		}
 	}
 	if err := inbox.Admit(context.Background(), sessionID, session.Prompt{Text: text}, session.DeliveryQueue); err != nil {

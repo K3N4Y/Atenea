@@ -8,6 +8,7 @@
 package command
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -27,6 +28,25 @@ type Command struct {
 	Name        string
 	Description string
 	Template    string
+	resolve     func(context.Context, string) (string, error)
+}
+
+// Mention is external content addressable from the composer with @Name.
+type Mention struct {
+	Name        string
+	Description string
+	resolve     func(context.Context) (string, error)
+}
+
+func DynamicMention(name, description string, resolve func(context.Context) (string, error)) Mention {
+	return Mention{Name: name, Description: description, resolve: resolve}
+}
+
+// Dynamic creates a command resolved at invocation time. This lets remote
+// prompt implementations stay behind the command module instead of leaking
+// protocol details into either UI.
+func Dynamic(name, description string, resolve func(context.Context, string) (string, error)) Command {
+	return Command{Name: name, Description: description, resolve: resolve}
 }
 
 // FromSkills deriva un comando por cada skill descubierta: "/<name>" referencia la
@@ -62,13 +82,14 @@ func Expand(template, args string) string {
 // Set indexa comandos por nombre y conserva la lista ordenada para el menu. Es de
 // solo lectura tras construirse, asi que Resolve/List son seguros concurrentemente.
 type Set struct {
-	list   []Command
-	byName map[string]Command
+	list     []Command
+	byName   map[string]Command
+	mentions map[string]Mention
 }
 
 // New indexa los comandos por nombre (ante un nombre duplicado gana el ultimo,
 // config del programa) y memoriza la lista ordenada por nombre para el menu.
-func New(cmds []Command) *Set {
+func New(cmds []Command, mentions ...Mention) *Set {
 	byName := make(map[string]Command, len(cmds))
 	for _, c := range cmds {
 		byName[c.Name] = c
@@ -78,7 +99,11 @@ func New(cmds []Command) *Set {
 		list = append(list, c)
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
-	return &Set{list: list, byName: byName}
+	indexedMentions := make(map[string]Mention, len(mentions))
+	for _, mention := range mentions {
+		indexedMentions[mention.Name] = mention
+	}
+	return &Set{list: list, byName: byName, mentions: indexedMentions}
 }
 
 // List devuelve los comandos ordenados por nombre para el menu del composer.
@@ -89,15 +114,45 @@ func (s *Set) List() []Command { return s.list }
 // es un comando (no empieza con "/", "/" sin nombre, o nombre desconocido) devuelve
 // ("", false) para que el texto se envie sin transformar.
 func (s *Set) Resolve(input string) (string, bool) {
+	expanded, ok, _ := s.ResolveContext(context.Background(), input)
+	return expanded, ok
+}
+
+// ResolveContext is Resolve for commands whose expansion requires I/O.
+func (s *Set) ResolveContext(ctx context.Context, input string) (string, bool, error) {
 	name, args, ok := parse(input)
 	if !ok {
-		return "", false
+		return "", false, nil
 	}
 	cmd, ok := s.byName[name]
 	if !ok {
-		return "", false
+		return "", false, nil
 	}
-	return Expand(cmd.Template, args), true
+	if cmd.resolve != nil {
+		expanded, err := cmd.resolve(ctx, args)
+		return expanded, true, err
+	}
+	return Expand(cmd.Template, args), true, nil
+}
+
+// ExpandMentions replaces exact whitespace-delimited @mentions with remote
+// content blocks. Unknown mentions, including ordinary workspace files, remain
+// untouched for the agent's normal read-tool flow.
+func (s *Set) ExpandMentions(ctx context.Context, input string) (string, error) {
+	fields := strings.Fields(input)
+	for _, field := range fields {
+		name := strings.TrimPrefix(field, "@")
+		mention, ok := s.mentions[name]
+		if field == name || !ok {
+			continue
+		}
+		content, err := mention.resolve(ctx)
+		if err != nil {
+			return "", fmt.Errorf("resolve @%s: %w", name, err)
+		}
+		input = strings.ReplaceAll(input, field, "<resource name=\""+name+"\">\n"+content+"\n</resource>")
+	}
+	return input, nil
 }
 
 // parse separa "/name args" en (name, args, true). El nombre va del "/" inicial al

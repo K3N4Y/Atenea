@@ -7,9 +7,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/K3N4Y/atenea/internal/command"
+	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/paths"
 	"github.com/K3N4Y/atenea/internal/permission"
 	"github.com/K3N4Y/atenea/internal/tool"
@@ -51,6 +54,75 @@ func TestManager_ConnectsToStdioServerAndExecutesDiscoveredTool(t *testing.T) {
 	}
 	if statuses := manager.Status(); len(statuses) != 0 {
 		t.Fatalf("Status after disconnect = %+v, want empty", statuses)
+	}
+}
+
+func TestManager_MapsPromptsAndResourcesToNamespacedComposerExtensions(t *testing.T) {
+	server := testMCPServer()
+	server.AddPrompt(&mcp.Prompt{Name: "review", Description: "Review code", Arguments: []*mcp.PromptArgument{{Name: "topic"}}}, func(_ context.Context, request *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		return &mcp.GetPromptResult{Messages: []*mcp.PromptMessage{{Role: mcp.Role("user"), Content: &mcp.TextContent{Text: "review " + request.Params.Arguments["topic"]}}}}, nil
+	})
+	server.AddResource(&mcp.Resource{Name: "guide", URI: "docs://guide", Description: "Guide"}, func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: "docs://guide", Text: "the guide"}}}, nil
+	})
+	httpServer := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil))
+	defer httpServer.Close()
+	manager := NewManager(t.TempDir())
+	defer manager.Close()
+	if _, err := manager.Connect(context.Background(), ServerConfig{Name: "docs", Type: "http", URL: httpServer.URL}); err != nil {
+		t.Fatal(err)
+	}
+	set := command.New(manager.Commands(), manager.Mentions()...)
+	prompt, ok, err := set.ResolveContext(context.Background(), `/docs:review auth`)
+	if err != nil || !ok || prompt != "user:\nreview auth" {
+		t.Fatalf("prompt = %q, %v, %v", prompt, ok, err)
+	}
+	enriched, err := set.ExpandMentions(context.Background(), "check @docs:guide")
+	if err != nil || !strings.Contains(enriched, "the guide") {
+		t.Fatalf("resource = %q, %v", enriched, err)
+	}
+	if names := manager.ResourceNames(); len(names) != 1 || names[0] != "docs:guide" {
+		t.Fatalf("names = %v", names)
+	}
+	manager.Disconnect("docs")
+	if len(manager.Commands()) != 0 || len(manager.ResourceNames()) != 0 {
+		t.Fatal("extensions survived disconnect")
+	}
+}
+
+func TestManager_SamplingRequiresServerAuthorization(t *testing.T) {
+	provider := llm.NewFakeProvider(llm.Event{Kind: llm.StepStarted}, llm.Event{Kind: llm.TextDelta, Text: "borrowed"}, llm.Event{Kind: llm.StepEnded})
+	for _, allowed := range []bool{false, true} {
+		server := testMCPServer()
+		server.AddTool(&mcp.Tool{Name: "sample", InputSchema: map[string]any{"type": "object"}}, func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			result, err := request.Session.CreateMessage(ctx, &mcp.CreateMessageParams{MaxTokens: 10, Messages: []*mcp.SamplingMessage{{Role: mcp.Role("user"), Content: &mcp.TextContent{Text: "hello"}}}})
+			if err != nil {
+				return nil, err
+			}
+			text, _ := contentText(result.Content)
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil
+		})
+		httpServer := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil))
+		manager := NewManagerWithRuntime(t.TempDir(), paths.Identity{}, provider, func() string { return "test-model" })
+		_, err := manager.Connect(context.Background(), ServerConfig{Name: "sample", Type: "http", URL: httpServer.URL, AllowSampling: allowed})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var sample tool.Tool
+		for _, candidate := range manager.Tools() {
+			if strings.HasSuffix(candidate.Name(), "_sample") {
+				sample = candidate
+			}
+		}
+		result, err := sample.Execute(context.Background(), json.RawMessage(`{}`))
+		if allowed && (err != nil || result.Output != "borrowed") {
+			t.Fatalf("authorized sampling = %q, %v", result.Output, err)
+		}
+		if !allowed && err == nil && !strings.Contains(result.Output, "error") {
+			t.Fatalf("unauthorized sampling = %q", result.Output)
+		}
+		manager.Close()
+		httpServer.Close()
 	}
 }
 

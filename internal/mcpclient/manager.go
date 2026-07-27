@@ -4,6 +4,7 @@ package mcpclient
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -18,6 +19,8 @@ import (
 	"time"
 
 	"github.com/K3N4Y/atenea/agentcore/permission"
+	"github.com/K3N4Y/atenea/internal/command"
+	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/paths"
 	"github.com/K3N4Y/atenea/internal/tool"
 
@@ -44,6 +47,10 @@ type ServerConfig struct {
 	// AllowedTools persistently trusts remote tool names from this server. "*"
 	// trusts every tool, including tools discovered after the declaration.
 	AllowedTools []string `json:"allowedTools,omitempty"`
+	// AllowSampling authorizes this server to send content to the active host
+	// model and receive its answer. It is false by default because sampling can
+	// disclose conversation data and consume model quota.
+	AllowSampling bool `json:"allowSampling,omitempty"`
 }
 
 // ServerStatus is the safe, serializable connection state exposed to the UI.
@@ -54,11 +61,13 @@ type ServerStatus struct {
 }
 
 type server struct {
-	config  ServerConfig
-	client  *mcp.Client
-	session *mcp.ClientSession
-	tools   []tool.Tool
-	rules   []permission.Rule
+	config   ServerConfig
+	client   *mcp.Client
+	session  *mcp.ClientSession
+	tools    []tool.Tool
+	commands []command.Command
+	mentions []command.Mention
+	rules    []permission.Rule
 }
 
 // Manager owns the subprocesses and MCP sessions for one application instance.
@@ -68,6 +77,8 @@ type Manager struct {
 	root     string
 	identity paths.Identity
 	servers  map[string]*server
+	provider llm.Provider
+	model    func() string
 }
 
 func NewManager(root string) *Manager {
@@ -78,7 +89,13 @@ func NewManager(root string) *Manager {
 // MCP initialization. The identity is copied, so it cannot change underneath
 // concurrent connections.
 func NewManagerWithIdentity(root string, identity paths.Identity) *Manager {
-	return &Manager{root: root, identity: identity.OrDevelopment(), servers: make(map[string]*server)}
+	return NewManagerWithRuntime(root, identity, nil, nil)
+}
+
+// NewManagerWithRuntime installs the host-model seam used only by explicitly
+// authorized sampling servers.
+func NewManagerWithRuntime(root string, identity paths.Identity, provider llm.Provider, model func() string) *Manager {
+	return &Manager{root: root, identity: identity.OrDevelopment(), servers: make(map[string]*server), provider: provider, model: model}
 }
 
 // SetRoot updates the root advertised to connected MCP servers.
@@ -110,7 +127,11 @@ func (m *Manager) Connect(ctx context.Context, config ServerConfig) (ServerStatu
 		return ServerStatus{}, fmt.Errorf("MCP %q is already connected", config.Name)
 	}
 
-	client := mcp.NewClient(&mcp.Implementation{Name: m.identity.Product, Version: m.identity.Version}, nil)
+	options := &mcp.ClientOptions{}
+	if config.AllowSampling && m.provider != nil {
+		options.CreateMessageHandler = m.sample
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: m.identity.Product, Version: m.identity.Version}, options)
 	client.AddRoots(&mcp.Root{URI: rootURI(root), Name: filepath.Base(root)})
 	transport, err := transportFor(config, root)
 	if err != nil {
@@ -147,6 +168,36 @@ func (m *Manager) Connect(ctx context.Context, config ServerConfig) (ServerStatu
 		srv.tools = append(srv.tools, adapter)
 		if toolAllowed(config.AllowedTools, definition.Name) {
 			srv.rules = append(srv.rules, permission.Rule{Tool: adapter.Name()})
+		}
+	}
+	if prompts, err := listPrompts(connectCtx, session); err != nil {
+		_ = session.Close()
+		return ServerStatus{}, fmt.Errorf("discover prompts of MCP %q: %w", config.Name, err)
+	} else {
+		seen := map[string]string{}
+		for _, prompt := range prompts {
+			name := normalize(config.Name) + ":" + normalize(prompt.Name)
+			if previous, exists := seen[name]; exists {
+				_ = session.Close()
+				return ServerStatus{}, fmt.Errorf("prompts %q and %q of MCP %q both become %q", previous, prompt.Name, config.Name, name)
+			}
+			seen[name] = prompt.Name
+			srv.commands = append(srv.commands, promptCommand(config.Name, session, prompt))
+		}
+	}
+	if resources, err := listResources(connectCtx, session); err != nil {
+		_ = session.Close()
+		return ServerStatus{}, fmt.Errorf("discover resources of MCP %q: %w", config.Name, err)
+	} else {
+		seen := map[string]string{}
+		for _, resource := range resources {
+			name := normalize(config.Name) + ":" + normalize(resource.Name)
+			if previous, exists := seen[name]; exists {
+				_ = session.Close()
+				return ServerStatus{}, fmt.Errorf("resources %q and %q of MCP %q both become %q", previous, resource.Name, config.Name, name)
+			}
+			seen[name] = resource.Name
+			srv.mentions = append(srv.mentions, resourceMention(config.Name, session, resource))
 		}
 	}
 	m.mu.Lock()
@@ -224,6 +275,40 @@ func (m *Manager) Tools() []tool.Tool {
 	}
 	sort.Slice(tools, func(i, j int) bool { return tools[i].Name() < tools[j].Name() })
 	return tools
+}
+
+func (m *Manager) Commands() []command.Command {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var result []command.Command
+	for _, srv := range m.servers {
+		result = append(result, srv.commands...)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	return result
+}
+
+func (m *Manager) Mentions() []command.Mention {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var result []command.Mention
+	for _, srv := range m.servers {
+		result = append(result, srv.mentions...)
+	}
+	return result
+}
+
+func (m *Manager) ResourceNames() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var names []string
+	for _, srv := range m.servers {
+		for _, resource := range srv.mentions {
+			names = append(names, resource.Name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 // PermissionRules returns the persisted per-server/per-tool approvals for the
@@ -435,6 +520,122 @@ func listTools(ctx context.Context, session *mcp.ClientSession) ([]*mcp.Tool, er
 		seen[result.NextCursor] = struct{}{}
 		cursor = result.NextCursor
 	}
+}
+
+func listPrompts(ctx context.Context, session *mcp.ClientSession) ([]*mcp.Prompt, error) {
+	var out []*mcp.Prompt
+	for prompt, err := range session.Prompts(ctx, nil) {
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, prompt)
+	}
+	return out, nil
+}
+
+func listResources(ctx context.Context, session *mcp.ClientSession) ([]*mcp.Resource, error) {
+	var out []*mcp.Resource
+	for resource, err := range session.Resources(ctx, nil) {
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, resource)
+	}
+	return out, nil
+}
+
+func promptCommand(server string, session *mcp.ClientSession, definition *mcp.Prompt) command.Command {
+	name := normalize(server) + ":" + normalize(definition.Name)
+	return command.Dynamic(name, definition.Description, func(ctx context.Context, raw string) (string, error) {
+		args := map[string]string{}
+		raw = strings.TrimSpace(raw)
+		if raw != "" {
+			if err := json.Unmarshal([]byte(raw), &args); err != nil {
+				if len(definition.Arguments) != 1 {
+					return "", fmt.Errorf("/%s expects arguments as a JSON object", name)
+				}
+				args[definition.Arguments[0].Name] = raw
+			}
+		}
+		result, err := session.GetPrompt(ctx, &mcp.GetPromptParams{Name: definition.Name, Arguments: args})
+		if err != nil {
+			return "", fmt.Errorf("MCP prompt %s: %w", definition.Name, err)
+		}
+		var parts []string
+		for _, message := range result.Messages {
+			text, err := contentText(message.Content)
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, string(message.Role)+":\n"+text)
+		}
+		return strings.Join(parts, "\n\n"), nil
+	})
+}
+
+func resourceMention(server string, session *mcp.ClientSession, definition *mcp.Resource) command.Mention {
+	name := normalize(server) + ":" + normalize(definition.Name)
+	return command.DynamicMention(name, definition.Description, func(ctx context.Context) (string, error) {
+		result, err := session.ReadResource(ctx, &mcp.ReadResourceParams{URI: definition.URI})
+		if err != nil {
+			return "", err
+		}
+		var parts []string
+		for _, content := range result.Contents {
+			if content.Text != "" {
+				parts = append(parts, content.Text)
+			} else if len(content.Blob) != 0 {
+				parts = append(parts, base64.StdEncoding.EncodeToString(content.Blob))
+			}
+		}
+		return strings.Join(parts, "\n"), nil
+	})
+}
+
+func contentText(content mcp.Content) (string, error) {
+	switch value := content.(type) {
+	case *mcp.TextContent:
+		return value.Text, nil
+	case *mcp.EmbeddedResource:
+		if value.Resource.Text != "" {
+			return value.Resource.Text, nil
+		}
+		return base64.StdEncoding.EncodeToString(value.Resource.Blob), nil
+	default:
+		return "", fmt.Errorf("unsupported MCP content %T", content)
+	}
+}
+
+func (m *Manager) sample(ctx context.Context, request *mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
+	if m.provider == nil {
+		return nil, fmt.Errorf("MCP sampling is unavailable")
+	}
+	messages := make([]llm.Message, 0, len(request.Params.Messages))
+	for _, message := range request.Params.Messages {
+		text, err := contentText(message.Content)
+		if err != nil {
+			return nil, err
+		}
+		messages = append(messages, llm.TextMessage(string(message.Role), text))
+	}
+	model := ""
+	if m.model != nil {
+		model = m.model()
+	}
+	stream, err := m.provider.Stream(ctx, llm.Request{Model: model, System: request.Params.SystemPrompt, Messages: messages, MaxOutputTokens: int(request.Params.MaxTokens)})
+	if err != nil {
+		return nil, err
+	}
+	var answer strings.Builder
+	for event := range stream {
+		if event.Kind == llm.TextDelta {
+			answer.WriteString(event.Text)
+		}
+		if event.Kind == llm.StepFailed {
+			return nil, fmt.Errorf("host model failed: %s: %v", event.Text, event.Err)
+		}
+	}
+	return &mcp.CreateMessageResult{Role: mcp.Role("assistant"), Model: model, Content: &mcp.TextContent{Text: answer.String()}}, nil
 }
 
 func (t *mcpTool) Name() string            { return t.name }

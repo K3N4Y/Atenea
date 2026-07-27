@@ -182,7 +182,12 @@ func New(cfg Config) *Engine {
 	e.store = event.NewEmittingStore(cfg.Store, bus)
 	e.checkpoints = cfg.Checkpoints
 	e.models = cfg.Models
-	e.mcp = mcpclient.NewManagerWithIdentity(cfg.Root, cfg.Identity)
+	e.mcp = mcpclient.NewManagerWithRuntime(cfg.Root, cfg.Identity, cfg.Provider, func() string {
+		if cfg.Models == nil {
+			return ""
+		}
+		return cfg.Models.Active().Model
+	})
 	e.wiring = wiring.Config{
 		Root:     cfg.Root,
 		Provider: cfg.Provider,
@@ -217,7 +222,8 @@ func (e *Engine) rewire() {
 	e.glob = built.Glob
 	e.tools = built.Tools
 	e.mu.Unlock()
-	e.agent.Configure(built.Runner, built.Commands)
+	commands := append(built.Commands.List(), e.mcp.Commands()...)
+	e.agent.Configure(built.Runner, command.New(commands, e.mcp.Mentions()...))
 	e.lifecycleMu.Unlock()
 }
 
@@ -360,7 +366,7 @@ func (e *Engine) ProjectFiles() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return files, nil
+	return append(files, e.mcp.ResourceNames()...), nil
 }
 
 // currentGlob and currentRunner read the mutable pieces under mu: rewire replaces

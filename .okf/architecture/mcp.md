@@ -1,6 +1,6 @@
 ---
 updated_at: 2026-07-27
-summary: MCP transports, declarations, permission classification, and persisted tool trust shared by both hosts and the command-line configuration surface.
+summary: MCP tools, prompts, resources, and authorized host-model sampling shared by both interactive hosts.
 ---
 
 # MCP servers
@@ -32,7 +32,7 @@ to open connects what it finds.
    `github.com/modelcontextprotocol/go-sdk` transport from the declaration:
    `CommandTransport`, `StreamableClientTransport`, or `SSEClientTransport`.
 3. The client advertises the current workspace as an MCP root, initializes the
-   session, and paginates `tools/list`.
+   session, and discovers tools, prompts, and resources.
 4. Each discovered tool is adapted to `internal/tool.Tool` and named
    `mcp_<server>_<tool>` to avoid collisions with built-in tools.
 5. The app rebuilds the normal runner registry. The newly materialized tools are
@@ -41,6 +41,21 @@ to open connects what it finds.
 6. The manager waits for every client session. If an MCP process exits or closes
    its stdio connection unexpectedly, it removes that server from the active
    status so the Settings panel shows it as disconnected.
+
+Prompts and resources use one namespaced composer substrate in both hosts. An
+MCP prompt `review` from server `docs` appears as `/docs:review`; invocation
+fetches the prompt at send time, accepts a single plain argument or a JSON object
+for multiple arguments, and preserves message roles. A resource `guide` appears
+as `@docs:guide`; selecting it uses the existing mention menu and admission reads
+the resource into a delimited context block. Namespacing prevents collisions
+between servers, and the whole snapshot disappears on an explicit disconnect.
+
+Sampling is opt-in per server with `allowSampling: true`. Only then does the
+client advertise sampling and forward a server request through the active host
+provider. The adapter bounds output by the requested maximum, accepts text
+content only, propagates provider failure, and returns only the completed answer.
+The default is deliberately false: sampling can disclose server-supplied content
+to a model, spend quota, and return model output to the server.
 
 The manager updates advertised roots when the workspace changes and closes every
 MCP session during Wails shutdown. Configurations remain available as
@@ -82,7 +97,8 @@ only when explicitly declared in the server's `env` map.
     "playwright": {
       "type": "stdio",
       "command": "npx",
-      "args": ["@playwright/mcp@latest"]
+      "args": ["@playwright/mcp@latest"],
+      "allowSampling": false
     },
     "hosted": {
       "type": "streamable-http",
