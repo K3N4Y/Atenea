@@ -580,6 +580,17 @@ func TestSQLiteStore_MigratesLegacyDatabaseWithZeroEpoch(t *testing.T) {
 			t.Fatalf("Sessions legacy: LastActivity invalido en %+v", summary)
 		}
 	}
+	attrs := map[string]string{"ext.example.trace_id": "legacy-migrated"}
+	if _, err := store.AppendEvent(ctx, "s1", SessionEvent{Kind: EventKind("ext.example.Observed"), Attrs: attrs}); err != nil {
+		t.Fatalf("AppendEvent with Attrs after legacy migration: %v", err)
+	}
+	events, err := store.Events(ctx, "s1", 0)
+	if err != nil {
+		t.Fatalf("Events after legacy migration: %v", err)
+	}
+	if !reflect.DeepEqual(events[len(events)-1].Attrs, attrs) {
+		t.Fatalf("Attrs after legacy migration = %#v, want %#v", events[len(events)-1].Attrs, attrs)
+	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("Close legacy: %v", err)
 	}

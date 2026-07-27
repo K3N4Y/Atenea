@@ -64,6 +64,12 @@ R3.2 applied the same idiom to the provider contract: `Describing` is optional, 
 answer for the context windows of its own models instead of core keeping a table.
 See [Provider capabilities](provider-capabilities.md).
 
+`SessionEvent.Attrs` is the event contract's extension escape hatch. Producers
+use namespaced string keys for metadata that does not justify a new common
+field; stores and consumers preserve keys they do not understand. Because it is
+ordinary JSON data, the same map crosses the CLI's JSON/NDJSON output and the
+Wails event/history interface without a host-specific adapter.
+
 R3.6 changed `Message` itself, which is the first and so far only *breaking*
 change to a published type: `Text string` became `Parts []Part`, so content has
 one representation and an image is a new `PartKind` rather than a new field on a

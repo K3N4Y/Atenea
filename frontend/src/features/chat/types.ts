@@ -82,6 +82,7 @@ export interface SessionEvent {
   ToolName?: string
   Input?: unknown
   Diff?: string
+  Attrs?: Record<string, string>
   SessionID?: string
   Message?: { Role?: string; Text?: string }
   Usage?: {

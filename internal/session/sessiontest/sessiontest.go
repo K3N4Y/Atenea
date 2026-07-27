@@ -76,6 +76,43 @@ func StoreContract(t *testing.T, newStore func(t *testing.T) session.Store) {
 		}
 	})
 
+	t.Run("EventsRoundTripExtensionAttrsDefensively", func(t *testing.T) {
+		ctx := context.Background()
+		store := newStore(t)
+		attrs := map[string]string{
+			"ext.example.trace_id": "trace-123",
+			"ext.example.detail":   "preserve me",
+		}
+		if _, err := store.AppendEvent(ctx, "s1", session.SessionEvent{
+			Kind:  session.EventKind("ext.example.Observed"),
+			Attrs: attrs,
+		}); err != nil {
+			t.Fatalf("AppendEvent: %v", err)
+		}
+
+		attrs["ext.example.trace_id"] = "mutated after append"
+		got, err := store.Events(ctx, "s1", 0)
+		if err != nil {
+			t.Fatalf("Events: %v", err)
+		}
+		want := map[string]string{
+			"ext.example.trace_id": "trace-123",
+			"ext.example.detail":   "preserve me",
+		}
+		if len(got) != 1 || !reflect.DeepEqual(got[0].Attrs, want) {
+			t.Fatalf("Events Attrs = %#v, want %#v", got, want)
+		}
+
+		got[0].Attrs["ext.example.trace_id"] = "mutated after read"
+		again, err := store.Events(ctx, "s1", 0)
+		if err != nil {
+			t.Fatalf("Events after mutation: %v", err)
+		}
+		if !reflect.DeepEqual(again[0].Attrs, want) {
+			t.Fatalf("Events Attrs after caller mutation = %#v, want %#v", again[0].Attrs, want)
+		}
+	})
+
 	t.Run("MessagesReturnInSeqOrder", func(t *testing.T) {
 		ctx := context.Background()
 		store := newStore(t)

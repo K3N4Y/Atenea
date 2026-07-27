@@ -1,6 +1,9 @@
 package session
 
-import "slices"
+import (
+	"maps"
+	"slices"
+)
 
 func cloneStructuredSummary(summary StructuredSummary) StructuredSummary {
 	summary.Constraints = slices.Clone(summary.Constraints)
@@ -30,6 +33,7 @@ func cloneSessionEvent(event SessionEvent) SessionEvent {
 		event.Message = &message
 	}
 	event.Input = append([]byte(nil), event.Input...)
+	event.Attrs = maps.Clone(event.Attrs)
 	if event.Usage != nil {
 		usage := *event.Usage
 		event.Usage = &usage

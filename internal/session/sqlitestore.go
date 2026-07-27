@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS events (
 	message_is_error INTEGER NOT NULL DEFAULT 0,
   ev_text     TEXT,
 	diff        TEXT,
+	attrs       BLOB,
 	compaction  BLOB,
 	checkpoint_id TEXT,
 	checkpoint_prompt TEXT,
@@ -140,6 +141,7 @@ func migrateSQLiteSchema(db *sql.DB) error {
 		{"message_is_error", "INTEGER NOT NULL DEFAULT 0"},
 		{"ev_text", "TEXT"},
 		{"diff", "TEXT"},
+		{"attrs", "BLOB"},
 		{"compaction", "BLOB"},
 		{"checkpoint_id", "TEXT"},
 		{"checkpoint_prompt", "TEXT"},
@@ -327,6 +329,14 @@ func (s *SQLiteStore) AppendEvent(ctx context.Context, sessionID string, ev Sess
 		}
 		compaction = b
 	}
+	var attrs []byte
+	if ev.Attrs != nil {
+		b, err := json.Marshal(ev.Attrs)
+		if err != nil {
+			return 0, err
+		}
+		attrs = b
+	}
 	var checkpointID, checkpointPrompt, checkpointBefore, checkpointAfter sql.NullString
 	if ev.Checkpoint != nil {
 		checkpointID = sql.NullString{String: ev.Checkpoint.ID, Valid: true}
@@ -347,11 +357,11 @@ func (s *SQLiteStore) AppendEvent(ctx context.Context, sessionID string, ev Sess
 	var seq int64
 	if err := tx.QueryRowContext(ctx,
 		`INSERT INTO events
-		   (session_id, seq, kind, has_message, msg_id, role, text, call_id, tool_name, input, usage, error, tool_calls, tool_call_id, message_is_error, ev_text, diff, compaction, checkpoint_id, checkpoint_prompt, checkpoint_before_tree, checkpoint_after_tree, activity_at)
-		 VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM events WHERE session_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+sqliteCurrentUnixMilli+`)
+		   (session_id, seq, kind, has_message, msg_id, role, text, call_id, tool_name, input, usage, error, tool_calls, tool_call_id, message_is_error, ev_text, diff, attrs, compaction, checkpoint_id, checkpoint_prompt, checkpoint_before_tree, checkpoint_after_tree, activity_at)
+		 VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM events WHERE session_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+sqliteCurrentUnixMilli+`)
 		 RETURNING seq`,
 		sessionID, sessionID, string(ev.Kind), hasMessage, msgID, role, text,
-		ev.CallID, ev.ToolName, []byte(ev.Input), usage, ev.Error, toolCalls, toolCallID, messageIsError, ev.Text, ev.Diff, compaction,
+		ev.CallID, ev.ToolName, []byte(ev.Input), usage, ev.Error, toolCalls, toolCallID, messageIsError, ev.Text, ev.Diff, attrs, compaction,
 		checkpointID, checkpointPrompt, checkpointBefore, checkpointAfter,
 	).Scan(&seq); err != nil {
 		return 0, err
@@ -510,7 +520,7 @@ func (s *SQLiteStore) rawEvents(ctx context.Context, sessionID string) ([]Sessio
 func sqliteRawEvents(ctx context.Context, queryer sqliteQueryer, sessionID string) ([]SessionEvent, error) {
 	rows, err := queryer.QueryContext(ctx,
 		`SELECT seq, kind, has_message, msg_id, role, text, call_id, tool_name,
-		        input, usage, error, tool_calls, tool_call_id, message_is_error, ev_text, diff, compaction,
+		        input, usage, error, tool_calls, tool_call_id, message_is_error, ev_text, diff, attrs, compaction,
 		        checkpoint_id, checkpoint_prompt, checkpoint_before_tree, checkpoint_after_tree
 		   FROM events
 		  WHERE session_id = ?
@@ -532,10 +542,10 @@ func sqliteRawEvents(ctx context.Context, queryer sqliteQueryer, sessionID strin
 			errText, evText, diff                                             sql.NullString
 			messageIsError                                                    int
 			checkpointID, checkpointPrompt, checkpointBefore, checkpointAfter sql.NullString
-			input, usage, toolCalls, compaction                               []byte
+			input, usage, toolCalls, attrs, compaction                        []byte
 		)
 		if err := rows.Scan(&seq, &kind, &hasMessage, &msgID, &role, &text,
-			&callID, &toolName, &input, &usage, &errText, &toolCalls, &tcID, &messageIsError, &evText, &diff, &compaction,
+			&callID, &toolName, &input, &usage, &errText, &toolCalls, &tcID, &messageIsError, &evText, &diff, &attrs, &compaction,
 			&checkpointID, &checkpointPrompt, &checkpointBefore, &checkpointAfter); err != nil {
 			return nil, err
 		}
@@ -552,6 +562,11 @@ func sqliteRawEvents(ctx context.Context, queryer sqliteQueryer, sessionID strin
 		}
 		if len(input) > 0 {
 			ev.Input = json.RawMessage(input)
+		}
+		if len(attrs) > 0 {
+			if err := json.Unmarshal(attrs, &ev.Attrs); err != nil {
+				return nil, fmt.Errorf("decode event attrs for session %q seq %d: %w", sessionID, seq, err)
+			}
 		}
 		if hasMessage == 1 {
 			// Message.Seq se deja en cero: AppendEvent no lo persiste (no hay

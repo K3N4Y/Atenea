@@ -124,6 +124,11 @@ type SessionEvent struct {
 	// tool). It does not enter Message, so the model neither sees it nor pays
 	// tokens for it; it is persisted and replayed when the session is rehydrated.
 	Diff string
+	// Attrs carries extension-specific metadata without growing the published
+	// event or SQLite schema for every new value. Keys should be namespaced
+	// (for example, "ext.example.trace_id"); consumers preserve unknown keys.
+	Attrs map[string]string
+
 	Compaction *CompactionCheckpoint
 	Checkpoint *PromptCheckpoint
 }

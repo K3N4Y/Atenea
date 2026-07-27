@@ -17,6 +17,11 @@ so the durable stream is readable by an integration while the store that writes
 it stays private. See [Published
 contracts](public-contracts.md).
 
+`SessionEvent.Attrs` is the additive extension escape hatch. Namespaced string
+keys travel unchanged through JSON/NDJSON, Wails, defensive in-memory copies,
+and SQLite replay, so extension metadata does not require another published
+field and database column. Unknown keys are data to preserve, not reject.
+
 The `EventKind` constants in `agentcore/session/event.go` are the single source
 of truth for the durable event taxonomy. `go generate ./agentcore/session`
 produces the frontend TypeScript union; a Go test compares the generated output
