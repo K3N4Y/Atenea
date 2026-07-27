@@ -13,22 +13,19 @@ import (
 	"github.com/K3N4Y/atenea/internal/tool"
 )
 
-// failingTool falla siempre en Execute. Sirve para ejercitar el camino de fallo
-// de una tool local sin depender de cancelacion ni de un store que rechace.
+// failingTool always fails Execute, exercising local-tool failure without
+// depending on cancellation or a store failure.
 type failingTool struct{}
 
 func (failingTool) Name() string            { return "failing" }
-func (failingTool) Description() string     { return "Falla siempre." }
+func (failingTool) Description() string     { return "Always fails." }
 func (failingTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
 func (failingTool) Execute(context.Context, json.RawMessage) (tool.Result, error) {
-	return tool.Result{}, errors.New("boom de la tool")
+	return tool.Result{}, errors.New("tool exploded")
 }
 
-// TestRunner_LogsToolFailureForDev afirma que cuando una tool local falla al
-// asentar, el runner escribe ademas una linea de log (visible en `wails dev`) con
-// el nombre de la tool y la causa. Sin esa linea el fallo solo vive en el log
-// durable y en el mensaje al modelo: el dev no tiene como enterarse de que las
-// tools fallan. El test inyecta logf para capturar la salida sin tocar stderr.
+// TestRunner_LogsToolFailureForDev verifies that a failed local tool produces a
+// development log line containing the tool name and cause.
 func TestRunner_LogsToolFailureForDev(t *testing.T) {
 	ctx := context.Background()
 	store := newRecordingStore()
@@ -46,24 +43,23 @@ func TestRunner_LogsToolFailureForDev(t *testing.T) {
 	r.logf = func(format string, args ...any) { fmt.Fprintf(&buf, format, args...) }
 
 	if _, err := r.runTurn(ctx, "s1"); err != nil {
-		t.Fatalf("runTurn error inesperado: %v", err)
+		t.Fatalf("runTurn returned an unexpected error: %v", err)
 	}
 
 	line := buf.String()
 	if line == "" {
-		t.Fatalf("no se logueo el fallo de la tool; el dev no tiene como enterarse")
+		t.Fatalf("tool failure was not logged")
 	}
 	if !strings.Contains(line, "failing") {
-		t.Errorf("log = %q, quiero que nombre la tool 'failing'", line)
+		t.Errorf("log = %q, want tool name 'failing'", line)
 	}
-	if !strings.Contains(line, "boom de la tool") {
-		t.Errorf("log = %q, quiero que incluya la causa 'boom de la tool'", line)
+	if !strings.Contains(line, "tool exploded") {
+		t.Errorf("log = %q, want cause 'tool exploded'", line)
 	}
 }
 
-// TestRunner_LogsDeniedToolForDev triangula con el otro camino de fallo de
-// settle: una tool no permitida devuelve UnknownToolError ANTES de ejecutar, y
-// tambien debe quedar logueada (el dev ve que el modelo pidio algo fuera del set).
+// TestRunner_LogsDeniedToolForDev verifies that an unallowed call is logged as
+// an UnknownToolError before execution.
 func TestRunner_LogsDeniedToolForDev(t *testing.T) {
 	ctx := context.Background()
 	store := newRecordingStore()
@@ -74,7 +70,7 @@ func TestRunner_LogsDeniedToolForDev(t *testing.T) {
 		llm.Event{Kind: llm.ToolCall, CallID: "c1", ToolName: "echo", Input: json.RawMessage(`{"text":"x"}`)},
 		llm.Event{Kind: llm.StepEnded},
 	)
-	// echo esta en el registry pero NO en los permisos: settle la deniega.
+	// Echo is registered but excluded from the materialized permissions.
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
 	r := NewRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{}, func() string { return "a1" })
 
@@ -82,21 +78,20 @@ func TestRunner_LogsDeniedToolForDev(t *testing.T) {
 	r.logf = func(format string, args ...any) { fmt.Fprintf(&buf, format, args...) }
 
 	if _, err := r.runTurn(ctx, "s1"); err != nil {
-		t.Fatalf("runTurn error inesperado: %v", err)
+		t.Fatalf("runTurn returned an unexpected error: %v", err)
 	}
 
 	line := buf.String()
 	if !strings.Contains(line, "echo") {
-		t.Errorf("log = %q, quiero que nombre la tool 'echo'", line)
+		t.Errorf("log = %q, want tool name 'echo'", line)
 	}
-	if !strings.Contains(line, "desconocida o no permitida") {
-		t.Errorf("log = %q, quiero que incluya la causa de denegacion", line)
+	if !strings.Contains(line, "unknown or not allowed") {
+		t.Errorf("log = %q, want denial cause", line)
 	}
 }
 
-// TestRunner_DoesNotLogSuccessfulTool es la otra cara: una tool que asienta bien
-// NO debe loguear nada. Evita un falso verde donde se loguea siempre (el dev se
-// inundaria de ruido y el log perderia su senal).
+// TestRunner_DoesNotLogSuccessfulTool verifies that successful calls produce no
+// failure log noise.
 func TestRunner_DoesNotLogSuccessfulTool(t *testing.T) {
 	ctx := context.Background()
 	store := newRecordingStore()
@@ -114,10 +109,10 @@ func TestRunner_DoesNotLogSuccessfulTool(t *testing.T) {
 	r.logf = func(format string, args ...any) { fmt.Fprintf(&buf, format, args...) }
 
 	if _, err := r.runTurn(ctx, "s1"); err != nil {
-		t.Fatalf("runTurn error inesperado: %v", err)
+		t.Fatalf("runTurn returned an unexpected error: %v", err)
 	}
 
 	if line := buf.String(); line != "" {
-		t.Errorf("se logueo en el camino feliz: %q, quiero nada", line)
+		t.Errorf("successful path logged %q, want no output", line)
 	}
 }

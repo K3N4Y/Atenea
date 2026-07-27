@@ -15,28 +15,19 @@ import (
 	"github.com/K3N4Y/atenea/internal/tool"
 )
 
-// errRebuildTurn y errContinueAfterCompaction son senales de control internas del
-// turno: nunca escapan de runTurn (el retry loop las traga). En vez de excepciones,
-// Go usa sentinels envueltos y errors.Is.
+// errRebuildTurn and errContinueAfterCompaction are internal turn-control
+// signals consumed by runTurn's retry loop.
 //
-//   - errRebuildTurn: el contexto cambio mientras se preparaba el turno (cambio de
-//     agente/modelo o mismatch de la revision del epoch). El request quedo viejo: se
-//     descarta y se reconstruye desde el store, SIN haber llamado al proveedor.
-//   - errContinueAfterCompaction: hubo overflow de contexto antes de empezar el
-//     mensaje del asistente. Se compacto el historial y se reintenta una vez por la
-//     ruta post-compaction.
+//   - errRebuildTurn: context changed while preparing the turn. The stale request
+//     is discarded and rebuilt without calling the provider.
+//   - errContinueAfterCompaction: context overflow was compacted before the
+//     assistant message began, so preparation retries against the new history.
 var (
 	errRebuildTurn             = errors.New("rebuild prepared turn")
 	errContinueAfterCompaction = errors.New("continue after overflow compaction")
 )
 
-// errPermissionDenied is the cause of the Tool.Failed when the user denies a
-// gated tool call (ask-before-run). The message travels to the model as the
-// tool's result so it understands the rejection and reacts.
-var errPermissionDenied = errors.New("tool denied by the user")
-
-// ProviderError envuelve un StepFailed del proveedor para devolverlo con
-// errors.As y persistir la misma causa como Step.Failed.
+// ProviderError wraps a provider StepFailed for errors.As and durable failure.
 type ProviderError struct {
 	Message string
 }
@@ -48,35 +39,25 @@ func (e *ProviderError) Error() string {
 	return "provider stream failed: " + e.Message
 }
 
-// runTurn ejecuta un turno reintentando ante las senales de control internas. El
-// cuerpo del turno vive en runTurnAttempt; runTurn solo decide que hacer con su
-// resultado: ante errRebuildTurn o errContinueAfterCompaction reintenta (el attempt
-// se reconstruye desde el store, ya con el epoch reconciliado o el historial
-// compactado); cualquier otro error, o el exito, se devuelve. La terminacion la
-// garantiza el contrato de cada senal: el rebuild solo se dispara mientras el epoch
-// siga cambiando (se estabiliza) y la compaction debe hacer progreso (el request
-// deja de exceder el contexto).
+// runTurn retries a turn for internal control signals and returns every other
+// error or successful result. Each retry rebuilds state from the store.
 func (r *Runner) runTurn(ctx context.Context, sessionID string) (bool, error) {
 	for {
 		cont, err := r.runTurnAttempt(ctx, sessionID)
 		switch {
 		case errors.Is(err, errRebuildTurn):
-			continue // algo cambio mientras se preparaba: reconstruir desde el store
+			continue // preparation changed; rebuild from the store
 		case errors.Is(err, errContinueAfterCompaction):
-			continue // hubo overflow: se compacto, reintentar por la ruta post-compaction
+			continue // overflow was compacted; retry the post-compaction path
 		default:
 			return cont, err
 		}
 	}
 }
 
-// runTurnAttempt es UN intento del turno. Snapshotea el epoch al empezar a preparar,
-// arma el Request desde el historial proyectado (a partir del BaselineSeq del epoch)
-// y las tools materializadas, resolviendo el modelo del epoch. Si el request excede
-// el contexto, compacta y devuelve errContinueAfterCompaction. Re-lee el epoch antes
-// de llamar al proveedor: si cambio (agente/modelo/revision), devuelve errRebuildTurn
-// SIN llamar a Stream. Si el epoch sigue vigente, llama Stream UNA vez y consume el
-// stream igual que M5. Devuelve needsContinuation.
+// runTurnAttempt performs one turn attempt. It snapshots the epoch, builds the
+// request from projected history and materialized tools, compacts on overflow,
+// and rechecks the epoch before calling Stream exactly once.
 func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string) (bool, error) {
 	before, err := r.store.Epoch(ctx, sessionID)
 	if err != nil {
@@ -91,7 +72,7 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string) (bool, er
 		}
 	}
 
-	// Historial proyectado desde el baseline del epoch y tools materializadas.
+	// Project history from the epoch baseline and materialize tools.
 	msgs := runnerContext.Messages
 	if !supportsCompaction {
 		msgs, err = r.store.Messages(ctx, sessionID, before.BaselineSeq)
@@ -101,8 +82,8 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string) (bool, er
 	} else if runnerContext.Anchor != nil {
 		msgs = append([]session.Message{*runnerContext.Anchor}, msgs...)
 	}
-	// Modo del turno: en plan-mode se arma el Request con el system y los permisos
-	// de plan; si no hay hook de modo (nil) el modo es normal e identico a hoy.
+	// Plan mode selects its own system prompt and permissions. A nil mode hook
+	// preserves normal-mode behavior.
 	sys := r.system
 	perms := r.perms
 	if r.mode != nil && r.mode(sessionID) == session.ModePlan {
@@ -113,6 +94,10 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string) (bool, er
 			perms = r.planPerms
 		}
 	}
+	// Materialization snapshots execution policy along with the allowed tools.
+	// Tests may configure the runner fields directly, while production uses the
+	// setter; synchronizing here keeps both paths on the same registry seam.
+	r.registry.SetPermissionGate(r.gate, r.policy)
 	mat := r.registry.Materialize(perms)
 	providerSnapshot := llm.Acquire(r.provider)
 	model := before.Model
@@ -127,7 +112,7 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string) (bool, er
 		req.System = renderCompactedSystem(req.System, runnerContext.Checkpoint.Summary)
 	}
 
-	// Overflow antes del mensaje del asistente: compactar y reintentar una vez.
+	// Compact overflow before the assistant message, then retry preparation.
 	if r.compactor != nil && r.compactor.NeedsCompaction(req) {
 		if err := r.compactor.Compact(ctx, sessionID); err != nil && !errors.Is(err, session.ErrNoCompactableHistory) {
 			return false, err
@@ -136,8 +121,7 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string) (bool, er
 		}
 	}
 
-	// Re-leer el epoch antes de llamar al proveedor: si cambio, el request quedo
-	// viejo. Se descarta y se reconstruye SIN haber llamado a Stream.
+	// Recheck the epoch before the provider call and discard a stale request.
 	after, err := r.store.Epoch(ctx, sessionID)
 	if err != nil {
 		return false, err
@@ -146,7 +130,7 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string) (bool, er
 		return false, errRebuildTurn
 	}
 
-	// Epoch vigente: una sola llamada al proveedor y consumo del stream (M5).
+	// The epoch is current: call the provider once and consume its stream.
 	in, err := providerSnapshot.Provider.Stream(ctx, req)
 	if err != nil {
 		return false, err
@@ -162,22 +146,10 @@ func sessionKey(sessionID string) string {
 	return "atenea-" + base64.RawURLEncoding.EncodeToString(digest[:])
 }
 
-// consume drena el stream del turno. Publica cada evento como SessionEvent durable
-// (orden total del log) y acumula las tool calls LOCALES; recien cuando el stream
-// TERMINO (todos sus eventos publicados, incluido Step.Ended, que materializa el
-// Message assistant con los tool_calls) lanza las goroutines que asientan cada tool
-// y publican su resultado. Ese orden es un invariante del historial: el Message
-// role=tool de un resultado nunca puede preceder al Message assistant que declara
-// su tool_call (los providers rechazan con 400 un historial `user, tool, assistant`).
-// Diferir el settle no cambia nada para el modelo: el resultado de una tool solo
-// alimenta el turno SIGUIENTE, y el adapter emite los ToolCall al final del stream
-// de todos modos. Las tools siguen asentandose en paralelo ENTRE SI y el turno
-// ESPERA a que todas asienten (g.Wait) antes de decidir la continuacion. Una tool
-// provider-executed solo se persiste (Publish), no se asienta. El error de una tool
-// se registra como Tool.Failed y NO corta el turno; solo un fallo del store (de
-// Publish/ToolSuccess/ToolFailed) lo hace. Ademas del Tool.Failed durable, el error
-// se escribe por r.logf (stderr en `wails dev`): ni el log durable ni el mensaje al
-// modelo son visibles para el dev.
+// consume drains and durably publishes the provider stream before settling local
+// tool calls concurrently. This ordering guarantees a tool result never precedes
+// the assistant message that declared it. Tool failures become Tool.Failed and
+// do not abort the turn; durable-store failures do.
 func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Event,
 	pub *Publisher, settle tool.SettleFunc) (bool, error) {
 
@@ -199,42 +171,28 @@ func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Ev
 			calls = append(calls, ev)
 		}
 	}
-	// El stream termino: el Message assistant ya esta persistido. Recien ahora se
-	// asientan las tools, en paralelo entre si.
+	// The assistant message is durable; local tools may now settle concurrently.
 	for _, ev := range calls {
 		ev := ev // capture for the goroutine
 		g.Go(func() error {
 			call := tool.Call{ID: ev.CallID, Name: ev.ToolName, Input: ev.Input}
-			// Ask-before-run: the policy classifies the call for this session
-			// (its session-scoped grants are part of the classification). Allow
-			// settles directly; Ask persists the request (the UI shows the
-			// prompt) and blocks on the gate until the decision; Deny — from the
-			// policy or from the user — publishes Tool.Failed and does NOT run
-			// the tool.
-			if r.gate != nil && r.policy != nil {
-				switch r.policy.Decide(sessionID, call) {
-				case permission.Deny:
-					return pub.ToolFailed(cleanupCtx, ev.CallID, errPermissionDenied)
-				case permission.Ask:
-					if err := pub.ToolPermissionRequested(cleanupCtx, ev.CallID); err != nil {
-						return err
-					}
-					approved, askErr := r.gate.Ask(gctx, permission.Request{
-						SessionID: sessionID, CallID: ev.CallID, ToolName: ev.ToolName, Input: ev.Input,
-					})
-					if askErr != nil {
-						// ctx cancelled or other gate failure: leave the call unsettled;
-						// the turn close (FailUnresolvedTools) marks it Tool.Failed.
-						return nil
-					}
-					if !approved {
-						return pub.ToolFailed(cleanupCtx, ev.CallID, errPermissionDenied)
-					}
+			settleCtx := tool.WithSessionID(gctx, sessionID)
+			settleCtx = tool.WithPermissionRequester(settleCtx, func(askCtx context.Context, request permission.Request) (bool, error) {
+				if err := pub.ToolPermissionRequested(cleanupCtx, request.CallID); err != nil {
+					return false, &tool.SettlementAbortError{Err: err}
 				}
-			}
-			res, err := settle(tool.WithSessionID(gctx, sessionID), call)
+				return r.gate.Ask(askCtx, request)
+			})
+			res, err := settle(settleCtx, call)
 			if err != nil {
-				r.logf("atenea: tool %q (call %s) fallo: %v", ev.ToolName, ev.CallID, err)
+				var abort *tool.SettlementAbortError
+				if errors.As(err, &abort) {
+					return abort.Err
+				}
+				if errors.Is(err, tool.ErrPermissionUnresolved) || (r.gate != nil && errors.Is(err, context.Canceled)) {
+					return nil
+				}
+				r.logf("atenea: tool %q (call %s) failed: %v", ev.ToolName, ev.CallID, err)
 				return pub.ToolFailed(cleanupCtx, ev.CallID, err)
 			}
 			return pub.ToolSuccess(cleanupCtx, ev.CallID, res.Output, res.Diff)

@@ -123,6 +123,22 @@ type Materialized struct {
 func (r *Registry) Materialize(perms Permissions) Materialized
 ```
 
+`Materialize` also snapshots one execution middleware chain. Its built-ins run
+in this order for every allowed call: the permission gate decides or asks,
+input repair validates and normalizes the model's JSON, and output capping
+stores oversized output while returning the bounded result. Additional private
+host middleware registered with `Registry.Use` runs after those policies and
+before the tool itself; the built-in output wrapper therefore caps any output
+an extension adds. The runner supplies only a per-call permission requester in
+the settlement context. That callback publishes the durable permission event
+before blocking on the gate, keeping session persistence out of the tool module
+and preserving the existing ask/deny ordering.
+
+Each call owns its repair notes and context, and each materialization owns a
+snapshot of configuration and extension middleware. Concurrent settlements do
+not share per-call state, while an in-flight turn cannot observe later registry
+configuration changes.
+
 The registry is also the single source of truth for the default permission set:
 `Registry.Permissions()` derives it from the registered tool names. Assembly
 must not repeat those names in a second allowlist. Mode-only tools are the one

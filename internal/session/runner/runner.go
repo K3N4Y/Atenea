@@ -11,12 +11,8 @@ import (
 	"github.com/K3N4Y/atenea/internal/tool"
 )
 
-// Runner ensambla el turno: lee el historial del Store, materializa tools del
-// Registry con los permisos del agente, llama al Provider y publica los eventos.
-// En M5 expone runTurn (un turno aislado); M6 sumo el loop externo Run (run.go,
-// drenar el Inbox y MaxSteps) sobre esta misma estructura. nextID genera el
-// assistantMessageID de cada turno (determinista en tests; un generador real en
-// M9).
+// Runner assembles a turn: it reads Store history, materializes the Registry
+// with the agent's permissions, calls the Provider, and publishes events.
 type Runner struct {
 	store     session.Store
 	inbox     session.Inbox
@@ -24,7 +20,7 @@ type Runner struct {
 	registry  *tool.Registry
 	perms     tool.Permissions
 	nextID    func() string
-	compactor Compactor // opcional; nil = nunca compacta (camino feliz de M5/M6)
+	compactor Compactor // optional; nil disables compaction
 
 	// system builds the turn baseline prompt from the epoch's model. nil (default)
 	// = no system prompt. SetSystemPrompt wires it from the real assembly
@@ -53,24 +49,18 @@ type Runner struct {
 	gate   permission.Gate
 	policy permission.Policy
 
-	// logf registra a stderr los fallos de tool para visibilidad en desarrollo:
-	// hoy un fallo solo vive en el log durable y en el mensaje al modelo, asi que
-	// corriendo `wails dev` no hay como enterarse de que las tools fallan. Default
-	// log.Printf; los tests lo inyectan para capturar la salida sin tocar stderr.
+	// logf writes tool failures to stderr for development visibility. It defaults
+	// to log.Printf; tests replace it to capture output without touching stderr.
 	logf func(format string, args ...any)
 }
 
-// Compactor decide si un Request excede el contexto del modelo y, si pasa, compacta
-// el historial durable de la sesion para que el siguiente intento entre. nil en el
-// Runner significa "nunca compacta". M7 lo inyecta con un fake en tests; el real
-// (que mide tokens contra el limite del modelo y resume el historial) llega en M10.
+// Compactor decides whether a Request exceeds the model context and compacts
+// durable session history so the next attempt fits. A nil Compactor disables it.
 type Compactor interface {
-	// NeedsCompaction informa si req excede el contexto y hay que compactar antes de
-	// llamar al proveedor.
+	// NeedsCompaction reports whether req must be compacted before calling the provider.
 	NeedsCompaction(req llm.Request) bool
-	// Compact reduce el historial durable de la sesion (resumen/baseline) para que el
-	// siguiente intento arme un request que entre. Debe hacer progreso: tras Compact,
-	// NeedsCompaction del nuevo request debe terminar siendo false.
+	// Compact reduces durable session history so the next request fits. It must
+	// make progress: NeedsCompaction must eventually become false.
 	Compact(ctx context.Context, sessionID string) error
 }
 
@@ -85,9 +75,8 @@ func (r *Runner) CompactNow(ctx context.Context, sessionID string) error {
 	return r.compactor.Compact(ctx, sessionID)
 }
 
-// NewRunner arma el Runner con sus dependencias. nextID genera el
-// assistantMessageID de cada turno: inyectado para dejar los tests deterministas
-// sin arrastrar una dependencia de UUID/tiempo.
+// NewRunner constructs a Runner. nextID is injected to keep tests deterministic
+// without introducing a UUID or clock dependency.
 func NewRunner(store session.Store, inbox session.Inbox, provider llm.Provider,
 	registry *tool.Registry, perms tool.Permissions, nextID func() string) *Runner {
 	return &Runner{
@@ -112,6 +101,7 @@ func (r *Runner) SetSystemPrompt(build func(model string) string) {
 func (r *Runner) SetPermissionGate(gate permission.Gate, policy permission.Policy) {
 	r.gate = gate
 	r.policy = policy
+	r.registry.SetPermissionGate(gate, policy)
 }
 
 // SetMode injects the per-session Mode lookup. It receives the session id and

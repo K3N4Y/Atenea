@@ -1260,6 +1260,14 @@ loop (`sqlitestore.go:126-171`) is fine until there are external consumers. The
 
 ### R6 — One tool-execution middleware chain, one prompt-section list
 
+> `[done 2026-07-27]` Tool settlement now runs through the registry-owned
+> permission, repair and output-capping middleware chain, with ordered extension
+> middleware snapshotted by each materialization. System prompts are assembled
+> from stable, ordered `PromptSection` renderers for the base, repository
+> instructions, skills, mode and environment. Both seams preserve the previous
+> observable behavior while allowing new policy and prompt contributions without
+> editing the runner or prompt assembler.
+
 Two seams, both of which *simplify* current code:
 
 ```go

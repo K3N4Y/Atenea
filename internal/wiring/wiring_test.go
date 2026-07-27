@@ -293,8 +293,11 @@ func settleBigOutput(t *testing.T, cfg Config) tool.Result {
 	if !ok {
 		t.Fatalf("Built.Tools is %T, want *tool.Registry to settle a call through it", built.Tools)
 	}
+	ctx := tool.WithPermissionRequester(context.Background(), func(context.Context, permission.Request) (bool, error) {
+		return true, nil
+	})
 	result, err := registry.Materialize(tool.Permissions{big.name: true}).
-		Settle(context.Background(), tool.Call{ID: "c1", Name: big.name})
+		Settle(ctx, tool.Call{ID: "c1", Name: big.name})
 	if err != nil {
 		t.Fatalf("Settle(%q) error = %v", big.name, err)
 	}

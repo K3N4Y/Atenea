@@ -2,60 +2,104 @@ package tool
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
+	"sync"
 
+	"github.com/K3N4Y/atenea/agentcore/permission"
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/tool/repair"
 )
 
-// SettleFunc asienta una tool call: valida contra el set materializado,
-// repairs the input against the tool's schema (repair.Repair), ejecuta y
-// devuelve el Result. Esta cerrada sobre las tools permitidas de una
-// materializacion: una tool fuera del set devuelve UnknownToolError sin
-// ejecutar nada. M5 la invoca concurrentemente desde consume (errgroup); por
-// eso es segura para uso concurrente (no muta estado compartido salvo el
-// OutputStore, que tiene su candado).
+// SettleFunc settles one tool call. A materialized function is closed over the
+// allowed tools and safe to call concurrently.
 type SettleFunc func(ctx context.Context, call Call) (Result, error)
 
-// Permissions es el set de tools permitidas por nombre. Materialize solo anuncia
-// (y Settle solo asienta) las que estan en true; una tool ausente o en false se
-// trata como denegada: el agente declara explicitamente su set anunciado. El
-// modelo de permisos rico (ask, edicion/bash por patron) llega cuando el agente
-// lo necesite; en M4 alcanza el set de nombres.
+// Middleware decorates tool settlement. Registry.Materialize applies the
+// permission gate, input repair, and output cap first, followed by extensions
+// in registration order.
+type Middleware func(next SettleFunc) SettleFunc
+
+// PermissionRequester publishes an ask-before-run request and waits for its
+// verdict. The runner supplies one per settlement because publication belongs
+// to the current durable turn.
+type PermissionRequester func(context.Context, permission.Request) (bool, error)
+type permissionRequestKey struct{}
+type executionStateKey struct{}
+type executionState struct{ repairNotes []string }
+
+// WithPermissionRequester supplies the turn-owned publication and ask operation
+// to the registry's permission middleware without coupling the tool module to
+// the durable session implementation.
+func WithPermissionRequester(ctx context.Context, request PermissionRequester) context.Context {
+	return context.WithValue(ctx, permissionRequestKey{}, request)
+}
+
+// ErrPermissionDenied is returned when policy or the user refuses a call.
+var ErrPermissionDenied = errors.New("tool denied by the user")
+
+// ErrPermissionUnresolved means asking stopped before a verdict. The runner
+// leaves the call unresolved so its existing turn-close path records the cause.
+var ErrPermissionUnresolved = errors.New("tool permission was not resolved")
+
+// SettlementAbortError carries an infrastructure failure that must abort the
+// turn instead of becoming a tool result.
+type SettlementAbortError struct{ Err error }
+
+func (e *SettlementAbortError) Error() string { return e.Err.Error() }
+func (e *SettlementAbortError) Unwrap() error { return e.Err }
+
+// Permissions is the set of tools allowed by name. Materialize only announces
+// and settles entries set to true; a missing or false entry is denied.
 type Permissions map[string]bool
 
-// Materialized es el resultado de Materialize: las definiciones anunciables al
-// modelo y el asentador cerrado sobre ese set. El runner (M5) pone Definitions en
-// llm.Request.Tools y pasa Settle al loop de consumo.
+// Materialized contains the definitions announced to the model and a settlement
+// function closed over exactly that set.
 type Materialized struct {
 	Definitions []llm.ToolDef
 	Settle      SettleFunc
 }
 
-// UnknownToolError lo devuelve Settle cuando la Call nombra una tool que no esta
-// en el set materializado: desconocida para el registry o denegada por permisos
-// (en M7 tambien una stale por epoch). No se ejecuta nada (sin efectos
-// laterales). M5 lo traduce a Tool.Failed. Es un tipo (no un sentinel) para que
-// el mensaje nombre la tool y el llamador la inspeccione con errors.As.
+// UnknownToolError is returned when a call names a tool outside the materialized
+// set, whether unregistered or excluded by permissions. Nothing is executed.
 type UnknownToolError struct{ Name string }
 
 func (e *UnknownToolError) Error() string {
-	return fmt.Sprintf("tool %q desconocida o no permitida", e.Name)
+	return fmt.Sprintf("tool %q is unknown or not allowed", e.Name)
 }
 
-// Registry es el catalogo de tools del agente y su acotador de output. Es
-// inmutable tras NewRegistry (Materialize solo lee), asi que materializar y
-// asentar desde varias goroutines es seguro; el unico estado mutable compartido
-// es el OutputStore, que se candadea solo.
+// Registry is the agent's tool catalog and execution policy. Configuration is
+// protected by mu and snapshotted by Materialize; OutputStore protects its own
+// mutable state.
 type Registry struct {
-	tools   map[string]Tool
-	outputs *OutputStore
+	tools       map[string]Tool
+	outputs     *OutputStore
+	middlewares []Middleware
+	mu          sync.RWMutex
+	gate        permission.Gate
+	policy      permission.Policy
 }
 
-// NewRegistry arma el registry con su OutputStore y las tools dadas, indexadas por
-// nombre. Si dos tools comparten nombre gana la ultima (config del programa, no
-// input del modelo).
+// SetPermissionGate configures the built-in permission middleware. Configuration
+// is snapshotted by Materialize, so already-materialized settlements do not
+// change underneath an in-flight turn.
+func (r *Registry) SetPermissionGate(gate permission.Gate, policy permission.Policy) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.gate, r.policy = gate, policy
+}
+
+// Use appends execution middleware after the three built-ins. Configure a
+// registry before serving turns; Materialize snapshots the slice for each turn.
+func (r *Registry) Use(middlewares ...Middleware) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.middlewares = append(r.middlewares, middlewares...)
+}
+
+// NewRegistry indexes tools by name. If names collide, the final tool wins;
+// registration is host configuration rather than model input.
 func NewRegistry(outputs *OutputStore, tools ...Tool) *Registry {
 	m := make(map[string]Tool, len(tools))
 	for _, t := range tools {
@@ -77,13 +121,15 @@ func (r *Registry) Permissions() Permissions {
 	return permissions
 }
 
-// Materialize filtra el catalogo por permisos y devuelve las definiciones
-// anunciables y un Settle cerrado sobre las tools permitidas. Las Definitions van
-// ordenadas por nombre para que el request sea determinista (estabiliza el cache
-// de prompt del proveedor y los tests). El Settle captura solo las permitidas:
-// una Call fuera de ese set devuelve UnknownToolError ANTES de ejecutar, asi que
-// una tool denegada o desconocida no produce efectos laterales.
+// Materialize filters the catalog by permissions and returns definitions plus a
+// SettleFunc closed over the allowed tools. Definitions are sorted by name for
+// deterministic requests. A call outside the set returns UnknownToolError before
+// execution, so denied and unknown tools cannot produce side effects.
 func (r *Registry) Materialize(perms Permissions) Materialized {
+	r.mu.RLock()
+	gate, policy := r.gate, r.policy
+	extensions := append([]Middleware(nil), r.middlewares...)
+	r.mu.RUnlock()
 	allowed := make(map[string]Tool, len(r.tools))
 	defs := make([]llm.ToolDef, 0, len(r.tools))
 	for name, t := range r.tools {
@@ -99,32 +145,88 @@ func (r *Registry) Materialize(perms Permissions) Materialized {
 	}
 	sort.Slice(defs, func(i, j int) bool { return defs[i].Name < defs[j].Name })
 
-	settle := func(ctx context.Context, call Call) (Result, error) {
+	execute := func(ctx context.Context, call Call) (Result, error) {
 		t, ok := allowed[call.Name]
 		if !ok {
 			return Result{}, &UnknownToolError{Name: call.Name}
 		}
-		// The input goes through the repair layer BEFORE executing: an
-		// almost-valid input is repaired and an irreparable one returns
-		// the error without executing the tool. An empty input (tool
-		// with no arguments) skips the layer: there is nothing to repair.
-		input, notes := call.Input, []string(nil)
-		if len(input) > 0 {
-			var err error
-			input, notes, err = repair.Repair(call.Name, t.Schema(), call.Input)
+		return t.Execute(ctx, call.Input)
+	}
+	middlewares := []Middleware{
+		permissionMiddleware(gate, policy),
+		repairMiddleware(allowed),
+		outputMiddleware(r.outputs),
+	}
+	middlewares = append(middlewares, extensions...)
+	settle := execute
+	for i := len(middlewares) - 1; i >= 0; i-- {
+		settle = middlewares[i](settle)
+	}
+	return Materialized{Definitions: defs, Settle: settle}
+}
+
+func permissionMiddleware(gate permission.Gate, policy permission.Policy) Middleware {
+	return func(next SettleFunc) SettleFunc {
+		return func(ctx context.Context, call Call) (Result, error) {
+			if gate == nil || policy == nil {
+				return next(ctx, call)
+			}
+			sessionID := SessionIDFrom(ctx)
+			switch policy.Decide(sessionID, call) {
+			case permission.Deny:
+				return Result{}, ErrPermissionDenied
+			case permission.Ask:
+				request, _ := ctx.Value(permissionRequestKey{}).(PermissionRequester)
+				if request == nil {
+					return Result{}, ErrPermissionUnresolved
+				}
+				approved, err := request(ctx, permission.Request{SessionID: sessionID, CallID: call.ID, ToolName: call.Name, Input: call.Input})
+				if err != nil {
+					var abort *SettlementAbortError
+					if errors.As(err, &abort) {
+						return Result{}, err
+					}
+					return Result{}, ErrPermissionUnresolved
+				}
+				if !approved {
+					return Result{}, ErrPermissionDenied
+				}
+			}
+			return next(ctx, call)
+		}
+	}
+}
+
+func repairMiddleware(tools map[string]Tool) Middleware {
+	return func(next SettleFunc) SettleFunc {
+		return func(ctx context.Context, call Call) (Result, error) {
+			t, ok := tools[call.Name]
+			if !ok || len(call.Input) == 0 {
+				return next(ctx, call)
+			}
+			input, notes, err := repair.Repair(call.Name, t.Schema(), call.Input)
 			if err != nil {
 				return Result{}, err
 			}
+			call.Input = input
+			return next(context.WithValue(ctx, executionStateKey{}, &executionState{repairNotes: notes}), call)
 		}
-		res, err := t.Execute(ctx, input)
-		if err != nil {
-			return Result{}, err
-		}
-		// Repair notes are prepended BEFORE capping, so the <repair_note>
-		// header survives the capping and the model sees it.
-		capped := r.outputs.Cap(call.ID, repair.WithNotes(notes, res.Output))
-		capped.Diff = res.Diff // el diff (solo-UI) no se acota
-		return capped, nil
 	}
-	return Materialized{Definitions: defs, Settle: settle}
+}
+
+func outputMiddleware(outputs *OutputStore) Middleware {
+	return func(next SettleFunc) SettleFunc {
+		return func(ctx context.Context, call Call) (Result, error) {
+			res, err := next(ctx, call)
+			if err != nil {
+				return Result{}, err
+			}
+			if state, ok := ctx.Value(executionStateKey{}).(*executionState); ok {
+				res.Output = repair.WithNotes(state.repairNotes, res.Output)
+			}
+			capped := outputs.Cap(call.ID, res.Output)
+			capped.Diff = res.Diff
+			return capped, nil
+		}
+	}
 }

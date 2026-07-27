@@ -5,33 +5,23 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
-// Prompts base embebidos. Uno por familia de modelo mas un fallback.
-//
 //go:embed anthropic.txt
 var anthropicPrompt string
 
 //go:embed default.txt
 var defaultPrompt string
 
-// Prompt base de los endpoints locales (LM Studio, Ollama). A diferencia del default
-// (persona code-gen), establece el loop agentico y el protocolo de tools por
-// function-calling, sin el patron de salida "code-first / skipped:" que hacia que un
-// modelo local narrara la tool call como texto en vez de ejecutarla.
-//
 //go:embed local.txt
 var localPrompt string
 
-// Bloque de instrucciones para el modo plan, embebido. Se agrega al final de
-// la salida normal de Build.
-//
 //go:embed plan.txt
 var planInstructions string
 
-// Env son los datos de runtime que van en el bloque <env>. Se inyectan por
-// parametro (no se leen del reloj ni del SO aqui) para que Build sea pura.
+// Env contains the runtime data rendered in the <env> section.
 type Env struct {
 	WorkingDir   string
 	WorktreeRoot string
@@ -40,8 +30,32 @@ type Env struct {
 	Date         string
 }
 
-// Select elige el prompt base segun el id del modelo (substring case-insensitive).
-// Hoy solo distingue Anthropic; cualquier otro id cae al fallback.
+// Context contains all inputs available to a PromptSection renderer.
+type Context struct {
+	Base             string
+	Instructions     string
+	Skills           string
+	ModeInstructions string
+	Env              Env
+}
+
+// PromptSection is one independently rendered part of a system prompt. Sections
+// with equal orders retain their input order, and empty results are omitted.
+type PromptSection struct {
+	Order  int
+	Name   string
+	Render func(Context) string
+}
+
+const (
+	SectionOrderBase = iota * 100
+	SectionOrderInstructions
+	SectionOrderSkills
+	SectionOrderMode
+	SectionOrderEnvironment
+)
+
+// Select chooses the embedded base prompt for a model ID.
 func Select(modelID string) string {
 	if strings.Contains(strings.ToLower(modelID), "claude") {
 		return anthropicPrompt
@@ -49,49 +63,65 @@ func Select(modelID string) string {
 	return defaultPrompt
 }
 
-// Build concatena el prompt base (elegido por familia de modelo), las instrucciones
-// del repo, las skills disponibles y el bloque <env>. El contenido estable precede
-// al entorno dinamico para maximizar el prefijo reutilizable por el cache.
+// Build assembles the model prompt, keeping stable sections before runtime data.
 func Build(modelID string, env Env, instructions, skills string) string {
 	return assemble(Select(modelID), env, instructions, skills, "")
 }
 
-// BuildLocal arma el prompt de un endpoint local (LM Studio, Ollama) sobre el prompt
-// base local en vez de elegir por familia de modelo: los ids locales son arbitrarios,
-// asi que la familia no sirve para enrutar. Conserva el mismo orden que Build.
+// BuildLocal assembles the dedicated tool-calling prompt for local endpoints.
 func BuildLocal(env Env, instructions, skills string) string {
 	return assemble(localPrompt, env, instructions, skills, "")
 }
 
-// assemble concatena el contenido estable y deja el bloque <env> al final. Omite
-// instrucciones, skills o instrucciones de modo cuando vienen vacias.
 func assemble(base string, env Env, instructions, skills, modeInstructions string) string {
-	parts := []string{base}
-	if instructions != "" {
-		parts = append(parts, instructions)
+	return Assemble(Context{
+		Base:             base,
+		Instructions:     instructions,
+		Skills:           skills,
+		ModeInstructions: modeInstructions,
+		Env:              env,
+	}, StandardSections())
+}
+
+// StandardSections returns the built-in system-prompt sections. Callers may append
+// extension sections and pass the resulting slice to Assemble.
+func StandardSections() []PromptSection {
+	return []PromptSection{
+		{Order: SectionOrderBase, Name: "base", Render: func(ctx Context) string { return ctx.Base }},
+		{Order: SectionOrderInstructions, Name: "instructions", Render: func(ctx Context) string { return ctx.Instructions }},
+		{Order: SectionOrderSkills, Name: "skills", Render: func(ctx Context) string { return ctx.Skills }},
+		{Order: SectionOrderMode, Name: "mode", Render: func(ctx Context) string { return ctx.ModeInstructions }},
+		{Order: SectionOrderEnvironment, Name: "environment", Render: func(ctx Context) string { return renderEnv(ctx.Env) }},
 	}
-	if skills != "" {
-		parts = append(parts, skills)
+}
+
+// Assemble renders sections in stable Order sequence and joins non-empty results.
+func Assemble(ctx Context, sections []PromptSection) string {
+	ordered := append([]PromptSection(nil), sections...)
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Order < ordered[j].Order })
+
+	parts := make([]string, 0, len(ordered))
+	for _, section := range ordered {
+		if section.Render == nil {
+			continue
+		}
+		if rendered := section.Render(ctx); rendered != "" {
+			parts = append(parts, rendered)
+		}
 	}
-	if modeInstructions != "" {
-		parts = append(parts, modeInstructions)
-	}
-	parts = append(parts, renderEnv(env))
 	return strings.Join(parts, "\n\n")
 }
 
-// BuildPlan agrega las instrucciones estables del modo plan antes del bloque <env>.
+// BuildPlan adds the stable plan-mode contract before runtime data.
 func BuildPlan(modelID string, env Env, instructions, skills string) string {
 	return assemble(Select(modelID), env, instructions, skills, planInstructions)
 }
 
-// BuildLocalPlan es a BuildLocal lo que BuildPlan a Build: el prompt local mas el
-// contrato del modo plan.
+// BuildLocalPlan combines the local base prompt with the plan-mode contract.
 func BuildLocalPlan(env Env, instructions, skills string) string {
 	return assemble(localPrompt, env, instructions, skills, planInstructions)
 }
 
-// renderEnv arma el bloque <env> literal con dos espacios de indentacion.
 func renderEnv(env Env) string {
 	return fmt.Sprintf("<env>\n"+
 		"  Working directory: %s\n"+
@@ -108,7 +138,6 @@ func renderEnv(env Env) string {
 	)
 }
 
-// yesNo mapea el flag de git al texto que espera el bloque <env>.
 func yesNo(b bool) string {
 	if b {
 		return "yes"
@@ -116,9 +145,8 @@ func yesNo(b bool) string {
 	return "no"
 }
 
-// LoadInstructions sube desde dir hasta root inclusive y devuelve el primer
-// AGENTS.md o CLAUDE.md hallado, formateado con su ruta absoluta. Si no halla
-// ninguno devuelve "" y nil.
+// LoadInstructions searches from dir through root and returns the nearest
+// AGENTS.md or CLAUDE.md, formatted with its absolute path.
 func LoadInstructions(dir, root string) (string, error) {
 	candidates := []string{"AGENTS.md", "CLAUDE.md"}
 	current := dir
@@ -133,7 +161,7 @@ func LoadInstructions(dir, root string) (string, error) {
 				return "Instructions from: " + path + "\n" + string(content), nil
 			}
 		}
-		// Paramos tras procesar root (inclusive).
+		// Stop after processing root itself.
 		if current == root {
 			break
 		}

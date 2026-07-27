@@ -87,7 +87,12 @@ The existing child packages are the useful behavioral seams:
 
 - `session/runner` owns provider turns, tool settlement, continuation, and
   compaction orchestration;
-- `session/prompt` owns embedded system-prompt selection;
+- `session/prompt` owns embedded system-prompt selection and assembly. Prompt
+  content is contributed as an ordered `PromptSection` list; the standard base,
+  repository instructions, skills, mode contract, and runtime environment are
+  independent renderers. Stable ordering keeps the existing cache-friendly
+  output while allowing a host or extension to insert a section without
+  changing the assembler;
 - `session/subagent` owns child-agent execution over isolated session adapters.
 
 These packages depend on `session`; the domain module does not depend on them.
