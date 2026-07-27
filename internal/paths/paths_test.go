@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"testing"
 )
 
@@ -159,5 +160,75 @@ func TestArtifactPathsUseTheirXDGRoots(t *testing.T) {
 				t.Fatalf("path = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestDiscoveryDirs_ProjectBeforeHomeInCompatibilityOrder(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	project := filepath.Join(t.TempDir(), "project")
+
+	tests := []struct {
+		name string
+		kind string
+		dirs func(string) []string
+	}{
+		{name: "skills", kind: "skills", dirs: SkillDirs},
+		{name: "agents", kind: "agents", dirs: AgentDirs},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			want := []string{
+				filepath.Join(project, ".atenea", tt.kind),
+				filepath.Join(project, ".agents", tt.kind),
+				filepath.Join(project, ".claude", tt.kind),
+				filepath.Join(home, ".atenea", tt.kind),
+				filepath.Join(home, ".agents", tt.kind),
+				filepath.Join(home, ".claude", tt.kind),
+			}
+			if got := tt.dirs(project); !slices.Equal(got, want) {
+				t.Fatalf("dirs = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+func TestDiscoveryDirs_DeduplicateProjectWhenItIsHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	for name, dirs := range map[string]func(string) []string{"skills": SkillDirs, "agents": AgentDirs} {
+		t.Run(name, func(t *testing.T) {
+			got := dirs(home)
+			if len(got) != len(compatibilityDirectories) {
+				t.Fatalf("dirs = %v, want one entry per compatibility directory", got)
+			}
+		})
+	}
+}
+
+func TestDiscoveryDirs_UnresolvableHomeKeepsProjectDirectories(t *testing.T) {
+	t.Setenv("HOME", "")
+	project := t.TempDir()
+	want := []string{
+		filepath.Join(project, ".atenea", "agents"),
+		filepath.Join(project, ".agents", "agents"),
+		filepath.Join(project, ".claude", "agents"),
+	}
+	if got := AgentDirs(project); !slices.Equal(got, want) {
+		t.Fatalf("AgentDirs() = %v, want %v", got, want)
+	}
+}
+
+func TestBuiltinSkillDir_IsAteneaGlobalDiscoveryDirectory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	got, err := BuiltinSkillDir()
+	if err != nil {
+		t.Fatalf("BuiltinSkillDir() error = %v", err)
+	}
+	if want := SkillDirs(home)[0]; got != want {
+		t.Fatalf("BuiltinSkillDir() = %q, want %q", got, want)
 	}
 }

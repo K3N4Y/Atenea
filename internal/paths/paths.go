@@ -9,6 +9,12 @@ import (
 
 const productDirectory = "atenea"
 
+// compatibilityDirectories is ordered by ownership: Atenea's native layout,
+// the agent-agnostic convention, then Claude Code compatibility. Discovery is
+// first-wins, so this order is part of the interface and must remain identical
+// for skills and subagents.
+var compatibilityDirectories = [...]string{".atenea", ".agents", ".claude"}
+
 const (
 	databaseFile    = "atenea.db"
 	checkpointsDir  = "checkpoints"
@@ -109,6 +115,51 @@ func MCPConfig() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, mcpConfigFile), nil
+}
+
+// SkillDirs returns the ordered directories used for skill discovery. Project
+// definitions precede global definitions, and each base follows the shared
+// .atenea, .agents, .claude compatibility order. Duplicate paths are removed.
+func SkillDirs(root string) []string {
+	return discoveryDirs(root, "skills")
+}
+
+// AgentDirs returns the ordered directories used for subagent discovery. It has
+// exactly the same project, home, compatibility, and deduplication semantics as
+// SkillDirs.
+func AgentDirs(root string) []string {
+	return discoveryDirs(root, "agents")
+}
+
+// BuiltinSkillDir returns the global Atenea-owned skill directory. Built-in
+// skills are materialized there and then found through normal discovery.
+func BuiltinSkillDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, compatibilityDirectories[0], "skills"), nil
+}
+
+func discoveryDirs(root, kind string) []string {
+	bases := []string{root}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		bases = append(bases, home)
+	}
+
+	dirs := make([]string, 0, len(bases)*len(compatibilityDirectories))
+	seen := make(map[string]struct{}, cap(dirs))
+	for _, base := range bases {
+		for _, compatibilityDir := range compatibilityDirectories {
+			dir := filepath.Join(base, compatibilityDir, kind)
+			if _, exists := seen[dir]; exists {
+				continue
+			}
+			seen[dir] = struct{}{}
+			dirs = append(dirs, dir)
+		}
+	}
+	return dirs
 }
 
 func userDataDir() (string, error) {

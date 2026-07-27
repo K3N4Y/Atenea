@@ -5,9 +5,9 @@ import (
 	"io"
 	"log"
 	"os"
-	"path/filepath"
 
 	"github.com/K3N4Y/atenea/internal/dotenv"
+	"github.com/K3N4Y/atenea/internal/paths"
 	"github.com/K3N4Y/atenea/internal/providerconfig"
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/skill"
@@ -141,12 +141,12 @@ func openProviders(ctx context.Context) *providerconfig.Service {
 // question it exists to answer. Extraction never overwrites, so calling it costs
 // nothing and cannot hide a local edit.
 func ExtractBuiltinSkills() {
-	home, err := os.UserHomeDir()
+	destination, err := paths.BuiltinSkillDir()
 	if err != nil {
 		log.Printf("atenea: could not resolve the home directory to extract the built-in skills: %v", err)
 		return
 	}
-	if err := skill.ExtractBuiltins(filepath.Join(home, ".atenea", "skills")); err != nil {
+	if err := skill.ExtractBuiltins(destination); err != nil {
 		log.Printf("atenea: could not extract the built-in skills: %v", err)
 	}
 }

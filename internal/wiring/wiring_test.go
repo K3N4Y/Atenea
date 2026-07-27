@@ -44,18 +44,20 @@ func TestDefaultSkillDirs_ProjectBeforeGlobalDeduped(t *testing.T) {
 	}
 }
 
-// TestDefaultAgentDirs_ProjectOnly pins the asymmetry with the skills as it
-// behaves today: subagents are searched for under the project root only, and
-// .claude/agents is not read. The audit reads both as probably bugs; resolving
-// them is R7's one ordered list, and this test is what makes that change visible
-// when it happens instead of silent.
-func TestDefaultAgentDirs_ProjectOnly(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+// The compatibility wrapper follows the shared paths policy: project before
+// home, including Atenea, agent-standard, and Claude Code layouts.
+func TestDefaultAgentDirs_ProjectBeforeGlobal(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 
 	got := DefaultAgentDirs("/proj")
 	want := []string{
 		filepath.Join("/proj", ".atenea", "agents"),
 		filepath.Join("/proj", ".agents", "agents"),
+		filepath.Join("/proj", ".claude", "agents"),
+		filepath.Join(home, ".atenea", "agents"),
+		filepath.Join(home, ".agents", "agents"),
+		filepath.Join(home, ".claude", "agents"),
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("DefaultAgentDirs = %v,\n want %v", got, want)

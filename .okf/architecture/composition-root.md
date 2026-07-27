@@ -214,14 +214,15 @@ headless entrypoint of R4.3 that assembled a `wiring.Config` directly would get 
 output cap and no skills. A zero value is only a contract if the function that
 reads it enforces it, so `Build` enforces it, in one `Config.resolve`.
 
-### The two discovery asymmetries were preserved, not chosen
+### Skill and subagent discovery share one compatibility contract
 
-`DefaultSkillDirs` searches the project **and** `$HOME` and honors `.claude/`;
-`DefaultAgentDirs` searches the project only and does not. The audit reads both as
-probably bugs, and R7 is where the one ordered list they should both derive from
-resolves them. Promoting a literal to a field is not the place to change what it
-promotes, so the defaults are byte-for-byte what the literals were, with a test on
-each that will make the R7 change visible instead of silent.
+`paths.SkillDirs` and `paths.AgentDirs` search the project before `$HOME`, then
+honor `.atenea/`, `.agents/`, and `.claude/` in that order beneath each base.
+Discovery is first-wins, so project definitions override global definitions and
+native Atenea definitions override compatibility layouts. Identical paths are
+deduplicated while preserving that order. `wiring.Config.resolve` consumes this
+shared policy; the former `DefaultSkillDirs` and `DefaultAgentDirs` functions are
+compatibility wrappers only.
 
 ## The offline demo provider
 
@@ -260,7 +261,7 @@ where discovery scans, another asserts `~/.atenea` is never created unless asked
 
 - **The terminal app has the built-in skills.** They are extracted into
   `~/.atenea/skills` at launch, which is one of the global directories
-  `wiring.DefaultSkillDirs` already scans, so an extracted skill is discovered exactly
+  `paths.SkillDirs` scans, so an extracted skill is discovered exactly
   like one the user wrote and contributes its own slash command. Extraction never
   overwrites an existing file, so it is idempotent and local edits survive.
 - **The demo greeting is English** (`Hello from atenea.`), which is what moving

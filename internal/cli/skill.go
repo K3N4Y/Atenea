@@ -9,8 +9,8 @@ import (
 	"text/tabwriter"
 
 	"github.com/K3N4Y/atenea/internal/host"
+	"github.com/K3N4Y/atenea/internal/paths"
 	"github.com/K3N4Y/atenea/internal/skill"
-	"github.com/K3N4Y/atenea/internal/wiring"
 )
 
 // skillCommand is `atenea skill`: what discovery found, and why it did not find
@@ -207,7 +207,7 @@ func discovered(env Env, path, cwd string) ([]string, []skill.Entry, int) {
 	// global directory, and a listing that omitted them would describe a workspace
 	// nobody runs. It never overwrites, so it cannot hide a local edit.
 	host.ExtractBuiltinSkills()
-	dirs := wiring.DefaultSkillDirs(root)
+	dirs := paths.SkillDirs(root)
 	entries, err := skill.Scan(dirs...)
 	if err != nil {
 		fmt.Fprintln(env.Stderr, path+":", err)

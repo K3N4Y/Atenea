@@ -22,6 +22,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/command"
 	"github.com/K3N4Y/atenea/internal/event"
 	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/paths"
 	"github.com/K3N4Y/atenea/internal/permission"
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/session/prompt"
@@ -196,63 +197,16 @@ func DefaultPolicy(catalog tool.Catalog) permission.Policy {
 	return permission.NewEffectsPolicy(catalog)
 }
 
-// DefaultSkillDirs returns the directories skills are discovered in when Config
-// leaves SkillDirs nil: first the project's (root) and then the global ones (the
-// user's home), so a project skill overrides a global one of the same name
-// (skill.Discover is first-wins). Under each base it looks at .atenea/skills
-// (atenea's own), .agents/skills (the tool-agnostic standard shared between
-// agents) and .claude/skills (Claude Code), which is how global skills come to
-// live in ~/.agents/skills, ~/.claude/skills and so on. If the home cannot be
-// resolved only the project's remain. Identical paths (root IS the home, say) are
-// deduplicated so the same tree is not walked twice.
-//
-// The slice is fresh on every call, because extending the defaults is done by
-// appending to it and a shared backing array is how one caller's extension shows
-// up in another's list.
+// DefaultSkillDirs is retained for compatibility. New callers use
+// paths.SkillDirs, which owns the discovery layout.
 func DefaultSkillDirs(root string) []string {
-	subdirs := []string{
-		filepath.Join(".atenea", "skills"),
-		filepath.Join(".agents", "skills"),
-		filepath.Join(".claude", "skills"),
-	}
-	bases := []string{root}
-	if home, err := os.UserHomeDir(); err != nil {
-		log.Printf("atenea: could not resolve the home directory for the global skills: %v", err)
-	} else if home != "" {
-		bases = append(bases, home)
-	}
-	var dirs []string
-	seen := map[string]bool{}
-	for _, base := range bases {
-		for _, sub := range subdirs {
-			dir := filepath.Join(base, sub)
-			if seen[dir] {
-				continue
-			}
-			seen[dir] = true
-			dirs = append(dirs, dir)
-		}
-	}
-	return dirs
+	return paths.SkillDirs(root)
 }
 
-// DefaultAgentDirs returns the directories subagent definitions are discovered in
-// when Config leaves AgentDirs nil: .atenea/agents (atenea's own) then
-// .agents/agents (the standard), under the project root, so the project's own
-// definition overrides the standard one of the same name.
-//
-// The two asymmetries with DefaultSkillDirs are preserved rather than chosen:
-// subagents are not looked for in the home and .claude/agents is not read, while
-// skills do both. The audit reads those as probably bugs and R7 is where the one
-// ordered list both derive from resolves them — promoting a value to a field is
-// not the place to change what it promotes.
-//
-// Fresh slice per call, for the reason DefaultSkillDirs states.
+// DefaultAgentDirs is retained for compatibility. New callers use
+// paths.AgentDirs, which owns the discovery layout.
 func DefaultAgentDirs(root string) []string {
-	return []string{
-		filepath.Join(root, ".atenea", "agents"),
-		filepath.Join(root, ".agents", "agents"),
-	}
+	return paths.AgentDirs(root)
 }
 
 // DefaultPlanMode is the plan surface Build applies when Config leaves PlanMode
@@ -280,10 +234,10 @@ func (c Config) resolve() Config {
 		c.Policy = DefaultPolicy
 	}
 	if c.SkillDirs == nil {
-		c.SkillDirs = DefaultSkillDirs(c.Root)
+		c.SkillDirs = paths.SkillDirs(c.Root)
 	}
 	if c.AgentDirs == nil {
-		c.AgentDirs = DefaultAgentDirs(c.Root)
+		c.AgentDirs = paths.AgentDirs(c.Root)
 	}
 	if c.PlanMode == nil {
 		plan := DefaultPlanMode()

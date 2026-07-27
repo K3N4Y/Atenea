@@ -1299,17 +1299,17 @@ name and the filesystem layout:
   `XDG_DATA_HOME`/`XDG_CACHE_HOME` with `os.UserConfigDir()` as fallback
 - `DB()`, `Checkpoints()`, `Credentials()`, `Providers()`, `ModelsCache()`,
   `MCPConfig()`
-- `SkillDirs(root)`, `AgentDirs(root)` from one ordered, documented list — since
+- ~~`SkillDirs(root)`, `AgentDirs(root)` from one ordered, documented list — since
   R4.2 those two lists live as `wiring.DefaultSkillDirs`/`DefaultAgentDirs`, which
   is where they are documented and tested today, and they are what this package
-  takes over
+  takes over~~ `[done 2026-07-27]`
 - One `EnvPrefix = "ATENEA_"` constant so `ATENEA_DB`, `ATENEA_CHECKPOINTS`,
   `ATENEA_CONFIG_DIR` are derived, not re-typed
 - One `Product` / `Version` pair, wired from `cmd/atenea/version.go`, and passed
   to the MCP client identity (`manager.go:93` currently hardcodes `"dev"`)
 
-While consolidating, fix the two discovery asymmetries: agents should search
-`$HOME` and honor `.claude/agents` exactly as skills do. ~~`ExtractBuiltins`
+While consolidating, ~~fix the two discovery asymmetries: agents should search
+`$HOME` and honor `.claude/agents` exactly as skills do.~~ `[done 2026-07-27]` ~~`ExtractBuiltins`
 should run from the shared host (R4) so the TUI gets built-in skills too.~~
 `[done 2026-07-26]` with R4.1 — but the destination path is still assembled from
 `os.UserHomeDir()` inside `internal/host`, which is one more caller for this
