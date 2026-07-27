@@ -14,6 +14,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/K3N4Y/atenea/internal/host"
+	"github.com/K3N4Y/atenea/internal/paths"
 )
 
 // Env is everything the dispatch takes from the process. Nothing in this package
@@ -21,6 +22,9 @@ import (
 // surface — argument parsing, exit codes, the streams — testable without a
 // terminal and without a subprocess.
 type Env struct {
+	// Identity is the release identity passed through to integrations opened by a
+	// headless host. Its zero value identifies a development build.
+	Identity paths.Identity
 	// Args are the arguments after the program name, exactly as they arrived.
 	Args []string
 	// Stdin is the piped prompt. It is only read when StdinIsTerminal is false.

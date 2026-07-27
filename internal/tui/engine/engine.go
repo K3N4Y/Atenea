@@ -22,6 +22,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/host"
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/mcpclient"
+	"github.com/K3N4Y/atenea/internal/paths"
 	"github.com/K3N4Y/atenea/internal/permission"
 	"github.com/K3N4Y/atenea/internal/providerconfig"
 	"github.com/K3N4Y/atenea/internal/session"
@@ -33,6 +34,7 @@ import (
 // Config describes the headless agent assembly: the workspace root, the LLM
 // provider and the durable store.
 type Config struct {
+	Identity    paths.Identity
 	Root        string
 	Provider    llm.Provider
 	Store       session.Store
@@ -180,7 +182,7 @@ func New(cfg Config) *Engine {
 	e.store = event.NewEmittingStore(cfg.Store, bus)
 	e.checkpoints = cfg.Checkpoints
 	e.models = cfg.Models
-	e.mcp = mcpclient.NewManager(cfg.Root)
+	e.mcp = mcpclient.NewManagerWithIdentity(cfg.Root, cfg.Identity)
 	e.wiring = wiring.Config{
 		Root:     cfg.Root,
 		Provider: cfg.Provider,

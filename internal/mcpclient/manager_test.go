@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/K3N4Y/atenea/internal/paths"
 	"github.com/K3N4Y/atenea/internal/tool"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -57,6 +58,27 @@ func TestManager_RejectsInvalidServerConfig(t *testing.T) {
 	}
 	if _, err := manager.Connect(context.Background(), ServerConfig{Name: "valid"}); err == nil {
 		t.Fatal("Connect succeeded without command")
+	}
+}
+
+func TestManager_AdvertisesInjectedIdentity(t *testing.T) {
+	manager := NewManagerWithIdentity(t.TempDir(), paths.NewIdentity("v1.2.3"))
+	t.Cleanup(manager.Close)
+
+	_, err := manager.Connect(context.Background(), ServerConfig{
+		Name: "identity", Command: os.Args[0],
+		Args: []string{"-test.run=TestMCPHelperProcess"},
+		Env:  map[string]string{"ATENEA_MCP_HELPER": "1", "ATENEA_MCP_HELPER_IDENTITY_PROBE": "1"},
+	})
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	result, err := manager.Tools()[0].Execute(context.Background(), json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.Output != "atenea v1.2.3" {
+		t.Fatalf("client identity = %q, want %q", result.Output, "atenea v1.2.3")
 	}
 }
 
@@ -128,12 +150,21 @@ func TestMCPHelperProcess(t *testing.T) {
 	if os.Getenv("ATENEA_MCP_HELPER") != "1" {
 		return
 	}
-	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0.0"}, nil)
+	var clientIdentity string
+	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0.0"}, &mcp.ServerOptions{
+		InitializedHandler: func(_ context.Context, request *mcp.InitializedRequest) {
+			info := request.Session.InitializeParams().ClientInfo
+			clientIdentity = info.Name + " " + info.Version
+		},
+	})
 	server.AddTool(&mcp.Tool{
 		Name:        "echo",
 		Description: "Returns pong.",
 		InputSchema: map[string]any{"type": "object"},
 	}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if os.Getenv("ATENEA_MCP_HELPER_IDENTITY_PROBE") == "1" {
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: clientIdentity}}}, nil
+		}
 		if os.Getenv("ATENEA_MCP_HELPER_ENV_PROBE") == "1" {
 			output := fmt.Sprintf("provider=%s explicit=%s", os.Getenv("OPENAI_API_KEY"), os.Getenv("EXPLICIT_TOKEN"))
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: output}}}, nil

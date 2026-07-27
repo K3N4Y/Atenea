@@ -23,6 +23,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/checkpoint"
 	"github.com/K3N4Y/atenea/internal/cli"
 	"github.com/K3N4Y/atenea/internal/host"
+	"github.com/K3N4Y/atenea/internal/paths"
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/tui"
 	"github.com/K3N4Y/atenea/internal/tui/engine"
@@ -34,6 +35,7 @@ func main() {
 		Stdin:           os.Stdin,
 		Stdout:          os.Stdout,
 		Stderr:          os.Stderr,
+		Identity:        paths.NewIdentity(version),
 		Version:         versionString(),
 		StdinIsTerminal: isTerminal(os.Stdin),
 		Interactive:     runInteractive,
@@ -72,6 +74,7 @@ func runInteractive() error {
 	// skills, the workspace root, the SQLite store and the provider service the
 	// desktop app also reads, and the sitting. See internal/host.
 	h := host.New(context.Background(), host.Config{
+		Identity:             paths.NewIdentity(version),
 		Dotenv:               ".env",
 		ExtractBuiltinSkills: true,
 	})
@@ -80,6 +83,7 @@ func runInteractive() error {
 	active := h.Providers.Active()
 
 	eng := engine.New(engine.Config{
+		Identity:    h.Identity,
 		Root:        h.Root,
 		Provider:    h.Providers.Provider(),
 		Store:       h.Store,

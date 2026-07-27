@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/K3N4Y/atenea/agentcore/permission"
+	"github.com/K3N4Y/atenea/internal/paths"
 	"github.com/K3N4Y/atenea/internal/tool"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -53,13 +54,21 @@ type server struct {
 // Manager owns the subprocesses and MCP sessions for one application instance.
 // It is safe for the runner and the settings UI to access concurrently.
 type Manager struct {
-	mu      sync.RWMutex
-	root    string
-	servers map[string]*server
+	mu       sync.RWMutex
+	root     string
+	identity paths.Identity
+	servers  map[string]*server
 }
 
 func NewManager(root string) *Manager {
-	return &Manager{root: root, servers: make(map[string]*server)}
+	return NewManagerWithIdentity(root, paths.Identity{})
+}
+
+// NewManagerWithIdentity constructs a manager that advertises identity during
+// MCP initialization. The identity is copied, so it cannot change underneath
+// concurrent connections.
+func NewManagerWithIdentity(root string, identity paths.Identity) *Manager {
+	return &Manager{root: root, identity: identity.OrDevelopment(), servers: make(map[string]*server)}
 }
 
 // SetRoot updates the root advertised to connected MCP servers.
@@ -91,7 +100,7 @@ func (m *Manager) Connect(ctx context.Context, config ServerConfig) (ServerStatu
 		return ServerStatus{}, fmt.Errorf("MCP %q is already connected", config.Name)
 	}
 
-	client := mcp.NewClient(&mcp.Implementation{Name: "atenea", Version: "dev"}, nil)
+	client := mcp.NewClient(&mcp.Implementation{Name: m.identity.Product, Version: m.identity.Version}, nil)
 	client.AddRoots(&mcp.Root{URI: rootURI(root), Name: filepath.Base(root)})
 	command := exec.Command(config.Command, config.Args...)
 	command.Dir = config.Cwd

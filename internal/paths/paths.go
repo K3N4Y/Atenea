@@ -7,7 +7,36 @@ import (
 	"runtime"
 )
 
-const productDirectory = "atenea"
+const (
+	Product            = "atenea"
+	DevelopmentVersion = "dev"
+	productDirectory   = Product
+)
+
+// Identity is the immutable product identity advertised to integrations.
+// NewIdentity supplies the development version for callers that have no
+// release metadata, which keeps tests and source builds honest.
+type Identity struct {
+	Product string
+	Version string
+}
+
+func NewIdentity(version string) Identity {
+	if version == "" {
+		version = DevelopmentVersion
+	}
+	return Identity{Product: Product, Version: version}
+}
+
+func (i Identity) OrDevelopment() Identity {
+	if i.Product == "" {
+		i.Product = Product
+	}
+	if i.Version == "" {
+		i.Version = DevelopmentVersion
+	}
+	return i
+}
 
 // EnvPrefix namespaces environment variables owned by Atenea. Provider
 // credential variables are catalog data and intentionally do not use it.

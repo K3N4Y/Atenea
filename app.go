@@ -87,7 +87,7 @@ func newAppWithHost(h *host.Host, emit event.EmitFunc) *App {
 	a.term = terminal.NewManager()
 	emitting := event.NewEmittingStore(h.Store, a.bus)
 	a.workspace = wailsworkspace.New(wailsworkspace.Config{
-		Root: h.Root,
+		Root: h.Root, Identity: h.Identity,
 		// The switchable handle is stable: choosing another model changes what it
 		// delegates to, not what is wired, so the rebuild exists only to cut the runs
 		// that came from the previous model.

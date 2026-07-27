@@ -14,6 +14,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/host"
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/mcpclient"
+	"github.com/K3N4Y/atenea/internal/paths"
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/tool"
 	"github.com/K3N4Y/atenea/internal/wiring"
@@ -21,7 +22,8 @@ import (
 
 // Config contains the stable dependencies shared by every workspace build.
 type Config struct {
-	Root string
+	Identity paths.Identity
+	Root     string
 	// Provider is the handle every build wires, not the adapter of the moment: it
 	// is switchable, so selecting another model swaps what it delegates to without
 	// this manager rebuilding anything.
@@ -60,7 +62,7 @@ func New(cfg Config) *Manager {
 		store:       cfg.Store,
 		bus:         cfg.Bus,
 		sitting:     cfg.Sitting,
-		mcp:         mcpclient.NewManager(cfg.Root),
+		mcp:         mcpclient.NewManagerWithIdentity(cfg.Root, cfg.Identity),
 	}
 	m.lifecycleMu.Lock()
 	m.rebuildLocked(cfg.Root)

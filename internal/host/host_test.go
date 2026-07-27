@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/K3N4Y/atenea/internal/paths"
 	"github.com/K3N4Y/atenea/internal/providerconfig"
 	"github.com/K3N4Y/atenea/internal/session"
 )
@@ -20,6 +21,18 @@ func injected(t *testing.T) Config {
 		t.Fatalf("open provider service: %v", err)
 	}
 	return Config{Store: session.NewMemoryStore(), Providers: providers}
+}
+
+func TestNew_PreservesInjectedIdentityAndDefaultsDevelopment(t *testing.T) {
+	releaseConfig := injected(t)
+	releaseConfig.Identity = paths.NewIdentity("v1.2.3")
+	if got := New(context.Background(), releaseConfig).Identity; got != releaseConfig.Identity {
+		t.Fatalf("release identity = %+v, want %+v", got, releaseConfig.Identity)
+	}
+
+	if got := New(context.Background(), injected(t)).Identity; got != paths.NewIdentity(paths.DevelopmentVersion) {
+		t.Fatalf("development identity = %+v", got)
+	}
 }
 
 // Which environment key selects which provider is providerconfig's answer and its

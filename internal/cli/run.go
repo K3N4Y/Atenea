@@ -126,6 +126,7 @@ func execute(env Env, t turn) int {
 	// difference between the hosts that nothing announces. In a release build the
 	// .env is compiled out, so it only ever loads during development.
 	h := env.assemble(ctx, host.Config{
+		Identity:             env.Identity,
 		Root:                 t.root,
 		Dotenv:               ".env",
 		ExtractBuiltinSkills: true,

@@ -1307,8 +1307,12 @@ name and the filesystem layout:
   `ATENEA_CONFIG_DIR` are derived, not re-typed~~ `[done 2026-07-27]`.
   `ATENEA_CONFIG_DIR` names the Atenea config root directly and takes precedence
   over `XDG_CONFIG_HOME`; provider credential names remain catalog-owned data.
-- One `Product` / `Version` pair, wired from `cmd/atenea/version.go`, and passed
-  to the MCP client identity (`manager.go:93` currently hardcodes `"dev"`)
+- ~~One `Product` / `Version` pair, wired from `cmd/atenea/version.go`, and passed
+  to the MCP client identity (`manager.go:93` currently hardcodes `"dev"`)~~
+  `[done 2026-07-27]` `paths.Identity` is immutable per host, defaults source and
+  test builds to `atenea dev`, and carries the release version from the CLI
+  boundary through interactive and headless assembly. Desktop and terminal MCP
+  managers receive that host identity explicitly, with no mutable package state.
 
 While consolidating, ~~fix the two discovery asymmetries: agents should search
 `$HOME` and honor `.claude/agents` exactly as skills do.~~ `[done 2026-07-27]` ~~`ExtractBuiltins`

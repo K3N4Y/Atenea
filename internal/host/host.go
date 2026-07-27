@@ -17,6 +17,7 @@ import (
 // the production assembly minus the two startup side effects, which a test wants
 // off and both entrypoints turn on.
 type Config struct {
+	Identity paths.Identity
 	// Root anchors the agent: the file and exec tools, skill and subagent
 	// discovery, and the system prompt. Empty resolves the process working
 	// directory, falling back to "." when even that fails.
@@ -44,6 +45,7 @@ type Config struct {
 // read directly while h.Sitting is what a manager receives whole.
 type Host struct {
 	*Sitting
+	Identity paths.Identity
 	// Root is the workspace the agent starts anchored to. The desktop app moves it
 	// live through App.SetWorkspace; the terminal app keeps the one it launched in.
 	Root string
@@ -73,6 +75,7 @@ func New(ctx context.Context, cfg Config) *Host {
 	}
 	h := &Host{
 		Sitting:   NewSitting(),
+		Identity:  cfg.Identity.OrDevelopment(),
 		Root:      cfg.Root,
 		Store:     cfg.Store,
 		Providers: cfg.Providers,
