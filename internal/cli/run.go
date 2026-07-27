@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/K3N4Y/atenea/internal/agent"
+	composer "github.com/K3N4Y/atenea/internal/command"
 	"github.com/K3N4Y/atenea/internal/event"
 	"github.com/K3N4Y/atenea/internal/host"
+	"github.com/K3N4Y/atenea/internal/mcpclient"
 	"github.com/K3N4Y/atenea/internal/permission"
 	"github.com/K3N4Y/atenea/internal/providerconfig"
 	"github.com/K3N4Y/atenea/internal/session"
@@ -164,6 +166,22 @@ func execute(env Env, t turn) int {
 		}
 	})
 	store := event.NewEmittingStore(h.Store, bus)
+	mcp := mcpclient.NewManagerWithRuntime(h.Root, h.Identity, h.Providers.Provider(), func() string { return h.Providers.Active().Model })
+	defer mcp.Close()
+	configs, err := mcpclient.LoadConfig(h.Root)
+	if err != nil {
+		fmt.Fprintln(env.Stderr, "atenea run: load MCP configuration:", err)
+		return ExitStartup
+	}
+	for _, config := range configs {
+		if !config.AutoConnect {
+			continue
+		}
+		if _, err := mcp.Connect(ctx, config); err != nil {
+			fmt.Fprintln(env.Stderr, "atenea run: auto-connect:", err)
+			return ExitStartup
+		}
+	}
 
 	refused := &denials{}
 	built := wiring.Build(wiring.Config{
@@ -184,11 +202,14 @@ func execute(env Env, t turn) int {
 		LocalPrompt: func() bool {
 			return h.Providers.Active().LocalModels
 		},
-		NextID: wiring.NewIDGen(),
-		Mode:   h.Agent.Mode,
-		Policy: refused.over(t.permissions.policy),
+		NextID:           wiring.NewIDGen(),
+		Mode:             h.Agent.Mode,
+		Policy:           refused.over(t.permissions.policy),
+		MCPTools:         mcp.Tools(),
+		PersistentGrants: mcp.PermissionRules(),
 	})
-	h.Agent.Configure(built.Runner, built.Commands)
+	commands := append(built.Commands.List(), mcp.Commands()...)
+	h.Agent.Configure(built.Runner, composer.New(commands, mcp.Mentions()...))
 	out.attach(newSink(t.format, env.Stdout, env.Stderr, built.Tools))
 
 	sessionID := t.sessionID

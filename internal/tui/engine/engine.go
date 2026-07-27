@@ -204,6 +204,9 @@ func New(cfg Config) *Engine {
 		Mode:        e.agent.Mode,
 	}
 	e.rewire()
+	if configs, err := mcpclient.LoadConfig(cfg.Root); err == nil {
+		e.mcp.Start(configs, e.rewire)
+	}
 	return e
 }
 

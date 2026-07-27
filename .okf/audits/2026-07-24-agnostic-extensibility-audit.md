@@ -1,6 +1,6 @@
 ---
 updated_at: 2026-07-27
-summary: Audit of how agnostic atenea's seams are, and what to change to enable third-party integrations, contributions, and a plugin system. R1 through R5, R7, and R8.1 through R8.4 are done; the remaining recommendations stay open.
+summary: Audit of how agnostic atenea's seams are, and what to change to enable third-party integrations, contributions, and a plugin system. R1 through R5, R7, and R8 are done; the remaining recommendations stay open.
 ---
 
 # Agnosticism and extensibility audit — atenea
@@ -76,7 +76,7 @@ of them delete code.
 | CLI / headless | **Good** — the complete R4 surface over a two-level stdlib-`flag` dispatch and no CLI framework: `atenea run` (NDJSON of the durable stream, a result document, six exit codes, three effect-derived permission modes, `--session` on the shared store) plus `atenea mcp list\|add\|remove` and `atenea skill list\|validate`, which declare and inspect what a run reads and need no provider to do it (R4.3, R4.4) | `internal/cli`, `internal/permission/unattended.go`, `cmd/atenea/main.go` |
 | Public API | **Partial** — 5 importable contract packages under `agentcore/` plus 2 contract test kits, boundary enforced by test; the tool capability interfaces landed with R2, message content parts with R3.6 (the first breaking change, taken deliberately while nothing promises stability); implementations still private, no stability promise yet (R1.3, R1.4, R2, R3 done) | `agentcore/`, `agentcore/boundary_test.go`, `agentcore/{tool/tooltest,llm/llmtest}` |
 | Branding/paths | **Weak** — `atenea` literal in 6+ path builders, no XDG | §3.6 |
-| MCP as plugin substrate | **Partial** — tools, namespaced composer prompts/resources, opt-in host-model sampling, remote transports, and durable trust are shared by both hosts; lifecycle hardening remains | §3.8 |
+| MCP as plugin substrate | **Good** — remote transports, durable trust, shared tools/prompts/resources/sampling, and opt-in supervised lifecycle are consistent across all hosts | §3.8 |
 | Contributor docs | **Weak** — no CONTRIBUTING; `AGENTS.md` points at two files that do not exist; LICENSE now present (R1.2 done) | §3.9 |
 
 ## 3. Findings
@@ -386,8 +386,9 @@ Gaps that keep it from being a plugin substrate:
   whole, which is what the panel shows. What remains is the *config schema*: no
   per-server declared sensitivity and no persisted "trust this server" allowlist —
   see R8.2.
-- **Never auto-connects** (`.okf/architecture/mcp.md:11-12`) — every session
-  starts with zero servers until the user acts.
+- ~~**Never auto-connects.**~~ `[done 2026-07-27]` R8.5 added explicit
+  `autoConnect`, separate per-server connection and call budgets, observable
+  health, bounded restart backoff, and deterministic identity across reconnects.
 - ~~**Invisible to subagents.**~~ `[done 2026-07-27]` R8.3 assembles the current
   `cfg.MCPTools` snapshot into both registries. A subagent definition still has
   to name a remote tool, so connection does not widen its authority, and its
@@ -1373,9 +1374,14 @@ Work to make it a genuine plugin substrate:
    server-namespaced, reconnect replaces the whole snapshot, content failures
    stop admission, and sampling is advertised only after durable per-server
    authorization. This is the difference between "tool bridge" and "plugin".
-5. **Lifecycle**: opt-in auto-connect for declared servers (today always manual),
-   per-server connect/call timeouts, health and restart-with-backoff, and stable
-   tool names across reconnects.
+5. ~~**Lifecycle**: opt-in auto-connect for declared servers, per-server
+   connect/call timeouts, health and restart-with-backoff, and stable tool names
+   across reconnects.~~ `[done 2026-07-27]` One manager owns the state machine
+   for both interactive hosts; headless connects the same opt-in set before
+   prompt admission. Capability snapshots disappear before retry, exponential
+   backoff resets on success and cancels on disconnect/shutdown, call budgets
+   cover tools/prompts/resources independently of initialization, and normalized
+   name collisions reject the connection rather than changing identity.
 
 Explicitly rejected alternatives, so they are not revisited by accident:
 
@@ -1482,8 +1488,9 @@ boundary test's ban on third-party imports.
 configuring what it will find when it starts, and the TTY-free end-to-end test the
 phase also unlocked is what its own tests are written as.*
 
-**Phase 3 — plugin substrate.** R8 MCP transports, permissions, subagent
-exposure, prompts/resources/sampling, lifecycle. R9 unified manifests +
+**Phase 3 — plugin substrate. R8 complete (2026-07-27).** R8 MCP transports,
+permissions, subagent exposure, prompts/resources/sampling, and lifecycle are
+complete. R9 unified manifests +
 `validate`.
 *Outcome: a third party ships an extension without touching this repo.*
 

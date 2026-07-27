@@ -1,6 +1,6 @@
 ---
 updated_at: 2026-07-27
-summary: MCP tools, prompts, resources, and authorized host-model sampling shared by both interactive hosts.
+summary: Supervised MCP tools, prompts, resources, and authorized host-model sampling shared by every host.
 ---
 
 # MCP servers
@@ -8,9 +8,9 @@ summary: MCP tools, prompts, resources, and authorized host-model sampling share
 Atenea connects to local MCP servers over stdio and hosted servers over
 Streamable HTTP or legacy HTTP+SSE. Server definitions live in
 shared JSON config files — the single source of truth for the desktop app, the
-TUI and the `atenea mcp` subcommand (see "Configuration files" below). Opening
-Atenea never launches a configured process: every configured server starts only
-after the user explicitly connects it.
+TUI and the `atenea mcp` subcommand (see "Configuration files" below). A
+declaration remains inert by default. Setting `autoConnect: true` opts it into
+startup and supervised restart in the desktop app, TUI, and `atenea run`.
 
 Declaring a server and connecting one are separate acts, and the surfaces split
 along that line. The desktop panel and the TUI picker do both, because they are
@@ -38,9 +38,20 @@ to open connects what it finds.
 5. The app rebuilds the normal runner registry. The newly materialized tools are
    available to subsequent turns; disconnecting removes them and closes the
    subprocess.
-6. The manager waits for every client session. If an MCP process exits or closes
-   its stdio connection unexpectedly, it removes that server from the active
-   status so the Settings panel shows it as disconnected.
+6. The manager waits for every client session. An opted-in server that exits is
+   removed from the capability snapshot immediately and restarted with bounded
+   exponential backoff. Success resets the backoff; explicit disconnect and
+   shutdown cancel pending waits and sessions.
+
+Health is `disconnected`, `connecting`, `healthy`, `restarting`, or `failed`,
+with the latest safe error text. Snapshot changes rewire every capability
+together. Tool identity is a pure function of server and remote names, including
+the long-name hash, so reconnect cannot rename a tool; normalized-name
+collisions reject the complete connection deterministically.
+
+`connectTimeoutMs` bounds transport initialization and discovery (30 seconds by
+default). `callTimeoutMs` independently bounds every tool, prompt, and resource
+invocation (60 seconds by default). Caller cancellation still wins when earlier.
 
 Prompts and resources use one namespaced composer substrate in both hosts. An
 MCP prompt `review` from server `docs` appears as `/docs:review`; invocation
@@ -98,7 +109,10 @@ only when explicitly declared in the server's `env` map.
       "type": "stdio",
       "command": "npx",
       "args": ["@playwright/mcp@latest"],
-      "allowSampling": false
+      "allowSampling": false,
+      "autoConnect": true,
+      "connectTimeoutMs": 30000,
+      "callTimeoutMs": 60000
     },
     "hosted": {
       "type": "streamable-http",
@@ -146,11 +160,11 @@ asynchronously so the UI stays responsive while a server process starts (the
 row shows `starting…`/`stopping…` in flight), and `r` reloads the list. Both
 files are re-read on every listing, so edits show up without restarting.
 
-On each connect/disconnect the headless engine re-runs `wiring.Build` with the
-manager's current tools and swaps the runner — the same move `App.wire` makes
-in the Wails app. Startup never launches a configured server (same contract as
-the desktop app), and engine shutdown closes every MCP subprocess after active
-runs stop.
+On each connect/disconnect or supervised health transition the headless engine
+re-runs `wiring.Build` with the manager's current tools and swaps the runner —
+the same move the Wails workspace manager makes. Startup launches only opted-in
+servers, and shutdown closes every session and cancels pending restart waits
+after active runs stop.
 
 ## Command line
 
@@ -175,6 +189,11 @@ would be `false` on every row of every listing and would be read as a report abo
 the user's servers rather than about the process printing it. The full surface,
 the refusals and the exit codes are in
 [Headless CLI](headless-cli.md#atenea-mcp--the-servers-from-a-script).
+
+`atenea run` is a short-lived host rather than a declaration command. It connects
+all opted-in servers before admitting the prompt, exposes their complete
+capability snapshot, reports a startup failure if one cannot connect, and closes
+every session before exiting.
 
 ## Scope
 

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"sort"
@@ -27,7 +28,20 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const connectTimeout = 30 * time.Second
+const (
+	defaultConnectTimeout = 30 * time.Second
+	defaultCallTimeout    = 60 * time.Second
+)
+
+type Health string
+
+const (
+	HealthDisconnected Health = "disconnected"
+	HealthConnecting   Health = "connecting"
+	HealthHealthy      Health = "healthy"
+	HealthRestarting   Health = "restarting"
+	HealthFailed       Health = "failed"
+)
 
 var serverName = regexp.MustCompile(`^[A-Za-z0-9_-]{1,48}$`)
 
@@ -51,23 +65,35 @@ type ServerConfig struct {
 	// model and receive its answer. It is false by default because sampling can
 	// disclose conversation data and consume model quota.
 	AllowSampling bool `json:"allowSampling,omitempty"`
+	// AutoConnect opts this declaration into process startup and supervised
+	// restart when a host opens. Manual declarations remain inert by default.
+	AutoConnect bool `json:"autoConnect,omitempty"`
+	// Timeouts are milliseconds so the de-facto JSON schema remains portable
+	// across clients that do not understand Go duration strings. Zero selects
+	// the documented defaults.
+	ConnectTimeoutMS int `json:"connectTimeoutMs,omitempty"`
+	CallTimeoutMS    int `json:"callTimeoutMs,omitempty"`
 }
 
 // ServerStatus is the safe, serializable connection state exposed to the UI.
 type ServerStatus struct {
 	ServerConfig
-	Connected bool `json:"connected"`
-	Tools     int  `json:"tools"`
+	Connected bool   `json:"connected"`
+	Tools     int    `json:"tools"`
+	Health    Health `json:"health"`
+	Error     string `json:"error,omitempty"`
 }
 
 type server struct {
-	config   ServerConfig
-	client   *mcp.Client
-	session  *mcp.ClientSession
-	tools    []tool.Tool
-	commands []command.Command
-	mentions []command.Mention
-	rules    []permission.Rule
+	config      ServerConfig
+	client      *mcp.Client
+	session     *mcp.ClientSession
+	tools       []tool.Tool
+	commands    []command.Command
+	mentions    []command.Mention
+	rules       []permission.Rule
+	callTimeout time.Duration
+	cancel      context.CancelFunc
 }
 
 // Manager owns the subprocesses and MCP sessions for one application instance.
@@ -79,6 +105,11 @@ type Manager struct {
 	servers  map[string]*server
 	provider llm.Provider
 	model    func() string
+	ctx      context.Context
+	cancel   context.CancelFunc
+	auto     map[string]context.CancelFunc
+	states   map[string]ServerStatus
+	onChange func()
 }
 
 func NewManager(root string) *Manager {
@@ -95,7 +126,108 @@ func NewManagerWithIdentity(root string, identity paths.Identity) *Manager {
 // NewManagerWithRuntime installs the host-model seam used only by explicitly
 // authorized sampling servers.
 func NewManagerWithRuntime(root string, identity paths.Identity, provider llm.Provider, model func() string) *Manager {
-	return &Manager{root: root, identity: identity.OrDevelopment(), servers: make(map[string]*server), provider: provider, model: model}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Manager{root: root, identity: identity.OrDevelopment(), servers: make(map[string]*server), provider: provider, model: model, ctx: ctx, cancel: cancel, auto: make(map[string]context.CancelFunc), states: make(map[string]ServerStatus)}
+}
+
+// Start supervises declarations that explicitly opt into auto-connect. The
+// callback is invoked after snapshots change and must not call back while
+// holding a caller lock. Calling Start again replaces the supervised set.
+func (m *Manager) Start(configs []ServerConfig, onChange func()) {
+	m.mu.Lock()
+	m.onChange = onChange
+	wanted := make(map[string]ServerConfig)
+	var stopped []*server
+	for _, cfg := range configs {
+		if cfg.AutoConnect {
+			wanted[cfg.Name] = cfg
+		}
+	}
+	for name, cancel := range m.auto {
+		cfg, ok := wanted[name]
+		if current := m.states[name].ServerConfig; !ok || !reflect.DeepEqual(current, cfg) {
+			cancel()
+			delete(m.auto, name)
+			if srv := m.servers[name]; srv != nil {
+				stopped = append(stopped, srv)
+				delete(m.servers, name)
+			}
+			delete(m.states, name)
+		}
+	}
+	for name, cfg := range wanted {
+		if _, ok := m.auto[name]; ok {
+			continue
+		}
+		ctx, cancel := context.WithCancel(m.ctx)
+		m.auto[name] = cancel
+		m.states[name] = ServerStatus{ServerConfig: cfg, Health: HealthDisconnected}
+		go m.supervise(ctx, cfg)
+	}
+	m.mu.Unlock()
+	for _, srv := range stopped {
+		srv.cancel()
+		_ = srv.session.Close()
+	}
+}
+
+func (m *Manager) supervise(ctx context.Context, cfg ServerConfig) {
+	backoff := 100 * time.Millisecond
+	for {
+		m.setState(cfg, HealthConnecting, "")
+		_, err := m.Connect(ctx, cfg)
+		if err == nil {
+			backoff = 100 * time.Millisecond
+			for ctx.Err() == nil && m.connected(cfg.Name) {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(50 * time.Millisecond):
+				}
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			m.setState(cfg, HealthRestarting, "connection ended")
+		} else if ctx.Err() != nil {
+			return
+		} else {
+			m.setState(cfg, HealthFailed, err.Error())
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		if backoff < 5*time.Second {
+			backoff *= 2
+			if backoff > 5*time.Second {
+				backoff = 5 * time.Second
+			}
+		}
+	}
+}
+func (m *Manager) connected(name string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.servers[name] != nil
+}
+func (m *Manager) setState(cfg ServerConfig, health Health, message string) {
+	m.mu.Lock()
+	st := m.states[cfg.Name]
+	st.ServerConfig = cfg
+	st.Health = health
+	st.Error = message
+	st.Connected = health == HealthHealthy
+	if srv := m.servers[cfg.Name]; srv != nil {
+		st.Tools = len(srv.tools)
+	}
+	m.states[cfg.Name] = st
+	cb := m.onChange
+	m.mu.Unlock()
+	if cb != nil {
+		go cb()
+	}
 }
 
 // SetRoot updates the root advertised to connected MCP servers.
@@ -137,17 +269,41 @@ func (m *Manager) Connect(ctx context.Context, config ServerConfig) (ServerStatu
 	if err != nil {
 		return ServerStatus{}, err
 	}
-	connectCtx := ctx
-	cancel := func() {}
-	if transportType(config) == "stdio" {
-		connectCtx, cancel = context.WithTimeout(ctx, connectTimeout)
-	}
+	connectCtx, cancel := context.WithTimeout(ctx, durationMS(config.ConnectTimeoutMS, defaultConnectTimeout))
 	defer cancel()
-	session, err := client.Connect(connectCtx, transport, nil)
+	type connectResult struct {
+		session *mcp.ClientSession
+		err     error
+	}
+	connected := make(chan connectResult, 1)
+	sessionCtx, cancelSession := context.WithCancel(ctx)
+	keepSession := false
+	defer func() {
+		if !keepSession {
+			cancelSession()
+		}
+	}()
+	go func() {
+		session, err := client.Connect(sessionCtx, transport, nil)
+		if sessionCtx.Err() != nil && session != nil {
+			_ = session.Close()
+			session = nil
+		}
+		connected <- connectResult{session: session, err: err}
+	}()
+	var session *mcp.ClientSession
+	select {
+	case result := <-connected:
+		session, err = result.session, result.err
+	case <-connectCtx.Done():
+		cancelSession()
+		return ServerStatus{}, fmt.Errorf("connect MCP %q: %w", config.Name, connectCtx.Err())
+	}
 	if err != nil {
+		cancelSession()
 		return ServerStatus{}, fmt.Errorf("connect MCP %q: %w", config.Name, err)
 	}
-	srv := &server{config: config, client: client, session: session}
+	srv := &server{config: config, client: client, session: session, callTimeout: durationMS(config.CallTimeoutMS, defaultCallTimeout), cancel: cancelSession}
 	definitions, err := listTools(connectCtx, session)
 	if err != nil {
 		_ = session.Close()
@@ -155,7 +311,7 @@ func (m *Manager) Connect(ctx context.Context, config ServerConfig) (ServerStatu
 	}
 	names := make(map[string]struct{}, len(definitions))
 	for _, definition := range definitions {
-		adapter, err := newTool(config, session, definition)
+		adapter, err := newTool(config, session, srv.callTimeout, definition)
 		if err != nil {
 			_ = session.Close()
 			return ServerStatus{}, fmt.Errorf("tool %q of MCP %q: %w", definition.Name, config.Name, err)
@@ -182,7 +338,7 @@ func (m *Manager) Connect(ctx context.Context, config ServerConfig) (ServerStatu
 				return ServerStatus{}, fmt.Errorf("prompts %q and %q of MCP %q both become %q", previous, prompt.Name, config.Name, name)
 			}
 			seen[name] = prompt.Name
-			srv.commands = append(srv.commands, promptCommand(config.Name, session, prompt))
+			srv.commands = append(srv.commands, promptCommand(config.Name, session, srv.callTimeout, prompt))
 		}
 	}
 	if resources, err := listResources(connectCtx, session); err != nil {
@@ -197,7 +353,7 @@ func (m *Manager) Connect(ctx context.Context, config ServerConfig) (ServerStatu
 				return ServerStatus{}, fmt.Errorf("resources %q and %q of MCP %q both become %q", previous, resource.Name, config.Name, name)
 			}
 			seen[name] = resource.Name
-			srv.mentions = append(srv.mentions, resourceMention(config.Name, session, resource))
+			srv.mentions = append(srv.mentions, resourceMention(config.Name, session, srv.callTimeout, resource))
 		}
 	}
 	m.mu.Lock()
@@ -207,7 +363,15 @@ func (m *Manager) Connect(ctx context.Context, config ServerConfig) (ServerStatu
 		return ServerStatus{}, fmt.Errorf("MCP %q is already connected", config.Name)
 	}
 	m.servers[config.Name] = srv
+	keepSession = true
+	if _, supervised := m.auto[config.Name]; supervised {
+		m.states[config.Name] = ServerStatus{ServerConfig: config, Connected: true, Tools: len(srv.tools), Health: HealthHealthy}
+	}
+	cb := m.onChange
 	m.mu.Unlock()
+	if cb != nil {
+		go cb()
+	}
 	// The legacy SDK SSE connection reports EOF from Wait while its split GET/POST
 	// session is still usable. Monitoring it would tear down a healthy session.
 	// Streamable HTTP and stdio have a single connection whose Wait is reliable.
@@ -219,16 +383,33 @@ func (m *Manager) Connect(ctx context.Context, config ServerConfig) (ServerStatu
 
 func (m *Manager) removeWhenSessionEnds(name string, ended *server) {
 	_ = ended.session.Wait()
+	ended.cancel()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.servers[name] == ended {
 		delete(m.servers, name)
+		if st, ok := m.states[name]; ok {
+			st.Connected = false
+			st.Tools = 0
+			st.Health = HealthRestarting
+			st.Error = "connection ended"
+			m.states[name] = st
+		}
+		cb := m.onChange
+		if cb != nil {
+			go cb()
+		}
 	}
 }
 
 // Disconnect closes the MCP session and its subprocess. It is idempotent.
 func (m *Manager) Disconnect(name string) error {
 	m.mu.Lock()
+	if cancel := m.auto[name]; cancel != nil {
+		cancel()
+		delete(m.auto, name)
+		delete(m.states, name)
+	}
 	srv, ok := m.servers[name]
 	if ok {
 		delete(m.servers, name)
@@ -237,6 +418,7 @@ func (m *Manager) Disconnect(name string) error {
 	if !ok {
 		return nil
 	}
+	srv.cancel()
 	if err := srv.session.Close(); err != nil {
 		return fmt.Errorf("disconnect MCP %q: %w", name, err)
 	}
@@ -246,23 +428,39 @@ func (m *Manager) Disconnect(name string) error {
 // Close disconnects every server. It is used during application shutdown.
 func (m *Manager) Close() {
 	m.mu.Lock()
+	m.cancel()
 	servers := m.servers
 	m.servers = make(map[string]*server)
 	m.mu.Unlock()
 	for _, srv := range servers {
 		_ = srv.session.Close()
+		srv.cancel()
 	}
 }
 
 func (m *Manager) Status() []ServerStatus {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	statuses := make([]ServerStatus, 0, len(m.servers))
+	statuses := make([]ServerStatus, 0, len(m.servers)+len(m.states))
+	seen := make(map[string]bool)
+	for name, status := range m.states {
+		statuses = append(statuses, status)
+		seen[name] = true
+	}
 	for _, srv := range m.servers {
-		statuses = append(statuses, ServerStatus{ServerConfig: srv.config, Connected: true, Tools: len(srv.tools)})
+		if !seen[srv.config.Name] {
+			statuses = append(statuses, ServerStatus{ServerConfig: srv.config, Connected: true, Tools: len(srv.tools), Health: HealthHealthy})
+		}
 	}
 	sort.Slice(statuses, func(i, j int) bool { return statuses[i].Name < statuses[j].Name })
 	return statuses
+}
+
+func durationMS(value int, fallback time.Duration) time.Duration {
+	if value <= 0 {
+		return fallback
+	}
+	return time.Duration(value) * time.Millisecond
 }
 
 // Tools returns the tools exposed by every connected MCP server.
@@ -328,6 +526,9 @@ func (m *Manager) PermissionRules() []permission.Rule {
 func validate(config ServerConfig) error {
 	if !serverName.MatchString(config.Name) {
 		return fmt.Errorf("invalid MCP name %q: use up to 48 letters, digits, _ or -", config.Name)
+	}
+	if config.ConnectTimeoutMS < 0 || config.CallTimeoutMS < 0 {
+		return fmt.Errorf("MCP timeouts cannot be negative")
 	}
 	switch transportType(config) {
 	case "stdio":
@@ -464,6 +665,7 @@ type mcpTool struct {
 	schema      json.RawMessage
 	remoteName  string
 	session     *mcp.ClientSession
+	callTimeout time.Duration
 }
 
 type classifiedMCPTool struct {
@@ -473,7 +675,7 @@ type classifiedMCPTool struct {
 
 func (t *classifiedMCPTool) Effects() tool.Effects { return t.effects }
 
-func newTool(config ServerConfig, session *mcp.ClientSession, definition *mcp.Tool) (tool.Tool, error) {
+func newTool(config ServerConfig, session *mcp.ClientSession, callTimeout time.Duration, definition *mcp.Tool) (tool.Tool, error) {
 	schema, err := json.Marshal(definition.InputSchema)
 	if err != nil {
 		return nil, fmt.Errorf("serialize the input schema: %w", err)
@@ -495,6 +697,7 @@ func newTool(config ServerConfig, session *mcp.ClientSession, definition *mcp.To
 		schema:      schema,
 		remoteName:  definition.Name,
 		session:     session,
+		callTimeout: callTimeout,
 	}
 	if strings.TrimSpace(config.Sensitivity) == "" {
 		return adapter, nil
@@ -544,7 +747,7 @@ func listResources(ctx context.Context, session *mcp.ClientSession) ([]*mcp.Reso
 	return out, nil
 }
 
-func promptCommand(server string, session *mcp.ClientSession, definition *mcp.Prompt) command.Command {
+func promptCommand(server string, session *mcp.ClientSession, timeout time.Duration, definition *mcp.Prompt) command.Command {
 	name := normalize(server) + ":" + normalize(definition.Name)
 	return command.Dynamic(name, definition.Description, func(ctx context.Context, raw string) (string, error) {
 		args := map[string]string{}
@@ -557,7 +760,9 @@ func promptCommand(server string, session *mcp.ClientSession, definition *mcp.Pr
 				args[definition.Arguments[0].Name] = raw
 			}
 		}
-		result, err := session.GetPrompt(ctx, &mcp.GetPromptParams{Name: definition.Name, Arguments: args})
+		callCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		result, err := session.GetPrompt(callCtx, &mcp.GetPromptParams{Name: definition.Name, Arguments: args})
 		if err != nil {
 			return "", fmt.Errorf("MCP prompt %s: %w", definition.Name, err)
 		}
@@ -573,10 +778,12 @@ func promptCommand(server string, session *mcp.ClientSession, definition *mcp.Pr
 	})
 }
 
-func resourceMention(server string, session *mcp.ClientSession, definition *mcp.Resource) command.Mention {
+func resourceMention(server string, session *mcp.ClientSession, timeout time.Duration, definition *mcp.Resource) command.Mention {
 	name := normalize(server) + ":" + normalize(definition.Name)
 	return command.DynamicMention(name, definition.Description, func(ctx context.Context) (string, error) {
-		result, err := session.ReadResource(ctx, &mcp.ReadResourceParams{URI: definition.URI})
+		callCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		result, err := session.ReadResource(callCtx, &mcp.ReadResourceParams{URI: definition.URI})
 		if err != nil {
 			return "", err
 		}
@@ -657,7 +864,9 @@ func (t *mcpTool) Execute(ctx context.Context, input json.RawMessage) (tool.Resu
 	if err := json.Unmarshal(input, &arguments); err != nil {
 		return tool.Result{}, fmt.Errorf("invalid MCP input: %w", err)
 	}
-	result, err := t.session.CallTool(ctx, &mcp.CallToolParams{Name: t.remoteName, Arguments: arguments})
+	callCtx, cancel := context.WithTimeout(ctx, t.callTimeout)
+	defer cancel()
+	result, err := t.session.CallTool(callCtx, &mcp.CallToolParams{Name: t.remoteName, Arguments: arguments})
 	if err != nil {
 		return tool.Result{}, fmt.Errorf("MCP %s: %w", t.remoteName, err)
 	}

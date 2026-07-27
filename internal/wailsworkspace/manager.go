@@ -67,7 +67,16 @@ func New(cfg Config) *Manager {
 	m.lifecycleMu.Lock()
 	m.rebuildLocked(cfg.Root)
 	m.lifecycleMu.Unlock()
+	if configs, err := mcpclient.LoadConfig(cfg.Root); err == nil {
+		m.mcp.Start(configs, m.refreshMCP)
+	}
 	return m
+}
+
+func (m *Manager) refreshMCP() {
+	m.lifecycleMu.Lock()
+	defer m.lifecycleMu.Unlock()
+	m.rebuildLocked(m.root)
 }
 
 // Admit runs fn while workspace reconfiguration is excluded.
@@ -97,6 +106,9 @@ func (m *Manager) SetRoot(path string) error {
 	defer m.lifecycleMu.Unlock()
 	m.mcp.SetRoot(path)
 	m.rebuildLocked(path)
+	if configs, err := mcpclient.LoadConfig(path); err == nil {
+		m.mcp.Start(configs, m.refreshMCP)
+	}
 	return nil
 }
 

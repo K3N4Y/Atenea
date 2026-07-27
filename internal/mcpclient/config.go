@@ -273,7 +273,7 @@ func Merge(configs []ServerConfig, connected []ServerStatus) []ServerStatus {
 			merged = append(merged, status)
 			continue
 		}
-		merged = append(merged, ServerStatus{ServerConfig: config})
+		merged = append(merged, ServerStatus{ServerConfig: config, Health: HealthDisconnected})
 	}
 	for _, status := range byName {
 		merged = append(merged, status)

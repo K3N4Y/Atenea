@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,6 +20,17 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+func waitFor(t *testing.T, timeout time.Duration, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for !condition() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !condition() {
+		t.Fatal("condition did not become true")
+	}
+}
 
 func TestManager_ConnectsToStdioServerAndExecutesDiscoveredTool(t *testing.T) {
 	manager := NewManager(t.TempDir())
@@ -306,6 +318,74 @@ func TestManager_RemovesServerAfterUnexpectedSessionTermination(t *testing.T) {
 	}
 	if statuses := manager.Status(); len(statuses) != 0 {
 		t.Fatalf("Status after unexpected termination = %+v, want empty", statuses)
+	}
+}
+
+func TestManager_CallTimeoutIsSeparateFromConnectTimeout(t *testing.T) {
+	server := mcp.NewServer(&mcp.Implementation{Name: "slow", Version: "1"}, nil)
+	server.AddTool(&mcp.Tool{Name: "wait", InputSchema: map[string]any{"type": "object"}}, func(ctx context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+	httpServer := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil))
+	defer httpServer.Close()
+	manager := NewManager(t.TempDir())
+	defer manager.Close()
+	if _, err := manager.Connect(context.Background(), ServerConfig{Name: "slow", Type: "http", URL: httpServer.URL, ConnectTimeoutMS: 1000, CallTimeoutMS: 20}); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	_, err := manager.Tools()[0].Execute(context.Background(), json.RawMessage(`{}`))
+	if err == nil || !strings.Contains(err.Error(), "deadline exceeded") {
+		t.Fatalf("Execute error = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("call timeout took %s", elapsed)
+	}
+}
+
+func TestManager_AutoConnectRestartsAndExplicitDisconnectCancels(t *testing.T) {
+	manager := NewManager(t.TempDir())
+	defer manager.Close()
+	var changes atomic.Int32
+	config := ServerConfig{Name: "supervised", Command: os.Args[0], Args: []string{"-test.run=TestMCPHelperProcess"}, Env: map[string]string{"ATENEA_MCP_HELPER": "1", "ATENEA_MCP_HELPER_EXIT_AFTER_CALL": "1"}, AutoConnect: true, ConnectTimeoutMS: 1000}
+	manager.Start([]ServerConfig{config}, func() { changes.Add(1) })
+	waitFor(t, 5*time.Second, func() bool { return len(manager.Tools()) == 1 })
+	name := manager.Tools()[0].Name()
+	if _, err := manager.Tools()[0].Execute(context.Background(), json.RawMessage(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 5*time.Second, func() bool { return len(manager.Tools()) == 0 })
+	waitFor(t, 5*time.Second, func() bool { return len(manager.Tools()) == 1 })
+	if got := manager.Tools()[0].Name(); got != name {
+		t.Fatalf("tool name after restart = %q, want stable %q", got, name)
+	}
+	if changes.Load() < 3 {
+		t.Fatalf("lifecycle callbacks = %d, want health transitions", changes.Load())
+	}
+	if err := manager.Disconnect("supervised"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if len(manager.Tools()) != 0 || len(manager.Status()) != 0 {
+		t.Fatalf("server restarted after explicit disconnect: %+v", manager.Status())
+	}
+}
+
+func TestManager_RejectsStableNameCollision(t *testing.T) {
+	server := mcp.NewServer(&mcp.Implementation{Name: "collision", Version: "1"}, nil)
+	for _, name := range []string{"same name", "same_name"} {
+		server.AddTool(&mcp.Tool{Name: name, InputSchema: map[string]any{"type": "object"}}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+	}
+	httpServer := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil))
+	defer httpServer.Close()
+	manager := NewManager(t.TempDir())
+	defer manager.Close()
+	_, err := manager.Connect(context.Background(), ServerConfig{Name: "collision", Type: "http", URL: httpServer.URL})
+	if err == nil || !strings.Contains(err.Error(), `both become "mcp_collision_same_name"`) {
+		t.Fatalf("Connect error = %v", err)
 	}
 }
 
