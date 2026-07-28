@@ -8,6 +8,8 @@ summary: Navigation index for Atenea project documentation in the OKF convention
 This directory is the source of truth for project documentation. Every document
 uses Markdown and begins with `updated_at` and `summary` YAML metadata.
 
+The project-wide vocabulary lives in the root [domain glossary](../CONTEXT.md).
+
 ## Directory layout
 
 - [`architecture/`](architecture/): technical architecture, agent-loop, LLM,
@@ -20,6 +22,9 @@ uses Markdown and begins with `updated_at` and `summary` YAML metadata.
 
 ## Architecture
 
+- [Architecture decision records](architecture/adr/)
+- [ADR 0001: Keep contracts public and the loop private](architecture/adr/0001-keep-contracts-public-and-the-loop-private.md)
+- [ADR 0002: Use MCP as the only third-party code boundary](architecture/adr/0002-use-mcp-as-the-only-third-party-code-boundary.md)
 - [Agent loop](architecture/agent-loop.md)
 - [Claude LLM integration](architecture/llm-claude.md)
 - [Composition root](architecture/composition-root.md)

@@ -1,95 +1,52 @@
 package tui
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"reflect"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/glamour"
-	glamouransi "github.com/charmbracelet/glamour/ansi"
-	"github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/muesli/termenv"
 
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/tool"
 	"github.com/K3N4Y/atenea/internal/tui/theme"
 )
 
-// composerBoxBorderWidth es el ancho que los dos bordes laterales de la caja
-// suman al contenido (Style.Width de lipgloss fija el ancho del CONTENIDO).
 const composerBoxBorderWidth = 2
 
-// composerBoxPadding es el padding horizontal de la caja del composer: una
-// celda de espacio entre cada borde lateral y el contenido, para que la linea
-// interior renda "│ ❯" (estilo Claude Code) en vez del prompt pegado al
-// borde. Style.Width de lipgloss INCLUYE el padding, asi que composerBox no
-// lo descuenta del ancho, pero resizeViewport si resta las 2*composerBoxPadding
-// celdas al fijar el ancho del textarea.
 const composerBoxPadding = 1
 
 const composerOuterMargin = 2
 
-// inputCursorWidth es la celda extra que bubbles/textarea reserva para el
-// cursor cuando tiene Width fijado.
 const inputCursorWidth = 1
 
-// inputPrompt es el caracter de prompt de la linea de input; el historial usa
-// el mismo glifo dentro de un bloque gris para distinguir ambos contextos.
 const inputPrompt = "❯ "
 
-// toolInputSummaryWidth es el ancho maximo (en celdas) del resumen del Input
-// en el header de la tool: suficiente para leer QUE corrio de un vistazo sin
-// que un input largo desborde la linea del header.
 const toolInputSummaryWidth = 48
 
-// Marcadores de estado de las entradas de actividad (tools, skills, permisos
-// y errores de step): un glifo tras el margen del transcript dice el estado de
-// un vistazo; el detalle va debajo como lineas de rail (activityRailPrefix).
 const (
-	activityRunMarker  = "●" // actividad en ejecucion
-	activityOKMarker   = "✓" // actividad terminada con exito
-	activityFailMarker = "✗" // actividad terminada con error (tambien errores de step)
-	activityAskMarker  = "?" // solicitud de permiso pendiente (aprobar/denegar)
+	activityRunMarker  = "●"
+	activityOKMarker   = "✓"
+	activityFailMarker = "✗"
+	activityAskMarker  = "?"
 )
 
-// activityNameWidth es el ancho de la columna del nombre en el header de
-// actividad: el nombre va alineado a la izquierda a este ancho para que los
-// resumenes de headers adyacentes queden en una columna comun legible.
 const activityNameWidth = 8
 
 const activityInset = "  "
 
-// activityHeader compone el header de una entrada de actividad: el marcador
-// tras activityInset, el nombre alineado a activityNameWidth columnas y el
-// resumen (`● bash     ls`). Sin resumen se recortan los espacios colgantes
-// de la alineacion para no dejar una cola invisible en la linea.
 func activityHeader(marker, name, summary string) string {
 	name = sanitizeTerminalText(name)
 	summary = sanitizeTerminalText(summary)
 	return strings.TrimRight(activityInset+marker+" "+fmt.Sprintf("%-*s", activityNameWidth, name)+" "+summary, " ")
 }
 
-// toolOutputPreviewLines es el tope de lineas del preview del output de una
-// tool exitosa: acota el detalle para no inundar el transcript; el resto se
-// resume en la marca "│ … +N lines".
 const toolOutputPreviewLines = 4
 
-// activityRailPrefix es el rail de detalle de las entradas de actividad: cada
-// linea bajo el header (output, diff, error, marca de truncado) abre con
-// U+2502 + espacio tras activityInset, alineado bajo el marcador del header. En
-// el diff los marcadores +/- del propio diff llevan la vista dentro del rail.
 const activityRailPrefix = activityInset + "│ "
 
-// toolDiffPreviewLines es el tope de lineas del diff mostrado bajo el header
-// de una tool exitosa de edit/write: mas generoso que el preview del output
-// (el diff ES el resultado que se quiere revisar) pero acotado igual; el resto
-// se resume en la misma marca "│ … +N lines".
 const toolDiffPreviewLines = 16
 
 // editDiffCardMaxRows caps the body rows of the rich edit diff card (see
@@ -99,9 +56,6 @@ const toolDiffPreviewLines = 16
 // transcript.
 const editDiffCardMaxRows = 40
 
-// diffRailGlyph is the solid left bar of each row in the edit diff card's
-// blocks (U+258C LEFT HALF BLOCK): one cell, colored in the block's accent, so
-// the "antes"/"después" blocks read as continuous colored columns.
 const diffRailGlyph = "▌"
 
 // noMarker is the diffRow marker that drops the +/- column entirely (the write
@@ -109,14 +63,9 @@ const diffRailGlyph = "▌"
 // unified-diff marker between the line number and the text.
 const noMarker byte = 0
 
-// Estilos de presentacion. Solo envuelven lineas o segmentos ya renderizados,
-// sin margenes ni padding, para no alterar el conteo de lineas de la vista.
-// Cada linea con marcador se estiliza como UN segmento (o cortando solo donde
-// ningun assert busca substrings contiguos), asi el contenido plano que fijan
-// los tests nunca se parte con codigos ANSI.
 var (
 	canvasStyle      = lipgloss.NewStyle().Background(lipgloss.Color(theme.Canvas))
-	accentStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Accent)) // marcador de usuario y prompt del input
+	accentStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Accent))
 	userMessageStyle = lipgloss.NewStyle().Background(lipgloss.Color(theme.UserMessage)).Padding(1, 3)
 	userMarkerStyle  = lipgloss.NewStyle().Faint(true)
 	userTextStyle    = lipgloss.NewStyle().Background(lipgloss.Color(theme.UserMessage))
@@ -124,14 +73,10 @@ var (
 	toolOKStyle      = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color(theme.Success))
 	toolFailedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Error))
 	toolDeniedStyle  = lipgloss.NewStyle().Faint(true)
-	toolOutputStyle  = lipgloss.NewStyle().Faint(true)                               // preview del output de la tool (detalle, no protagonista)
-	diffAddStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Success)) // lineas agregadas del diff (+)
-	diffDelStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Error))   // lineas quitadas del diff (-)
+	toolOutputStyle  = lipgloss.NewStyle().Faint(true)
+	diffAddStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Success))
+	diffDelStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Error))
 
-	// Styles of the rich edit diff card (see renderEditDiff). The header bars
-	// (file path and "@@ … @@") share a muted gray band; the "antes"/"después"
-	// blocks each carry a full-width tinted band on changed rows plus a solid
-	// left rail bar in the block's color, while context rows stay plain gray.
 	diffPathStyle    = lipgloss.NewStyle().Background(lipgloss.Color(theme.DiffHeaderBg))
 	diffHunkStyle    = lipgloss.NewStyle().Background(lipgloss.Color(theme.DiffHeaderBg)).Foreground(lipgloss.Color(theme.Muted))
 	diffDelBandStyle = lipgloss.NewStyle().Background(lipgloss.Color(theme.DiffDelBg)).Foreground(lipgloss.Color(theme.Error))
@@ -159,29 +104,14 @@ var (
 	thinkingLabelStyle  = lipgloss.NewStyle().Bold(true) // "◆ Thought"/"◆ Thinking…" label of the thinking block header
 	composerBorderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Border))
 	treeCursorStyle     = lipgloss.NewStyle().Reverse(true)
-	// treePanelStyle dimensiona (ancho y alto) las columnas del cuerpo cuando el
-	// arbol esta abierto —arbol, chat y visor— sin dibujar borde alguno: el arbol
-	// simplemente empuja al chat hacia la derecha, sin encapsular cada lado en su
-	// propia caja. El padding vertical/horizontal lo aporta el propio contenido.
-	treePanelStyle = lipgloss.NewStyle()
+	treePanelStyle      = lipgloss.NewStyle()
 
-	// composerBoxStyle es la caja de borde redondeado del composer (estilo
-	// Claude Code). Es la excepcion deliberada a la regla de arriba: agrega las
-	// dos lineas de borde que reservedLines ya descuenta (composerBoxLines) y
-	// el padding horizontal (composerBoxPadding) a cada lado del contenido. El
-	// borde queda sin color para que sus caracteres (╭/│/╰) sigan siendo
-	// contenido plano asertable por los tests.
 	composerBoxStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(lipgloss.Color(theme.Border)).
 				Padding(0, composerBoxPadding)
 )
 
-// render produce la linea del bloque; los marcadores y el contenido son
-// estables para que los tests puedan asertar sobre ellos, los estilos solo
-// los envuelven. width es el ancho util del viewport (0 = sin envolver): solo
-// lo usa el render markdown del assistant, el resto de bloques deja
-// el envolvimiento a syncViewport.
 func (e entry) render(width int, p tool.Presentation) string {
 	switch e.kind {
 	case entryUser:
@@ -210,9 +140,6 @@ func (e entry) render(width int, p tool.Presentation) string {
 	case entryPermission:
 		return permissionStyle.Render(activityHeader(activityAskMarker, activityLabel(p, e), displaySubject(p.Subject)))
 	case entryPlanApproval:
-		// Misma gramatica de actividad que el permiso (marcador de pregunta y
-		// "Plan" como nombre, el mismo label que present_plan declara), con el
-		// gesto que lo resuelve como sufijo.
 		return permissionStyle.Render(activityHeader(activityAskMarker, "Plan", "presentado") + " (y ejecutar / n seguir en plan)")
 	case entryError:
 		if !isProviderError(e.text) {
@@ -235,9 +162,7 @@ func (e entry) render(width int, p tool.Presentation) string {
 		return statusStyle.Render(sanitizeTerminalText(e.text))
 	case entryEvent:
 		return statusStyle.Render("[" + sanitizeTerminalText(e.eventKind) + "] " + sanitizeTerminalText(e.text))
-	default: // entryAssistant: texto plano sin marcador
-		// Los bloques asentados se rinden completos; durante el streaming se
-		// rinde solo el prefijo revelado para no filtrar el backlog pendiente.
+	default:
 		if e.settled() {
 			return renderMarkdown(e.text, width)
 		}
@@ -245,9 +170,6 @@ func (e entry) render(width int, p tool.Presentation) string {
 	}
 }
 
-// thinkingPreviewLines es el tope de lineas del preview del pensamiento en
-// curso: una ventana deslizante con las ULTIMAS lineas no vacias del texto
-// revelado (paridad con el ThinkingBlock del escritorio).
 const thinkingPreviewLines = 4
 
 const thinkingInset = "  "
@@ -278,9 +200,6 @@ func (e entry) renderThinking(width int) string {
 		// goes at the end so substring asserts keep working.
 		return insetThinking(summary + statusStyle.Render(" ⇧Tab"))
 	}
-	// Expandido: cabecera de resumen seguida del texto completo del
-	// pensamiento, envuelto al ancho del viewport (0 = sin envolver) y en
-	// estilo tenue, con cada linea como UN segmento asertable.
 	body := sanitizeTerminalText(e.revealedText())
 	if width > len(thinkingInset) {
 		body = ansi.Wrap(body, width-len(thinkingInset), "")
@@ -292,8 +211,6 @@ func insetThinking(text string) string {
 	return thinkingInset + strings.ReplaceAll(text, "\n", "\n"+thinkingInset)
 }
 
-// lastNonEmptyLines devuelve las ultimas limit lineas no vacias (ignorando las
-// de solo whitespace) del texto: la ventana deslizante del preview.
 func lastNonEmptyLines(text string, limit int) []string {
 	var kept []string
 	for _, line := range strings.Split(text, "\n") {
@@ -317,11 +234,6 @@ func formatThinkingDuration(d time.Duration) string {
 	return d.Round(time.Second).String()
 }
 
-// renderTool rinde el bloque de una tool call segun lo que la tool dice de si
-// misma (tool.Presentation): el label la nombra, el subject dice QUE corrio de un
-// vistazo (`● Bash  ls`, `● Skill  demo`) y sin subject el header queda en
-// marcador y nombre pelados. La forma la decide el Kind, no el nombre de la tool:
-// una tool que atenea no trae se rinde igual de bien que una propia.
 func (e entry) renderTool(p tool.Presentation, width int) string {
 	// A settled call that changed a file renders as the rich card instead of the
 	// generic activity line: per-hunk before/after for a change, a single neutral
@@ -369,20 +281,11 @@ func displaySubject(subject string) string {
 	return ansi.Truncate(subject, toolInputSummaryWidth, "…")
 }
 
-// renderActivity es el render comun de las entradas de actividad de tool: el
-// header `<marcador> <nombre> <resumen>` (ver activityHeader) con el marcador
-// de estado tras activityInset y, con showDetail y exito, el detalle (diff u
-// output) debajo como lineas de rail. Cada linea es UN segmento para que el
-// contenido plano siga siendo asertable.
 func (e entry) renderActivity(name, summary string, showDetail bool) string {
 	switch e.status {
 	case toolOK:
 		detail := ""
 		if showDetail {
-			// Con diff (edit/write) el detalle es el diff, no el output: el
-			// output de esas tools es un "ok" sin informacion frente al
-			// cambio. El header suma ademas el stat `+N -M` del diff (ver
-			// diffStat), separado del resumen por dos espacios.
 			detail = renderDiffPreview(e.diff)
 			if detail != "" {
 				added, removed := diffStat(e.diff)
@@ -397,7 +300,6 @@ func (e entry) renderActivity(name, summary string, showDetail bool) string {
 		}
 		return out
 	case toolFailed:
-		// El error va debajo del header como linea de rail, no pegado a el.
 		return toolFailedStyle.Render(activityHeader(activityFailMarker, name, summary)) +
 			"\n" + toolFailedStyle.Render(activityRailPrefix+"error: "+sanitizeTerminalText(e.err))
 	case toolDenied:
@@ -413,727 +315,6 @@ func (e entry) renderActivity(name, summary string, showDetail bool) string {
 	}
 }
 
-// diffStat cuenta las lineas agregadas y quitadas de un unified diff: las que
-// empiezan con "+"/"-", excluyendo las cabeceras de archivo "+++"/"---". Es
-// el stat `+N -M` que el header de una edit/write exitosa muestra junto al
-// resumen del Input.
-func diffStat(diff string) (added, removed int) {
-	for _, line := range strings.Split(diff, "\n") {
-		switch {
-		case strings.HasPrefix(line, "+++"), strings.HasPrefix(line, "---"):
-		case strings.HasPrefix(line, "+"):
-			added++
-		case strings.HasPrefix(line, "-"):
-			removed++
-		}
-	}
-	return added, removed
-}
-
-// summarizeToolInput resume el JSON del Input de una tool que NO dice como
-// presentarse (tool.Presenter): es el subject por defecto. Con un objeto de
-// EXACTAMENTE un campo con valor string, el resumen es ese valor pelado (el caso
-// comun: `{"command":"ls -la"}` se lee mejor como `ls -la` que como JSON); en
-// cualquier otro caso es el JSON compacto. Sin Input, con JSON invalido o con
-// objeto vacio devuelve "" y el header queda en marcador y nombre pelados. El
-// saneado, el aplanado y el truncado los aplica displaySubject, igual que a
-// cualquier otro subject.
-func summarizeToolInput(raw string) string {
-	if raw == "" {
-		return ""
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(raw), &fields); err != nil || len(fields) == 0 {
-		return ""
-	}
-	if len(fields) == 1 {
-		for _, v := range fields {
-			var s string
-			if err := json.Unmarshal(v, &s); err == nil && s != "" {
-				return s
-			}
-		}
-	}
-	var buf bytes.Buffer
-	if err := json.Compact(&buf, []byte(raw)); err != nil {
-		return ""
-	}
-	return buf.String()
-}
-
-// renderCappedLines es el esqueleto comun de los previews de detalle de una
-// tool: parte el texto en lineas, rinde cada una con renderLine (UN segmento
-// contiguo por linea, siguiendo la convencion de los estilos de arriba) hasta
-// maxLines lineas y, con mas, cierra con la marca de rail "│ … +N lines"
-// (N = ocultas) que acota el detalle para no inundar el transcript. Texto
-// vacio o solo whitespace devuelve "" (sin preview).
-func renderCappedLines(text string, maxLines int, renderLine func(line string) string) string {
-	text = sanitizeTerminalText(text)
-	if strings.TrimSpace(text) == "" {
-		return ""
-	}
-	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
-	shown := lines
-	if len(shown) > maxLines {
-		shown = shown[:maxLines]
-	}
-	rendered := make([]string, 0, len(shown)+1)
-	for _, line := range shown {
-		rendered = append(rendered, renderLine(line))
-	}
-	if hidden := len(lines) - len(shown); hidden > 0 {
-		rendered = append(rendered, toolOutputStyle.Render(activityRailPrefix+"… +"+strconv.Itoa(hidden)+" lines"))
-	}
-	return strings.Join(rendered, "\n")
-}
-
-// renderOutputPreview rinde el output de una tool exitosa como lineas de rail
-// bajo el header: cada linea prefijada con activityRailPrefix y en estilo
-// tenue, hasta toolOutputPreviewLines lineas (mas alla, la marca de
-// renderCappedLines).
-func renderOutputPreview(output string) string {
-	return renderCappedLines(output, toolOutputPreviewLines, func(line string) string {
-		return toolOutputStyle.Render(activityRailPrefix + line)
-	})
-}
-
-// renderDiffPreview rinde el diff unificado de Tool.Success (edit/write) bajo
-// el header: cada linea con el rail activityRailPrefix tras el margen, las
-// lineas "+" en verde, las "-" en rojo y el resto tenue, hasta
-// toolDiffPreviewLines lineas (mas generoso que el preview del output: el
-// diff ES el resultado que se quiere revisar). Diff vacio o solo whitespace
-// devuelve "" (sin detalle, la vista cae al output).
-func renderDiffPreview(diff string) string {
-	return renderCappedLines(diff, toolDiffPreviewLines, func(line string) string {
-		style := toolOutputStyle
-		switch {
-		case strings.HasPrefix(line, "+"):
-			style = diffAddStyle
-		case strings.HasPrefix(line, "-"):
-			style = diffDelStyle
-		}
-		return style.Render(activityRailPrefix + line)
-	})
-}
-
-// diffLine is one body line of a unified-diff hunk: kind is its marker byte
-// (' ' context, '-' removed, '+' added) and text the content after the marker.
-type diffLine struct {
-	kind byte
-	text string
-}
-
-// diffHunk is one hunk of a unified diff: header is the raw "@@ … @@" text,
-// oldStart/newStart the 1-indexed first line numbers of each side (from the
-// header), and lines its body in unified order.
-type diffHunk struct {
-	header   string
-	oldStart int
-	newStart int
-	lines    []diffLine
-}
-
-// parseUnifiedDiff splits the unified diff produced by hashline.UnifiedDiff
-// into the edited path (from the "+++ b/…" header) and its hunks. ok is false
-// when the text is not a unified diff with at least one hunk (the caller then
-// falls back to the plain diff preview).
-func parseUnifiedDiff(diff string) (path string, hunks []diffHunk, ok bool) {
-	for _, line := range strings.Split(diff, "\n") {
-		switch {
-		case len(hunks) == 0 && strings.HasPrefix(line, "+++ "):
-			// File headers only appear before the first hunk; guarding on that
-			// keeps an added line whose content is "++ …" (diff line "+++ …")
-			// from being mistaken for the header once inside a hunk.
-			path = strings.TrimPrefix(strings.TrimPrefix(line, "+++ "), "b/")
-		case len(hunks) == 0 && strings.HasPrefix(line, "--- "):
-			// The old-side file header carries no per-line data we render.
-		case strings.HasPrefix(line, "@@"):
-			oldStart, newStart, headerOK := parseHunkHeader(line)
-			if !headerOK {
-				continue
-			}
-			hunks = append(hunks, diffHunk{header: line, oldStart: oldStart, newStart: newStart})
-		case line == "" || strings.HasPrefix(line, `\`):
-			// Trailing blank split segment or a "\ No newline" marker: skip.
-		default:
-			if len(hunks) == 0 {
-				continue
-			}
-			h := &hunks[len(hunks)-1]
-			h.lines = append(h.lines, diffLine{kind: line[0], text: line[1:]})
-		}
-	}
-	return path, hunks, len(hunks) > 0
-}
-
-// parseHunkHeader reads the 1-indexed start line of each side from a
-// "@@ -A[,B] +C[,D] @@" header. difflib prints the start already 1-indexed
-// (it omits ",length" when the length is 1), so only the start matters here.
-func parseHunkHeader(line string) (oldStart, newStart int, ok bool) {
-	fields := strings.Fields(line)
-	if len(fields) < 3 || fields[0] != "@@" {
-		return 0, 0, false
-	}
-	oldStart, okOld := parseHunkSide(fields[1], '-')
-	newStart, okNew := parseHunkSide(fields[2], '+')
-	return oldStart, newStart, okOld && okNew
-}
-
-// parseHunkSide reads the start line of one hunk side ("-A", "-A,B", "+C" …):
-// the sign byte then digits up to an optional ",length" that is discarded.
-func parseHunkSide(field string, sign byte) (int, bool) {
-	if len(field) == 0 || field[0] != sign {
-		return 0, false
-	}
-	num := field[1:]
-	if i := strings.IndexByte(num, ','); i >= 0 {
-		num = num[:i]
-	}
-	start, err := strconv.Atoi(num)
-	if err != nil {
-		return 0, false
-	}
-	return start, true
-}
-
-// renderEditDiff renders a successful edit as the rich diff card: a file-path
-// bar, then for each hunk a "@@ … @@" bar with its "+N -M" stat and, below,
-// the removed side ("antes", red) above the added side ("después", green).
-// Context lines repeat in both blocks in gray so each block reads as the whole
-// before/after slice of the hunk. Returns "" when the diff does not parse, so
-// the caller falls back to renderDiffPreview. width is the viewport width; rows
-// truncate to it (never wrap) and changed rows fill it as a colored band.
-func renderEditDiff(diff string, width int) string {
-	path, hunks, ok := parseUnifiedDiff(diff)
-	if !ok {
-		return ""
-	}
-	gutter := diffGutterWidth(hunks)
-	contentW, margin := cardInset(width)
-	rows := []string{diffPathBar(diffPathStyle, path, contentW)}
-	for _, h := range hunks {
-		rows = append(rows, diffHunkBar(h, contentW))
-		rows = append(rows, diffBlockRows(h, gutter, contentW, false)...) // antes (removed, red)
-		rows = append(rows, diffBlockRows(h, gutter, contentW, true)...)  // después (added, green)
-	}
-	return frameDiffCard(rows, margin)
-}
-
-// renderWriteCard renders a successful write as a diff card sibling to
-// renderEditDiff, but in a single neutral gray instead of the red/green
-// before/after pair. A write always creates a brand-new file (it refuses to
-// overwrite), so there is no old side to show: the card is just the file-path
-// bar and, below it, every written line on the gray band — no hunk bar, no
-// "+N -M" stat, no +/- marker. Returns "" when the diff does not parse, so the
-// caller falls back to renderActivity.
-func renderWriteCard(diff string, width int) string {
-	path, hunks, ok := parseUnifiedDiff(diff)
-	if !ok {
-		return ""
-	}
-	gutter := diffGutterWidth(hunks)
-	contentW, margin := cardInset(width)
-	rows := []string{diffPathBar(writePathStyle, path, contentW)}
-	for _, h := range hunks {
-		rows = append(rows, writeBlockRows(h, gutter, contentW)...)
-	}
-	return frameDiffCard(rows, margin)
-}
-
-// cardInset splits width into the card's content width and the left/right
-// margin string that insets it by composerOuterMargin cells, so a card lines up
-// with the rest of the chat content (activity lines, user messages) and the
-// margin cells reveal the canvas background. A width too small to inset falls
-// back to full bleed (no margin).
-func cardInset(width int) (contentW int, margin string) {
-	if width > 2*composerOuterMargin {
-		return width - 2*composerOuterMargin, strings.Repeat(" ", composerOuterMargin)
-	}
-	return width, ""
-}
-
-// frameDiffCard finishes a diff card: it caps the rows at editDiffCardMaxRows
-// (collapsing the overflow into a "… +N lines" tail) and insets every row by
-// margin. Shared by renderEditDiff and renderWriteCard.
-func frameDiffCard(rows []string, margin string) string {
-	if len(rows) > editDiffCardMaxRows {
-		hidden := len(rows) - editDiffCardMaxRows
-		rows = rows[:editDiffCardMaxRows]
-		rows = append(rows, diffCtxStyle.Render("… +"+strconv.Itoa(hidden)+" lines"))
-	}
-	for i, r := range rows {
-		rows[i] = margin + r + margin
-	}
-	return strings.Join(rows, "\n")
-}
-
-// diffGutterWidth is the width of the line-number column: the digit count of
-// the largest line number any hunk can show on either side, so numbers align
-// across every block of the card.
-func diffGutterWidth(hunks []diffHunk) int {
-	maxNum := 1
-	for _, h := range hunks {
-		oldNum, newNum := h.oldStart, h.newStart
-		for _, l := range h.lines {
-			switch l.kind {
-			case '+':
-				newNum++
-			case '-':
-				oldNum++
-			default:
-				oldNum++
-				newNum++
-			}
-		}
-		maxNum = max(maxNum, oldNum, newNum)
-	}
-	return len(strconv.Itoa(maxNum))
-}
-
-// diffPathBar renders the file-path header bar of a card: a full-width band, in
-// the given style, carrying the path. The edit card passes diffPathStyle (gray
-// name); the write card passes writePathStyle (olive name on the same band).
-func diffPathBar(style lipgloss.Style, path string, width int) string {
-	return style.Render(fitBand(sanitizeTerminalText(path), width))
-}
-
-// diffHunkBar renders a hunk's "@@ … @@" header as a full-width muted band with
-// the hunk's "+N -M" stat pinned to the right edge (green added, red removed).
-func diffHunkBar(h diffHunk, width int) string {
-	added, removed := 0, 0
-	for _, l := range h.lines {
-		switch l.kind {
-		case '+':
-			added++
-		case '-':
-			removed++
-		}
-	}
-	header := sanitizeTerminalText(h.header)
-	// The stat rides the same muted band as the header, so its "+N"/"-M" and the
-	// space between them carry the header background too (green/red foreground
-	// on gray), not the bare canvas.
-	bg := lipgloss.Color(theme.DiffHeaderBg)
-	stat := diffAddStyle.Background(bg).Render("+"+strconv.Itoa(added)) +
-		diffHunkStyle.Render(" ") +
-		diffDelStyle.Background(bg).Render("-"+strconv.Itoa(removed))
-	statWidth := ansi.StringWidth("+" + strconv.Itoa(added) + " -" + strconv.Itoa(removed))
-	if width <= 0 {
-		return diffHunkStyle.Render(header) + "  " + stat
-	}
-	// Truncate the header so the header text and the stat never collide, then
-	// pad the gap between them so the stat sits flush against the right edge.
-	headerRoom := max(width-statWidth-1, 1)
-	header = ansi.Truncate(header, headerRoom, "…")
-	gap := max(width-ansi.StringWidth(header)-statWidth, 1)
-	return diffHunkStyle.Render(header+strings.Repeat(" ", gap)) + stat
-}
-
-// diffBlockRows renders one side of a hunk: with added true the "después"
-// block (context + added lines, new-side numbers, green); otherwise the "antes"
-// block (context + removed lines, old-side numbers, red). An empty side (e.g.
-// no removed lines on a pure insertion) yields no rows.
-func diffBlockRows(h diffHunk, gutter, width int, added bool) []string {
-	bandStyle, railStyle, keep := diffDelBandStyle, diffDelRailStyle, byte('-')
-	if added {
-		bandStyle, railStyle, keep = diffAddBandStyle, diffAddRailStyle, '+'
-	}
-	num := h.oldStart
-	if added {
-		num = h.newStart
-	}
-	var rows []string
-	for _, l := range h.lines {
-		switch {
-		case l.kind == keep:
-			rows = append(rows, diffRow(railStyle, bandStyle, gutter, width, num, l.kind, l.text))
-			num++
-		case l.kind == ' ':
-			rows = append(rows, diffRow(railStyle, diffCtxStyle, gutter, width, num, ' ', l.text))
-			num++
-		}
-	}
-	return rows
-}
-
-// writeBlockRows renders every added line of a write's hunk as a gray write-card
-// row: the neutral band and rail, new-side line numbers, and no +/- marker
-// (marker 0). A write diff is a pure insertion, so only '+' lines carry content;
-// anything else is ignored.
-func writeBlockRows(h diffHunk, gutter, width int) []string {
-	num := h.newStart
-	var rows []string
-	for _, l := range h.lines {
-		if l.kind != '+' {
-			continue
-		}
-		rows = append(rows, diffRow(writeRailStyle, writeBandStyle, gutter, width, num, noMarker, l.text))
-		num++
-	}
-	return rows
-}
-
-// diffRow renders one row of a diff block: the colored rail bar, then the line
-// number, marker and content. A changed row (band != diffCtxStyle) fills the
-// full width as a colored band; a context row stays plain (no trailing fill).
-// Content truncates with an ellipsis so the row is always exactly one line and
-// the gutter stays aligned.
-func diffRow(railStyle, bodyStyle lipgloss.Style, gutter, width, num int, marker byte, text string) string {
-	// noMarker drops the +/- column entirely (the write card): line number, two
-	// spaces, then the text. Otherwise the marker sits between the number and the
-	// text as in a unified diff.
-	inner := fmt.Sprintf("%*d  %s", gutter, num, sanitizeTerminalText(text))
-	if marker != noMarker {
-		inner = fmt.Sprintf("%*d %c %s", gutter, num, marker, sanitizeTerminalText(text))
-	}
-	railCells := ansi.StringWidth(diffRailGlyph)
-	innerWidth := width - railCells
-	if width <= 0 {
-		return railStyle.Render(diffRailGlyph) + bodyStyle.Render(inner)
-	}
-	if innerWidth < 1 {
-		innerWidth = 1
-	}
-	inner = ansi.Truncate(inner, innerWidth, "…")
-	// Changed rows fill the band to the full width; context rows stay unpadded
-	// so they read as plain text without a trailing colored block.
-	if bodyStyle.GetBackground() != diffCtxStyle.GetBackground() {
-		if pad := innerWidth - ansi.StringWidth(inner); pad > 0 {
-			inner += strings.Repeat(" ", pad)
-		}
-	}
-	return railStyle.Render(diffRailGlyph) + bodyStyle.Render(inner)
-}
-
-// fitBand truncates text to width and pads it back to width so a header bar's
-// background spans the full line. width <= 0 leaves the text untouched.
-func fitBand(text string, width int) string {
-	if width <= 0 {
-		return text
-	}
-	text = ansi.Truncate(text, width, "…")
-	if pad := width - ansi.StringWidth(text); pad > 0 {
-		text += strings.Repeat(" ", pad)
-	}
-	return text
-}
-
-// markdownRuleWidth is the fixed width of the horizontal rule glyph run:
-// glamour renders HR as a literal format string, so the rule cannot follow
-// the terminal width. 40 cells reads as a deliberate separator at the usual
-// widths without overflowing narrow terminals.
-const markdownRuleWidth = 40
-
-// markdownCodeBlockMarker brackets each rendered code block so
-// paintCodeBlockBackgrounds can find it in glamour's output. NUL bytes never
-// survive sanitizeTerminalText, so assistant content cannot forge a marker;
-// the marker lines themselves are removed from the final render.
-const markdownCodeBlockMarker = "\x00code\x00"
-
-// markdownStyle is the TUI's own glamour theme for assistant markdown. The
-// stock dark theme clashes with the TUI identity (indigo H1 chip, literal
-// ##/### prefixes, "--------" rules, double-styled links, code blocks with
-// no background and an extra indent). This theme sticks to the ANSI palette
-// the rest of view.go already uses — accent 6, gray 8 — plus neutral gray
-// 236 for subtle backgrounds over the #141414 canvas. Heading hierarchy
-// comes from weight (H1 bold accent, H2 bold, H3-H6 bold gray; gray instead
-// of faint because glamour's renderText ignores the Faint field), never from
-// prefixes or background chips. The document color stays nil so text
-// inherits the terminal default. In the Ascii profile (tests, no TTY) all of
-// this degrades to plain contiguous text, keeping the content assertable.
-var markdownStyle = func() glamouransi.StyleConfig {
-	str := func(v string) *string { return &v }
-	yes := func() *bool { v := true; return &v }
-	num := func(v uint) *uint { return &v }
-
-	// Syntax colors reuse the stock dark chroma set (already curated for a
-	// dark background), with the block background on EVERY token entry:
-	// chroma's TTY formatters clear the style-level Background before
-	// formatting, so a background only renders when each token carries its
-	// own. The reflection loop covers every entry so none is left as a hole
-	// in the block.
-	chromaTheme := *styles.DarkStyleConfig.CodeBlock.Chroma
-	entries := reflect.ValueOf(&chromaTheme).Elem()
-	for i := 0; i < entries.NumField(); i++ {
-		entry := entries.Field(i).Addr().Interface().(*glamouransi.StylePrimitive)
-		entry.BackgroundColor = str(theme.CodeBlockHex)
-	}
-
-	return glamouransi.StyleConfig{
-		Document: glamouransi.StyleBlock{
-			StylePrimitive: glamouransi.StylePrimitive{BlockPrefix: "\n", BlockSuffix: "\n"},
-			Margin:         num(2),
-		},
-		BlockQuote: glamouransi.StyleBlock{
-			Indent:      num(1),
-			IndentToken: str("│ "),
-		},
-		List: glamouransi.StyleList{LevelIndent: 2},
-		Heading: glamouransi.StyleBlock{
-			StylePrimitive: glamouransi.StylePrimitive{BlockSuffix: "\n\n", Bold: yes()},
-		},
-		H1:            glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{Color: str(theme.Accent)}},
-		H3:            glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{Color: str(theme.Border)}},
-		H4:            glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{Color: str(theme.Border)}},
-		H5:            glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{Color: str(theme.Border)}},
-		H6:            glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{Color: str(theme.Border)}},
-		Strikethrough: glamouransi.StylePrimitive{CrossedOut: yes()},
-		Emph:          glamouransi.StylePrimitive{Italic: yes()},
-		Strong:        glamouransi.StylePrimitive{Bold: yes()},
-		HorizontalRule: glamouransi.StylePrimitive{
-			Color:  str(theme.Border),
-			Format: "\n" + strings.Repeat("─", markdownRuleWidth) + "\n",
-		},
-		Item:        glamouransi.StylePrimitive{BlockPrefix: "• "},
-		Enumeration: glamouransi.StylePrimitive{BlockPrefix: ". "},
-		Task:        glamouransi.StyleTask{Ticked: "[✓] ", Unticked: "[ ] "},
-		// One single quiet link style: text and URL both underlined accent,
-		// instead of the stock green-bold text next to a cyan URL.
-		Link:      glamouransi.StylePrimitive{Color: str(theme.Accent), Underline: yes()},
-		LinkText:  glamouransi.StylePrimitive{Color: str(theme.Accent), Underline: yes()},
-		Image:     glamouransi.StylePrimitive{Color: str(theme.Accent), Underline: yes()},
-		ImageText: glamouransi.StylePrimitive{Color: str(theme.Border), Format: "Image: {{.text}} →"},
-		Code: glamouransi.StyleBlock{
-			StylePrimitive: glamouransi.StylePrimitive{
-				Color: str(theme.Border),
-			},
-		},
-		// No CodeBlock margin: the block aligns with the body at the document
-		// margin (column 2) instead of the stock extra indent (column 4). The
-		// marker lines bracket the block for paintCodeBlockBackgrounds.
-		CodeBlock: glamouransi.StyleCodeBlock{
-			StyleBlock: glamouransi.StyleBlock{
-				StylePrimitive: glamouransi.StylePrimitive{
-					BlockPrefix: markdownCodeBlockMarker + "\n",
-					BlockSuffix: markdownCodeBlockMarker + "\n",
-				},
-			},
-			Chroma: &chromaTheme,
-		},
-	}
-}()
-
-// markdownDocMargin es el margen izquierdo del documento del estilo del
-// markdown. glamour pade cada linea rendida a WordWrap + este margen:
-// renderMarkdown lo descuenta del ancho pedido para que ninguna linea exceda
-// el ancho util del viewport. Se lee del propio estilo (no un 2 a mano) para
-// seguir cualquier cambio del estilo o de la libreria.
-var markdownDocMargin = func() int {
-	if m := markdownStyle.Document.Margin; m != nil {
-		return int(*m)
-	}
-	return 0
-}()
-
-// markdownCodeBlockPadStyle paints the spaces that square a code block line
-// up to the width of the block's widest line, in the same background the
-// chroma tokens carry.
-var markdownCodeBlockPadStyle = lipgloss.NewStyle().Background(lipgloss.Color(theme.CodeBlock))
-
-// paintCodeBlockBackgrounds squares up the background of every code block in
-// glamour's rendered output. Chroma's TTY formatters only paint background
-// behind the tokens they emit (the style-level background is cleared before
-// formatting), which leaves each line's background ragged on the right; this
-// pass pads every line of a block — bracketed by markdownCodeBlockMarker
-// lines, which are dropped — with background-styled spaces up to the block's
-// widest line. Glamour's own right-padding on wrapped code lines is unstyled,
-// so it is trimmed before measuring and repainted by the pad; blank code
-// lines lose their unstyled document margin to the same trim and get it back
-// before the pad so the background never starts at column 0.
-func paintCodeBlockBackgrounds(rendered string) string {
-	if !strings.Contains(rendered, markdownCodeBlockMarker) {
-		return rendered
-	}
-	isMarker := func(line string) bool { return strings.Contains(line, markdownCodeBlockMarker) }
-	lines := strings.Split(rendered, "\n")
-	out := make([]string, 0, len(lines))
-	for i := 0; i < len(lines); i++ {
-		if !isMarker(lines[i]) {
-			out = append(out, lines[i])
-			continue
-		}
-		start := i + 1
-		end := start
-		for end < len(lines) && !isMarker(lines[end]) {
-			end++
-		}
-		block := lines[start:end]
-		width := 0
-		for j, line := range block {
-			line = strings.TrimRight(line, " ")
-			if w := lipgloss.Width(line); w < markdownDocMargin {
-				line += strings.Repeat(" ", markdownDocMargin-w)
-			}
-			block[j] = line
-			if w := lipgloss.Width(line); w > width {
-				width = w
-			}
-		}
-		for _, line := range block {
-			if pad := width - lipgloss.Width(line); pad > 0 {
-				line += markdownCodeBlockPadStyle.Render(strings.Repeat(" ", pad))
-			}
-			out = append(out, line)
-		}
-		i = end // skip the closing marker; the loop increment moves past it
-	}
-	return strings.Join(out, "\n")
-}
-
-// markdownRendererCache memoiza el ultimo TermRenderer construido, clavado al
-// ancho de envolvimiento con el que se creo. renderTranscript corre en cada
-// Update (cada delta del streaming) y rinde cada bloque assistant cerrado:
-// construir un renderer de glamour por bloque en cada render es O(bloques)
-// construcciones por tecla y lag visible en conversaciones largas. Un solo
-// slot alcanza porque el ancho solo cambia con un resize de la terminal. Sin
-// lock a proposito: la TUI es una sola instancia y Bubble Tea corre
-// Update/View en una sola goroutine, asi que el cache nunca se accede
-// concurrentemente.
-var markdownRendererCache struct {
-	wrap     int
-	profile  termenv.Profile
-	renderer *glamour.TermRenderer
-}
-
-// markdownRenderer devuelve el renderer de glamour para el ancho de
-// envolvimiento dado (ya descontado el margen del documento), reusando el
-// cacheado mientras el ancho no cambie. Reusar el renderer es seguro: cada
-// Render de glamour convierte sobre un buffer nuevo, sin estado entre
-// llamadas. El perfil de COLOR sigue al de lipgloss, igual que el resto de
-// estilos de la vista: sin TTY (tests) es Ascii y el contenido rendido queda
-// como texto plano contiguo asertable (glamour con colores parte cada palabra
-// en su propio segmento ANSI); en terminal real colorea. El renderer captura
-// el perfil al construirse, asi que el cache tambien se clava al perfil: los
-// tests que fuerzan un perfil no deben reusar un renderer construido con otro.
-func markdownRenderer(wrap int) (*glamour.TermRenderer, error) {
-	profile := lipgloss.ColorProfile()
-	if markdownRendererCache.renderer != nil && markdownRendererCache.wrap == wrap && markdownRendererCache.profile == profile {
-		return markdownRendererCache.renderer, nil
-	}
-	r, err := glamour.NewTermRenderer(
-		glamour.WithStyles(markdownStyle),
-		glamour.WithWordWrap(wrap),
-		glamour.WithColorProfile(profile),
-	)
-	if err != nil {
-		return nil, err
-	}
-	markdownRendererCache.wrap = wrap
-	markdownRendererCache.profile = profile
-	markdownRendererCache.renderer = r
-	return r, nil
-}
-
-// hardWrapOverflow hard-breaks only the lines whose display width exceeds the
-// limit, leaving every other line — and its layout and color — byte-identical.
-// glamour word-wraps but never splits a token longer than the wrap width, so a
-// long URL, path, or code identifier overflows the viewport as a single line;
-// the stock emergency word-wrap then re-broke it at column 0 with a blank line
-// in front, orphaning the continuation out of rhythm. This breaks the overflow
-// inside the line and re-indents every continuation to the line's own leading
-// margin, so a wrapped long token stays aligned like any other wrapped line.
-// ANSI-aware throughout: widths and breaks count display cells, and
-// ansi.Hardwrap carries the active SGR state onto each continuation. limit <= 0
-// disables wrapping.
-func hardWrapOverflow(s string, limit int) string {
-	if limit <= 0 {
-		return s
-	}
-	lines := strings.Split(s, "\n")
-	changed := false
-	for i, line := range lines {
-		if ansi.StringWidth(line) <= limit {
-			continue
-		}
-		indent, body := splitLeadingSpaces(line)
-		if indent >= limit {
-			indent = 0
-		}
-		pad := strings.Repeat(" ", indent)
-		segs := strings.Split(ansi.Hardwrap(body, limit-indent, false), "\n")
-		for j := range segs {
-			segs[j] = pad + segs[j]
-		}
-		lines[i] = strings.Join(segs, "\n")
-		changed = true
-	}
-	if !changed {
-		return s
-	}
-	return strings.Join(lines, "\n")
-}
-
-// splitLeadingSpaces peels a line's leading margin — the run of spaces before
-// the first visible cell — off the rest, returning the margin's display width
-// and the body with those spaces removed but every ANSI escape kept in place
-// (so the body's color state, and thus each continuation's, is unchanged).
-func splitLeadingSpaces(line string) (spaces int, body string) {
-	var b strings.Builder
-	i := 0
-	for i < len(line) {
-		if line[i] == 0x1b { // ESC: copy a CSI/SGR sequence through to its final byte
-			j := i + 1
-			if j < len(line) && line[j] == '[' { // skip the CSI intro before the params
-				j++
-			}
-			for j < len(line) && (line[j] < 0x40 || line[j] > 0x7e) { // params/intermediates
-				j++
-			}
-			if j < len(line) { // include the final byte (0x40–0x7e)
-				j++
-			}
-			b.WriteString(line[i:j])
-			i = j
-			continue
-		}
-		if line[i] == ' ' {
-			spaces++
-			i++
-			continue
-		}
-		break
-	}
-	b.WriteString(line[i:])
-	return spaces, b.String()
-}
-
-// renderMarkdown rinde texto markdown al ancho dado (0 = sin envolver) con
-// markdownStyle, fijo: deterministico, sin detectar el fondo de la terminal.
-// El envolvimiento se pide al ancho MENOS el margen del documento del estilo:
-// glamour pade cada linea a WordWrap + margen. Un token mas ancho que ese hueco
-// (URL, ruta o identificador largo) glamour no lo parte y desborda el viewport;
-// hardWrapOverflow lo corta antes de pintar los fondos de codigo para que estos
-// cuadren dentro del ancho util en vez de dejar palabras huerfanas.
-// Ante cualquier error se devuelve el texto tal cual: mejor markdown crudo
-// que perder contenido. Los saltos de linea de borde se recortan porque
-// renderTranscript ya separa los bloques con "\n\n".
-func renderMarkdown(text string, width int) string {
-	text = sanitizeTerminalText(text)
-	wrap := width
-	if wrap > 0 {
-		wrap = max(wrap-markdownDocMargin, 0)
-	}
-	r, err := markdownRenderer(wrap)
-	if err != nil {
-		return text
-	}
-	out, err := r.Render(text)
-	if err != nil {
-		return text
-	}
-	out = hardWrapOverflow(out, width)
-	return strings.Trim(paintCodeBlockBackgrounds(out), "\n")
-}
-
-// renderTranscript une los bloques de la conversacion, un parrafo por
-// entrada, salvo las entradas de actividad adyacentes, que se agrupan sin
-// linea en blanco entre si (ver compactActivityJoin). Pasa el ancho util del
-// viewport (0 sin tamano conocido = sin envolver) para que el render markdown
-// envuelva al mismo ancho que luego usa syncViewport. Consume la misma
-// proyeccion ordenada (visibleEntries) que entryLines, de modo que la condicion
-// de ocultamiento por permiso y la de union de parrafos se aplican una sola vez
-// en el modulo: la vista y el mapeo de clics no pueden divergir por
-// construccion.
 func (m Model) renderTranscript() string {
 	width := 0
 	if m.ready {
@@ -1153,9 +334,6 @@ func (m Model) renderTranscript() string {
 	return b.String()
 }
 
-// reservedLines es el alto reservado bajo el transcript: la caja del composer
-// (alto del textarea + bordes), con menu abierto una linea por item y con
-// corrida en curso la linea de estado del indicador de trabajo.
 func (m Model) reservedLines() int {
 	reserved := m.composerReservedLines() + len(m.menuItems)
 	if m.showsWorking() {
@@ -1183,19 +361,6 @@ func (m Model) composerReservedLines() int {
 	return reserved
 }
 
-// resizeViewport recalcula el alto del viewport con el ultimo tamano anunciado
-// y las lineas reservadas actuales, y re-sincroniza el contenido. Las
-// dimensiones se acotan a un minimo de 0: bajo pty el tamano inicial puede ser
-// 0x0, o el alto anunciado puede ser menor que las lineas reservadas (terminal
-// minuscula), y un alto negativo hace paniquear a bubbles/viewport (slice out
-// of range en visibleLines al hacer GotoBottom); con 0 el corte queda vacio y
-// no paniquea. Sin tamano conocido (ready == false) es no-op.
-//
-// Tambien fija el ancho visible del textarea al interior de la caja del
-// composer: ancho de la terminal menos los bordes laterales, el padding
-// horizontal, el prompt y la celda del cursor que bubbles agrega siempre al
-// final. El textarea crece verticalmente hasta composerMaxLines y luego
-// scrollea; el ancho se acota a una celda para terminales minusculas.
 func (m Model) resizeViewport() Model {
 	if !m.ready {
 		return m
@@ -1214,15 +379,6 @@ func (m Model) resizeViewport() Model {
 	return m.syncViewport()
 }
 
-// syncViewport vuelca el transcript al viewport y sigue la cola solo mientras
-// followAgent siga activo. Si el usuario esta leyendo historial, conserva el
-// offset y marca actividad nueva cuando cambia el transcript. Antes de
-// SetContent el transcript pasa por hardWrapOverflow al ancho del viewport,
-// porque el viewport trunca horizontalmente cada linea (ansi.Cut), no envuelve:
-// las lineas que exceden el ancho (un token que glamour no supo partir) se
-// cortan en su sitio, con la sangria intacta. Ademas deja correcto el conteo de
-// lineas que usa GotoBottom. Con ancho <= 0 (terminal minuscula) no se envuelve.
-// Sin tamano conocido (ready == false) es no-op.
 func (m Model) syncViewport() Model {
 	return m.syncViewportContent(false)
 }
@@ -1253,24 +409,11 @@ func (m Model) syncViewportContent(agentActivity bool) Model {
 	return m
 }
 
-// entryLine es una linea fisica del contenido del viewport ya envuelto, con el
-// indice de la entrada duena de esa linea. Permite mapear una fila clicada del
-// viewport a su bloque de conversacion (ver clickThinkingToggle) sin re-derivar
-// el texto: replica exactamente el contenido que syncViewport vuelca (mismo
-// renderTranscript + ansi.Wrap), asi la numeracion de lineas coincide con la
-// que el viewport muestra.
 type entryLine struct {
-	idx  int // indice en m.entries de la entrada duena; -1 para las lineas
+	idx  int
 	line string
 }
 
-// entryLines reconstruye el contenido del viewport envuelto linea por linea,
-// conservando a que entrada pertenece cada linea fisica. Los bloques se separan
-// con una linea vacia (el "\n\n" de renderTranscript) salvo entre entradas de
-// actividad adyacentes, que se agrupan sin separador, y el texto se envuelve al
-// ancho del viewport exactamente como syncViewport, de modo que la linea N de
-// esta lista es la linea N absoluta del contenido del viewport (la que ocupa la
-// fila YOffset+N en pantalla). Sin tamano conocido (ready == false) no envuelve.
 func (m Model) entryLines() []entryLine {
 	width := 0
 	if m.ready {
@@ -1278,13 +421,7 @@ func (m Model) entryLines() []entryLine {
 	}
 	var out []entryLine
 	for i, ve := range m.visibleEntries() {
-		// Same ordered projection renderTranscript consumes: the permission
-		// gating and the paragraph-join decision come from visibleEntries, so
-		// the line numbering here cannot drift from what the viewport shows.
 		if i > 0 && !ve.joinCompact {
-			// Paragraph separator between blocks (one empty line), ONLY when
-			// renderTranscript separates with "\n\n": the shared join decision
-			// keeps both line numberings from diverging.
 			out = append(out, entryLine{idx: -1, line: ""})
 		}
 		// hardWrapOverflow (same as syncViewport) may split a long line into
@@ -1298,13 +435,6 @@ func (m Model) entryLines() []entryLine {
 	return out
 }
 
-// View renderiza la conversacion con la caja del composer al final. Con menu
-// de autocompletado abierto sus lineas van entre el transcript y la caja
-// (antes de la linea de estado); con corrida en curso una linea de estado con
-// el indicador de trabajo precede a la caja. El modelo vive en el borde
-// inferior y el resumen Git, cuando existe, ocupa la primera fila del margen
-// bajo la caja. El alto sigue acotado porque reservedLines ya descuenta todo
-// ese chrome del viewport.
 func (m Model) View() string {
 	if m.modelPicker.open {
 		return m.modelPickerView()
@@ -1505,11 +635,6 @@ func sanitizeResumePickerLine(value string) string {
 func (m Model) renderCanvas(content string) string {
 	content = restoreCanvasBackground(content)
 	if !m.ready {
-		// Sin tamano conocido no hay lienzo rectangular que rellenar: el
-		// render multi-linea de lipgloss padea cada linea al ancho de la mas
-		// larga, un rectangulo arbitrario que ademas cuelga espacios tras los
-		// headers de actividad. El fondo se pinta linea a linea (una linea
-		// suelta no se padea) hasta que llegue el primer WindowSizeMsg.
 		lines := strings.Split(content, "\n")
 		for i, line := range lines {
 			lines[i] = canvasStyle.Render(line)
@@ -1542,17 +667,6 @@ func restoreCanvasBackground(content string) string {
 func (m Model) chatContent() string {
 	status := ""
 	if m.showsWorking() {
-		// La linea de estado es "<glifo> working": el glifo animado del
-		// spinner (ya estilizado por su propio Style) seguido del texto en
-		// estilo tenue, con " working" como UN segmento para que el
-		// contenido plano siga siendo asertable por los tests.
-		// Se antepone composerOuterMargin espacios como prefijo plano (no
-		// lipgloss.Margin, que tambien agregaria relleno a la derecha) para
-		// que el glifo del spinner arranque en la misma columna que el
-		// borde "╭" de la caja del composer. El margen se acota al ancho del
-		// panel de chat (mismo patron que topBarLine) para que en terminales
-		// minusculas el prefijo no ensanche la linea mas alla de la terminal;
-		// sin tamano conocido (m.ready == false) queda el margen fijo.
 		margin := composerOuterMargin
 		if m.ready {
 			// Same chat-column outer margin the composer box and permission panel
@@ -1565,10 +679,6 @@ func (m Model) chatContent() string {
 	return m.transcriptView() + m.menuView() + status + m.permissionPanelView() + m.composerView()
 }
 
-// chatView dimensiona el chat como la columna derecha cuando el arbol esta
-// abierto: sin borde ni titulo, solo acotado a contentWidth x bodyHeight para
-// que JoinHorizontal lo alinee junto al arbol. El contenido ya viene envuelto
-// al ancho del chat (viewport y composer se dimensionan con chatContentWidth).
 func (m Model) chatView(content string) string {
 	style := treePanelStyle
 	if m.ready {
@@ -1577,9 +687,6 @@ func (m Model) chatView(content string) string {
 	return style.Render(content)
 }
 
-// viewerView dimensiona el visor como la columna derecha, sin borde ni titulo,
-// igual que chatView. El panel recibe el alto completo del cuerpo (el mismo que
-// en pantalla completa) y reserva por si solo la fila de cabecera.
 func (m Model) viewerView(width int) string {
 	content := m.fileViewerPanel.view(max(width, 0), max(m.bodyHeight(), 0))
 	style := treePanelStyle
@@ -1595,20 +702,6 @@ func (m Model) renderFileViewer(width, height int) string {
 	return m.fileViewerPanel.view(width, height)
 }
 
-// menuView rinde el popup de autocompletado: una linea por item, con el
-// prefijo "❯ " (acento) para el seleccionado y dos espacios para el resto,
-// luego el label ("/<name>" o la ruta del archivo) y, tras dos espacios, la
-// descripcion en estilo tenue (los archivos no llevan: la linea termina en el
-// label, sin espacios colgantes). El label es contenido plano asertable; los
-// estilos solo envuelven segmentos. Sin menu abierto devuelve "" y la vista no
-// agrega lineas.
-//
-// Cada linea se trunca al ancho de la terminal: reservedLines descuenta UNA
-// linea por item, y una linea mas ancha la envolveria el terminal a dos lineas
-// reales, dejando corto el alto reservado y roto el layout. El tail "…" senala
-// que la ruta o descripcion sigue mas alla del corte. Sin tamano conocido
-// (ready == false) o con ancho <= 0 no se trunca, igual que el resto de la
-// vista degradada (syncViewport tampoco envuelve).
 func (m Model) menuView() string {
 	var b strings.Builder
 	for i, item := range m.menuItems {
@@ -1628,13 +721,6 @@ func (m Model) menuView() string {
 	return b.String()
 }
 
-// composerBox envuelve la linea de input en la caja de borde redondeado del
-// composer. Con tamano de terminal conocido cada linea de la caja mide
-// exactamente el ancho de la terminal: el interior se fija a width - 2
-// (Style.Width de lipgloss INCLUYE el padding pero no el borde, que suma
-// composerBoxBorderWidth), acotado a >= 0 para terminales minusculas, donde
-// Width 0 de lipgloss significa "sin fijar" y la caja queda a ancho natural
-// (con su padding), igual que sin tamano conocido.
 func (m Model) composerBox() string {
 	return m.composerBoxWithWidth(m.chatContentWidth())
 }
@@ -1821,9 +907,6 @@ func (m Model) treeVisibleRowCount() int {
 	return m.baseLayout().treeVisibleRows
 }
 
-// transcriptView devuelve el transcript con su separador hacia el resto de la
-// vista: el viewport de alto acotado cuando el tamano de la terminal es
-// conocido, o el render completo como fallback mientras no lo es.
 func (m Model) transcriptView() string {
 	if m.ready {
 		if m.viewport.Height <= 0 {
@@ -1841,8 +924,6 @@ func (m Model) transcriptView() string {
 	return ""
 }
 
-// renderNewActivityIndicator coloca una flecha pasiva en el borde inferior
-// derecho del transcript sin agregar filas ni cambiar el alto del viewport.
 func renderNewActivityIndicator(view string, width int) string {
 	if view == "" || width <= 0 {
 		return view

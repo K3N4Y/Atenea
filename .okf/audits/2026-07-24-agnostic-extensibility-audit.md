@@ -1,6 +1,6 @@
 ---
 updated_at: 2026-07-27
-summary: Audit of how agnostic atenea's seams are, and what to change to enable third-party integrations, contributions, and a plugin system. R1 through R5 and R7 through R9 are done; the remaining recommendations stay open.
+summary: Audit of how agnostic atenea's seams are, and what to change to enable third-party integrations, contributions, and a plugin system. R1 through R5 and R7 through R10 are done; R6 remains open.
 ---
 
 # Agnosticism and extensibility audit — atenea
@@ -77,7 +77,7 @@ of them delete code.
 | Public API | **Partial** — 5 importable contract packages under `agentcore/` plus 2 contract test kits, boundary enforced by test; the tool capability interfaces landed with R2, message content parts with R3.6 (the first breaking change, taken deliberately while nothing promises stability); implementations still private, no stability promise yet (R1.3, R1.4, R2, R3 done) | `agentcore/`, `agentcore/boundary_test.go`, `agentcore/{tool/tooltest,llm/llmtest}` |
 | Branding/paths | **Weak** — `atenea` literal in 6+ path builders, no XDG | §3.6 |
 | MCP as plugin substrate | **Good** — remote transports, durable trust, shared tools/prompts/resources/sampling, and opt-in supervised lifecycle are consistent across all hosts | §3.8 |
-| Contributor docs | **Weak** — no CONTRIBUTING; `AGENTS.md` points at two files that do not exist; LICENSE now present (R1.2 done) | §3.9 |
+| Contributor docs | **Good** — license, contribution and security policies; live domain glossary and ADR index; public-contract expectations and architecture decisions are documented (R10) | `CONTRIBUTING.md`, `SECURITY.md`, `CONTEXT.md`, `.okf/architecture/adr/` |
 
 ## 3. Findings
 
@@ -1456,20 +1456,35 @@ right shape. Consolidate the plumbing:
 
 ### R10 — Contributor experience
 
-1. `LICENSE`, `CONTRIBUTING.md` (quality gates from `AGENTS.md`, contract-test
-   expectations from R1), `SECURITY.md` (matters once extensions execute code).
-2. Fix the `AGENTS.md` dead pointers: create `CONTEXT.md` and
-   `.okf/architecture/adr/`, or remove the references.
-3. **Comment-language migration.** New code is already English by rule. Prioritize
+1. ~~`LICENSE`, `CONTRIBUTING.md` (quality gates from `AGENTS.md`, contract-test
+   expectations from R1), `SECURITY.md` (matters once extensions execute code).~~
+   `[done 2026-07-27]` The MIT license is joined by contribution and security
+   policies that document the exact quality gates, public contract kits, dual-host
+   expectations, private reporting path, permission boundary and MCP threat model.
+2. ~~Fix the `AGENTS.md` dead pointers: create `CONTEXT.md` and
+   `.okf/architecture/adr/`, or remove the references.~~ `[done 2026-07-27]`
+   `CONTEXT.md` now defines the shared product vocabulary, and the indexed ADR
+   directory owns durable architecture decisions.
+3. ~~**Comment-language migration.** New code is already English by rule. Prioritize
    the packages that become public contracts (`llm`, `tool`, `permission`, session
    event types) — their comments *are* the published documentation — then migrate
-   the rest per-package as files are touched.
-4. Split `internal/tui/view.go` (1894) and `model.go` (1696) by concern. R2's
-   `Presenter` removes the main reason they grow with every feature; splitting
-   removes the merge-conflict surface for contributors.
-5. Add an ADR for each decision taken here — especially "MCP is the only
+   the rest per-package as files are touched.~~ `[done 2026-07-27]` Every comment
+   in `agentcore/{llm,tool,permission,session}` and both public contract kits was
+   audited and is already English. The per-file migration rule remains in
+   `AGENTS.md`; the TUI files touched by R10.4 were migrated with their split.
+4. ~~Split `internal/tui/view.go` and `model.go` by concern. R2's `Presenter`
+   removes the main reason they grow with every feature; splitting removes the
+   merge-conflict surface for contributors.~~ `[done 2026-07-27]` Diff cards and
+   Markdown rendering left `view.go`; explorer behavior, permission/plan gates,
+   and prompt admission left `model.go`. The package interface and behavior are
+   unchanged, while the two original files fell from 1,856/1,765 lines to
+   937/1,062 lines and contributors can change those concerns independently.
+5. ~~Add an ADR for each decision taken here — especially "MCP is the only
    third-party boundary" and "contracts public, loop private". These are the
-   decisions future contributors will otherwise relitigate.
+   decisions future contributors will otherwise relitigate.~~ `[done 2026-07-27]`
+   ADR 0001 records the deliberately small published contract surface and ADR
+   0002 records MCP as the sole third-party executable-code boundary, including
+   consequences and rejected alternatives.
 
 ## 5. Phased plan
 
@@ -1520,9 +1535,8 @@ complete. R9 unified and versioned manifests, added subagent validation, removed
 the orphaned skill lockfile, and unified slash-command registration.
 *Outcome: a third party ships an extension without touching this repo.*
 
-**Phase 4 — hardening.** R5 event contract (default cases, generated TS union,
-`Attrs`, forward-compat fix). R6 tool middleware + prompt sections. R10
-contributor experience.
+**Phase 4 — hardening.** R5 event contract (complete). R10 contributor
+experience (complete). R6 tool middleware + prompt sections remains open.
 *Outcome: the contracts survive versions and outside code.*
 
 ## 6. What not to do
