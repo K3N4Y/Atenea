@@ -263,6 +263,28 @@ func TestComposer_BuiltinMenuSelectionSurfacesSubmit(t *testing.T) {
 	}
 }
 
+func TestComposer_CommandMenuPrioritizesLocalCommandsBeforeTheLimit(t *testing.T) {
+	commands := []command.Command{
+		{Name: "compact", BuiltIn: true},
+		{Name: "connect", BuiltIn: true},
+		{Name: "dep-skill"},
+		{Name: "local-test-skill"},
+		{Name: "mcp", BuiltIn: true},
+		{Name: "mentioned"},
+		{Name: "mentioned-skill"},
+		{Name: "model", BuiltIn: true},
+		{Name: "new", BuiltIn: true},
+	}
+	models := modelSource{catalog: func() ([]providerconfig.ProviderModels, bool) { return nil, false }}
+	c := typeInto(newTestComposer(), "/", commands, nil, models)
+	for _, item := range c.menuItems {
+		if item.label == "/model" {
+			return
+		}
+	}
+	t.Fatalf("slash menu = %#v, want local /model before the menu limit", c.menuItems)
+}
+
 func TestComposer_MentionMenuLoadsFilesOnceThenShowsThem(t *testing.T) {
 	models := modelSource{catalog: func() ([]providerconfig.ProviderModels, bool) { return nil, false }}
 	listFiles := func() ([]string, error) { return []string{"internal/tui/model.go"}, nil }

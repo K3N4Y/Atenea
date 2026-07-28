@@ -107,17 +107,23 @@ func isCanonicalModelCommand(text string, providers []providerconfig.ProviderMod
 	return false
 }
 
-// filterCommands sorts commands against a query (case-insensitive), mirroring the ranking of filterCommands in command.ts. Empty Query returns the head of the list. If not, it preserves the commands whose name (or, failing that, description) contains the query, ranking the name prefix (0) before the name substring (1) and before the match in the description (2); Break the tie by shortest name and then alphabetical. Without a match it is discarded. Limit to limit; limit <= 0 returns empty.
+// filterCommands ranks matches by query quality, then keeps local commands ahead
+// of extension commands with the same score so the bounded menu cannot hide host
+// capabilities. Remaining ties use shortest name and alphabetical order.
 func filterCommands(cmds []command.Command, query string, limit int) []command.Command {
 	if limit <= 0 {
 		return nil
 	}
 	q := strings.ToLower(query)
 	if q == "" {
-		if len(cmds) > limit {
-			return cmds[:limit]
+		ordered := append([]command.Command(nil), cmds...)
+		sort.SliceStable(ordered, func(i, j int) bool {
+			return ordered[i].BuiltIn && !ordered[j].BuiltIn
+		})
+		if len(ordered) > limit {
+			return ordered[:limit]
 		}
-		return cmds
+		return ordered
 	}
 	type scoredCmd struct {
 		cmd   command.Command
@@ -143,6 +149,9 @@ func filterCommands(cmds []command.Command, query string, limit int) []command.C
 		a, b := matches[i], matches[j]
 		if a.score != b.score {
 			return a.score < b.score
+		}
+		if a.cmd.BuiltIn != b.cmd.BuiltIn {
+			return a.cmd.BuiltIn
 		}
 		if len(a.cmd.Name) != len(b.cmd.Name) {
 			return len(a.cmd.Name) < len(b.cmd.Name)
