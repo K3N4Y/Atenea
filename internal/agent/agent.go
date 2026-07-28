@@ -70,13 +70,22 @@ func (t *toolList) UnmarshalYAML(node *yaml.Node) error {
 	return node.Decode((*[]string)(t))
 }
 
-// Discover recursively scans agent directories for Markdown definitions. The
-// first definition of a name wins; missing directories and malformed files are
-// skipped so one broken definition cannot prevent discovery of the others.
-func Discover(agentsDirs ...string) ([]Def, error) {
-	var out []Def
-	seen := make(map[string]bool)
-	for _, agentsDir := range agentsDirs {
+// Entry records what happened to one Markdown definition during discovery.
+// Malformed and shadowed entries remain visible here even though Discover omits
+// them from the usable catalog.
+type Entry struct {
+	Def
+	Location   string
+	Err        error
+	ShadowedBy string
+}
+
+// Scan recursively records every Markdown definition discovery walks. The first
+// definition of a name wins; missing directories contribute no entries.
+func Scan(agentDirs ...string) ([]Entry, error) {
+	var entries []Entry
+	winners := make(map[string]string)
+	for _, agentsDir := range agentDirs {
 		err := filepath.WalkDir(agentsDir, func(path string, d fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				if os.IsNotExist(walkErr) {
@@ -93,18 +102,39 @@ func Discover(agentsDirs ...string) ([]Def, error) {
 			}
 			def, parseErr := Parse(raw)
 			if parseErr != nil {
-				return nil // Skip a malformed definition without breaking discovery.
+				entries = append(entries, Entry{Location: path, Err: parseErr})
+				return nil
 			}
-			if seen[def.Name] {
-				return nil // The first occurrence wins.
-			}
-			seen[def.Name] = true
+			entry := Entry{Def: def, Location: path}
 			def.Location = path
-			out = append(out, def)
+			entry.Def = def
+			if winner := winners[def.Name]; winner != "" {
+				entry.ShadowedBy = winner
+			} else {
+				winners[def.Name] = path
+			}
+			entries = append(entries, entry)
 			return nil
 		})
 		if err != nil {
 			return nil, err
+		}
+	}
+	return entries, nil
+}
+
+// Discover returns the usable, unshadowed definitions from Scan. Malformed
+// definitions stay non-fatal so one broken file cannot prevent other subagents
+// from loading.
+func Discover(agentDirs ...string) ([]Def, error) {
+	entries, err := Scan(agentDirs...)
+	if err != nil {
+		return nil, err
+	}
+	var out []Def
+	for _, entry := range entries {
+		if entry.Err == nil && entry.ShadowedBy == "" {
+			out = append(out, entry.Def)
 		}
 	}
 	return out, nil

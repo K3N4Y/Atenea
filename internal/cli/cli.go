@@ -101,6 +101,11 @@ var commands = []command{
 		run:     skillCommand,
 	},
 	{
+		name:    "agent",
+		summary: "Validate the discovered or named subagent definitions",
+		run:     agentCommand,
+	},
+	{
 		name:    "version",
 		summary: "Print the version, commit and build date of this binary",
 		run:     versionCommand,

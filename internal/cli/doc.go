@@ -1,6 +1,6 @@
 // Package cli is atenea's command-line surface: the subcommand dispatch, the
-// non-interactive `atenea run`, and the two commands that configure what a run
-// finds when it starts — `atenea mcp` and `atenea skill`.
+// non-interactive `atenea run`, and the commands that inspect or configure what a
+// run finds when it starts — `atenea mcp`, `atenea skill`, and `atenea agent`.
 //
 // It is the programmatic way in. Everything a third party needs in order to drive
 // the agent — a CI step, an editor plugin, another agent, a TTY-free end-to-end
