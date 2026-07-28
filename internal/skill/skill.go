@@ -16,6 +16,7 @@ import (
 // the SKILL.md, which resolves the base directory and lists the skill's resources
 // when it is loaded).
 type Info struct {
+	Version     int
 	Name        string
 	Description string
 	Location    string
@@ -30,16 +31,18 @@ type Info struct {
 func (i Info) Announced() bool { return i.Description != "" }
 
 // Parse separates a SKILL.md's frontmatter from its body. The frontmatter is the
-// block delimited by "---" at the start of the file; name and description are read
-// from it (one per line, "key: value"). The rest is Content. A file with no
+// block delimited by "---" at the start of the file. The rest is Content. A file with no
 // frontmatter, or with no name, is an error: a skill without a name cannot be
-// referenced by the model. Parse does not set Location (Scan does).
+// referenced by the model. Version defaults to 1 for legacy manifests; unsupported
+// versions are rejected. Unknown frontmatter keys are intentionally tolerated so
+// another host can extend a compatible manifest. Parse does not set Location (Scan does).
 //
 // The errors are written to be read by a contributor whose skill did not show up,
 // because that is where they surface: `atenea skill validate` prints them next to
 // the file that produced them.
 func Parse(raw []byte) (Info, error) {
 	var manifest struct {
+		Version     int    `yaml:"version"`
 		Name        string `yaml:"name"`
 		Description string `yaml:"description"`
 	}
@@ -47,7 +50,12 @@ func Parse(raw []byte) (Info, error) {
 	if err != nil {
 		return Info{}, err
 	}
+	version, err := frontmatter.Version(manifest.Version)
+	if err != nil {
+		return Info{}, err
+	}
 	info := Info{
+		Version:     version,
 		Name:        manifest.Name,
 		Description: strings.Join(strings.Fields(manifest.Description), " "),
 		Content:     string(body),

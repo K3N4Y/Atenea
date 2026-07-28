@@ -8,6 +8,21 @@ import (
 	"go.yaml.in/yaml/v4"
 )
 
+// CurrentVersion is the schema version understood by the manifest parsers.
+const CurrentVersion = 1
+
+// Version resolves an omitted version as the legacy version and rejects schema
+// versions whose semantics this build does not understand.
+func Version(declared int) (int, error) {
+	if declared == 0 {
+		return CurrentVersion, nil
+	}
+	if declared != CurrentVersion {
+		return 0, fmt.Errorf("unsupported manifest version %d (supported version: %d)", declared, CurrentVersion)
+	}
+	return declared, nil
+}
+
 // Parse decodes the opening YAML frontmatter into dst and returns the document
 // body. Frontmatter delimiters must be complete lines at the start of the file.
 func Parse(raw []byte, dst any) ([]byte, error) {

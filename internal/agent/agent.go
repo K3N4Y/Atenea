@@ -13,6 +13,7 @@ import (
 
 // Def is a subagent definition: its metadata, Markdown prompt, and source path.
 type Def struct {
+	Version     int
 	Name        string
 	Description string
 	Tools       []string
@@ -22,9 +23,12 @@ type Def struct {
 }
 
 // Parse decodes a subagent's YAML frontmatter and separates it from its prompt.
-// Location is left unset for Discover to populate.
+// Version defaults to 1 for legacy manifests; unsupported versions are rejected.
+// Unknown frontmatter keys are intentionally tolerated so another host can extend
+// a compatible manifest. Location is left unset for Discover to populate.
 func Parse(raw []byte) (Def, error) {
 	var manifest struct {
+		Version     int      `yaml:"version"`
 		Name        string   `yaml:"name"`
 		Description string   `yaml:"description"`
 		Tools       toolList `yaml:"tools"`
@@ -34,7 +38,12 @@ func Parse(raw []byte) (Def, error) {
 	if err != nil {
 		return Def{}, fmt.Errorf("agent: %w", err)
 	}
+	version, err := frontmatter.Version(manifest.Version)
+	if err != nil {
+		return Def{}, fmt.Errorf("agent: %w", err)
+	}
 	def := Def{
+		Version:     version,
 		Name:        manifest.Name,
 		Description: strings.Join(strings.Fields(manifest.Description), " "),
 		Tools:       []string(manifest.Tools),
