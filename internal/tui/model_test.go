@@ -5418,8 +5418,10 @@ func TestModel_MenuKeysNavigateSelection(t *testing.T) {
 		t.Fatalf("linea seleccionada del menu = %q, el comando integrado /new debe arrancar seleccionado", got)
 	}
 
-	// Down goes down to the first skill.
-	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	// Local commands lead the initial menu, so move past all five to the first skill.
+	for range 5 {
+		m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	}
 	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/commit") {
 		t.Fatalf("linea seleccionada del menu = %q, Down debe mover el marcador a la skill /commit", got)
 	}

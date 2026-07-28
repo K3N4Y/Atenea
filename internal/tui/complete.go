@@ -107,9 +107,9 @@ func isCanonicalModelCommand(text string, providers []providerconfig.ProviderMod
 	return false
 }
 
-// filterCommands ranks matches by query quality, then keeps local commands ahead
-// of extension commands with the same score so the bounded menu cannot hide host
-// capabilities. Remaining ties use shortest name and alphabetical order.
+// filterCommands keeps local commands ahead of extensions in the bounded initial
+// menu. Once the user types a query, matches retain the established quality,
+// shortest-name, and alphabetical ranking regardless of their source.
 func filterCommands(cmds []command.Command, query string, limit int) []command.Command {
 	if limit <= 0 {
 		return nil
@@ -149,9 +149,6 @@ func filterCommands(cmds []command.Command, query string, limit int) []command.C
 		a, b := matches[i], matches[j]
 		if a.score != b.score {
 			return a.score < b.score
-		}
-		if a.cmd.BuiltIn != b.cmd.BuiltIn {
-			return a.cmd.BuiltIn
 		}
 		if len(a.cmd.Name) != len(b.cmd.Name) {
 			return len(a.cmd.Name) < len(b.cmd.Name)

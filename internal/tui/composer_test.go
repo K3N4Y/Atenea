@@ -285,6 +285,18 @@ func TestComposer_CommandMenuPrioritizesLocalCommandsBeforeTheLimit(t *testing.T
 	t.Fatalf("slash menu = %#v, want local /model before the menu limit", c.menuItems)
 }
 
+func TestComposer_TypedCommandQueryKeepsShortestNameRanking(t *testing.T) {
+	commands := []command.Command{
+		{Name: "compact", BuiltIn: true},
+		{Name: "commit"},
+	}
+	models := modelSource{catalog: func() ([]providerconfig.ProviderModels, bool) { return nil, false }}
+	c := typeInto(newTestComposer(), "/co", commands, nil, models)
+	if len(c.menuItems) != 2 || c.menuItems[0].label != "/commit" {
+		t.Fatalf("slash menu = %#v, want shorter /commit first for a typed query", c.menuItems)
+	}
+}
+
 func TestComposer_MentionMenuLoadsFilesOnceThenShowsThem(t *testing.T) {
 	models := modelSource{catalog: func() ([]providerconfig.ProviderModels, bool) { return nil, false }}
 	listFiles := func() ([]string, error) { return []string{"internal/tui/model.go"}, nil }
