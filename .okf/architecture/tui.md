@@ -35,6 +35,13 @@ from the same workspace, `/compact` requests durable context compaction for the
 active session, and `/model` opens a full-screen two-column picker with
 providers on the left and the selected provider's models on the wider right.
 
+The engine registers `/new`, `/compact`, `/model`, `/mcp`, `/connect`, `/resume`,
+and `/undo` in the same `command.Set` as skill-derived and MCP commands. The
+composer receives that single list and uses `Command.BuiltIn` to distinguish
+local dispatch from prompt expansion. Registration rejects duplicate names;
+dynamic collisions fall back to the local catalog rather than allowing an
+extension to shadow a host command.
+
 At startup, the TUI allocates a fresh session ID: launching never shows
 transcripts from previous runs. Earlier `tui-` sessions whose persisted
 `Session.Cwd` matches the current workspace stay reachable through `/resume`,

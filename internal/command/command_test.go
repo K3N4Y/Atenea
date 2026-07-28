@@ -2,13 +2,33 @@ package command
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/K3N4Y/atenea/internal/skill"
 )
 
-// TestExpand_SubstituyeArguments: $ARGUMENTS se reemplaza por los args; el
-// resultado se recorta para no arrastrar espacios sobrantes.
+func TestNewChecked_RejectsACommandThatShadowsABuiltin(t *testing.T) {
+	_, err := NewChecked([]Command{
+		{Name: "new", Description: "Start a new session", BuiltIn: true},
+		{Name: "new", Description: "A skill trying to shadow the local command"},
+	})
+	if err == nil || !strings.Contains(err.Error(), `duplicate slash command "new"`) {
+		t.Fatalf("NewChecked error = %v, want duplicate command name", err)
+	}
+}
+
+func TestSet_ListPreservesBuiltinIdentity(t *testing.T) {
+	set, err := NewChecked([]Command{{Name: "new", BuiltIn: true}})
+	if err != nil {
+		t.Fatalf("NewChecked: %v", err)
+	}
+	if got := set.List(); len(got) != 1 || !got[0].BuiltIn {
+		t.Fatalf("List() = %#v, want local /new command", got)
+	}
+}
+
+// TestExpand_SubstituteArguments: $ARGUMENTS is replaced by the args; The result is cropped to avoid dragging excess spaces.
 func TestExpand_SubstituyeArguments(t *testing.T) {
 	got := Expand(`Usa la skill "x".`+"\n\n$ARGUMENTS", "implementa foo")
 	want := `Usa la skill "x".` + "\n\nimplementa foo"
@@ -17,8 +37,7 @@ func TestExpand_SubstituyeArguments(t *testing.T) {
 	}
 }
 
-// TestExpand_SinArgsRecortaPlaceholder: sin args, el placeholder y su separador
-// quedan vacios; el resultado no termina con saltos de linea sueltos.
+// TestExpand_SinArgsRecortaPlaceholder: without args, the placeholder and its separator remain empty; the result does not end with loose line breaks.
 func TestExpand_SinArgsRecortaPlaceholder(t *testing.T) {
 	got := Expand(`Usa la skill "x".`+"\n\n$ARGUMENTS", "")
 	want := `Usa la skill "x".`
@@ -27,8 +46,7 @@ func TestExpand_SinArgsRecortaPlaceholder(t *testing.T) {
 	}
 }
 
-// TestExpand_SinPlaceholderAnexaArgs: una plantilla sin $ARGUMENTS anexa los args
-// al final (separados por linea en blanco) cuando los hay.
+// TestExpand_SinPlaceholderAnexaArgs: a template without $ARGUMENTS appends the args at the end (separated by a blank line) when they exist.
 func TestExpand_SinPlaceholderAnexaArgs(t *testing.T) {
 	if got := Expand("Hace algo", "contexto"); got != "Hace algo\n\ncontexto" {
 		t.Fatalf("con args: Expand = %q", got)
@@ -38,8 +56,7 @@ func TestExpand_SinPlaceholderAnexaArgs(t *testing.T) {
 	}
 }
 
-// TestFromSkills_DerivaUnComandoPorSkill: cada skill descubierta produce un
-// comando /<name> con su descripcion y una plantilla que referencia la skill.
+// TestFromSkills_DerivaUnComandoPorSkill: each skill discovered produces a /<name> command with its description and a template that references the skill.
 func TestFromSkills_DerivaUnComandoPorSkill(t *testing.T) {
 	skills := []skill.Info{
 		{Name: "code-review", Description: "Revision de codigo"},
@@ -52,15 +69,14 @@ func TestFromSkills_DerivaUnComandoPorSkill(t *testing.T) {
 	if cmds[0].Name != "code-review" || cmds[0].Description != "Revision de codigo" {
 		t.Fatalf("comando[0] = %+v", cmds[0])
 	}
-	// La plantilla debe nombrar la skill para que el agente la cargue por su tool.
+	// The template must name the skill so that the agent loads it through its tool.
 	exp := Expand(cmds[0].Template, "")
 	if exp == "" || !contains(exp, "code-review") {
 		t.Fatalf("la plantilla no referencia la skill: %q", exp)
 	}
 }
 
-// TestSet_ListOrdenaPorNombre: List devuelve los comandos ordenados por nombre,
-// estable para el menu del composer.
+// TestSet_ListOrdenaByName: List returns commands ordered by name, stable for the composer menu.
 func TestSet_ListOrdenaPorNombre(t *testing.T) {
 	s := New([]Command{
 		{Name: "commit", Description: "b"},
@@ -72,8 +88,7 @@ func TestSet_ListOrdenaPorNombre(t *testing.T) {
 	}
 }
 
-// TestSet_ResolveExpandeComandoRegistrado: una entrada "/name args" de un comando
-// registrado se resuelve a la plantilla expandida con los args.
+// TestSet_ResolveExpandRegisteredCommand: A "/name args" entry from a registered command resolves to the template expanded with the args.
 func TestSet_ResolveExpandeComandoRegistrado(t *testing.T) {
 	s := New([]Command{{Name: "foo", Template: "Hace foo.\n\n$ARGUMENTS"}})
 	out, ok := s.Resolve("/foo hola mundo")
@@ -85,7 +100,7 @@ func TestSet_ResolveExpandeComandoRegistrado(t *testing.T) {
 	}
 }
 
-// TestSet_ResolveSinArgs: "/name" sin args expande la plantilla sin el placeholder.
+// TestSet_ResolveSinArgs: "/name" without args expands the template without the placeholder.
 func TestSet_ResolveSinArgs(t *testing.T) {
 	s := New([]Command{{Name: "foo", Template: "Hace foo.\n\n$ARGUMENTS"}})
 	out, ok := s.Resolve("/foo")
@@ -94,8 +109,7 @@ func TestSet_ResolveSinArgs(t *testing.T) {
 	}
 }
 
-// TestSet_ResolveTextoNormalNoEsComando: texto que no empieza con "/" pasa de
-// largo (no es comando), para no transformar prompts normales.
+// TestSet_ResolveTextoNormalNoEsComando: text that does not begin with "/" is passed over (it is not a command), so as not to transform normal prompts.
 func TestSet_ResolveTextoNormalNoEsComando(t *testing.T) {
 	s := New([]Command{{Name: "foo", Template: "x"}})
 	if _, ok := s.Resolve("hola foo"); ok {
@@ -103,8 +117,7 @@ func TestSet_ResolveTextoNormalNoEsComando(t *testing.T) {
 	}
 }
 
-// TestSet_ResolveComandoDesconocidoPasaDeLargo: "/desconocido" que no esta en el
-// registro no se transforma; se envia literal (ok=false).
+// TestSet_ResolveUnknownCommandPasaDeLargo: "/unknown" that is not in the registry is not transformed; literal is sent (ok=false).
 func TestSet_ResolveComandoDesconocidoPasaDeLargo(t *testing.T) {
 	s := New([]Command{{Name: "foo", Template: "x"}})
 	if _, ok := s.Resolve("/desconocido algo"); ok {
@@ -112,8 +125,7 @@ func TestSet_ResolveComandoDesconocidoPasaDeLargo(t *testing.T) {
 	}
 }
 
-// TestSet_ResolveNombreTerminaEnSaltoDeLinea: el nombre termina en el primer
-// espacio en blanco (un salto de linea de Shift+Enter separa nombre de args).
+// TestSet_ResolveNameEndsOnLineFeed: the name ends on the first blank space (a line break of Shift+Enter separates name from args).
 func TestSet_ResolveNombreTerminaEnSaltoDeLinea(t *testing.T) {
 	s := New([]Command{{Name: "foo", Template: "Hace foo.\n\n$ARGUMENTS"}})
 	out, ok := s.Resolve("/foo\nhola")
@@ -122,7 +134,7 @@ func TestSet_ResolveNombreTerminaEnSaltoDeLinea(t *testing.T) {
 	}
 }
 
-// TestSet_ResolveBarraSolaNoEsComando: "/" sin nombre no es comando.
+// TestSet_ResolveBarSolaNoEsCommand: "/" without a name is not a command.
 func TestSet_ResolveBarraSolaNoEsComando(t *testing.T) {
 	s := New([]Command{{Name: "foo", Template: "x"}})
 	if _, ok := s.Resolve("/"); ok {

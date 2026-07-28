@@ -246,11 +246,12 @@ func TestComposer_SlashMenuBuildsAndAppliesSelection(t *testing.T) {
 
 func TestComposer_BuiltinMenuSelectionSurfacesSubmit(t *testing.T) {
 	models := modelSource{catalog: func() ([]providerconfig.ProviderModels, bool) { return nil, false }}
-	c := typeInto(newTestComposer(), "/ne", nil, nil, models)
+	commands := []command.Command{{Name: "new", Description: "Start a new session", BuiltIn: true}}
+	c := typeInto(newTestComposer(), "/ne", commands, nil, models)
 	if len(c.menuItems) == 0 || c.menuItems[0].label != "/new" {
 		t.Fatalf("slash menu = %+v, want /new builtin", c.menuItems)
 	}
-	c, intent, _ := c.handleKey(keyMsg(tea.KeyEnter), nil, nil, models)
+	c, intent, _ := c.handleKey(keyMsg(tea.KeyEnter), commands, nil, models)
 	if !intent.submit || !intent.handled {
 		t.Fatalf("Enter on /new intent = %+v, want submit+handled so the root dispatches", intent)
 	}

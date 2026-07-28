@@ -6,6 +6,7 @@ package wailsworkspace
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"sync"
 
@@ -197,5 +198,10 @@ func (m *Manager) rebuildLocked(root string) {
 	m.glob = built.Glob
 	m.mu.Unlock()
 	commands := append(built.Commands.List(), m.mcp.Commands()...)
-	m.sitting.Agent.Configure(built.Runner, command.New(commands, m.mcp.Mentions()...))
+	commandSet, err := command.NewChecked(commands, m.mcp.Mentions()...)
+	if err != nil {
+		log.Printf("atenea: could not register slash commands: %v", err)
+		commandSet = built.Commands
+	}
+	m.sitting.Agent.Configure(built.Runner, commandSet)
 }

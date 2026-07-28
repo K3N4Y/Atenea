@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/K3N4Y/atenea/internal/command"
 	"github.com/K3N4Y/atenea/internal/mcpclient"
 )
 
@@ -70,8 +71,7 @@ func mcpServer(name, command string, connected bool, tools int) mcpclient.Server
 	}
 }
 
-// applyCmd pasa un mensaje por Update y devuelve tambien el cmd, para poder
-// ejecutar el toggle asincrono del picker dentro del test.
+// applyCmd passes a message through Update and also returns the cmd, to be able to execute the asynchronous toggle of the picker within the test.
 func applyCmd(t *testing.T, m Model, msg tea.Msg) (Model, tea.Cmd) {
 	t.Helper()
 	updated, cmd := m.Update(msg)
@@ -130,7 +130,7 @@ func TestModel_MCPPickerTogglesServerOnEnter(t *testing.T) {
 	if view := ansi.Strip(m.View()); !strings.Contains(view, "starting…") {
 		t.Fatalf("the row must show the toggle in flight:\n%s", view)
 	}
-	// Enter de nuevo mientras esta busy: inerte, no duplica la conexion.
+	// Enter again while busy: inert, does not duplicate the connection.
 	m, dup := applyCmd(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if dup != nil {
 		t.Fatal("toggling a busy server must be a no-op")
@@ -148,7 +148,7 @@ func TestModel_MCPPickerTogglesServerOnEnter(t *testing.T) {
 		t.Fatalf("the row must show the server on with its tools:\n%s", view)
 	}
 
-	// Enter otra vez: ahora desconecta.
+	// Enter again: the server is now disconnected.
 	m, cmd = applyCmd(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	m = apply(t, m, cmd())
 	if len(agent.disconnects) != 1 || agent.disconnects[0] != "github" {
@@ -180,7 +180,7 @@ func TestModel_MCPPickerDropsStaleToggleResults(t *testing.T) {
 	m := openMCPPicker(t, agent)
 	m, cmd := applyCmd(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
-	// Cerrar y reabrir invalida la generacion: el resultado viejo no aplica.
+	// Closing and reopening invalidates the generation: the old result does not apply.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
 	m = typeRunes(t, m, "/mcp")
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -228,8 +228,7 @@ func TestModel_MCPPickerClickTogglesRow(t *testing.T) {
 	)
 	m := openMCPPicker(t, agent)
 
-	// Con 80x24 la primera fila de items queda en Y=4 (fila en blanco, borde,
-	// cabecera, separador); la segunda fila (playwright) en Y=5.
+	// With 80x24 the first row of items is Y=4 (blank row, border, header, separator); the second row (playwright) at Y=5.
 	m, cmd := applyCmd(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 6, Y: 5})
 	if cmd == nil {
 		t.Fatal("click on a row must toggle it")
@@ -244,7 +243,7 @@ func TestModel_MCPPickerClickTogglesRow(t *testing.T) {
 }
 
 func TestModel_CommandMenuOffersMCPBuiltin(t *testing.T) {
-	m := NewModel(newMCPTestAgent(), "s1", nil)
+	m := NewModel(newMCPTestAgent(), "s1", nil).WithCompletions([]command.Command{{Name: "mcp", BuiltIn: true}}, nil)
 	m = typeRunes(t, m, "/mc")
 	found := false
 	for _, item := range m.menuItems {

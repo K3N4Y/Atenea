@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/K3N4Y/atenea/internal/command"
 	"github.com/K3N4Y/atenea/internal/providerconfig"
 )
 
@@ -228,7 +229,7 @@ func TestModel_WithNoticeShowsInTranscript(t *testing.T) {
 }
 
 func TestModel_ConnectMenuOffersTheCommand(t *testing.T) {
-	m := NewModel(newConnectTestAgent(), "s1", nil)
+	m := NewModel(newConnectTestAgent(), "s1", nil).WithCompletions([]command.Command{{Name: "connect", BuiltIn: true}}, nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = typeRunes(t, m, "/conn")
 	found := false

@@ -1,12 +1,6 @@
 package tui
 
-// Autocompletado del composer: la logica pura del popup, espejo de
-// frontend/src/lib. El menu "/" de slash-commands espeja command.ts
-// (detectCommand/filterCommands) y el @-menu de archivos espeja mention.ts
-// (detectMention/filterFiles); a diferencia del @, un comando es TODO el
-// mensaje: solo dispara cuando "/" es el primer caracter del input. Los
-// metodos del composer (applySelection/refreshMenu/closeMenu y el cache de
-// listFiles) cablean esos tokens al estado del popup; ver composer.go.
+// Composer autocompletion: pure popup logic, mirror of frontend/src/lib. The slash-commands "/" menu mirrors command.ts (detectCommand/filterCommands) and the files @-menu mirrors mention.ts (detectMention/filterFiles); Unlike @, a command is the ENTIRE message: it only fires when "/" is the first character of the input. The composer methods (applySelection/refreshMenu/closeMenu and the listFiles cache) wire those tokens to the popup state; see composer.go.
 
 import (
 	"fmt"
@@ -21,14 +15,10 @@ import (
 	"github.com/K3N4Y/atenea/internal/providerconfig"
 )
 
-// menuLimit acota cuantos items muestra el popup de autocompletado. It grows
-// with the builtin set (/new, /compact, /model, /mcp, /connect) so builtins
-// never crowd skill commands out of the popup.
+// menuLimit limits how many items the autocomplete popup displays. It grows with the builtin set (/new, /compact, /model, /mcp, /connect) so builtins never crowd skill commands out of the popup.
 const menuLimit = 8
 
-// menuItem es una fila del popup, agnostica de la fuente: el menu "/" la
-// puebla con "/<name>" y la descripcion de la skill en estilo tenue; el
-// @-menu de archivos, con la ruta como label y sin descripcion.
+// menuItem is a popup row, source agnostic: menu "/" populates it with "/<name>" and the skill description in faint style; the @-menu of files, with the path as a label and without description.
 type menuItem struct {
 	label       string
 	description string
@@ -38,28 +28,17 @@ type menuItem struct {
 	empty       bool
 }
 
-// tokenQuery es el token de autocompletado vigente bajo el caret, la forma
-// comun que devuelven detectCommand y detectMention (espejo de CommandQuery
-// en command.ts y MentionQuery en mention.ts): query es el texto entre el
-// disparador ("/" o "@") y el caret (lo que filtra), start el indice del
-// disparador ("/" siempre en 0; el "@" donde arranca el token) y end la
-// posicion del caret. Los indices son por runa, igual que el caret del
-// textinput de bubbles.
+// tokenQuery is the current autocomplete token under the caret, the common form returned by detectCommand and detectMention (mirror of CommandQuery in command.ts and MentionQuery in mention.ts): query is the text between the trigger ("/" or "@") and the caret (what it filters), start the index of the trigger ("/" always at 0; the "@" where the token starts) and end the position of the caret. The indices are per rune, just like the caret of the bubbles textinput.
 type tokenQuery struct {
 	active     bool
 	query      string
 	start, end int
 }
 
-// inactiveToken es el resultado neutro cuando no hay token vigente (espejo
-// del INACTIVE de command.ts y mention.ts).
+// inactiveToken is the neutral result when there is no current token (mirror of INACTIVE from command.ts and mention.ts).
 var inactiveToken = tokenQuery{start: -1, end: -1}
 
-// detectCommand reconoce un comando solo cuando "/" es el primer caracter del
-// texto y el caret sigue dentro del nombre (sin ningun espacio en blanco entre
-// el "/" y el caret). Al teclear el primer espacio el menu se cierra: lo que
-// sigue son los argumentos del comando. Caret fuera de rango = inactivo.
-// Opera sobre []rune porque el caret del textinput es por runa, no por byte.
+// detectCommand recognizes a command only when "/" is the first character of the text and the caret follows within the name (without any white space between the "/" and the caret). When you type the first space the menu closes: what follows are the command arguments. Caret out of range = inactive. It operates on []rune because the textinput caret is per rune, not per byte.
 func detectCommand(text string, caret int) tokenQuery {
 	runes := []rune(text)
 	if caret < 0 || caret > len(runes) {
@@ -128,13 +107,7 @@ func isCanonicalModelCommand(text string, providers []providerconfig.ProviderMod
 	return false
 }
 
-// filterCommands ordena comandos contra una query (sin distinguir mayusculas),
-// espejo del ranking de filterCommands en command.ts. Query vacia devuelve la
-// cabeza de la lista. Si no, conserva los comandos cuyo nombre (o, en su
-// defecto, descripcion) contiene la query, rankeando el prefijo del nombre (0)
-// antes que la subcadena del nombre (1) y antes que el match en la descripcion
-// (2); desempata por nombre mas corto y luego alfabetico. Sin match se
-// descarta. Acota a limit; limit <= 0 devuelve vacio.
+// filterCommands sorts commands against a query (case-insensitive), mirroring the ranking of filterCommands in command.ts. Empty Query returns the head of the list. If not, it preserves the commands whose name (or, failing that, description) contains the query, ranking the name prefix (0) before the name substring (1) and before the match in the description (2); Break the tie by shortest name and then alphabetical. Without a match it is discarded. Limit to limit; limit <= 0 returns empty.
 func filterCommands(cmds []command.Command, query string, limit int) []command.Command {
 	if limit <= 0 {
 		return nil
@@ -186,12 +159,7 @@ func filterCommands(cmds []command.Command, query string, limit int) []command.C
 	return out
 }
 
-// detectMention busca un token "@" que termina en el caret (espejo de
-// detectMention en mention.ts). Es activo cuando hay un "@" antes del caret
-// sin espacios en medio y el "@" inicia palabra (inicio del texto o precedido
-// por espacio), para que un email como a@b no dispare. La query es el texto
-// entre el "@" y el caret; conserva las barras de una ruta. Opera sobre []rune
-// porque el caret del textinput es por runa, no por byte.
+// detectMention looks for an "@" token ending in caret (mirror of detectMention in mention.ts). It is active when there is an "@" before the caret without spaces in between and the "@" starts the word (beginning of the text or preceded by a space), so that an email like a@b does not trigger. The query is the text between the "@" and the caret; preserves the bars of a route. It operates on []rune because the textinput caret is per rune, not per byte.
 func detectMention(text string, caret int) tokenQuery {
 	runes := []rune(text)
 	if caret < 0 || caret > len(runes) {
@@ -216,12 +184,7 @@ func detectMention(text string, caret int) tokenQuery {
 	return tokenQuery{active: true, query: string(runes[i+1 : caret]), start: i, end: caret}
 }
 
-// filterFiles ordena rutas contra una query (sin distinguir mayusculas),
-// espejo del ranking de filterFiles en mention.ts. Query vacia devuelve la
-// cabeza de la lista. Si no, conserva las rutas que contienen la query,
-// rankeando el prefijo del basename (0) antes que la subcadena del basename
-// (1) y antes que el match en la ruta completa (2); desempata por ruta mas
-// corta. Sin match se descarta. Acota a limit; limit <= 0 devuelve vacio.
+// filterFiles sorts paths against a query (case-insensitive), mirroring the ranking of filterFiles in mention.ts. Empty Query returns the head of the list. If not, it preserves the routes that contain the query, ranking the basename prefix (0) before the basename substring (1) and before the match in the full route (2); Break the tie by shortest route. Without a match it is discarded. Limit to limit; limit <= 0 returns empty.
 func filterFiles(files []string, query string, limit int) []string {
 	if limit <= 0 {
 		return nil
@@ -271,14 +234,7 @@ func filterFiles(files []string, query string, limit int) []string {
 	return out
 }
 
-// applySelection aplica el item seleccionado del popup sobre el input,
-// recomputando el token vigente (la misma prioridad que refreshMenu): con
-// token "/" reemplaza "/co" por "/<name> " (espejo de applyCommand: el label
-// ya es "/<name>", conserva lo que hubiera despues del caret); con token "@"
-// reemplaza el token por "@<ruta> " conservando el texto alrededor (espejo de
-// applyMention: text[:start] + insert + text[end:]). En ambos el caret queda
-// tras el espacio, listo para seguir escribiendo, y el recomputo final cierra
-// el menu (el token ya no es vigente por el espacio). Sin menu abierto es no-op.
+// applySelection applies the selected item from the popup on the input, recomputing the current token (same priority as refreshMenu): with token "/" replaces "/co" with "/<name> " (mirror of applyCommand: the label is already "/<name>", preserves what was after the caret); with token "@" replaces the token with "@<path> " preserving the text around it (mirror of applyMention: text[:start] + insert + text[end:]). In both, the caret remains after the space, ready to continue writing, and the final recomputation closes the menu (the token is no longer valid for the space). Without an open menu it is a no-op.
 func (c composer) applySelection(commands []command.Command, listFiles func() ([]string, error), models modelSource) (composer, tea.Cmd) {
 	if len(c.menuItems) == 0 {
 		return c, nil
@@ -306,18 +262,7 @@ func (c composer) applySelection(commands []command.Command, listFiles func() ([
 	return c.refreshMenu(commands, listFiles, models)
 }
 
-// refreshMenu recomputa el popup de autocompletado desde el texto y el caret
-// actuales del input: con token "/" vigente puebla los items con los comandos
-// filtrados; con token "@" vigente, con los archivos del workspace filtrados
-// (listFiles se agenda UNA vez al activarse el token y se cachea mientras siga
-// activo; mientras corre o falla, el menu muestra el estado correspondiente).
-// Sin token vigente lo cierra, invalida resultados pendientes y descarta el
-// cache. En todos los casos el primer item queda seleccionado. Se llama tras
-// cada tecla que alimenta el input. commands es la fuente de slash-commands,
-// listFiles la del @-menu y models la busqueda inline "/model" (inyectados por
-// la raiz, como el listFiles del explorer). Value-in / value-out: el llamador
-// (el seam de Model refreshMenu) recalcula el alto del viewport, que es una
-// preocupacion de layout del Model.
+// refreshMenu recomputes the autocomplete popup from the current input text and caret: with current "/" token populates the items with the filtered commands; with a valid "@" token, with the workspace files filtered (listFiles is scheduled ONCE when the token is activated and is cached as long as it is active; while it runs or fails, the menu shows the corresponding status). Without a valid token, it closes it, invalidates pending results and discards the cache. In all cases the first item is selected. It is called after each key that feeds the input. commands is the source of slash-commands, listFiles is the source of @-menu, and models is the inline search "/model" (injected by the root, like explorer's listFiles). Value-in / value-out: The caller (the Model refreshMenu seam) recalculates the height of the viewport, which is a Model layout concern.
 func (c composer) refreshMenu(commands []command.Command, listFiles func() ([]string, error), models modelSource) (composer, tea.Cmd) {
 	c.menuItems = nil
 	c.menuSelected = 0
@@ -347,82 +292,11 @@ func (c composer) refreshMenu(commands []command.Command, listFiles func() ([]st
 		c.modelSearch = false
 		c = c.dropFileCache()
 		query := strings.ToLower(q.query)
-		includeNew := strings.HasPrefix("new", query)
-		includeCompact := strings.HasPrefix("compact", query)
-		includeModel := strings.HasPrefix("model", query)
-		includeMcp := strings.HasPrefix("mcp", query)
-		includeConnect := strings.HasPrefix("connect", query)
 		developmentItems := developmentBuiltinCommands(query)
-		if includeNew {
-			c.menuItems = append(c.menuItems, menuItem{label: "/new", builtin: true})
-		}
-		reserved := len(c.menuItems)
-		if includeCompact {
-			reserved++
-		}
-		if includeModel {
-			reserved++
-		}
-		if includeMcp {
-			reserved++
-		}
-		if includeConnect {
-			reserved++
-		}
-		reserved += len(developmentItems)
-		for _, cmd := range filterCommands(commands, q.query, menuLimit-reserved) {
-			c.menuItems = append(c.menuItems, menuItem{label: "/" + cmd.Name, description: cmd.Description, builtin: cmd.Name == "resume"})
-		}
-		if includeCompact {
-			item := menuItem{label: "/compact", description: "Compact conversation context", builtin: true}
-			if query == "" && len(c.menuItems) > 1 {
-				insertAt := len(c.menuItems) - 1
-				c.menuItems = append(c.menuItems, menuItem{})
-				copy(c.menuItems[insertAt+1:], c.menuItems[insertAt:])
-				c.menuItems[insertAt] = item
-			} else {
-				c.menuItems = append(c.menuItems, item)
-			}
-		}
-		if includeModel {
-			item := menuItem{label: "/model", description: "Select provider and model", builtin: true}
-			if query != "" {
-				insertAt := 0
-				if includeNew {
-					insertAt = 1
-				}
-				c.menuItems = append(c.menuItems, menuItem{})
-				copy(c.menuItems[insertAt+1:], c.menuItems[insertAt:])
-				c.menuItems[insertAt] = item
-			} else if len(c.menuItems) > 1 {
-				last := c.menuItems[len(c.menuItems)-1]
-				c.menuItems[len(c.menuItems)-1] = item
-				c.menuItems = append(c.menuItems, last)
-			} else {
-				c.menuItems = append(c.menuItems, item)
-			}
-		}
-		if includeMcp {
-			item := menuItem{label: "/mcp", description: "Toggle MCP servers on or off", builtin: true}
-			if query == "" && len(c.menuItems) > 1 {
-				insertAt := len(c.menuItems) - 1
-				c.menuItems = append(c.menuItems, menuItem{})
-				copy(c.menuItems[insertAt+1:], c.menuItems[insertAt:])
-				c.menuItems[insertAt] = item
-			} else {
-				c.menuItems = append(c.menuItems, item)
-			}
-		}
-		if includeConnect {
-			item := menuItem{label: "/connect", description: "Connect a provider with an API key", builtin: true}
-			if query == "" && len(c.menuItems) > 1 {
-				insertAt := len(c.menuItems) - 1
-				c.menuItems = append(c.menuItems, menuItem{})
-				copy(c.menuItems[insertAt+1:], c.menuItems[insertAt:])
-				c.menuItems[insertAt] = item
-			} else {
-				c.menuItems = append(c.menuItems, item)
-			}
+		for _, cmd := range filterCommands(commands, q.query, menuLimit-len(developmentItems)) {
+			c.menuItems = append(c.menuItems, menuItem{
+				label: "/" + cmd.Name, description: cmd.Description, builtin: cmd.BuiltIn,
+			})
 		}
 		c.menuItems = append(c.menuItems, developmentItems...)
 	} else if q := detectMention(text, caret); q.active {
@@ -448,20 +322,14 @@ func (c composer) refreshMenu(commands []command.Command, listFiles func() ([]st
 	return c, nil
 }
 
-// closeMenu cierra el popup descartando items y seleccion, sin tocar el input
-// ni el cache de archivos (la proxima tecla que alimente el input recomputa el
-// token y puede reabrirlo). El llamador recalcula el alto del viewport porque
-// el popup ocupaba lineas bajo el transcript (reservedLines las descontaba).
-// refreshMenu no lo reusa: alli el reset precede al repoblado.
+// closeMenu closes the popup, discarding items and selection, without touching the input or the file cache (the next key that supplies the input recomputes the token and can reopen it). The caller recalculates the height of the viewport because the popup occupied lines under the transcript (reservedLines discounted them). refreshMenu does not reuse it: there the reset precedes the repopulation.
 func (c composer) closeMenu() composer {
 	c.menuItems = nil
 	c.menuSelected = 0
 	return c
 }
 
-// loadFilesOnce agenda listFiles la primera vez que el token "@" esta vigente y
-// cachea el resultado mientras lo siga estando (dropFileCache lo descarta al
-// desactivarse). La generacion permite ignorar respuestas de tokens anteriores.
+// loadFilesOnce schedules listFiles the first time the "@" token is in effect and caches the result as long as it is active (dropFileCache discards it when disabled). The generation allows ignoring responses from previous tokens.
 func (c composer) loadFilesOnce(listFiles func() ([]string, error)) (composer, tea.Cmd) {
 	if c.filesLoaded || c.filesLoading {
 		return c, nil
@@ -477,8 +345,7 @@ func (c composer) loadFilesOnce(listFiles func() ([]string, error)) (composer, t
 	return c, listFilesCmd(listFiles, fileListMenu, c.filesGen)
 }
 
-// dropFileCache descarta el listado cacheado del @-menu: la proxima activacion
-// del token vuelve a llamar listFiles (el workspace pudo cambiar entre tokens).
+// dropFileCache discards the cached list from the @-menu: the next activation of the token calls listFiles again (the workspace was able to switch between tokens).
 func (c composer) dropFileCache() composer {
 	c.files = nil
 	c.filesLoaded = false
@@ -488,11 +355,7 @@ func (c composer) dropFileCache() composer {
 	return c
 }
 
-// applyListedFiles folds an async "@"-menu listing result into the file cache,
-// guarded by the generation so a stale result is ignored, then rebuilds the
-// popup from the current input. It mirrors the explorer's applyListed but feeds
-// the mention menu instead of the tree. The caller (the Model refreshMenu seam)
-// recomputes the viewport height.
+// applyListedFiles folds an async "@"-menu listing result into the file cache, saved by the generation so a stale result is ignored, then rebuilds the popup from the current input. It mirrors the explorer's applyListed but feeds the mention menu instead of the tree. The caller (the Model refreshMenu seam) recomputes the viewport height.
 func (c composer) applyListedFiles(msg filesListedMsg, commands []command.Command, listFiles func() ([]string, error), models modelSource) (composer, tea.Cmd, bool) {
 	if msg.generation != c.filesGen {
 		return c, nil, false

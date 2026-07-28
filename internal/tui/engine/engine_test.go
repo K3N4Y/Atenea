@@ -143,27 +143,16 @@ func (p *resumeBlockingProvider) Stream(ctx context.Context, _ llm.Request) (<-c
 	return out, nil
 }
 
-// turnProvider implementa llm.Provider con un guion POR TURNO: la i-esima
-// llamada a Stream reproduce el i-esimo guion. Contrasta con llm.FakeProvider,
-// que repite el mismo guion en cada Stream (loop infinito si el guion pide
-// tools). Si los guiones se acaban, emite un turno de solo StepEnded para que
-// la corrida cierre limpia. Protegido con mutex: el runner llama Stream desde
-// su propia goroutine.
+// turnProvider implements llm.Provider with a script PER TURN: the ith call to Stream plays the ith script. Contrast with llm.FakeProvider, which repeats the same script in each Stream (infinite loop if the script asks for tools). If the scripts run out, issue a StepEnded-only turn so that the run ends cleanly. Protected with mutex: the runner calls Stream from its own goroutine.
 type turnProvider struct {
 	mu    sync.Mutex
 	turns [][]llm.Event
 	next  int
-	// toolNames registra, por cada llamada a Stream, los nombres de las tools
-	// anunciadas en el Request: la evidencia observable del modo del turno
-	// (plan-mode anuncia present_plan y esconde bash/write).
+	// toolNames records, for each call to Stream, the names of the tools announced in the Request: the observable evidence of the shift mode (plan-mode announces present_plan and hides bash/write).
 	toolNames [][]string
-	// messages registra, por cada llamada a Stream, el historial proyectado que
-	// el runner envio al proveedor: la evidencia observable del orden en que los
-	// eventos se materializaron como Messages.
+	// messages records, for each call to Stream, the projected history that the runner sent to the provider: the observable evidence of the order in which events materialized as Messages.
 	messages [][]llm.Message
-	// delayStepEnded, si es > 0, duerme ese lapso entre un ToolCall del guion y
-	// el StepEnded que lo sigue: espejo deterministico del ultimo chunk SSE que
-	// llega tarde por la red mientras la tool ya se esta asentando localmente.
+	// delayStepEnded, if > 0, sleeps that period between a ToolCall of the script and the StepEnded that follows it: deterministic mirror of the last SSE chunk that arrives late over the network while the tool is already settling locally.
 	delayStepEnded time.Duration
 }
 
@@ -395,26 +384,21 @@ func (p *turnProvider) Stream(ctx context.Context, req llm.Request) (<-chan llm.
 	return out, nil
 }
 
-// requestedTools devuelve una copia de los nombres de tools anunciados en cada
-// llamada a Stream, en orden de llegada. Con mutex: el runner llama Stream
-// desde su propia goroutine.
+// requestedTools returns a copy of the tool names announced in each call to Stream, in order of arrival. With mutex: the runner calls Stream from its own goroutine.
 func (p *turnProvider) requestedTools() [][]string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([][]string(nil), p.toolNames...)
 }
 
-// requestedMessages devuelve una copia del historial proyectado enviado en cada
-// llamada a Stream, en orden de llegada. Con mutex: el runner llama Stream
-// desde su propia goroutine.
+// RequestedMessages returns a copy of the projected history sent on each call to Stream, in order of arrival. With mutex: the runner calls Stream from its own goroutine.
 func (p *turnProvider) requestedMessages() [][]llm.Message {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([][]llm.Message(nil), p.messages...)
 }
 
-// nextMsg saca el siguiente mensaje del canal del engine, con timeout generoso
-// para no ser flaky. Falla el test si el canal se cierra o vence el timeout.
+// nextMsg takes the next message from the engine channel, with a generous timeout so as not to be flaky. The test fails if the channel closes or expires.
 func nextMsg(t *testing.T, ch <-chan tea.Msg, timeout time.Duration) tea.Msg {
 	t.Helper()
 	select {
@@ -429,13 +413,7 @@ func nextMsg(t *testing.T, ch <-chan tea.Msg, timeout time.Duration) tea.Msg {
 	}
 }
 
-// resolveUntilStopped entrega la decision del permiso via el API publico del
-// engine, reintentando en segundo plano hasta que el test lo detenga. El
-// reintento elimina una carrera real: el runner publica
-// Tool.Permission.Requested ANTES de que gate.Ask registre la solicitud, asi
-// que una entrega unica podria adelantarse al registro y perderse (el gate
-// descarta decisiones sin Ask pendiente). Reintentar es inocuo: la entrega
-// efectiva retira la solicitud del gate y los reintentos posteriores son no-op.
+// resolveUntilStopped delivers the permission decision via the engine's public API, retrying in the background until the test stops it. Retry eliminates a real race: the runner publishes Tool.Permission.Requested BEFORE gate.Ask registers the request, so a single delivery could preempt registration and be lost (the gate discards decisions without pending Ask). Retry is harmless: effective delivery removes the request from the gate and subsequent retries are no-op.
 func resolveUntilStopped(e *Engine, sessionID, callID string, verdict permission.Verdict) (stop func()) {
 	done := make(chan struct{})
 	var wg sync.WaitGroup
@@ -1104,8 +1082,7 @@ func TestEngine_SendPromptContinuesWhenHistoryPersistenceFails(t *testing.T) {
 	}
 }
 
-// gatedBashTurns arma el guion de dos turnos del escenario ask-before-run: el
-// turno 1 pide la tool gateada bash con ese comando y el turno 2 responde texto.
+// gatedBashTurns scripts the two-turn ask-before-run scenario: turn 1 asks for the gated bash tool with that command and turn 2 responds with text.
 func gatedBashTurns(command string) [][]llm.Event {
 	input, err := json.Marshal(map[string]string{"command": command})
 	if err != nil {
@@ -1162,11 +1139,7 @@ func countEvents(events []session.SessionEvent, kind session.EventKind) int {
 	return count
 }
 
-// collectUntilRunDone consume el canal del engine en el goroutine del test:
-// acumula los EventMsg hasta ver el RunDoneMsg y los devuelve, tomando cada
-// mensaje con nextMsg (que falla si el canal se cierra o vence el timeout).
-// onEvent (opcional) se invoca con cada evento al llegar; los tests lo usan
-// para reaccionar a mitad de corrida (resolver un permiso, detener la sesion).
+// collectUntilRunDone consumes the engine channel in the test goroutine: it accumulates the EventMsg until it sees the RunDoneMsg and returns them, taking each message with nextMsg (which fails if the channel closes or times out). onEvent (optional) is called with each event upon arrival; The tests use it to react mid-run (resolve a permission, stop the session).
 func collectUntilRunDone(t *testing.T, ch <-chan tea.Msg, timeout time.Duration, onEvent func(session.SessionEvent)) ([]session.SessionEvent, RunDoneMsg) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -1486,7 +1459,7 @@ func TestEngine_PromptAfterIdleCompactWaitsForCommittedContext(t *testing.T) {
 	}
 }
 
-// lastEvent devuelve el ultimo evento con ese Kind y CallID, o nil si no llego.
+// lastEvent returns the last event with that Kind and CallID, or nil if it did not arrive.
 func lastEvent(events []session.SessionEvent, kind session.EventKind, callID string) *session.SessionEvent {
 	var found *session.SessionEvent
 	for i, ev := range events {
@@ -1497,9 +1470,7 @@ func lastEvent(events []session.SessionEvent, kind session.EventKind, callID str
 	return found
 }
 
-// writeSkill crea <root>/.atenea/skills/<name>/SKILL.md con el frontmatter
-// name/description (mismo formato que los tests de internal/skill): la fuente
-// de la que el wiring deriva los slash-commands del composer.
+// writeSkill creates <root>/.atenea/skills/<name>/SKILL.md with the frontmatter name/description (same format as internal/skill tests): the source from which the wiring derives composer slash-commands.
 func writeSkill(t *testing.T, root, name, desc string) {
 	t.Helper()
 	dir := filepath.Join(root, ".atenea", "skills", name)
@@ -1513,10 +1484,7 @@ func writeSkill(t *testing.T, root, name, desc string) {
 }
 
 func TestEngine_ExposesCommandsFromSkills(t *testing.T) {
-	// El Engine expone los slash-commands derivados de las skills descubiertas
-	// (espejo de App.ListCommands): la TUI los cablea al menu "/" del composer.
-	// Se asierta CONTENCION, no igualdad: el wiring tambien descubre las skills
-	// globales del home del usuario.
+	// The Engine exposes the slash-commands derived from the discovered skills (mirror of App.ListCommands): the TUI wires them to the composer's "/" menu. It asserts CONTAINMENT, not equality: the wiring also reveals the global skills of the user's home.
 	root := t.TempDir()
 	writeSkill(t, root, "saluda", "saluda con estilo")
 
@@ -1534,10 +1502,27 @@ func TestEngine_ExposesCommandsFromSkills(t *testing.T) {
 	t.Fatalf("Commands() = %v, debe contener el comando %q derivado de la skill del proyecto", cmds, "saluda")
 }
 
+func TestEngine_CommandsListsLocalAndSkillCommandsFromOneSet(t *testing.T) {
+	e := New(Config{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore()})
+	want := map[string]bool{
+		"new": true, "compact": true, "model": true, "mcp": true,
+		"connect": true, "resume": true, "undo": true,
+	}
+	for _, cmd := range e.Commands() {
+		if expectedBuiltin, ok := want[cmd.Name]; ok {
+			if cmd.BuiltIn != expectedBuiltin {
+				t.Fatalf("command %q BuiltIn = %v, want %v", cmd.Name, cmd.BuiltIn, expectedBuiltin)
+			}
+			delete(want, cmd.Name)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("Commands() is missing local commands: %v", want)
+	}
+}
+
 func TestEngine_ProjectFilesListsWorkspace(t *testing.T) {
-	// El Engine lista los archivos del workspace (rutas relativas a la raiz)
-	// para el @-menu del composer (espejo de App.ListProjectFiles). El glob
-	// real usa ripgrep: sin rg instalado el caso se salta.
+	// The Engine lists the workspace files (paths relative to the root) for the composer's @-menu (mirror of App.ListProjectFiles). The actual glob uses ripgrep: without rg installed the case is skipped.
 	if _, err := exec.LookPath("rg"); err != nil {
 		t.Skipf("rg unavailable: %v", err)
 	}
@@ -1566,11 +1551,7 @@ func TestEngine_ProjectFilesListsWorkspace(t *testing.T) {
 }
 
 func TestEngine_SendPromptExpandsSlashCommand(t *testing.T) {
-	// SendPrompt expande un slash-command antes de encolarlo (espejo de
-	// agent.Service): el Message user promovido lleva el prompt EXPANDIDO
-	// de la plantilla de la skill, no el literal "/saluda ...". Un prompt que
-	// no es comando pasa sin cambios. Cubre tambien SendPlanPrompt: ambos
-	// comparten el camino comun de send.
+	// SendPrompt expands a slash-command before enqueuing it (agent.Service mirror): the promoted Message user carries the EXPANDED prompt from the skill template, not the literal "/greets...". A non-command prompt passes without changes. It also covers SendPlanPrompt: both share the common send path.
 	root := t.TempDir()
 	writeSkill(t, root, "saluda", "saluda con estilo")
 	fake := llm.NewFakeProvider(
@@ -1582,8 +1563,7 @@ func TestEngine_SendPromptExpandsSlashCommand(t *testing.T) {
 	)
 	e := New(Config{Root: root, Provider: fake, Store: session.NewMemoryStore()})
 
-	// lastUserPrompt corre una corrida completa y devuelve el ultimo Message
-	// user promovido entre sus eventos.
+	// lastUserPrompt runs a full run and returns the last Message user promoted between its events.
 	lastUserPrompt := func(sessionID, text string) string {
 		t.Helper()
 		if _, err := e.SendPrompt(sessionID, text); err != nil {
@@ -1602,20 +1582,20 @@ func TestEngine_SendPromptExpandsSlashCommand(t *testing.T) {
 		return prompt
 	}
 
-	// La plantilla de FromSkills es `Usa la skill %q.\n\n$ARGUMENTS`.
+	// The FromSkills template is `Use skill %q.\n\n$ARGUMENTS`.
 	want := "Usa la skill \"saluda\".\n\nhola mundo"
 	if got := lastUserPrompt("s1", "/saluda hola mundo"); got != want {
 		t.Fatalf("Message user promovido = %q, quiero el prompt expandido %q, no el literal del comando", got, want)
 	}
 
-	// Un prompt que no es comando pasa sin transformar.
+	// A non-command prompt passes untransformed.
 	if got := lastUserPrompt("s2", "hola normal"); got != "hola normal" {
 		t.Fatalf("Message user promovido = %q, un prompt que no es comando debe pasar sin cambios (%q)", got, "hola normal")
 	}
 }
 
 func TestEngine_StreamsSessionEventsAndSignalsRunDone(t *testing.T) {
-	// Un turno de solo texto: el guion completo de una corrida limpia.
+	// A text-only turn: the complete script for a clean run.
 	fake := llm.NewFakeProvider(
 		llm.Event{Kind: llm.StepStarted},
 		llm.Event{Kind: llm.TextStarted},
@@ -1813,7 +1793,7 @@ func TestEngine_GatedBashApprovedRunsAndSettles(t *testing.T) {
 		t.Fatalf("SendPrompt(s1, corre el comando) = %v, se esperaba nil", err)
 	}
 
-	// Al ver la solicitud de permiso, el usuario APRUEBA la tool.
+	// By viewing the permission request, the user APPROVES the tool.
 	events, done := collectUntilRunDone(t, e.Events(), 10*time.Second, func(ev session.SessionEvent) {
 		if ev.Kind == session.KindToolPermissionRequested && ev.CallID == "c1" {
 			t.Cleanup(resolveUntilStopped(e, ev.SessionID, "c1", permission.AllowedOnce))
@@ -1842,7 +1822,7 @@ func TestEngine_GatedBashDeniedFailsWithoutRunning(t *testing.T) {
 		t.Fatalf("SendPrompt(s1, corre el comando) = %v, se esperaba nil", err)
 	}
 
-	// Al ver la solicitud de permiso, el usuario DENIEGA la tool.
+	// Upon seeing the permission request, the user DENIES the tool.
 	events, done := collectUntilRunDone(t, e.Events(), 10*time.Second, func(ev session.SessionEvent) {
 		if ev.Kind == session.KindToolPermissionRequested && ev.CallID == "c1" {
 			t.Cleanup(resolveUntilStopped(e, ev.SessionID, "c1", permission.Denied))
@@ -1862,8 +1842,7 @@ func TestEngine_GatedBashDeniedFailsWithoutRunning(t *testing.T) {
 	if done.Err != "" {
 		t.Errorf("RunDoneMsg.Err = %q, la denegacion no es un fallo de la corrida (Err vacio)", done.Err)
 	}
-	// La prueba dura de que bash NO corrio: el archivo que el comando tocaria
-	// no debe existir tras el fin de la corrida.
+	// The hard proof that bash did NOT run: the file that the command would touch must not exist after the end of the run.
 	if _, err := os.Stat(forbidden); !os.IsNotExist(err) {
 		t.Errorf("os.Stat(%q) = %v, el archivo no debe existir: la tool denegada no debe ejecutar el comando", forbidden, err)
 	}
@@ -1934,8 +1913,7 @@ func TestEngine_AllowSessionDoesNotCoverADifferentCommand(t *testing.T) {
 }
 
 func TestEngine_StopUnblocksPendingPermission(t *testing.T) {
-	// Un solo turno: la tool gateada queda esperando aprobacion para siempre;
-	// Stop debe desbloquearla y cerrar la corrida limpia.
+	// A single turn: the gated tool waits for approval forever; Stop must unlock it and close the clean run.
 	provider := newTurnProvider([]llm.Event{
 		{Kind: llm.StepStarted},
 		{Kind: llm.ToolCall, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"echo bloqueado"}`)},
@@ -1947,7 +1925,7 @@ func TestEngine_StopUnblocksPendingPermission(t *testing.T) {
 		t.Fatalf("SendPrompt(s1, corre el comando) = %v, se esperaba nil", err)
 	}
 
-	// En vez de decidir, el usuario detiene la corrida.
+	// Instead of deciding, the user stops the run.
 	events, done := collectUntilRunDone(t, e.Events(), 10*time.Second, func(ev session.SessionEvent) {
 		if ev.Kind == session.KindToolPermissionRequested && ev.CallID == "c1" {
 			e.Stop("s1")
@@ -1963,11 +1941,7 @@ func TestEngine_StopUnblocksPendingPermission(t *testing.T) {
 }
 
 func TestEngine_AcceptPlanRunsImplementationInNormalMode(t *testing.T) {
-	// TRIANGULATE: AcceptPlan debe volver la sesion a modo normal y promover el
-	// prompt fijo de implementacion como prompt del usuario, arrancando la
-	// corrida (espejo de App.AcceptPlan). Evidencia observable: el Request del
-	// turno de AcceptPlan vuelve a anunciar bash (modo normal) y entre los
-	// eventos llega el Message user con el texto del prompt fijo.
+	// TRIANGULATE: AcceptPlan must return the session to normal mode and promote the fixed implementation prompt as the user prompt, starting the run (mirror of App.AcceptPlan). Observable evidence: the AcceptPlan turn Request announces bash again (normal mode) and between the events the Message user arrives with the fixed prompt text.
 	textTurn := func(text string) []llm.Event {
 		return []llm.Event{
 			{Kind: llm.StepStarted},
@@ -1980,7 +1954,7 @@ func TestEngine_AcceptPlanRunsImplementationInNormalMode(t *testing.T) {
 	provider := newTurnProvider(textTurn("plan listo"), textTurn("implementado"))
 	e := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 
-	// Corrida de plan previa: deja la sesion en plan-mode con el plan presentado.
+	// Previous plan run: leaves the session in plan-mode with the plan presented.
 	if _, err := e.SendPlanPrompt("s1", "planea"); err != nil {
 		t.Fatalf("SendPlanPrompt(s1, planea) = %v, se esperaba nil", err)
 	}
@@ -1989,7 +1963,7 @@ func TestEngine_AcceptPlanRunsImplementationInNormalMode(t *testing.T) {
 	}
 	planCalls := len(provider.requestedTools())
 
-	// El usuario acepta el plan: debe arrancar la corrida de implementacion.
+	// The user accepts the plan: he must start the implementation run.
 	if _, err := e.AcceptPlan("s1"); err != nil {
 		t.Fatalf("AcceptPlan(s1) = %v, se esperaba nil", err)
 	}
@@ -2023,11 +1997,7 @@ func TestEngine_AcceptPlanRunsImplementationInNormalMode(t *testing.T) {
 }
 
 func TestEngine_SendPlanPromptRunsInPlanMode(t *testing.T) {
-	// TRIANGULATE: SendPlanPrompt debe correr el turno en plan-mode REAL (como
-	// en la app Wails), no delegar en SendPrompt. La evidencia observable son
-	// las tools que el runner anuncia al modelo en el Request de cada turno:
-	// plan-mode anuncia present_plan y esconde bash/write; el modo es por envio,
-	// asi que un SendPrompt posterior en la MISMA sesion vuelve a anunciar bash.
+	// TRIANGULATE: SendPlanPrompt should run the turn in REAL plan-mode (like in the Wails app), not delegate to SendPrompt. The observable evidence is the tools that the runner announces to the model in the Request of each turn: plan-mode announces present_plan and hides bash/write; the mode is by send, so a subsequent SendPrompt in the SAME session announces bash again.
 	textTurn := func(text string) []llm.Event {
 		return []llm.Event{
 			{Kind: llm.StepStarted},
@@ -2040,7 +2010,7 @@ func TestEngine_SendPlanPromptRunsInPlanMode(t *testing.T) {
 	provider := newTurnProvider(textTurn("plan listo"), textTurn("hecho"))
 	e := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 
-	// Envio en plan-mode: el turno debe anunciar las tools de planificacion.
+	// Sending in plan-mode: the shift must announce the planning tools.
 	if _, err := e.SendPlanPrompt("s1", "planea x"); err != nil {
 		t.Fatalf("SendPlanPrompt(s1, planea x) = %v, se esperaba nil", err)
 	}
@@ -2061,8 +2031,7 @@ func TestEngine_SendPlanPromptRunsInPlanMode(t *testing.T) {
 		}
 	}
 
-	// Envio normal posterior en la MISMA sesion: el modo es por envio (espejo
-	// de la app Wails) y el turno vuelve a anunciar las tools de build.
+	// Subsequent normal sending in the SAME session: the mode is by sending (mirror of the Wails app) and the turn announces the build tools again.
 	if _, err := e.SendPrompt("s1", "hazlo"); err != nil {
 		t.Fatalf("SendPrompt(s1, hazlo) = %v, se esperaba nil", err)
 	}
@@ -2080,16 +2049,7 @@ func TestEngine_SendPlanPromptRunsInPlanMode(t *testing.T) {
 }
 
 func TestEngine_ToolResultNeverPrecedesAssistantMessageInHistory(t *testing.T) {
-	// RED (bug real visto con OpenRouter/Cohere): cuando el modelo responde SOLO
-	// con una tool call que falla al instante (read con ruta absoluta: muere en
-	// la validacion de sandboxJoin, sin I/O), el Tool.Failed (que materializa el
-	// Message role=tool) puede persistirse ANTES que el Step.Ended (que
-	// materializa el Message assistant con los tool_calls), porque el runner
-	// asienta la tool en una goroutine concurrente mientras el StepEnded aun
-	// viaja por la red. El historial proyectado queda `user, tool, assistant` y
-	// el siguiente request al provider devuelve 400: "tool call id not found in
-	// previous tool calls". El delay del provider reproduce esa carrera de forma
-	// deterministica: el ultimo chunk SSE (StepEnded) llega ~100ms tarde.
+	// NETWORK (real bug seen with OpenRouter/Cohere): when the model responds ONLY with a tool call that fails instantly (read with absolute path: dies on sandboxJoin validation, no I/O), the Tool.Failed (which materializes the Message role=tool) can be persisted BEFORE the Step.Ended (which materializes the Message assistant with the tool_calls), because the runner seats the tool in a concurrent goroutine while the StepEnded still travels through the network. The projected history becomes `user, tool, assistant` and the next request to the provider returns 400: "tool call id not found in previous tool calls". The provider's delay reproduces that race deterministically: the last SSE chunk (StepEnded) arrives ~100ms late.
 	provider := newTurnProvider(
 		[]llm.Event{
 			{Kind: llm.StepStarted},
@@ -2120,7 +2080,7 @@ func TestEngine_ToolResultNeverPrecedesAssistantMessageInHistory(t *testing.T) {
 	}
 	history := calls[1] // el historial proyectado que ve el provider en el turno 2
 
-	// La secuencia de roles proyectada, para un mensaje de fallo legible.
+	// The projected role sequence, for a readable failure message.
 	roles := make([]string, len(history))
 	for i, m := range history {
 		roles[i] = m.Role
@@ -2158,10 +2118,7 @@ func TestEngine_ToolResultNeverPrecedesAssistantMessageInHistory(t *testing.T) {
 }
 
 func TestEngine_CapturesSessionCwdOnFirstPrompt(t *testing.T) {
-	// El PRIMER prompt de una sesion (cuando LoadSession aun da error) debe
-	// grabar la carpeta de trabajo como un SessionEvent Session.Cwd de PRIMERO
-	// en el log, antes de admitir el prompt (espejo de App.captureCwd): asi la
-	// sidebar de la app Wails agrupa las sesiones de la TUI por carpeta.
+	// The FIRST prompt of a session (when LoadSession still fails) must record the working folder as a SessionEvent Session.Cwd FIRST in the log, before supporting the prompt (mirror of App.captureCwd): thus the Wails app sidebar groups the TUI sessions by folder.
 	root := t.TempDir()
 	store := session.NewMemoryStore()
 	fake := llm.NewFakeProvider(
@@ -2180,7 +2137,7 @@ func TestEngine_CapturesSessionCwdOnFirstPrompt(t *testing.T) {
 		t.Fatalf("RunDoneMsg.Err = %q, want a clean run", done.Err)
 	}
 
-	// (a) El primer evento durable del log (Seq 1) es el Session.Cwd con la raiz.
+	// (a) The first durable event in the log (Seq 1) is the Session.Cwd with the root.
 	ctx := context.Background()
 	events, err := store.Events(ctx, "s1", 0)
 	if err != nil {
@@ -2194,7 +2151,7 @@ func TestEngine_CapturesSessionCwdOnFirstPrompt(t *testing.T) {
 		t.Errorf("primer evento del log = {Seq:%d Kind:%q Text:%q}, quiero {Seq:1 Kind:%q Text:%q}: la carpeta debe grabarse ANTES de admitir el prompt", first.Seq, first.Kind, first.Text, session.KindSessionCwd, root)
 	}
 
-	// (b) La proyeccion Sessions expone la carpeta en SessionSummary.Cwd.
+	// (b) The Sessions projection exposes the folder in SessionSummary.Cwd.
 	sums, err := store.Sessions(ctx)
 	if err != nil {
 		t.Fatalf("store.Sessions() = %v, se esperaba nil", err)
@@ -2214,10 +2171,7 @@ func TestEngine_CapturesSessionCwdOnFirstPrompt(t *testing.T) {
 }
 
 func TestEngine_CapturesSessionCwdOnce(t *testing.T) {
-	// TRIANGULATE: la captura del Session.Cwd es IDEMPOTENTE. Dos SendPrompt
-	// consecutivos a la MISMA sesion deben dejar en el log exactamente UN evento
-	// Session.Cwd (y de primero): una captura que appendeara la carpeta en cada
-	// envio ensuciaria el log y el historial proyectado en cada follow-up.
+	// TRIANGULATE: Session.Cwd capture is IDEMPOTENT. Two consecutive SendPrompts to the SAME session must leave exactly ONE Session.Cwd event in the log (and first): a capture that would append the folder in each sending would dirty the log and the history projected in each follow-up.
 	root := t.TempDir()
 	store := session.NewMemoryStore()
 	fake := llm.NewFakeProvider(
@@ -2260,9 +2214,7 @@ func TestEngine_CapturesSessionCwdOnce(t *testing.T) {
 }
 
 func TestEngine_SendPromptNewCreatesFreshDurableSession(t *testing.T) {
-	// /new es un comando reservado de la TUI: al recibirlo, el Engine debe
-	// abrir otra sesion durable en vez de tratarlo como un prompt para la
-	// sesion actual o resolverlo como una skill.
+	// /new is a TUI reserved command: upon receiving it, the Engine must open another durable session instead of treating it as a prompt for the current session or resolving it as a skill.
 	root := t.TempDir()
 	store := session.NewMemoryStore()
 	if _, err := store.AppendEvent(context.Background(), "s1", session.SessionEvent{
@@ -2291,9 +2243,7 @@ func TestEngine_SendPromptNewCreatesFreshDurableSession(t *testing.T) {
 }
 
 func TestEngine_SendPromptNewWithArgumentsRemainsRegularPrompt(t *testing.T) {
-	// TRIANGULATE: solo el literal exacto /new esta reservado. Con argumentos,
-	// el texto conserva el camino normal de slash-command/prompt y no abre otra
-	// sesion durable.
+	// TRIANGULATE: only the exact /new literal is reserved. With arguments, the text retains the normal slash-command/prompt path and does not open another durable session.
 	root := t.TempDir()
 	store := session.NewMemoryStore()
 	e := New(Config{
@@ -2648,7 +2598,7 @@ func assertUndoMissing(t *testing.T, root, name string) {
 }
 
 func TestEngine_MCPServersReadsWorkspaceConfig(t *testing.T) {
-	// Aisla el config global (~/.config/atenea/mcp.json) del entorno de la maquina.
+	// Isolates the global config (~/.config/atenea/mcp.json) from the machine environment.
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	root := t.TempDir()
 	config := `{"mcpServers": {"github": {"command": "npx", "args": ["github-mcp"]}}}`
@@ -2667,7 +2617,7 @@ func TestEngine_MCPServersReadsWorkspaceConfig(t *testing.T) {
 	if err := engine.ConnectMCPServer("missing"); err == nil {
 		t.Fatal("connecting an undeclared server must fail")
 	}
-	// Desconectar un server que no esta conectado es idempotente, como el manager.
+	// Disconnecting a server that is not connected is idempotent, like the manager.
 	if err := engine.DisconnectMCPServer("github"); err != nil {
 		t.Fatalf("DisconnectMCPServer: %v", err)
 	}

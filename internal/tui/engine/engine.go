@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -104,10 +103,7 @@ type Engine struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	// runner, glob and tools are the mutable pieces of the assembly: rewire (on an
-	// MCP connect or disconnect) replaces them, so they are read under mu. glob feeds
-	// the composer's @-menu of files (the mirror of App.ListProjectFiles); tools is the
-	// catalog the TUI asks about a tool it only knows by name.
+	// runner, glob and tools are the mutable pieces of the assembly: rewire (on an MCP connect or disconnect) replaces them, so they are read under mu. glob feeds the composer's @-menu of files (the mirror of App.ListProjectFiles); tools is the catalog the TUI asks about a tool it only knows by name.
 	runner *runner.Runner
 	glob   *tool.GlobTool
 	tools  tool.Catalog
@@ -225,8 +221,16 @@ func (e *Engine) rewire() {
 	e.glob = built.Glob
 	e.tools = built.Tools
 	e.mu.Unlock()
-	commands := append(built.Commands.List(), e.mcp.Commands()...)
-	e.agent.Configure(built.Runner, command.New(commands, e.mcp.Mentions()...))
+	commands := append(built.Commands.List(), localCommands()...)
+	commands = append(commands, e.mcp.Commands()...)
+	commandSet, err := command.NewChecked(commands, e.mcp.Mentions()...)
+	if err != nil {
+		// A discovered skill or MCP prompt cannot take over a local command. Keep
+		// the host usable with its local catalog and make the collision explicit.
+		log.Printf("atenea: could not register slash commands: %v", err)
+		commandSet = command.New(localCommands(), e.mcp.Mentions()...)
+	}
+	e.agent.Configure(built.Runner, commandSet)
 	e.lifecycleMu.Unlock()
 }
 
@@ -348,21 +352,24 @@ func (e *Engine) RefreshModels() {
 	}()
 }
 
-// Commands lists the available slash commands (name + description) for the composer's
-// "/" menu, sorted by name (the mirror of App.ListCommands).
+// Commands lists the available slash commands (name + description) for the composer's "/" menu, sorted by name (the mirror of App.ListCommands).
 func (e *Engine) Commands() []command.Command {
-	commands := e.agent.Commands()
-	commands = append(commands,
-		command.Command{Name: "resume", Description: "Resume a TUI session in this workspace"},
-		command.Command{Name: "undo", Description: "Undo the last prompt and its file changes"},
-	)
-	sort.Slice(commands, func(i, j int) bool { return commands[i].Name < commands[j].Name })
-	return commands
+	return e.agent.Commands()
 }
 
-// ProjectFiles lists the workspace files (paths relative to the root, honoring
-// .gitignore and excluding .git) for the composer's @-menu, bounded by the glob's
-// limit (the mirror of App.ListProjectFiles).
+func localCommands() []command.Command {
+	return []command.Command{
+		{Name: "compact", Description: "Compact conversation context", BuiltIn: true},
+		{Name: "connect", Description: "Connect a provider with an API key", BuiltIn: true},
+		{Name: "mcp", Description: "Toggle MCP servers on or off", BuiltIn: true},
+		{Name: "model", Description: "Select provider and model", BuiltIn: true},
+		{Name: "new", Description: "Start a new session", BuiltIn: true},
+		{Name: "resume", Description: "Resume a TUI session in this workspace", BuiltIn: true},
+		{Name: "undo", Description: "Undo the last prompt and its file changes", BuiltIn: true},
+	}
+}
+
+// ProjectFiles lists the workspace files (paths relative to the root, honoring .gitignore and excluding .git) for the composer's @-menu, bounded by the glob's limit (the mirror of App.ListProjectFiles).
 func (e *Engine) ProjectFiles() ([]string, error) {
 	glob := e.currentGlob()
 	files, _, err := glob.Files(context.Background(), "", ".", glob.MaxLimit)

@@ -35,7 +35,7 @@ func renderEntry(e entry, width int) string {
 	return e.render(width, NewModel(&fakeAgent{}, "s1", nil).presentationOf(e))
 }
 
-// fakeAgent implementa Agent y registra las llamadas para asertar sobre ellas.
+// fakeAgent implements Agent and logs calls to assert on them.
 type fakeAgent struct {
 	sent           []struct{ sessionID, text string }
 	planSent       []struct{ sessionID, text string }
@@ -368,7 +368,7 @@ func TestModel_ResumeCommandRejectsArgumentsAndActiveRunsLocally(t *testing.T) {
 
 func TestModel_ResumeBuiltinMenuEnterOpensPicker(t *testing.T) {
 	fake := &fakeAgent{resumeSessions: []session.SessionSummary{{ID: "tui-old", Title: "Old"}}}
-	m := NewModel(fake, "tui-current", nil).WithCompletions([]command.Command{{Name: "resume", Description: "Resume a session"}}, nil)
+	m := NewModel(fake, "tui-current", nil).WithCompletions([]command.Command{{Name: "resume", Description: "Resume a session", BuiltIn: true}}, nil)
 	m = typeRunes(t, m, "/res")
 	if len(m.menuItems) != 1 || !m.menuItems[0].builtin || m.menuItems[0].label != "/resume" {
 		t.Fatalf("menuItems = %+v, want builtin /resume", m.menuItems)
@@ -837,7 +837,7 @@ func TestModel_UndoWithArgumentsIsRejectedLocally(t *testing.T) {
 	}
 }
 
-// apply pasa un mensaje por Update y devuelve el Model concreto.
+// apply passes a message through Update and returns the specific Model.
 func apply(t *testing.T, m Model, msg tea.Msg) Model {
 	t.Helper()
 	updated, _ := m.Update(msg)
@@ -1116,10 +1116,7 @@ func TestModel_RetryReusesFailedTurnWithoutDuplicatingPrompt(t *testing.T) {
 	}
 }
 
-// drainReveal aplica ticks de reveal hasta agotar el backlog del smooth
-// streaming: los tests cuya asercion presupone el texto ya revelado lo usan
-// para no depender del ritmo de la animacion. El tope de iteraciones evita
-// colgar el test si el reveal dejara de avanzar.
+// drainReveal applies reveal ticks until the smooth streaming backlog is exhausted: tests whose assertion presupposes the text already revealed use it to not depend on the rhythm of the animation. The iteration limit prevents the test from crashing if the reveal stops progressing.
 func drainReveal(t *testing.T, m Model) Model {
 	t.Helper()
 	for i := 0; i < 1000; i++ {
@@ -1236,8 +1233,7 @@ func TestModel_ModelPickerClickSelectsModel(t *testing.T) {
 	m = typeRunes(t, m, "/model")
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
-	// Con 80x24: margen 2 + borde 1, columna de providers de 18 celdas y la
-	// primera fila de items en Y=4. Clic en el segundo provider (OpenAI).
+	// With 80x24: margin 2 + border 1, providers column of 18 cells and the first row of items at Y=4. Click on the second provider (OpenAI).
 	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 4, Y: 5})
 	view := ansi.Strip(m.View())
 	if !strings.Contains(view, "chatgpt5.5") || strings.Contains(view, "openai/chatgpt5.5") {
@@ -1247,13 +1243,13 @@ func TestModel_ModelPickerClickSelectsModel(t *testing.T) {
 		t.Fatalf("provider click must not select a model, selected = %#v", agent.selected)
 	}
 
-	// Clic en el divisor: inerte.
+	// Click on divider: inert.
 	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 21, Y: 4})
 	if len(agent.selected) != 0 {
 		t.Fatalf("divider click must be inert, selected = %#v", agent.selected)
 	}
 
-	// Clic en la primera fila de modelos: confirma como enter.
+	// Click on the first row of models: confirm as enter.
 	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 25, Y: 4})
 	if len(agent.selected) != 1 || agent.selected[0].providerID != "openai" || agent.selected[0].model != "chatgpt5.5" {
 		t.Fatalf("selected = %#v", agent.selected)
@@ -1431,14 +1427,13 @@ func TestModel_OpenRouterCuratedModelsShowContext(t *testing.T) {
 	}
 }
 
-// lineWith devuelve la primera linea de view que contiene needle, o falla.
+// lineWith returns the first line of view that contains needle, or fails.
 func lineWith(t *testing.T, view, needle string) string {
 	t.Helper()
 	return strings.Split(view, "\n")[lineIndexWith(t, view, needle)]
 }
 
-// lineIndexWith devuelve el indice (base 0) de la primera linea de view que
-// contiene needle; falla el test si ninguna lo contiene.
+// lineIndexWith returns the index (base 0) of the first line of view that contains needle; The test fails if none contain it.
 func lineIndexWith(t *testing.T, view, needle string) int {
 	t.Helper()
 	for i, line := range strings.Split(view, "\n") {
@@ -1450,8 +1445,7 @@ func lineIndexWith(t *testing.T, view, needle string) int {
 	return -1
 }
 
-// assertNoLineWiderThan falla si alguna linea de view excede width celdas
-// visibles (ancho de la terminal); mide con lipgloss.Width para ignorar ANSI.
+// assertNoLineWiderThan fails if any view line exceeds visible cells width (width of the terminal); Measure with lipgloss.Width to ignore ANSI.
 func assertNoLineWiderThan(t *testing.T, view string, width int) {
 	t.Helper()
 	for _, line := range strings.Split(view, "\n") {
@@ -1461,10 +1455,7 @@ func assertNoLineWiderThan(t *testing.T, view string, width int) {
 	}
 }
 
-// assertBoxLinesExactWidth falla si alguna linea de la caja del composer (las
-// que contienen un caracter de borde ╭/│/╰ tras el margen) no mide exactamente width
-// celdas visibles, o si la vista no contiene ninguna. Mide con
-// ansi.StringWidth para ignorar codigos ANSI.
+// assertBoxLinesExactWidth fails if any composer box line (those that contain a border character ╭/│/╰ after the margin) does not measure exactly the width of visible cells, or if the view does not contain any. Measure with ansi.StringWidth to ignore ANSI codes.
 func assertBoxLinesExactWidth(t *testing.T, view string, width int) {
 	t.Helper()
 	found := false
@@ -1484,14 +1475,7 @@ func assertBoxLinesExactWidth(t *testing.T, view string, width int) {
 	}
 }
 
-// forceANSI256Profile fija el perfil de color ANSI256 durante el test: sin TTY
-// el perfil es Ascii y ningun color se emite, asi que los tests que asertan
-// sobre secuencias SGR lo necesitan para que los colores sean observables.
-// El renderer de glamour se memoiza en markdownRendererCache keyed solo por
-// wrap y queda clavado al perfil con que se construyo: hay que invalidarlo al
-// cambiar el perfil (si no el test reusa un renderer Ascii construido por otro
-// test y pasa en falso) y tambien al limpiar (si no un renderer ANSI256
-// envenena a los tests siguientes).
+// forceANSI256Profile sets the ANSI256 color profile during the test: without TTY the profile is Ascii and no color is output, so tests that assert on SGR sequences need it for the colors to be observable. The glamor renderer is memoized in markdownRendererCache keyed only by wrap and remains pinned to the profile with which it was built: it must be invalidated when changing the profile (otherwise the test reuses an Ascii renderer built by another test and passes false) and also when cleaning (otherwise an ANSI256 renderer poisons the following tests).
 func forceANSI256Profile(t *testing.T) {
 	t.Helper()
 	prev := lipgloss.ColorProfile()
@@ -1626,11 +1610,7 @@ func TestModel_FoldsStreamingAssistantText(t *testing.T) {
 	}
 }
 
-// Contrato de render del assistant: mientras el bloque esta vivo (solo
-// TextStarted/TextDelta, sin StepEnded) el texto se muestra plano tal cual
-// llega; al cerrarse el turno (StepEnded pone live = false) el texto se rinde
-// como markdown: los marcadores crudos (** y "- ") desaparecen y el contenido
-// queda formateado (enfasis aplicado, listas con bullets).
+// Assistant render contract: while the block is live (TextStarted/TextDelta only, no StepEnded) the text is displayed flat as it arrives; When the turn closes (StepEnded sets live = false) the text is rendered as markdown: the raw markers (** and "-") disappear and the content is formatted (emphasis applied, lists with bullets).
 func TestModel_RendersClosedAssistantAsMarkdown(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -1666,8 +1646,7 @@ func TestModel_RendersClosedAssistantAsMarkdown(t *testing.T) {
 }
 
 func TestModel_LiveAssistantRendersMarkdownBeforeClosed(t *testing.T) {
-	// TRIANGULATE: el renderer debe aplicar Markdown tanto al prefijo revelado
-	// durante streaming como al contenido completo al asentarse el bloque.
+	// TRIANGULATE: The renderer must apply Markdown to both the prefix revealed during streaming and the entire content when settling the block.
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
@@ -1699,13 +1678,7 @@ func TestModel_LiveAssistantRendersMarkdownBeforeClosed(t *testing.T) {
 }
 
 func TestModel_ClosedMarkdownWrapsToTerminalWidth(t *testing.T) {
-	// TRIANGULATE: un renderMarkdown que ignora el ancho (WithWordWrap(0)
-	// siempre), o que pasa el ancho completo sin descontar el margen del
-	// documento de glamour, produce lineas mas anchas que la terminal. El
-	// envolvimiento de emergencia del viewport (ansi.Wrap en syncViewport) las
-	// re-parte y deja palabras huerfanas sin margen en la columna 0. El markdown
-	// cerrado debe envolverse al ancho de la terminal por el propio renderer:
-	// todo el texto visible y cada linea envuelta conservando su margen.
+	// TRIANGULATE: a renderMarkdown that ignores width (WithWordWrap(0) always), or that passes the full width without discounting the margin of the glamor document, produces lines wider than the terminal. The emergency wrapping of the viewport (ansi.Wrap in syncViewport) re-splits them and leaves orphaned words without margin in column 0. The closed markdown must be wrapped to the width of the terminal by the renderer itself: all the text visible and each line wrapped preserving its margin.
 	m := NewModel(nil, "s1", nil)
 	// Height 24: glamour v1 wraps this paragraph into more lines than v0.8 and
 	// the whole block must stay visible for the per-line margin asserts below.
@@ -1735,10 +1708,7 @@ func TestModel_ClosedMarkdownWrapsToTerminalWidth(t *testing.T) {
 }
 
 func TestModel_StepEndedMessageRendersAsMarkdown(t *testing.T) {
-	// TRIANGULATE: una implementacion pobre solo rendiria markdown si hubo
-	// deltas de streaming. Cuando el bloque vivo quedo vacio y es el Message
-	// coalescido del StepEnded quien rellena el texto (ver foldEvent,
-	// KindStepEnded), ese texto tambien debe rendirse como markdown al cerrar.
+	// TRIANGULATE: a poor implementation would only yield markdown if there were streaming deltas. When the live block is empty and it is the StepEnded coalesced Message that fills in the text (see foldEvent, KindStepEnded), that text must also be rendered as markdown upon closing.
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
@@ -1806,12 +1776,7 @@ func TestEntryAssistant_RenderRendersRevealedListWhileLiveAndCompleteListWhenSet
 	}
 }
 
-// Contrato del color del texto asentado del assistant: el markdown cerrado se
-// rinde con el color por defecto de la terminal, NO con el gris "252" que fija
-// Document.Color del estilo "dark" de glamour (el texto se ve apagado frente
-// al resto de la vista). El resto del tema (headings con color, etc.) se
-// conserva; aqui solo se prohibe el gris del documento. Se fuerza ANSI256
-// (forceANSI256Profile) para que el gris sea observable en la salida.
+// Assistant seated text color contract: Closed markdown is rendered with the terminal's default color, NOT the gray "252" that Document.Color sets to the "dark" glamor style (the text looks dull against the rest of the view). The rest of the theme (colored headings, etc.) is preserved; Only the gray of the document is prohibited here. ANSI256 (forceANSI256Profile) is forced so that gray is observable in the output.
 func TestModel_AssistantMarkdownUsesDefaultForeground(t *testing.T) {
 	forceANSI256Profile(t)
 
@@ -2041,8 +2006,7 @@ func TestModel_AssistantMarkdownKeepsOwnThemeAccents(t *testing.T) {
 func TestModel_RendersUserMessages(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
-	// El mensaje del usuario llega SIN Kind: el runner promueve el prompt como
-	// SessionEvent{Message: {Role: user}}.
+	// The user's message arrives WITHOUT Kind: the runner promotes the prompt as SessionEvent{Message: {Role: user}}.
 	m = apply(t, m, EventMsg{Message: &session.Message{ID: "u1", Role: session.RoleUser, Text: "hola atenea"}})
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "hola humano"})
@@ -2134,11 +2098,7 @@ func TestModel_RendersTaskToolAsSubAgentWithSpinner(t *testing.T) {
 	}
 }
 
-// Contrato del render de la tool "skill": usa la gramatica de actividad con
-// el nombre de la skill como resumen (`● Skill    <nombre>`), donde el nombre
-// es el campo "name" del Input JSON, sin filtrar el Input crudo al header. En
-// exito el header va SIN preview del output: el cuerpo del SKILL.md que viaja
-// en ev.Text es para el modelo, no para el transcript.
+// Tool "skill" render contract: uses the activity grammar with the name of the skill as a summary (`● Skill <name>`), where the name is the "name" field of the Input JSON, without filtering the raw Input to the header. On success, the header goes WITHOUT a preview of the output: the body of the SKILL.md that travels in ev.Text is for the model, not for the transcript.
 func TestModel_RendersSkillToolAsSkillLine(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil)
 
@@ -2166,11 +2126,7 @@ func TestModel_RendersSkillToolAsSkillLine(t *testing.T) {
 }
 
 func TestModel_SkillToolFailureShowsError(t *testing.T) {
-	// TRIANGULATE: una implementacion pobre de renderSkill solo cubre los
-	// estados running/ok y ante Tool.Failed deja el marcador ● para siempre.
-	// El fallo de la skill (p.ej. nombre inexistente) se asienta en la misma
-	// linea dedicada con el marcador ✗ y el error como linea de rail, igual
-	// que el resto de tools.
+	// TRIANGULATE: a poor implementation of renderSkill only covers the running/ok states and before Tool.Failed it leaves the ● marker forever. The skill failure (e.g. nonexistent name) sits on the same dedicated line with the ✗ marker and the error as a rail line, just like the rest of the tools.
 	m := NewModel(&fakeAgent{}, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "skill", Input: json.RawMessage(`{"name":"inexistente"}`)})
@@ -2188,11 +2144,7 @@ func TestModel_SkillToolFailureShowsError(t *testing.T) {
 }
 
 func TestModel_SkillToolWithoutNameRendersBareHeader(t *testing.T) {
-	// TRIANGULATE: una implementacion pobre asume que el Input de la skill es
-	// JSON valido (panic o basura en el header al parsearlo) cuando no puede
-	// extraer el nombre. Con Input no parseable el header queda "● Skill"
-	// pelado: sin resumen, sin espacios colgantes de la alineacion y sin
-	// filtrar el input crudo al transcript.
+	// TRIANGULATE: a poor implementation assumes that the Input of the skill is valid JSON (panic or garbage in the header when parsing it) when it cannot extract the name. With non-parseable Input the header is "● Skill" stripped: without summary, without dangling spaces in the alignment and without filtering the raw input to the transcript.
 	m := NewModel(&fakeAgent{}, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "skill", Input: json.RawMessage(`no-es-json`)})
@@ -2238,12 +2190,7 @@ func TestModel_ReadToolShowsOnlyStatusAndFileName(t *testing.T) {
 	}
 }
 
-// Contrato del detalle de tool calls: el header lleva el resumen del Input
-// (`✓ <name>     <resumen>`; con un solo campo string el resumen es su valor)
-// y Tool.Success trae el output en ev.Text, que se muestra bajo el header con
-// cada linea de rail `│ ` hasta 4 lineas; con mas lineas aparece una marca
-// final `│ … +N lines`. Con 3 lineas de output caben todas: no debe aparecer
-// ninguna marca de truncado.
+// Tool call detail contract: the header carries the summary of the Input (`✓ <name> <summary>`; with a single string field the summary is its value) and Tool.Success brings the output in ev.Text, which is displayed under the header with each line of rail `│ ` up to 4 lines; with more lines a final mark appears `│ … +N lines`. With 3 output lines they all fit: no truncation mark should appear.
 func TestModel_ToolSuccessShowsOutputPreview(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -2268,11 +2215,7 @@ func TestModel_ToolSuccessShowsOutputPreview(t *testing.T) {
 	}
 }
 
-// Edit success renders the rich diff card instead of the generic activity
-// line: a file-path bar, the "@@ … @@" hunk header, then the removed side
-// ("antes", red) above the added side ("después", green), each line numbered
-// with its real file line. The output preview ("ok") is dropped: the diff IS
-// the result worth reviewing.
+// Edit success renders the rich diff card instead of the generic activity line: a file-path bar, the "@@ … @@" hunk header, then the removed side ("before", red) above the added side ("after", green), each line numbered with its real file line. The output preview ("ok") is dropped: the diff IS the result worth reviewing.
 func TestModel_ToolSuccessShowsEditDiff(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -2290,16 +2233,15 @@ func TestModel_ToolSuccessShowsEditDiff(t *testing.T) {
 			t.Fatalf("View() sin ANSI = %q, debe contener %q: la edit exitosa se rinde como la tarjeta de diff con ruta, hunk y bloques antes/después", plain, want)
 		}
 	}
-	// El bloque rojo ("antes", quitadas) va arriba del verde ("después", agregadas).
+	// The red block ("before", removed) goes above the green ("after", added).
 	if i, j := strings.Index(plain, "1 - viejo"), strings.Index(plain, "1 + nuevo"); i < 0 || j < 0 || i > j {
 		t.Fatalf("View() sin ANSI = %q, el bloque de quitadas debe ir antes que el de agregadas", plain)
 	}
-	// La tarjeta se inseta como el resto del contenido: la fila abre con el
-	// margen (activityInset) y el rail ▌ en la misma columna que "✓ Read".
+	// The card is inserted like the rest of the content: the row opens with the margin (activityInset) and the rail ▌ in the same column as "✓ Read".
 	if row := lineWith(t, plain, "1 - viejo"); !strings.HasPrefix(row, activityInset+"▌") {
 		t.Fatalf("fila del diff = %q, debe abrir con el margen %q y el rail ▌", row, activityInset)
 	}
-	// Ni el rail viejo del preview unificado ni el preview del output sobreviven.
+	// Neither the old unified preview rail nor the output preview survive.
 	for _, banned := range []string{"│ -viejo", "│ +nuevo", "│ ok"} {
 		if strings.Contains(plain, banned) {
 			t.Fatalf("View() sin ANSI = %q, NO debe contener %q: la tarjeta reemplaza al preview unificado y al del output", plain, banned)
@@ -2323,13 +2265,13 @@ func TestModel_EditDiffShowsContextInBothBlocks(t *testing.T) {
 	})
 
 	plain := ansi.Strip(m.View())
-	// La quitada lleva el numero del archivo viejo y la agregada el del nuevo.
+	// The removed one has the number of the old file and the added one has the number of the new one.
 	for _, want := range []string{"11 - old", "11 + new"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("View() sin ANSI = %q, debe contener %q con el numero de linea real", plain, want)
 		}
 	}
-	// Cada linea de contexto aparece en el bloque rojo Y en el verde.
+	// Each line of context appears in the red block AND in the green block.
 	for _, ctx := range []string{"ctxA", "ctxB"} {
 		if got := strings.Count(plain, ctx); got < 2 {
 			t.Fatalf("View() sin ANSI = %q, la linea de contexto %q debe aparecer en ambos bloques (antes/después), got %d", plain, ctx, got)
@@ -2337,8 +2279,7 @@ func TestModel_EditDiffShowsContextInBothBlocks(t *testing.T) {
 	}
 }
 
-// TRIANGULATE: tumba un preview del output sin tope, que volcaria las 6 lineas
-// enteras al transcript en vez de cortar en 4 y resumir el resto en la marca.
+// TRIANGULATE: drops a preview of the output without a cap, which would dump the entire 6 lines into the transcript instead of cutting into 4 and summarizing the rest at the mark.
 func TestModel_ToolOutputPreviewTruncatesLongOutput(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -2365,27 +2306,20 @@ func TestModel_ToolOutputPreviewTruncatesLongOutput(t *testing.T) {
 	}
 }
 
-// El resumen generico del Input es el fallback para una tool que NO dice como
-// presentarse (tool.Presenter): las de un servidor MCP, y cualquiera que este
-// build no conozca. Por eso el sujeto se prueba con una tool ajena al registry.
-//
-// TRIANGULATE: tumba un resumen del Input que vuelque el input entero sin
-// truncar, o que con varios campos elija un campo suelto en vez del JSON
-// compacto completo.
+// The generic summary of the Input is the fallback for a tool that does NOT say how to present itself (tool.Presenter): those of an MCP server, and any that this build does not know. That is why the subject is tested with a tool outside the registry.  TRIANGULATE: returns a summary of the Input that returns the entire input without truncating, or that with several fields chooses a single field instead of the complete compact JSON.
 func TestModel_ToolInputSummaryCompactsMultiField(t *testing.T) {
 	const remote = "mcp_editor_patch"
 	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 200, Height: 24})
 
-	// Dos campos: el resumen es el JSON compacto, no el valor de un campo suelto.
+	// Two fields: The summary is the compact JSON, not the value of a single field.
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: remote, Input: json.RawMessage(`{"path":"a.go","texto":"x"}`)})
 	view := m.View()
 	if want := `● ` + remote + ` {"path":"a.go","texto":"x"}`; !strings.Contains(view, want) {
 		t.Fatalf("View() = %q, el header debe contener %q: con varios campos el resumen es el JSON compacto", view, want)
 	}
 
-	// Un solo campo string mas largo que el tope de 48 celdas: el resumen se
-	// trunca con la elipsis y la cola del input no aparece.
+	// A single string field longer than the maximum of 48 cells: the summary is truncated with the ellipsis and the tail of the input does not appear.
 	long := strings.Repeat("x", 60) + "-cola-final"
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "bash", Input: json.RawMessage(`{"command":"` + long + `"}`)})
 	view = m.View()
@@ -2400,8 +2334,7 @@ func TestModel_ToolInputSummaryCompactsMultiField(t *testing.T) {
 func TestModel_ShowsPendingPermissionAndClearsOnOutcome(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil)
 
-	// Orden real del runner: Tool.Called y despues Tool.Permission.Requested
-	// mientras bloquea en el gate (ask-before-run).
+	// Runner's actual order: Tool.Called and then Tool.Permission.Requested while blocking in the gate (ask-before-run).
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"rm -rf /tmp/x"}`)})
 	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"rm -rf /tmp/x"}`)})
 
@@ -2419,7 +2352,7 @@ func TestModel_ShowsPendingPermissionAndClearsOnOutcome(t *testing.T) {
 		t.Fatalf("PendingPermission() = (%q, %v), debe exponer la solicitud pendiente c1", callID, ok)
 	}
 
-	// El desenlace llega como Tool.Success del MISMO CallID: la solicitud desaparece.
+	// The outcome arrives as Tool.Success of the SAME CallID: the request disappears.
 	m = apply(t, m, EventMsg{
 		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash", Text: "hecho",
 		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "hecho", ToolCallID: "c1"},
@@ -2431,7 +2364,7 @@ func TestModel_ShowsPendingPermissionAndClearsOnOutcome(t *testing.T) {
 		t.Fatalf("PendingPermission() = (%q, %v), no debe quedar solicitud tras el desenlace", callID, ok)
 	}
 
-	// Tool.Failed tambien resuelve la solicitud (p.ej. denegada por el usuario).
+	// Tool.Failed also resolves the request (e.g. denied by the user).
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "write", Input: json.RawMessage(`{"path":"b.go"}`)})
 	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c2", ToolName: "write", Input: json.RawMessage(`{"path":"b.go"}`)})
 	if callID, ok := m.PendingPermission(); !ok || callID != "c2" {
@@ -2506,13 +2439,7 @@ func TestModel_ShowsStepFailedError(t *testing.T) {
 	}
 }
 
-// Contrato de la jerarquia visual de actividad: el header de cada tool lleva
-// un marcador de estado con dos columnas de margen (`●` corriendo, `✓` exito,
-// `✗` fallo),
-// el nombre de la tool alineado a 8 columnas (`%-8s`) y el resumen del Input
-// (`  ● Bash     ls`); el detalle va debajo como lineas de rail con el mismo
-// margen (`  │ 18 matches`, `  │ error: exit 1`). El formato viejo `[tool] ...`
-// desaparece del transcript.
+// Contract of the visual hierarchy of activity: the header of each tool carries a status marker with two columns of margin (`●` running, `✓` success, `✗` failure), the name of the tool aligned to 8 columns (`%-8s`) and the summary of the Input (` ● Bash ls`); The detail goes below as rail lines with the same margin (` │ 18 matches`, ` │ error: exit 1`). The old `[tool] ...` format disappears from the transcript.
 func TestModel_RendersActivityMarkersThroughToolLifecycle(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil)
 
@@ -2550,11 +2477,7 @@ func TestModel_RendersActivityMarkersThroughToolLifecycle(t *testing.T) {
 	}
 }
 
-// Contrato del agrupado compacto: las entradas de actividad adyacentes (tools,
-// permisos, errores de step) se unen SIN linea en blanco entre si (separador
-// "\n"), mientras la narrativa del assistant conserva su parrafo propio
-// ("\n\n") y rompe el grupo: dos tools consecutivas quedan en lineas
-// fisicamente contiguas y la narrativa va rodeada de lineas en blanco.
+// Compact grouping contract: adjacent activity entries (tools, permissions, step errors) are joined WITHOUT a blank line between them (separator "\n"), while the assistant narrative retains its own paragraph ("\n\n") and breaks the group: two consecutive tools remain on physically contiguous lines and the narrative is surrounded by blank lines.
 func TestModel_GroupsAdjacentActivityEntriesWithoutBlankLine(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil)
 
@@ -2612,7 +2535,7 @@ func TestModel_EditSuccessShowsDiffStatInHeader(t *testing.T) {
 	if strings.Contains(plain, "✓ Edit") {
 		t.Fatalf("View() sin ANSI = %q, NO debe contener %q: la tarjeta reemplaza la linea de actividad", plain, "✓ Edit")
 	}
-	// Las lineas cambiadas van como filas numeradas en los bloques, sin el rail viejo.
+	// The changed lines go as numbered rows in the blocks, without the old rail.
 	for _, want := range []string{"1 - vieja", "1 + nueva", "2 + extra"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("View() sin ANSI = %q, debe contener la fila %q", plain, want)
@@ -2623,8 +2546,7 @@ func TestModel_EditSuccessShowsDiffStatInHeader(t *testing.T) {
 	}
 }
 
-// A pure insertion (no removed lines) omits the red "antes" block entirely:
-// there is no old slice to show, so only the green "después" block renders.
+// A pure insertion (no removed lines) omits the red "before" block entirely: there is no old slice to show, so only the green "after" block renders.
 func TestModel_EditDiffOmitsEmptyRemovedBlock(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -2663,23 +2585,23 @@ func TestModel_ToolSuccessShowsWriteCard(t *testing.T) {
 	})
 
 	plain := ansi.Strip(m.View())
-	// La ruta y cada linea van numeradas pero SIN marcador +.
+	// The route and each line are numbered but WITHOUT a + marker.
 	for _, want := range []string{"nuevo.go", "1  package main", "2  // hola"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("View() sin ANSI = %q, debe contener %q: el write exitoso se rinde como tarjeta gris con ruta y lineas numeradas sin marcador", plain, want)
 		}
 	}
-	// La tarjeta reemplaza la linea de actividad.
+	// The card replaces the line of activity.
 	if strings.Contains(plain, "✓ Write") {
 		t.Fatalf("View() sin ANSI = %q, NO debe contener %q: la tarjeta reemplaza la linea de actividad", plain, "✓ Write")
 	}
-	// Sin barra de hunk, sin stat +N -M y sin marcador + / - en las filas.
+	// No hunk bar, no stat +N -M and no +/- marker on rows.
 	for _, banned := range []string{"@@", "+2 -0", "1 + package main", " - "} {
 		if strings.Contains(plain, banned) {
 			t.Fatalf("View() sin ANSI = %q, NO debe contener %q: el write no muestra hunk, stat ni marcador de diff", plain, banned)
 		}
 	}
-	// La fila abre con el margen y el rail ▌ en la misma columna que el resto.
+	// The row opens with the margin and the rail ▌ in the same column as the rest.
 	if row := lineWith(t, plain, "1  package main"); !strings.HasPrefix(row, activityInset+"▌") {
 		t.Fatalf("fila del write = %q, debe abrir con el margen %q y el rail ▌", row, activityInset)
 	}
@@ -2692,7 +2614,7 @@ func TestModel_WriteCardTruncatesLongFile(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	// 60 lineas: con la barra de ruta son 61 filas, mas que el tope de 40.
+	// 60 lines: with the route bar there are 61 rows, more than the limit of 40.
 	var b strings.Builder
 	b.WriteString("--- a/big.go\n+++ b/big.go\n@@ -0,0 +1,60 @@\n")
 	for i := 1; i <= 60; i++ {
@@ -2706,15 +2628,14 @@ func TestModel_WriteCardTruncatesLongFile(t *testing.T) {
 	})
 
 	plain := ansi.Strip(m.View())
-	// path (1) + 39 filas = 40 (el tope); linea-39 es la ultima que entra y se
-	// ocultan 60-39 = 21 lineas en la marca de resumen.
+	// path (1) + 39 rows = 40 (the top); Line-39 is the last one that enters and 60-39 = 21 lines are hidden in the summary mark.
 	if !strings.Contains(plain, "linea-39") {
 		t.Fatalf("View() sin ANSI = %q, la ultima linea dentro del tope debe mostrarse", plain)
 	}
 	if !strings.Contains(plain, "… +21 lines") {
 		t.Fatalf("View() sin ANSI = %q, debe resumir el exceso como %q", plain, "… +21 lines")
 	}
-	// La primera linea mas alla del tope (y las siguientes) no aparecen.
+	// The first line beyond the top (and the following ones) do not appear.
 	for _, banned := range []string{"linea-40", "linea-60"} {
 		if strings.Contains(plain, banned) {
 			t.Fatalf("View() sin ANSI = %q, NO debe contener %q: se corta en el tope", plain, banned)
@@ -2740,12 +2661,9 @@ func TestModel_WriteWithoutDiffShowsActivityLine(t *testing.T) {
 	}
 }
 
-// TRIANGULATE: tumba un header que trunque el nombre de la tool al ancho de la
-// columna de alineacion (8) o que padee de mas: con un nombre mas largo que la
-// columna, el nombre queda entero y el resumen a UN espacio del nombre.
+// TRIANGULATE: destroy a header that truncates the name of the tool to the width of the alignment column (8) or that is too long: with a name longer than the column, the name remains integer and the summary is ONE space in the name.
 func TestModel_ActivityHeaderKeepsLongToolNameReadable(t *testing.T) {
-	// Un nombre mas largo que la columna solo aparece en una tool que no dice
-	// como presentarse: las propias traen label corto (Bash, Edit, SubAgent).
+	// A name longer than the column only appears in a tool that does not say how to present itself: the tools themselves have a short label (Bash, Edit, SubAgent).
 	const remote = "mcp_planner_present_plan"
 	m := NewModel(&fakeAgent{}, "s1", nil)
 
@@ -2758,14 +2676,11 @@ func TestModel_ActivityHeaderKeepsLongToolNameReadable(t *testing.T) {
 	}
 }
 
-// TRIANGULATE: tumba un header que deje la cola invisible de la alineacion
-// cuando no hay resumen (sin Input o con Input `{}`): la linea es exactamente
-// el marcador y el nombre, sin espacios colgantes.
+// TRIANGULATE: knock down a header that leaves the tail of the alignment invisible when there is no summary (without Input or with Input `{}`): the line is exactly the marker and the name, without dangling spaces.
 func TestModel_ActivityHeaderWithoutSummaryHasNoTrailingSpaces(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil)
 
-	// Sin Input y con Input `{}`: en ambos el resumen queda vacio y el header
-	// debe recortar los espacios de la alineacion del nombre.
+	// Without Input and with Input `{}`: in both the summary is empty and the header must trim the spaces from the name alignment.
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash"})
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "grep", Input: json.RawMessage(`{}`)})
 
@@ -2778,9 +2693,7 @@ func TestModel_ActivityHeaderWithoutSummaryHasNoTrailingSpaces(t *testing.T) {
 	}
 }
 
-// TRIANGULATE: tumba un diffStat hardcodeado al diff del test de arriba o que
-// cuente las cabeceras de archivo +++/--- como contenido; la tabla cubre
-// tambien el diff vacio y las lineas +/- peladas (sin texto detras).
+// TRIANGULATE: drop a hardcoded diffStat to the diff of the test above or count file headers +++/--- as content; The table also covers the empty diff and the stripped +/- lines (without text behind them).
 func TestEntry_DiffStatIgnoresFileHeadersAndEmptyDiff(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -2813,9 +2726,7 @@ func TestEntry_DiffStatIgnoresFileHeadersAndEmptyDiff(t *testing.T) {
 	}
 }
 
-// TRIANGULATE: tumba un header que pegue el stat siempre (`✓ Bash     ls  +0 -0`)
-// en vez de solo cuando hay diff: una tool exitosa SIN diff lleva el header
-// pelado y su output como lineas de rail.
+// TRIANGULATE: knock down a header that always pastes the stat (`✓ Bash ls +0 -0`) instead of only when there is diff: a successful tool WITHOUT diff takes the stripped header and its output as rail lines.
 func TestModel_SuccessWithoutDiffShowsNoStat(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil)
 
@@ -2842,10 +2753,7 @@ func TestModel_SuccessWithoutDiffShowsNoStat(t *testing.T) {
 	}
 }
 
-// TRIANGULATE: tumba un agrupado compacto que solo contemple tools: el permiso
-// pendiente (entryPermission) y el fallo duro del step (entryError) tambien son
-// actividad y se unen al grupo sin lineas en blanco; la narrativa del assistant
-// que sigue conserva su parrafo propio.
+// TRIANGULATE: destroys a compact group that only includes tools: the pending permission (entryPermission) and the hard failure of the step (entryError) are also activity and join the group without blank lines; The assistant's narrative that follows retains its own paragraph.
 func TestModel_PermissionAndErrorJoinActivityGroup(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil)
 
@@ -2854,8 +2762,7 @@ func TestModel_PermissionAndErrorJoinActivityGroup(t *testing.T) {
 		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash",
 		Message: &session.Message{ID: "c1", Role: session.RoleTool, ToolCallID: "c1"},
 	})
-	// Orden real del runner: Tool.Called y despues Tool.Permission.Requested
-	// mientras bloquea en el gate (ask-before-run).
+	// Runner's actual order: Tool.Called and then Tool.Permission.Requested while blocking in the gate (ask-before-run).
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "write", Input: json.RawMessage(`{"path":"b.go"}`)})
 	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c2", ToolName: "write", Input: json.RawMessage(`{"path":"b.go"}`)})
 	m = apply(t, m, EventMsg{Kind: session.KindStepFailed, Error: "boom"})
@@ -2865,9 +2772,7 @@ func TestModel_PermissionAndErrorJoinActivityGroup(t *testing.T) {
 	m = drainReveal(t, m)
 
 	plain := ansi.Strip(m.View())
-	// El header "● Write" en ejecucion queda oculto mientras su permiso sigue
-	// pendiente: solo la linea naranja "? Write" del permiso representa la
-	// llamada gateada, sin duplicarla en dos filas contiguas.
+	// The running "● Write" header is hidden while its permission is still pending: only the orange "? Write" line of the permission represents the gated call, without duplicating it in two contiguous rows.
 	want := "  ✓ Bash     ls\n  ? Write    b.go\n  ✗ error    boom"
 	if !strings.Contains(plain, want) {
 		t.Fatalf("View() sin ANSI = %q, debe contener %q: la tool exitosa, el permiso pendiente y el error de step quedan fisicamente contiguos, sin lineas en blanco entre si", plain, want)
@@ -2886,20 +2791,17 @@ func TestModel_PermissionAndErrorJoinActivityGroup(t *testing.T) {
 func TestModel_ToolInputDeltasAreNotTranscript(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
-	// Reasoning: el bloque de pensamiento se muestra mientras fluye, pero al
-	// cerrarse colapsa al resumen "◆ Thought for ...": drenado el reveal, su texto
-	// NO queda como texto plano del transcript.
+	// Reasoning: the thought block is shown while it flows, but when closed it collapses to the summary "◆ Thought for...": once the reveal is drained, its text is NOT left as plain text of the transcript.
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "pienso en secreto"})
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: "pienso en secreto"})
 
-	// Tool input: los fragmentos crudos viajan en Text y el JSON completo en
-	// Input; ninguno es texto de conversacion, NUNCA.
+	// Tool input: raw fragments travel in Text and the complete JSON in Input; none of them are conversational texts, EVER.
 	m = apply(t, m, EventMsg{Kind: session.KindToolInputStarted, CallID: "c1"})
 	m = apply(t, m, EventMsg{Kind: session.KindToolInputDelta, CallID: "c1", Text: `{"cmd":"ls`})
 	m = apply(t, m, EventMsg{Kind: session.KindToolInputEnded, CallID: "c1", Input: json.RawMessage(`{"cmd":"ls"}`)})
 
-	// El texto normal del assistant si es transcript: contrasta con lo anterior.
+	// The normal text of the assistant is transcribed: contrasts with the above.
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "respuesta visible"})
 	m = drainReveal(t, m)
@@ -2915,12 +2817,7 @@ func TestModel_ToolInputDeltasAreNotTranscript(t *testing.T) {
 	}
 }
 
-// Paridad con el ThinkingBlock del escritorio: el reasoning se muestra como un
-// bloque colapsable del transcript. Mientras fluye, la vista lleva la cabecera
-// "◆ Thinking…" y debajo SOLO las ultimas 4 lineas no vacias del texto revelado
-// (ventana deslizante); Reasoning.Ended, con el backlog ya drenado, colapsa el
-// bloque a una unica linea de resumen con el prefijo "◆ Thought" (duracion
-// legible), y la cabecera y el preview desaparecen.
+// Parity with the desktop ThinkingBlock: reasoning is displayed as a collapsible block of the transcript. While flowing, the view carries the header "◆ Thinking..." and below ONLY the last 4 non-empty lines of the revealed text (sliding window); Reasoning.Ended, with the backlog already drained, collapses the block to a single summary line prefixed with "◆Thought" (readable duration), and the header and preview disappear.
 func TestModel_ShowsReasoningAsCollapsibleThinkingBlock(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
@@ -2960,15 +2857,10 @@ func TestModel_ShowsReasoningAsCollapsibleThinkingBlock(t *testing.T) {
 }
 
 func TestModel_ThinkingRevealsProgressivelyLikeAssistant(t *testing.T) {
-	// TRIANGULATE: un fold que appendea el delta del pensamiento y lo revela
-	// de golpe (revealed = total) pasa el test principal, que drena antes de
-	// asertar. El pensamiento participa del mismo reveal suave que el texto
-	// del assistant: sin ticks no se ve nada, cada tick avanza un prefijo y
-	// solo al drenar se ve el final.
+	// TRIANGULATE: a fold that appends the delta of thought and reveals it at once (revealed = total) passes the main test, which drains before asserting. The thought participates in the same soft reveal as the assistant text: without ticks nothing is seen, each tick advances a prefix and only when draining is the end seen.
 	m := NewModel(nil, "s1", nil)
 
-	// Dos lineas largas (300+ runas) para que el token final quede dentro de
-	// la ventana de 4 lineas del preview una vez drenado.
+	// Two long lines (300+ runes) so that the final token is within the 4-line preview window once drained.
 	text := "inicio-marca " + strings.Repeat("a", 150) + "\n" + strings.Repeat("b", 150) + " token-final"
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: text})
@@ -2997,11 +2889,7 @@ func TestModel_ThinkingRevealsProgressivelyLikeAssistant(t *testing.T) {
 }
 
 func TestModel_ThinkingPreviewSkipsBlankLines(t *testing.T) {
-	// TRIANGULATE: una ventana que corta las ultimas 4 lineas CRUDAS (sin
-	// filtrar vacias) muestra blancos y pierde contenido: de
-	// "r1\n\nr2\n\nr3\n\nr4\n\nr5" mostraria ["", "r4", "", "r5"]. La ventana
-	// filtra primero las vacias y recien ahi corta: r2..r5 pegadas a la
-	// cabecera, sin blancos intercalados.
+	// TRIANGULATE: a window that cuts the last 4 RAW lines (without empty filtering) shows blanks and loses content: from "r1\n\nr2\n\nr3\n\nr4\n\nr5" it would show ["", "r4", "", "r5"]. The window first filters the empty ones and then cuts: r2..r5 close to the header, without interspersed blanks.
 	m := NewModel(nil, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
@@ -3072,10 +2960,7 @@ func assertThinkingInset(t *testing.T, view string, needles ...string) {
 }
 
 func TestModel_TextStartedClosesLiveThinking(t *testing.T) {
-	// TRIANGULATE: si el runner nunca emite Reasoning.Ended, un fold ingenuo
-	// deja la cabecera "◆ Thinking…" viva para siempre mientras la respuesta
-	// streamea debajo. Que arranque el texto implica que el pensamiento
-	// termino: Text.Started lo cierra defensivamente.
+	// TRIANGULATE: if the runner never issues Reasoning.Ended, a naive fold leaves the "◆ Thinking..." header alive forever while the response streams below it. Starting the text implies that the thought is finished: Text.Started closes it defensively.
 	m := NewModel(nil, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
@@ -3099,10 +2984,7 @@ func TestModel_TextStartedClosesLiveThinking(t *testing.T) {
 }
 
 func TestModel_StepEndedClosesLiveThinking(t *testing.T) {
-	// TRIANGULATE: un step puede morir pensando (cancelacion, error del
-	// proveedor) sin Reasoning.Ended ni Text.Started de por medio. Step.Ended
-	// cierra el pensamiento defensivamente igual que Text.Started; sin ese
-	// cierre la cabecera "◆ Thinking…" quedaria viva para siempre.
+	// TRIANGULATE: a step can die thinking (cancellation, provider error) without Reasoning.Ended or Text.Started involved. Step.Ended closes the thought defensively just like Text.Started; Without that closure the header "◆ Thinking..." would remain alive forever.
 	m := NewModel(nil, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
@@ -3121,11 +3003,7 @@ func TestModel_StepEndedClosesLiveThinking(t *testing.T) {
 }
 
 func TestModel_ReasoningEndedTextCollapsesWithoutAnimation(t *testing.T) {
-	// TRIANGULATE: cuando Reasoning.Ended trae el texto completo sin deltas
-	// previos (proveedor que no streamea el pensamiento), el relleno NO se
-	// anima: se revela completo y colapsado en el mismo fold, sin ticks de por
-	// medio. Un fold que solo asigna el texto sin marcarlo revelado dejaria el
-	// bloque "escribiendose" despues de cerrado.
+	// TRIANGULATE: when Reasoning.Ended brings the complete text without previous deltas (provider that does not stream the thought), the fill is NOT animated: it is revealed complete and collapsed in the same fold, without ticks in between. A fold that only assigns the text without marking it revealed would leave the block "writing" after it is closed.
 	m := NewModel(nil, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
@@ -3149,10 +3027,7 @@ func TestModel_ReasoningEndedTextCollapsesWithoutAnimation(t *testing.T) {
 }
 
 func TestModel_TwoThinkingBlocksInSameRunStaySeparate(t *testing.T) {
-	// TRIANGULATE: un fold que reusa el bloque de pensamiento anterior en vez
-	// de abrir uno nuevo mezclaria las lineas del primero en el preview del
-	// segundo y colapsaria ambos en UNA sola linea de resumen. Cada
-	// Reasoning.Started abre un bloque propio.
+	// TRIANGULATE: a fold that reuses the previous thought block instead of opening a new one would mix the lines of the first in the preview of the second and collapse both into ONE summary line. Each Reasoning.Started opens its own block.
 	m := NewModel(nil, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
@@ -3183,16 +3058,13 @@ func TestModel_TwoThinkingBlocksInSameRunStaySeparate(t *testing.T) {
 }
 
 func TestModel_ThinkingCollapseWaitsForRevealDrain(t *testing.T) {
-	// TRIANGULATE: un colapso instantaneo al recibir Ended con backlog
-	// pendiente cortaria la animacion a mitad de frase. Paridad con el done
-	// del escritorio: el bloque se sigue "escribiendo" hasta drenar el reveal
-	// y recien ahi colapsa al resumen.
+	// TRIANGULATE: An instant crash upon receiving Ended with pending backlog would cut the animation mid-sentence. Parity with the desktop gift: the block continues "writing" until the reveal is drained and only then collapses to the summary.
 	m := NewModel(nil, "s1", nil)
 
 	text := "inicio-fluye " + strings.Repeat("c", 150) + "\n" + strings.Repeat("d", 150) + " final-tardio"
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: text})
-	// Un tick para que haya un prefijo visible que asertar antes del Ended.
+	// A tick so that there is a visible prefix to assert before the Ended.
 	m = apply(t, m, revealTickMsg{})
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: text})
 
@@ -3220,7 +3092,7 @@ func TestModel_ThinkingCollapseWaitsForRevealDrain(t *testing.T) {
 func TestModel_SecondTurnOpensNewBlock(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
-	// Primer turno completo: streaming, cierre del bloque y cierre del step.
+	// First complete turn: streaming, closing the block and closing the step.
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "Primera respuesta"})
 	m = apply(t, m, EventMsg{Kind: session.KindTextEnded, Text: "Primera respuesta"})
@@ -3229,7 +3101,7 @@ func TestModel_SecondTurnOpensNewBlock(t *testing.T) {
 		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: "Primera respuesta"},
 	})
 
-	// Segundo turno: el nuevo streaming abre un bloque NUEVO.
+	// Second turn: the new streaming opens a NEW block.
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "Segunda respuesta"})
 	m = drainReveal(t, m)
@@ -3263,7 +3135,7 @@ func TestModel_EnterWithEmptyInputDoesNotSend(t *testing.T) {
 }
 
 func TestModel_PermissionKeysResolveViaAgent(t *testing.T) {
-	// Escenario 1: 'y' aprueba la solicitud pendiente c1.
+	// Scenario 1: 'y' approves pending request c1.
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"ls"}`)})
@@ -3290,8 +3162,7 @@ func TestModel_PermissionKeysResolveViaAgent(t *testing.T) {
 		t.Fatalf("PendingPermission() = (%q, %v), Tool.Success debe retirar la solicitud", callID, ok)
 	}
 
-	// Escenario 2: 'n' deniega la solicitud pendiente c2; ademas las runas no
-	// entran al input y Enter no envia prompt mientras hay permiso pendiente.
+	// Scenario 2: 'n' denies pending request c2; Additionally, the runes do not enter the input and Enter does not send a prompt while permission is pending.
 	fake2 := &fakeAgent{}
 	m2 := NewModel(fake2, "s1", nil)
 	m2 = apply(t, m2, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "write", Input: json.RawMessage(`{"path":"a.go"}`)})
@@ -3699,9 +3570,7 @@ func TestModel_PermissionPanelDoesNotOverflowExtremelyShortTerminal(t *testing.T
 }
 
 func TestModel_PermissionResolvesWithEventSessionID(t *testing.T) {
-	// El evento de permiso puede venir de una sesion HIJA (subagente): el bus
-	// del padre surfacea el evento del hijo conservando SessionID = childID.
-	// La tecla 'y' debe resolver con ESE SessionID, no con el de la TUI.
+	// The allow event can come from a DAUGHTER session (subagent): the parent bus surfaces the child event keeping SessionID = childID. The 'y' key should resolve to THAT SessionID, not the TUI.
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
 	m = apply(t, m, EventMsg{SessionID: "child-1", Kind: session.KindToolCalled, CallID: "c9", ToolName: "bash", Input: json.RawMessage(`{"command":"ls"}`)})
@@ -3737,7 +3606,7 @@ func TestModel_CtrlCStopsAndQuits(t *testing.T) {
 		t.Fatalf("cmd() = %T, se esperaba tea.QuitMsg", msg)
 	}
 
-	// Con permiso pendiente Ctrl+C sigue funcionando igual.
+	// With permission pending Ctrl+C still works the same.
 	fake2 := &fakeAgent{}
 	m2 := NewModel(fake2, "s1", nil)
 	m2 = apply(t, m2, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"ls"}`)})
@@ -3828,7 +3697,7 @@ func TestModel_EscConfirmationDisarms(t *testing.T) {
 }
 
 func TestModel_RunDoneStopsWorkingAndShowsError(t *testing.T) {
-	// Corrida limpia: RunDoneMsg{Err: ""} solo apaga Working.
+	// Clean run: RunDoneMsg{Err: ""} just turns off Working.
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
@@ -3845,7 +3714,7 @@ func TestModel_RunDoneStopsWorkingAndShowsError(t *testing.T) {
 		t.Fatalf("View() = %q, una corrida limpia no debe mostrar error", got)
 	}
 
-	// Corrida fallida: RunDoneMsg{Err: "boom"} ademas muestra el error.
+	// Failed run: RunDoneMsg{Err: "boom"} also shows the error.
 	m2 := NewModel(fake, "s1", nil)
 	m2 = apply(t, m2, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
 	m2 = apply(t, m2, tea.KeyMsg{Type: tea.KeyEnter})
@@ -3897,7 +3766,7 @@ func TestModel_EventPumpDeliversFromChannel(t *testing.T) {
 
 	m := NewModel(nil, "s1", ch)
 
-	// Init arma la bomba: el cmd hace receive y entrega el primer msg.
+	// Init sets off the bomb: the cmd does receive and delivers the first msg.
 	cmd := m.Init()
 	if cmd == nil {
 		t.Fatalf("Init() = nil, con canal de eventos debe devolver el cmd de la bomba")
@@ -3911,7 +3780,7 @@ func TestModel_EventPumpDeliversFromChannel(t *testing.T) {
 		t.Fatalf("cmd() = %#v, se esperaba el primer EventMsg %#v", msg, first)
 	}
 
-	// Consumir un evento rearma la bomba: el nuevo cmd entrega el segundo msg.
+	// Consuming an event resets the bomb: the new cmd delivers the second msg.
 	updated, cmd2 := m.Update(msg)
 	m, ok = updated.(Model)
 	if !ok {
@@ -3925,19 +3794,19 @@ func TestModel_EventPumpDeliversFromChannel(t *testing.T) {
 		t.Fatalf("cmd() = %#v, se esperaba el segundo EventMsg %#v", msg2, second)
 	}
 
-	// RunDoneMsg tambien rearma la bomba.
+	// RunDoneMsg also resets the bomb.
 	_, cmd3 := m.Update(activeRunDone(m, ""))
 	if cmd3 == nil {
 		t.Fatalf("Update(RunDoneMsg) devolvio cmd nil, la bomba debe rearmarse tras el fin de corrida")
 	}
 
-	// Canal cerrado: el cmd devuelve nil en vez de bloquearse o entregar basura.
+	// Closed channel: cmd returns nil instead of hanging or delivering garbage.
 	close(ch)
 	if got := cmd3(); got != nil {
 		t.Fatalf("cmd() = %#v con canal cerrado, se esperaba nil", got)
 	}
 
-	// Canal nil (tests del fold): solo queda el comando del cursor.
+	// Channel nil (fold tests): only the cursor command remains.
 	if cmd := NewModel(nil, "s1", nil).Init(); cmd == nil {
 		t.Fatal("Init() = nil con canal nil, se esperaba el comando del cursor")
 	}
@@ -3946,11 +3815,10 @@ func TestModel_EventPumpDeliversFromChannel(t *testing.T) {
 func TestModel_ViewportFollowsTailOnNewEvents(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
-	// La terminal anuncia su tamano: la conversacion debe vivir en un viewport
-	// de alto acotado que sigue la cola (auto-scroll al fondo).
+	// The terminal announces its size: the conversation must live in a high-bounded viewport that follows the queue (auto-scroll at the bottom).
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
 
-	// Muchas mas entradas de las que caben en 10 lineas.
+	// Many more entries than fit in 10 lines.
 	for i := 0; i < 30; i++ {
 		m = apply(t, m, EventMsg{Message: &session.Message{
 			ID:   fmt.Sprintf("u%02d", i),
@@ -3975,7 +3843,7 @@ func TestModel_PgUpScrollsHistoryBack(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 12})
 
-	// Muchas mas entradas de las que caben: la vista arranca siguiendo la cola.
+	// Many more entries than fit: the view starts following the queue.
 	for i := 0; i < 30; i++ {
 		m = apply(t, m, EventMsg{Message: &session.Message{
 			ID:   fmt.Sprintf("u%02d", i),
@@ -3984,7 +3852,7 @@ func TestModel_PgUpScrollsHistoryBack(t *testing.T) {
 		}})
 	}
 
-	// PgUp retrocede una pagina: la cola deja de verse y aparece historial previo.
+	// PgUp goes back one page: the queue is no longer visible and previous history appears.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyPgUp})
 	view := m.View()
 	if strings.Contains(view, "mensaje-29") {
@@ -3997,7 +3865,7 @@ func TestModel_PgUpScrollsHistoryBack(t *testing.T) {
 		t.Fatalf("input.Value() = %q, PgUp NO debe escribir en el textinput", got)
 	}
 
-	// Varios PgDn consecutivos devuelven la vista a la cola.
+	// Several consecutive PgDns return the view to the queue.
 	for i := 0; i < 5; i++ {
 		m = apply(t, m, tea.KeyMsg{Type: tea.KeyPgDown})
 	}
@@ -4008,7 +3876,7 @@ func TestModel_PgUpScrollsHistoryBack(t *testing.T) {
 		t.Fatalf("input.Value() = %q, PgDn NO debe escribir en el textinput", got)
 	}
 
-	// Con permiso pendiente PgUp sigue siendo scroll: no dispara el gate.
+	// With pending permission PgUp is still scrolling: it does not trigger the gate.
 	fake := &fakeAgent{}
 	m2 := NewModel(fake, "s1", nil)
 	m2 = apply(t, m2, tea.WindowSizeMsg{Width: 40, Height: 10})
@@ -4034,7 +3902,7 @@ func TestModel_PgUpScrollsHistoryBack(t *testing.T) {
 	}
 }
 
-// Eventos de rueda del mouse compartidos por los tests de scroll.
+// Mouse wheel events shared by scroll tests.
 var (
 	wheelUp   = tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp}
 	wheelDown = tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown}
@@ -4044,7 +3912,7 @@ func TestModel_MouseWheelScrollsHistory(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 12})
 
-	// Muchas mas entradas de las que caben: la vista arranca siguiendo la cola.
+	// Many more entries than fit: the view starts following the queue.
 	for i := 0; i < 30; i++ {
 		m = apply(t, m, EventMsg{Message: &session.Message{
 			ID:   fmt.Sprintf("u%02d", i),
@@ -4053,7 +3921,7 @@ func TestModel_MouseWheelScrollsHistory(t *testing.T) {
 		}})
 	}
 
-	// Dos ruedas arriba retroceden en el historial: la cola deja de verse.
+	// Two wheels up go back in history: the tail is no longer visible.
 	m = apply(t, m, wheelUp)
 	m = apply(t, m, wheelUp)
 	view := m.View()
@@ -4067,7 +3935,7 @@ func TestModel_MouseWheelScrollsHistory(t *testing.T) {
 		t.Fatalf("input.Value() = %q, la rueda NO debe escribir en el textinput", got)
 	}
 
-	// Varias ruedas abajo devuelven la vista a la cola.
+	// Several wheels below return the view to the tail.
 	for i := 0; i < 5; i++ {
 		m = apply(t, m, wheelDown)
 	}
@@ -4075,7 +3943,7 @@ func TestModel_MouseWheelScrollsHistory(t *testing.T) {
 		t.Fatalf("View() = %q, tras varias ruedas abajo la cola %q debe volver a verse", got, "mensaje-29")
 	}
 
-	// Con permiso pendiente la rueda sigue siendo scroll: no dispara el gate.
+	// With permission pending, the wheel continues to scroll: it does not trigger the gate.
 	fake := &fakeAgent{}
 	m2 := NewModel(fake, "s1", nil)
 	m2 = apply(t, m2, tea.WindowSizeMsg{Width: 40, Height: 10})
@@ -4091,10 +3959,7 @@ func TestModel_MouseWheelScrollsHistory(t *testing.T) {
 }
 
 func TestModel_MouseWheelSurvivesTinyOrUnsizedTerminal(t *testing.T) {
-	// TRIANGULATE: un fix pobre podria asumir un viewport ya dimensionado al
-	// reenviar la rueda. Sin WindowSizeMsg previo (ready == false) o con pty
-	// 0x0, un evento de rueda no debe paniquear y View() debe seguir
-	// devolviendo un string aunque sea degradado.
+	// TRIANGULATE: a poor fix could assume an already sized viewport when resending the wheel. Without prior WindowSizeMsg (ready == false) or with pty 0x0, a wheel event should not panic and View() should continue to return a string even if it is demoted.
 	t.Run("sin WindowSizeMsg previo", func(t *testing.T) {
 		m := NewModel(nil, "s1", nil)
 
@@ -4129,7 +3994,7 @@ func TestModel_NewEventPreservesReadingPositionWhileScrolledUp(t *testing.T) {
 		}})
 	}
 
-	// Dos ruedas arriba: la cola deja de verse (precondicion del caso).
+	// Two wheels up: the tail is no longer visible (precondition of the case).
 	m = apply(t, m, wheelUp)
 	m = apply(t, m, wheelUp)
 	offset := m.viewport.YOffset
@@ -4137,8 +4002,7 @@ func TestModel_NewEventPreservesReadingPositionWhileScrolledUp(t *testing.T) {
 		t.Fatalf("View() = %q, tras rueda arriba la cola %q NO debe seguir visible", got, "mensaje-29")
 	}
 
-	// Llega actividad nueva: conserva la posicion de lectura y muestra una
-	// flecha pasiva en vez de arrastrar al usuario hacia la cola.
+	// New activity arrives: preserves the reading position and shows a passive arrow instead of dragging the user to the queue.
 	m = apply(t, m, EventMsg{Message: &session.Message{
 		ID:   "u30",
 		Role: session.RoleUser,
@@ -4214,7 +4078,7 @@ func TestModel_NewActivityIndicatorIsPassiveAndAgentOnly(t *testing.T) {
 	}
 	m = apply(t, m, wheelUp)
 
-	// Un cambio local de presentacion no es actividad nueva del agente.
+	// A local change of presentation is not new activity of the agent.
 	m = m.syncViewport()
 	if view := ansi.Strip(m.View()); strings.Contains(view, "↓") {
 		t.Fatalf("View() = %q, un cambio local no debe mostrar el indicador", view)
@@ -4238,10 +4102,7 @@ func TestModel_NewActivityIndicatorIsPassiveAndAgentOnly(t *testing.T) {
 }
 
 func TestModel_MouseClickIsInert(t *testing.T) {
-	// TRIANGULATE: con tea.WithMouseCellMotion la terminal manda TAMBIEN clicks
-	// y arrastres, no solo rueda. Un click izquierdo o un movimiento deben ser
-	// inertes: no resuelven el permiso pendiente, no escriben en el input y no
-	// cambian la vista.
+	// TRIANGULATE: with tea.WithMouseCellMotion the terminal ALSO sends clicks and drags, not just rolls. A left click or a movement must be inert: they do not resolve the pending permission, they do not write to the input and they do not change the view.
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
@@ -4275,25 +4136,25 @@ func TestModel_WorkingIndicatorVisibleWhileRunning(t *testing.T) {
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
 
-	// Sin corrida en curso no hay indicador.
+	// Without a run in progress there is no indicator.
 	if got := m.View(); strings.Contains(got, "working") {
 		t.Fatalf("View() = %q, sin corrida en curso NO debe verse el indicador de trabajo", got)
 	}
 
-	// El usuario envia un prompt: aparece el indicador estable.
+	// The user sends a prompt: the stable indicator appears.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if got := m.View(); !strings.Contains(got, "working") {
 		t.Fatalf("View() = %q, debe mostrar el indicador %q mientras la corrida sigue", got, "working")
 	}
 
-	// Con ready (tamano de terminal conocido) el indicador tambien se ve.
+	// With ready (known terminal size) the indicator is also visible.
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
 	if got := m.View(); !strings.Contains(got, "working") {
 		t.Fatalf("View() = %q, con ready el indicador %q tambien debe verse", got, "working")
 	}
 
-	// Fin de corrida limpio: el indicador desaparece.
+	// Clean end of run: the indicator disappears.
 	m = apply(t, m, activeRunDone(m, ""))
 	if got := m.View(); strings.Contains(got, "working") {
 		t.Fatalf("View() = %q, RunDoneMsg debe retirar el indicador de trabajo", got)
@@ -4305,7 +4166,7 @@ func TestModel_ViewFitsHeightWithIndicator(t *testing.T) {
 	m := NewModel(fake, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 12})
 
-	// Muchas mas entradas de las que caben en 12 lineas.
+	// Many more entries than fit in 12 lines.
 	for i := 0; i < 30; i++ {
 		m = apply(t, m, EventMsg{Message: &session.Message{
 			ID:   fmt.Sprintf("u%02d", i),
@@ -4314,7 +4175,7 @@ func TestModel_ViewFitsHeightWithIndicator(t *testing.T) {
 		}})
 	}
 
-	// Enviar un prompt enciende working: aparece la linea de estado.
+	// Sending a prompt turns on working: the status line appears.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
@@ -4330,12 +4191,7 @@ func TestModel_ViewFitsHeightWithIndicator(t *testing.T) {
 	}
 }
 
-// TestModel_WorkingIndicatorAlignsWithComposerLeftMargin cubre el margen
-// izquierdo de la linea de estado "working": el resto de la vista (la caja
-// del composer y la barra superior) arranca a composerOuterMargin columnas del
-// borde izquierdo de la terminal, pero la linea del spinner arranca en la
-// columna 0 (pegada al borde). El glifo del spinner debe alinearse con el
-// borde "╭" de la caja del composer, ambos a composerOuterMargin columnas.
+// TestModel_WorkingIndicatorAlignsWithComposerLeftMargin covers the left margin of the "working" status line: the rest of the view (the composer box and the top bar) starts composerOuterMargin columns from the left edge of the terminal, but the spinner line starts in column 0 (attached to the edge). The spinner glyph should align with the "╭" edge of the composer box, both to composerOuterMargin columns.
 func TestModel_WorkingIndicatorAlignsWithComposerLeftMargin(t *testing.T) {
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
@@ -4345,10 +4201,7 @@ func TestModel_WorkingIndicatorAlignsWithComposerLeftMargin(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	view := m.View()
-	// La linea de estado se ubica por el glifo del spinner, no por la palabra
-	// "working": esta prueba es sobre alineacion de columnas, no sobre el
-	// texto exacto de la linea (ese es un bug preexistente no relacionado, se
-	// arregla aparte en la fase GREEN).
+	// The status line is located by the spinner glyph, not by the word "working": this test is about column alignment, not the exact text of the line (that is an unrelated pre-existing bug, it is fixed separately in the GREEN phase).
 	lines := strings.Split(view, "\n")
 	spinnerCol := -1
 	for _, line := range lines {
@@ -4383,15 +4236,7 @@ func TestModel_WorkingIndicatorAlignsWithComposerLeftMargin(t *testing.T) {
 	}
 }
 
-// TestModel_WorkingIndicatorAlignsWithComposerLeftMargin_WiderTerminal repite
-// la aserción de alineación de columnas con un ancho de terminal distinto
-// (100, no 40/80) para descartar que el margen observado sea un valor
-// hardcodeado que solo coincide por casualidad con una corrida particular:
-// si la implementación calculara la columna del spinner a partir del ancho de
-// la terminal (p.ej. relativa o proporcional) en lugar de un prefijo fijo de
-// composerOuterMargin espacios, este caso lo detectaría porque seguiria
-// esperando exactamente composerOuterMargin sin importar el ancho. También
-// confirma que ninguna línea de la vista excede el ancho de la terminal.
+// TestModel_WorkingIndicatorAlignsWithComposerLeftMargin_WiderTerminal repeats the column alignment assertion with a different terminal width (100, not 40/80) to rule out the observed margin being a hardcoded value that only happens to match a particular run by chance: if the implementation calculated the spinner column from the terminal width (e.g. relative or proportional) instead of a fixed prefix of composerOuterMargin spaces, this case would detect it because it would still expect exactly composerOuterMargin regardless of the width. It also confirms that no line in the view exceeds the width of the terminal.
 func TestModel_WorkingIndicatorAlignsWithComposerLeftMargin_WiderTerminal(t *testing.T) {
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
@@ -4437,13 +4282,7 @@ func TestModel_WorkingIndicatorAlignsWithComposerLeftMargin_WiderTerminal(t *tes
 	}
 }
 
-// TestModel_WorkingIndicatorDoesNotOverflowTinyTerminal cubre una terminal muy
-// chica (Width 10): chatContent() acota el margen de la línea de estado con
-// `min(composerOuterMargin, m.chatContentWidth()/2)`, el mismo patrón que
-// topBarLine usa para su margen, así que ninguna línea de View() debe exceder
-// el ancho de la terminal (10 celdas) ni producir una sangría negativa. Si una
-// implementación futura volviera a un prefijo fijo sin acotar, este test lo
-// detectaría.
+// TestModel_WorkingIndicatorDoesNotOverflowTinyTerminal covers a very small terminal (Width 10): chatContent() bounds the margin of the status line with `min(composerOuterMargin, m.chatContentWidth()/2)`, the same pattern that topBarLine uses for its margin, so no line in View() should exceed the width of the terminal (10 cells) or produce a negative indentation. If a future implementation reverted to an unbounded fixed prefix, this test would detect it.
 func TestModel_WorkingIndicatorDoesNotOverflowTinyTerminal(t *testing.T) {
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
@@ -4468,20 +4307,15 @@ func TestModel_WorkingIndicatorDoesNotOverflowTinyTerminal(t *testing.T) {
 }
 
 func TestModel_SurvivesTinyTerminal(t *testing.T) {
-	// Bug real (E2E bajo pty): una terminal diminuta (0x0 al crear el pty, o de
-	// 1 linea) deja el alto del viewport NEGATIVO en resizeViewport
-	// (m.height - m.reservedLines()) y bubbles/viewport paniquea (slice out of
-	// range en visibleLines) al hacer SetContent/GotoBottom en syncViewport.
-	// Comportamiento esperado (GREEN): sin panic, View() devuelve un string
-	// (puede ser degradado) y el programa sigue vivo.
+	// Real bug (E2E under pty): a tiny terminal (0x0 when creating the pty, or 1 line) leaves the viewport height NEGATIVE in resizeViewport (m.height - m.reservedLines()) and bubbles/viewport panics (slice out of range in visibleLines) when doing SetContent/GotoBottom in syncViewport. Expected behavior (GREEN): without panic, View() returns a string (can be downgraded) and the program lives on.
 
 	t.Run("pty 0x0", func(t *testing.T) {
 		m := NewModel(nil, "s1", nil)
 
-		// El pty recien creado anuncia tamano 0x0.
+		// The newly created pty announces size 0x0.
 		m = apply(t, m, tea.WindowSizeMsg{Width: 0, Height: 0})
 
-		// Un evento que toca el viewport y el render no deben tumbar la TUI.
+		// An event that touches the viewport and render should not knock down the TUI.
 		m = apply(t, m, EventMsg{Message: &session.Message{ID: "u1", Role: session.RoleUser, Text: "hola"}})
 		if got := m.View(); got == "" {
 			t.Fatalf("View() = %q, con terminal 0x0 debe devolver un string aunque sea degradado", got)
@@ -4492,8 +4326,7 @@ func TestModel_SurvivesTinyTerminal(t *testing.T) {
 		fake := &fakeAgent{}
 		m := NewModel(fake, "s1", nil)
 
-		// Con 1 linea de alto, encender working (input + linea de estado) deja
-		// las lineas reservadas por encima del alto: viewport negativo.
+		// With 1 line high, turning on working (input + status line) leaves the reserved lines above the height: negative viewport.
 		m = apply(t, m, tea.WindowSizeMsg{Width: 20, Height: 1})
 		m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
 		m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -4509,16 +4342,13 @@ func TestModel_SurvivesTinyTerminal(t *testing.T) {
 }
 
 func TestModel_RecoversAfterResizeFromTiny(t *testing.T) {
-	// TRIANGULATE: un fix pobre podria "sobrevivir" a la terminal diminuta
-	// congelando el viewport o dejando ready = false para siempre. Este caso
-	// exige que, tras crecer la terminal, el viewport vuelva a mostrar la cola
-	// del transcript y siga acotando el alto al de la terminal.
+	// TRIANGULATE: a poor fix could "survive" the tiny terminal by freezing the viewport or leaving ready = false forever. This case requires that, after the terminal grows, the viewport shows the tail of the transcript again and continues limiting the height to that of the terminal.
 	m := NewModel(nil, "s1", nil)
 
-	// El pty recien creado anuncia 0x0.
+	// The newly created pty announces 0x0.
 	m = apply(t, m, tea.WindowSizeMsg{Width: 0, Height: 0})
 
-	// Foldear 30 mensajes de usuario con la terminal aun 0x0 no debe paniquear.
+	// Folding 30 user messages with the terminal even 0x0 should not panic.
 	for i := 0; i < 30; i++ {
 		m = apply(t, m, EventMsg{Message: &session.Message{
 			ID:   fmt.Sprintf("u%02d", i),
@@ -4527,7 +4357,7 @@ func TestModel_RecoversAfterResizeFromTiny(t *testing.T) {
 		}})
 	}
 
-	// La terminal crece a un tamano utilizable.
+	// The terminal grows to a usable size.
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
 
 	view := m.View()
@@ -4543,11 +4373,7 @@ func TestModel_RecoversAfterResizeFromTiny(t *testing.T) {
 }
 
 func TestModel_WrapsLongAssistantTextToTerminalWidth(t *testing.T) {
-	// Bug real (reproducido E2E): en una terminal angosta la respuesta del
-	// assistant se ve como UNA sola linea truncada. El transcript se vuelca
-	// crudo al viewport de bubbles, que corta horizontalmente cada linea al
-	// ancho de la terminal (ansi.Cut) en vez de hacer word-wrap: el final del
-	// texto desaparece de la vista.
+	// Real bug (reproduced E2E): on a narrow terminal the assistant's response looks like ONE truncated line. The transcript is dumped raw into the bubbles viewport, which horizontally cuts each line to the width of the terminal (ansi.Cut) instead of doing word-wrap: the end of the text disappears from view.
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
 
@@ -4566,9 +4392,7 @@ func TestModel_WrapsLongAssistantTextToTerminalWidth(t *testing.T) {
 }
 
 func TestModel_RewrapsOnResize(t *testing.T) {
-	// TRIANGULATE: un fix pobre podria envolver el transcript UNA sola vez al
-	// primer ancho anunciado. Cuando la terminal se angosta, el texto debe
-	// re-envolverse al ancho nuevo, no quedar cortado al ancho viejo.
+	// TRIANGULATE: a poor fix could wrap the transcript ONE time to the first advertised width. When the terminal narrows, the text should be re-wrapped to the new width, not cut to the old width.
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
 
@@ -4578,7 +4402,7 @@ func TestModel_RewrapsOnResize(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: long})
 	m = drainReveal(t, m)
 
-	// La terminal se angosta: el transcript debe re-envolverse a 24 celdas.
+	// The terminal narrows: the transcript must be re-wrapped to 24 cells.
 	m = apply(t, m, tea.WindowSizeMsg{Width: 24, Height: 10})
 
 	view := m.View()
@@ -4589,15 +4413,11 @@ func TestModel_RewrapsOnResize(t *testing.T) {
 }
 
 func TestModel_WrapsUnbreakableLongToken(t *testing.T) {
-	// TRIANGULATE: una implementacion de solo word-wrap no parte tokens sin
-	// espacios mas largos que el ancho: una URL larga quedaria en una sola
-	// linea que el viewport trunca. El token debe partirse en varias lineas
-	// para leerse entero.
+	// TRIANGULATE: a word-wrap-only implementation does not split tokens without spaces longer than the width: a long URL would remain on a single line that the viewport truncates. The token must be divided into several lines to be read in its entirety.
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
 
-	// Un solo token de 92 celdas sin espacios: cortado duro a 40 da lineas de
-	// 40 + 40 + 12, y el sufijo distintivo cae entero en la ultima linea.
+	// A single 92-cell token with no spaces: hard cut to 40 gives lines of 40 + 40 + 12, and the distinctive suffix falls integer on the last line.
 	url := "https://example.com/" + strings.Repeat("x", 60) + "sufijo-final"
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: url})
@@ -4611,15 +4431,11 @@ func TestModel_WrapsUnbreakableLongToken(t *testing.T) {
 }
 
 func TestModel_FollowsTailOfWrappedResponse(t *testing.T) {
-	// TRIANGULATE: GotoBottom cuenta lineas sobre el contenido ya cargado en el
-	// viewport. Si el transcript se envolviera DESPUES de SetContent, el conteo
-	// de lineas quedaria corto y la vista no seguiria la cola de una respuesta
-	// que envuelta ocupa mas lineas que el alto del viewport.
+	// TRIANGULATE: GotoBottom counts lines on the content already loaded in the viewport. If the transcript were wrapped AFTER SetContent, the line count would be short and the view would not follow the queue of a wrapped response that occupies more lines than the height of the viewport.
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
 
-	// ~500 celdas de palabras: envuelto a 40 ocupa ~14 lineas, mas que el alto
-	// del viewport (9). Token distintivo al inicio y otro al final.
+	// ~500 word cells: wrapped at 40 it occupies ~14 lines, more than the height of the viewport (9). Distinctive token at the beginning and another at the end.
 	long := "inicio-de-respuesta " + strings.Repeat("palabra ", 60) + "fin-de-respuesta"
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: long})
@@ -5006,9 +4822,7 @@ func TestFormatTokenCount(t *testing.T) {
 }
 
 func TestModel_ComposerBoxWrapsInput(t *testing.T) {
-	// TRIANGULATE: el input vive SIEMPRE dentro de una caja de borde redondeado
-	// que abarca el ancho de la terminal (estilo Claude Code), este o no fijado
-	// el status del composer.
+	// TRIANGULATE: the input ALWAYS lives inside a rounded-edge box that spans the width of the terminal (Claude Code style), whether or not the composer's status is set.
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 12})
 
@@ -5020,9 +4834,7 @@ func TestModel_ComposerBoxWrapsInput(t *testing.T) {
 	}
 	assertBoxLinesExactWidth(t, view, 40)
 
-	// La caja tiene padding horizontal (estilo Claude Code): la linea interior
-	// arranca con "│ ❯" (borde, espacio, prompt), no con el prompt pegado al
-	// borde. Se mide sin ANSI porque el prompt va estilizado.
+	// The box has horizontal padding (Claude Code style): the inner line starts with "│ ❯" (border, space, prompt), not with the prompt attached to the edge. It is measured without ANSI because the prompt is stylized.
 	if plain := ansi.Strip(view); !strings.Contains(plain, "│ ❯") {
 		t.Fatalf("View() sin ANSI = %q, la linea interior de la caja debe tener padding horizontal: debe contener %q (borde, espacio, prompt), no el prompt pegado al borde", plain, "│ ❯")
 	}
@@ -5043,7 +4855,7 @@ func TestModel_ComposerBoxWrapsInput(t *testing.T) {
 		t.Fatalf("View() = %q, la linea del input (%q en %d) debe quedar ENTRE el borde superior (╭ en %d) y el inferior (╰ en %d)", view, inputPrompt, inputAt, topAt, bottomAt)
 	}
 
-	// Con status fijado el pie queda DEBAJO del borde inferior de la caja.
+	// With set status the foot is BELOW the bottom edge of the box.
 	m2 := NewModel(nil, "s1", nil).WithStatus("build", "openrouter/free")
 	m2 = apply(t, m2, tea.WindowSizeMsg{Width: 40, Height: 12})
 	view2 := m2.View()
@@ -5055,9 +4867,7 @@ func TestModel_ComposerBoxWrapsInput(t *testing.T) {
 }
 
 func TestModel_ComposerBoxFollowsResize(t *testing.T) {
-	// TRIANGULATE: una caja hardcodeada al primer ancho anunciado no sirve;
-	// tras redimensionar la terminal cada linea de la caja debe medir el ancho
-	// nuevo.
+	// TRIANGULATE: a box hardcoded to the first advertised width is useless; After resizing the terminal, each line of the box must measure the new width.
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 12})
 	assertBoxLinesExactWidth(t, m.View(), 40)
@@ -5067,14 +4877,12 @@ func TestModel_ComposerBoxFollowsResize(t *testing.T) {
 }
 
 func TestModel_ViewFitsHeightWithBoxModelAndIndicator(t *testing.T) {
-	// TRIANGULATE: con la caja (3 lineas), el modelo en el borde y el indicador de
-	// trabajo encendidos a la vez, el alto sigue acotado al de la terminal y la
-	// vista sigue la cola del transcript.
+	// TRIANGULATE: with the box (3 lines), the model on the edge and the work indicator on at the same time, the height is still limited to that of the terminal and the view follows the tail of the transcript.
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil).WithStatus("build", "openrouter/free")
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 12})
 
-	// Muchas mas entradas de las que caben en 12 lineas.
+	// Many more entries than fit in 12 lines.
 	for i := 0; i < 30; i++ {
 		m = apply(t, m, EventMsg{Message: &session.Message{
 			ID:   fmt.Sprintf("u%02d", i),
@@ -5083,7 +4891,7 @@ func TestModel_ViewFitsHeightWithBoxModelAndIndicator(t *testing.T) {
 		}})
 	}
 
-	// Enviar un prompt enciende working: aparece el indicador sobre la caja.
+	// Sending a prompt turns on working: the indicator appears on the box.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
@@ -5126,9 +4934,7 @@ func TestModel_LongTypedPromptGrowsWithoutOverflowingTerminal(t *testing.T) {
 }
 
 func TestModel_TabTogglesAgentModeToPlan(t *testing.T) {
-	// Tab alterna el modo del agente entre "build" y "plan" (estilo Claude
-	// Code): el pie del composer refleja el modo en vivo y Enter envia el
-	// prompt por el camino del modo activo (SendPlanPrompt en plan).
+	// Tab toggles the agent mode between "build" and "plan" (Claude Code style): the composer footer reflects the live mode and Enter sends the prompt via the active mode path (SendPlanPrompt in plan).
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil).WithStatus("build", "openrouter/free")
 
@@ -5142,7 +4948,7 @@ func TestModel_TabTogglesAgentModeToPlan(t *testing.T) {
 		t.Fatalf("View() = %q, tras Tab el pie NO debe seguir mostrando %q", view, "build ·")
 	}
 
-	// En modo plan, Enter envia el prompt via SendPlanPrompt, no via SendPrompt.
+	// In plan mode, Enter sends the prompt via SendPlanPrompt, not via SendPrompt.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("investiga x")})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
@@ -5158,9 +4964,7 @@ func TestModel_TabTogglesAgentModeToPlan(t *testing.T) {
 }
 
 func TestModel_TabTogglesBackToBuild(t *testing.T) {
-	// TRIANGULATE: Tab ALTERNA el modo, no solo lo enciende. Dos Tab devuelven
-	// el pie del composer a build y Enter vuelve a enviar por SendPrompt (el
-	// camino normal), no por SendPlanPrompt.
+	// TRIANGULATE: Tab TOggles the mode, not just turns it on. Two Tab returns the composer footer to build and Enter sends again via SendPrompt (the normal path), not SendPlanPrompt.
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil).WithStatus("build", "m")
 
@@ -5190,9 +4994,7 @@ func TestModel_TabTogglesBackToBuild(t *testing.T) {
 }
 
 func TestModel_TabIsInertWhilePermissionPending(t *testing.T) {
-	// TRIANGULATE: con un permiso pendiente el teclado esta en modo aprobacion
-	// (solo y/n hacen algo): Tab NO debe alternar el modo del agente ni cambiar
-	// el pie del composer.
+	// TRIANGULATE: with a pending permission the keyboard is in approval mode (only y/n do anything): Tab should NOT toggle the agent mode or change the composer footer.
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil).WithStatus("build", "m")
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"ls"}`)})
@@ -5210,9 +5012,7 @@ func TestModel_TabIsInertWhilePermissionPending(t *testing.T) {
 }
 
 func TestModel_PresentPlanOffersAcceptAndYExecutes(t *testing.T) {
-	// Cuando el agente presenta un plan (tool present_plan asentada con exito),
-	// la conversacion muestra una oferta de aprobacion pendiente; la tecla 'y'
-	// acepta el plan via Agent.AcceptPlan y retira la oferta.
+	// When the agent presents a plan (tool present_plan successfully posted), the conversation displays a pending approval offer; the 'y' key accepts the plan via Agent.AcceptPlan and withdraws the offer.
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil).WithStatus("build", "m")
 
@@ -5225,7 +5025,7 @@ func TestModel_PresentPlanOffersAcceptAndYExecutes(t *testing.T) {
 		t.Fatalf("oferta de aprobacion = %q, debe contener %q", planLine, "(y ejecutar / n seguir en plan)")
 	}
 
-	// 'y' acepta el plan: UNA llamada a AcceptPlan con la sesion de la TUI.
+	// 'and' accept the plan: ONE call to AcceptPlan with the TUI session.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
 
 	if len(fake.accepted) != 1 {
@@ -5246,10 +5046,7 @@ func TestModel_PresentPlanOffersAcceptAndYExecutes(t *testing.T) {
 }
 
 func TestModel_PlanApprovalNRejectsAndStaysInPlanMode(t *testing.T) {
-	// TRIANGULATE: 'n' descarta la oferta de aprobacion SIN tocar el modo ni
-	// aceptar nada: el pie sigue en plan y el proximo Enter sigue yendo por
-	// SendPlanPrompt. Una implementacion rota que apague planMode (o llame
-	// AcceptPlan) al rechazar debe caer aqui.
+	// TRIANGULATE: 'n' discards the approval offer WITHOUT touching the mode or accepting anything: the footer remains in plan and the next Enter continues going through SendPlanPrompt. A broken implementation that turns off planMode (or calls AcceptPlan) on rejection should fall here.
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil).WithStatus("build", "m")
 
@@ -5269,7 +5066,7 @@ func TestModel_PlanApprovalNRejectsAndStaysInPlanMode(t *testing.T) {
 		t.Fatalf("View() = %q, tras 'n' el pie debe seguir mostrando %q: rechazar la oferta no cambia el modo", got, "m · plan")
 	}
 
-	// El siguiente envio sigue yendo por el camino de plan: el modo no cambio.
+	// The next shipment continues to follow the plan path: the mode did not change.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("ajusta el plan")})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if len(fake.planSent) != 1 {
@@ -5284,10 +5081,7 @@ func TestModel_PlanApprovalNRejectsAndStaysInPlanMode(t *testing.T) {
 }
 
 func TestModel_PlanApprovalCapturesKeyboard(t *testing.T) {
-	// TRIANGULATE: con la oferta de plan pendiente el teclado esta en modo
-	// aprobacion: las runas normales NO alimentan el input y Enter NO envia
-	// nada. 'y' despues acepta: el pie vuelve a build y la corrida queda
-	// trabajando hasta RunDoneMsg.
+	// TRIANGULATE: with the plan offer pending the keyboard is in approval mode: the normal runes DO NOT feed the input and Enter does NOT send anything. 'and' then accepts: the foot builds again and the run continues working until RunDoneMsg.
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil).WithStatus("build", "m")
 
@@ -5304,7 +5098,7 @@ func TestModel_PlanApprovalCapturesKeyboard(t *testing.T) {
 		t.Fatalf("sent=%d planSent=%d accepted=%d, ni Enter ni las runas normales deben enviar o aceptar nada con plan pendiente", len(fake.sent), len(fake.planSent), len(fake.accepted))
 	}
 
-	// 'y' acepta: vuelve a build y la corrida queda en curso.
+	// 'y' accepts: build again and the run is in progress.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
 	if len(fake.accepted) != 1 || fake.accepted[0] != "s1" {
 		t.Fatalf("accepted = %v, 'y' debe llamar AcceptPlan(%q) exactamente una vez", fake.accepted, "s1")
@@ -5322,8 +5116,7 @@ func TestModel_PlanApprovalCapturesKeyboard(t *testing.T) {
 }
 
 func TestModel_PresentPlanFailedDoesNotOfferApproval(t *testing.T) {
-	// Punto fino: un present_plan asentado con Tool.Failed NO ofrece aprobacion
-	// y el teclado sigue normal (la runa va al input y 'y' no acepta nada).
+	// Fine point: a present_plan set with Tool.Failed does NOT offer approval and the keyboard remains normal (the rune goes to the input and 'y' does not accept anything).
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil).WithStatus("build", "m")
 
@@ -5346,7 +5139,7 @@ func TestModel_EnterSendsTypedPromptViaAgent(t *testing.T) {
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
 
-	// El usuario teclea "hola" y pulsa Enter.
+	// The user types "hello" and presses Enter.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
@@ -5413,13 +5206,25 @@ func TestModel_SendFailuresKeepPendingUserAction(t *testing.T) {
 	})
 }
 
-// menuCommands son los comandos compartidos por los tests del menu "/".
+// menuCommands are the commands shared by the menu "/" tests.
 var menuCommands = []command.Command{
+	{Name: "new", Description: "Start a new session", BuiltIn: true},
 	{Name: "commit", Description: "genera un commit"},
+	{Name: "model", Description: "Select provider and model", BuiltIn: true},
+	{Name: "compact", Description: "Compact conversation context", BuiltIn: true},
+	{Name: "mcp", Description: "Toggle MCP servers on or off", BuiltIn: true},
+	{Name: "connect", Description: "Connect a provider with an API key", BuiltIn: true},
 	{Name: "review", Description: "revisa el diff"},
 }
 
-// typeRunes alimenta el input runa por runa, como tecleos reales.
+func withMenuBuiltins(commands ...command.Command) []command.Command {
+	return append([]command.Command{
+		{Name: "new", Description: "Start a new session", BuiltIn: true},
+		{Name: "model", Description: "Select provider and model", BuiltIn: true},
+	}, commands...)
+}
+
+// typeRunes feeds input rune by rune, like real keystrokes.
 func typeRunes(t *testing.T, m Model, s string) Model {
 	t.Helper()
 	for _, r := range s {
@@ -5432,9 +5237,7 @@ func typeRunes(t *testing.T, m Model, s string) Model {
 	return m
 }
 
-// menuSelectedLine devuelve la linea del menu marcada con "❯ " (prefijo al
-// inicio de linea, sin ANSI), o "" si no hay ninguna. La linea del composer no
-// confunde: arranca con el borde "│", no con el marcador.
+// menuSelectedLine returns the menu line marked with "❯ " (prefix at the beginning of the line, without ANSI), or "" if there is none. The composer's line is not confusing: it starts with the border "│", not with the marker.
 func menuSelectedLine(view string) string {
 	for _, line := range strings.Split(view, "\n") {
 		if plain := ansi.Strip(line); strings.HasPrefix(plain, "❯ ") {
@@ -5445,9 +5248,7 @@ func menuSelectedLine(view string) string {
 }
 
 func TestModel_CommandMenuFiltersAsYouType(t *testing.T) {
-	// El menu se recomputa con cada tecla: teclear "/", "c", "o" filtra los
-	// candidatos con el ranking de filterCommands (prefijo del nombre primero):
-	// queda solo /commit y /review desaparece del popup.
+	// The menu is recomputed with each key: typing "/", "c", "o" filters the candidates with the ranking of filterCommands (name prefix first): only /commit remains and /review disappears from the popup.
 	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(menuCommands, nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
@@ -5583,8 +5384,7 @@ func TestModel_CompactStatusForOtherSessionIsIgnored(t *testing.T) {
 }
 
 func TestModel_CommandMenuClosesOnSpace(t *testing.T) {
-	// El primer espacio cierra el menu: lo que sigue al nombre son los args del
-	// comando y el popup ya no debe tapar la conversacion.
+	// The first space closes the menu: what follows the name are the command args and the popup should no longer cover the conversation.
 	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(menuCommands, nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
@@ -5600,13 +5400,11 @@ func TestModel_CommandMenuClosesOnSpace(t *testing.T) {
 }
 
 func TestModel_MenuKeysNavigateSelection(t *testing.T) {
-	// Con el menu abierto, Up/Down mueven el marcador "❯ " de forma ciclica y
-	// quedan capturados por el popup: no scrollean el viewport ni escriben en
-	// el input.
+	// With the menu open, Up/Down move the "❯" marker cyclically and are captured by the popup: they do not scroll the viewport or write to the input.
 	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(menuCommands, nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	// Transcript mas largo que el viewport: la vista sigue la cola (mensaje-29).
+	// Transcript longer than viewport: view follows queue (message-29).
 	for i := 0; i < 30; i++ {
 		m = apply(t, m, EventMsg{Message: &session.Message{
 			ID:   fmt.Sprintf("u%02d", i),
@@ -5620,13 +5418,13 @@ func TestModel_MenuKeysNavigateSelection(t *testing.T) {
 		t.Fatalf("linea seleccionada del menu = %q, el comando integrado /new debe arrancar seleccionado", got)
 	}
 
-	// Down baja a la primera skill.
+	// Down goes down to the first skill.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/commit") {
 		t.Fatalf("linea seleccionada del menu = %q, Down debe mover el marcador a la skill /commit", got)
 	}
 
-	// Enter sobre una skill conserva el flujo de completar con espacio.
+	// Entering a skill preserves the fill-with-space flow.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if got := m.input.Value(); got != "/commit " {
 		t.Fatalf("input.Value() = %q, Enter sobre una skill debe completarla con espacio para argumentos", got)
@@ -5638,7 +5436,7 @@ func TestModel_MenuKeysNavigateSelection(t *testing.T) {
 		t.Fatalf("SendPrompt fue llamado %d veces, Enter sobre una skill solo debe completarla", got)
 	}
 
-	// En un menu fresco, Up desde /new cicla al ultimo item.
+	// In a fresh menu, Up from /new cycles to the last item.
 	mCycle := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(menuCommands, nil)
 	mCycle = apply(t, mCycle, tea.WindowSizeMsg{Width: 80, Height: 24})
 	mCycle = typeRunes(t, mCycle, "/")
@@ -5647,13 +5445,13 @@ func TestModel_MenuKeysNavigateSelection(t *testing.T) {
 		t.Fatalf("linea seleccionada del menu = %q, Up en /new debe ciclar al ultimo item", got)
 	}
 
-	// Down en el ultimo vuelve al comando integrado.
+	// Down in the last one returns to the integrated command.
 	mCycle = apply(t, mCycle, tea.KeyMsg{Type: tea.KeyDown})
 	if got := menuSelectedLine(mCycle.View()); !strings.Contains(got, "/new") {
 		t.Fatalf("linea seleccionada del menu = %q, Down en el ultimo item debe ciclar al primero (/new)", got)
 	}
 
-	// Las flechas quedaron en el segundo popup: no escriben en el input.
+	// The arrows remained in the second popup: they do not write in the input.
 	view := m.View()
 	if !strings.Contains(view, "mensaje-29") {
 		t.Fatalf("View() = %q, con menu abierto Up/Down NO deben scrollear el viewport: la cola (mensaje-29) debe seguir visible", view)
@@ -5664,10 +5462,7 @@ func TestModel_MenuKeysNavigateSelection(t *testing.T) {
 }
 
 func TestModel_TabAppliesSelectedCommand(t *testing.T) {
-	// Con el menu abierto, Tab aplica la seleccion (espejo de applyCommand en
-	// command.ts): reemplaza el token "/co" por "/commit " con el caret tras el
-	// espacio, listo para los args. El recomputo ve el espacio y cierra el
-	// menu. Tab con menu abierto NO alterna el plan-mode.
+	// With the menu open, Tab applies the selection (mirror of applyCommand in command.ts): replaces the "/co" token with "/commit " with the caret after the space, ready for the args. The recompute sees the space and closes the menu. Tab with menu open DOES NOT toggle plan-mode.
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil).WithStatus("build", "m").WithCompletions(menuCommands, nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -5695,8 +5490,7 @@ func TestModel_TabAppliesSelectedCommand(t *testing.T) {
 }
 
 func TestModel_EnterAppliesSelectionInsteadOfSending(t *testing.T) {
-	// Con el menu abierto, Enter aplica la seleccion igual que Tab y NO envia
-	// nada; el segundo Enter (menu ya cerrado) si envia el texto tal cual.
+	// With the menu open, Enter applies the selection the same as Tab and does NOT send anything; the second Enter (menu already closed) if you send the text as is.
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil).WithCompletions(menuCommands, nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -5714,7 +5508,7 @@ func TestModel_EnterAppliesSelectionInsteadOfSending(t *testing.T) {
 		t.Fatalf("linea seleccionada del menu = %q, aplicar la seleccion debe cerrar el menu", got)
 	}
 
-	// Menu cerrado: el segundo Enter envia el texto tal cual via SendPrompt.
+	// Closed menu: the second Enter sends the text as is via SendPrompt.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if len(fake.sent) != 1 {
 		t.Fatalf("SendPrompt fue llamado %d veces, con el menu cerrado Enter debe enviar exactamente una vez", len(fake.sent))
@@ -5725,9 +5519,7 @@ func TestModel_EnterAppliesSelectionInsteadOfSending(t *testing.T) {
 }
 
 func TestModel_EscClosesMenuWithoutStopping(t *testing.T) {
-	// Con el menu abierto, Esc cierra el popup SIN detener la corrida y sin
-	// tocar el texto del input; teclear otra runa recomputa y reabre el menu.
-	// Con menu cerrado, dos Esc confirman la cancelacion.
+	// With the menu open, Esc closes the popup WITHOUT stopping the run and without touching the input text; Typing another rune recomputes and reopens the menu. With the menu closed, two Esc confirm the cancellation.
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil).WithCompletions(menuCommands, nil)
 	m.working = true
@@ -5750,13 +5542,13 @@ func TestModel_EscClosesMenuWithoutStopping(t *testing.T) {
 		t.Fatalf("input.Value() = %q, Esc solo cierra el popup: el texto %q debe quedar intacto", got, "/c")
 	}
 
-	// Otra runa recomputa el menu desde el token aun vigente: se reabre.
+	// Another rune recomputes the menu from the still valid token: it is reopened.
 	m = typeRunes(t, m, "o")
 	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/commit") {
 		t.Fatalf("linea seleccionada del menu = %q, teclear otra runa debe reabrir el menu sobre /commit", got)
 	}
 
-	// Con menu cerrado el primer Esc arma y el segundo detiene la corrida.
+	// With the menu closed, the first Esc arms and the second stops the run.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc}) // cierra el popup reabierto
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc}) // menu cerrado: arma
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc}) // confirma
@@ -5766,11 +5558,7 @@ func TestModel_EscClosesMenuWithoutStopping(t *testing.T) {
 }
 
 func TestModel_AtOpensFileMenu(t *testing.T) {
-	// Un "@" que inicia palabra abre el @-menu de archivos (espejo de
-	// detectMention/filterFiles en mention.ts): el label es la ruta, sin
-	// descripcion; el filtro rankea el basename (prefijo antes que subcadena)
-	// antes que el match en la ruta. listFiles se llama UNA vez al activarse el
-	// token y se cachea mientras siga activo.
+	// A word-starting "@" opens the @-menu of files (mirror of detectMention/filterFiles in mention.ts): the label is the path, without description; the filter ranks the basename (prefix before substring) before the match in the route. listFiles is called ONE time when the token is activated and is cached as long as it is active.
 	calls := 0
 	listFiles := func() ([]string, error) {
 		calls++
@@ -5788,7 +5576,7 @@ func TestModel_AtOpensFileMenu(t *testing.T) {
 		t.Fatalf("linea seleccionada del menu = %q, el primer archivo del listado debe arrancar seleccionado", got)
 	}
 
-	// "mo" filtra por basename: solo model.go arranca con "mo".
+	// "mo" filters by basename: only model.go starts with "mo".
 	m = typeRunes(t, m, "mo")
 	view = m.View()
 	lineWith(t, view, "internal/tui/model.go")
@@ -5801,7 +5589,7 @@ func TestModel_AtOpensFileMenu(t *testing.T) {
 		t.Fatalf("listFiles fue llamado %d veces, debe llamarse UNA vez al activarse el token y cachearse mientras siga activo", calls)
 	}
 
-	// Con listFiles nil el menu simplemente no abre.
+	// With listFiles nil the menu simply does not open.
 	m2 := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, nil)
 	m2 = apply(t, m2, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m2 = typeRunes(t, m2, "hola @")
@@ -5809,7 +5597,7 @@ func TestModel_AtOpensFileMenu(t *testing.T) {
 		t.Fatalf("linea seleccionada del menu = %q, sin listFiles el @-menu no debe abrir", got)
 	}
 
-	// Con listFiles fallando el menu muestra el error sin bloquear el input.
+	// With listFiles failing the menu shows the error without blocking the input.
 	m3 := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
 		return nil, fmt.Errorf("rg no disponible")
 	})
@@ -5821,8 +5609,7 @@ func TestModel_AtOpensFileMenu(t *testing.T) {
 }
 
 func TestModel_AtInsideWordDoesNotOpenMenu(t *testing.T) {
-	// El "@" debe iniciar palabra (inicio del texto o precedido de espacio):
-	// un email como a@b NO dispara el @-menu (espejo de detectMention).
+	// The "@" must begin the word (beginning of the text or preceded by a space): an email like a@b DOES NOT trigger the @-menu (detectMention mirror).
 	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
 		return []string{"app.go"}, nil
 	})
@@ -5835,9 +5622,7 @@ func TestModel_AtInsideWordDoesNotOpenMenu(t *testing.T) {
 }
 
 func TestModel_TabAppliesSelectedMention(t *testing.T) {
-	// Con el @-menu abierto, Tab reemplaza el token por "@<ruta> " conservando
-	// el texto alrededor (espejo de applyMention: text[:start] + "@<ruta> " +
-	// text[end:]) y deja el caret tras el espacio. El recomputo cierra el menu.
+	// With the @-menu open, Tab replaces the token with "@<path> " while preserving the text around it (mirror of applyMention: text[:start] + "@<path> " + text[end:]) and leaves the caret after the space. Recomputation closes the menu.
 	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
 		return []string{"internal/tui/model.go", "app.go", "README.md"}, nil
 	})
@@ -5863,15 +5648,11 @@ func TestModel_TabAppliesSelectedMention(t *testing.T) {
 }
 
 func TestModel_SlashOpensCommandMenu(t *testing.T) {
-	// Con comandos configurados via WithCompletions, teclear "/" como primer
-	// caracter del composer abre un popup de menu encima de la caja: una linea
-	// por comando con "/<name>" y su descripcion. El primer item arranca
-	// seleccionado y se marca con el prefijo "❯ " (los no seleccionados llevan
-	// dos espacios de prefijo).
-	cmds := []command.Command{
-		{Name: "commit", Description: "genera un commit"},
-		{Name: "review", Description: "revisa el diff"},
-	}
+	// With commands configured via WithCompletions, typing "/" as the first character in the composer opens a menu popup above the box: one line per command with "/<name>" and its description. The first item starts selected and is marked with the prefix "❯" (those not selected have two prefix spaces).
+	cmds := withMenuBuiltins(
+		command.Command{Name: "commit", Description: "genera un commit"},
+		command.Command{Name: "review", Description: "revisa el diff"},
+	)
 	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(cmds, nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
@@ -5894,7 +5675,7 @@ func TestModel_CommandMenuAlwaysIncludesModelBuiltin(t *testing.T) {
 	for i := range commands {
 		commands[i] = command.Command{Name: fmt.Sprintf("skill-%02d", i), Description: "skill"}
 	}
-	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(commands, nil)
+	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(withMenuBuiltins(commands...), nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = typeRunes(t, m, "/")
 	if view := m.View(); !strings.Contains(view, "/model") {
@@ -5903,12 +5684,11 @@ func TestModel_CommandMenuAlwaysIncludesModelBuiltin(t *testing.T) {
 }
 
 func TestModel_CommandMenuPrioritizesNewAndEnterCreatesSession(t *testing.T) {
-	// /new es un comando integrado, no una skill fuzzy: debe aparecer primero
-	// y Enter sobre su seleccion crea y activa la sesion sin insertar espacio.
+	// /new is a built-in command, not a fuzzy skill: it must appear first and Enter on its selection creates and activates the session without inserting a space.
 	fake := &fakeAgent{newSessionID: "s2"}
-	m := NewModel(fake, "s1", nil).WithCompletions([]command.Command{
-		{Name: "renew", Description: "skill con coincidencia fuzzy"},
-	}, nil)
+	m := NewModel(fake, "s1", nil).WithCompletions(withMenuBuiltins(
+		command.Command{Name: "renew", Description: "skill con coincidencia fuzzy"},
+	), nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	m = typeRunes(t, m, "/")
@@ -5972,12 +5752,11 @@ func TestModel_NewSessionClearsLiveTokenEstimates(t *testing.T) {
 }
 
 func TestModel_ExactNewEnterBeatsFuzzySkillSelection(t *testing.T) {
-	// Aunque una skill fuzzy este seleccionada, escribir exactamente /new y
-	// pulsar Enter debe ejecutar el reservado, no completar la skill.
+	// Even if a fuzzy skill is selected, typing /new exactly and pressing Enter should execute the reservation, not complete the skill.
 	fake := &fakeAgent{newSessionID: "s2"}
-	m := NewModel(fake, "s1", nil).WithCompletions([]command.Command{
-		{Name: "renew", Description: "skill con coincidencia fuzzy"},
-	}, nil)
+	m := NewModel(fake, "s1", nil).WithCompletions(withMenuBuiltins(
+		command.Command{Name: "renew", Description: "skill con coincidencia fuzzy"},
+	), nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	m = typeRunes(t, m, "/new")
@@ -5995,8 +5774,7 @@ func TestModel_ExactNewEnterBeatsFuzzySkillSelection(t *testing.T) {
 }
 
 func TestModel_NewWithTrailingSpaceKeepsComposerForArguments(t *testing.T) {
-	// El espacio cierra el menu y desactiva solo el comando reservado: el texto
-	// queda intacto para que el usuario pueda continuar escribiendo argumentos.
+	// The space closes the menu and disables only the reserved command: the text is left intact so that the user can continue typing arguments.
 	fake := &fakeAgent{newSessionID: "s2"}
 	m := NewModel(fake, "s1", nil).WithCompletions([]command.Command{
 		{Name: "renew", Description: "skill con coincidencia fuzzy"},
@@ -6020,11 +5798,7 @@ func TestModel_NewWithTrailingSpaceKeepsComposerForArguments(t *testing.T) {
 }
 
 func TestModel_MenuLinesTruncateToTerminalWidth(t *testing.T) {
-	// Una linea del menu mas ancha que la terminal la envolveria el terminal a
-	// dos lineas reales, pero reservedLines solo descuenta UNA por item: el
-	// layout se rompe. El menu debe truncar cada linea al ancho de la terminal,
-	// como ya hace el resto de la vista (el transcript envuelve con ansi.Wrap,
-	// el textinput scrollea horizontal).
+	// A menu line wider than the terminal would be wrapped by the terminal with two real lines, but reservedLines only discounts ONE per item: the layout is broken. The menu should truncate each line to the width of the terminal, as the rest of the view already does (the transcript wraps with ansi.Wrap, the textinput scrolls horizontally).
 	longPath := strings.Repeat("sub/", 30) + "archivo-de-nombre-largo.go"
 	listFiles := func() ([]string, error) {
 		return []string{longPath}, nil
@@ -6039,19 +5813,13 @@ func TestModel_MenuLinesTruncateToTerminalWidth(t *testing.T) {
 	assertNoLineWiderThan(t, view, 40)
 }
 
-// Contrato del indicador animado: mientras hay una corrida en curso la linea
-// de estado muestra un glifo de spinner seguido de " working"; el prefijo
-// estatico "... " desaparece. Arrancar la corrida (Enter con texto) devuelve
-// un tea.Cmd no nil que bombea la animacion: ejecutarlo produce un mensaje
-// que, aplicado a Update, avanza el glifo del spinner (la linea de estado
-// cambia) y devuelve a su vez el siguiente cmd del loop.
+// Animated indicator contract: while a run is in progress the status line shows a spinner glyph followed by "working"; the static prefix "..." disappears. Starting the run (Enter with text) returns a non-nil tea.Cmd that pumps the animation: executing it produces a message that, applied to Update, advances the spinner glyph (the status line changes) and returns in turn the next cmd of the loop.
 func TestModel_WorkingIndicatorAnimatesOnTicks(t *testing.T) {
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	// El usuario teclea "hola" y pulsa Enter; el cmd del Enter se conserva
-	// (el helper apply lo descarta y aqui es el corazon del contrato).
+	// The user types "hello" and presses Enter; The Enter cmd is preserved (the apply helper discards it and here is the heart of the contract).
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m, ok := updated.(Model)
@@ -6059,14 +5827,12 @@ func TestModel_WorkingIndicatorAnimatesOnTicks(t *testing.T) {
 		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
 	}
 
-	// a) Arrancar la corrida debe devolver el cmd que bombea la animacion:
-	// sin cmd nadie produce ticks y el spinner queda congelado.
+	// a) Starting the run must return the cmd that pumps the animation: without cmd no one produces ticks and the spinner remains frozen.
 	if cmd == nil {
 		t.Fatalf("Update(Enter) devolvio cmd nil, arrancar la corrida debe devolver el cmd que bombea la animacion: sin cmd el spinner queda congelado")
 	}
 
-	// b) La linea de estado conserva "working" pero sin el marcador
-	// estatico viejo "... working": ahora el prefijo es el glifo animado.
+	// b) The status line retains "working" but without the old static marker "...working": now the prefix is ​​the animated glyph.
 	view := m.View()
 	if !strings.Contains(view, "working") {
 		t.Fatalf("View() = %q, con corrida en curso debe verse la linea de estado con %q", view, "working")
@@ -6075,8 +5841,7 @@ func TestModel_WorkingIndicatorAnimatesOnTicks(t *testing.T) {
 		t.Fatalf("View() = %q, NO debe contener el marcador estatico %q: el prefijo fijo se reemplaza por el glifo del spinner", view, "... working")
 	}
 
-	// c) Ejecutar el cmd produce el mensaje de tick; aplicarlo a Update debe
-	// avanzar el glifo del spinner: la linea de estado cambia.
+	// c) Running the cmd produces the tick message; applying it to Update should advance the spinner glyph: the status line changes.
 	before := lineWith(t, view, "working")
 	msg := cmd()
 	if msg == nil {
@@ -6092,22 +5857,19 @@ func TestModel_WorkingIndicatorAnimatesOnTicks(t *testing.T) {
 		t.Fatalf("linea de estado tras el tick = %q, identica a la previa: el tick debe avanzar el frame del spinner, una linea identica significa animacion congelada", after)
 	}
 
-	// d) El loop sigue: el Update del tick debe agendar el proximo tick.
+	// d) The loop continues: the Update of the tick must schedule the next tick.
 	if tickCmd == nil {
 		t.Fatalf("Update(tick) devolvio cmd nil, el loop de animacion debe agendar el proximo tick")
 	}
 }
 
-// TRIANGULATE: el loop de ticks debe morir cuando la corrida termina. Un case
-// de tick que siempre re-agenda sin mirar working deja la TUI despertando para
-// siempre: un tick viejo que llega DESPUES de RunDoneMsg no debe re-agendar el
-// loop (cmd nil) ni revivir la linea de estado.
+// TRIANGULATE: the tick loop must die when the run ends. A tick case that always reschedules without looking at working leaves the TUI waking up forever: an old tick that arrives AFTER RunDoneMsg should not reschedule the loop (cmd nil) or revive the status line.
 func TestModel_SpinnerTickDiesAfterRunDone(t *testing.T) {
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	// Arranca la corrida y queda un tick en vuelo (el cmd ya produjo su msg).
+	// The run starts and there is one tick left in flight (the cmd has already produced its msg).
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m, ok := updated.(Model)
@@ -6119,7 +5881,7 @@ func TestModel_SpinnerTickDiesAfterRunDone(t *testing.T) {
 	}
 	msg := cmd()
 
-	// La corrida termina; recien entonces llega el tick viejo.
+	// The bullfight ends; Only then does the old tick arrive.
 	m = apply(t, m, activeRunDone(m, ""))
 	updated, tickCmd := m.Update(msg)
 	m, ok = updated.(Model)
@@ -6135,20 +5897,17 @@ func TestModel_SpinnerTickDiesAfterRunDone(t *testing.T) {
 	}
 }
 
-// TRIANGULATE: el camino del plan tambien anima. Una implementacion pobre que
-// cablee el tick solo en el camino Enter deja el spinner congelado cuando la
-// corrida arranca aceptando un plan con 'y': aceptar el plan debe devolver el
-// cmd que bombea la animacion y su tick debe avanzar el glifo.
+// TRIANGULATE: the path of the plan also encourages. A poor implementation that wires the tick only in the Enter path leaves the spinner frozen when the run starts accepting a plan with 'y': accepting the plan should return the cmd that pumps the animation and its tick should advance the glyph.
 func TestModel_AcceptPlanStartsSpinner(t *testing.T) {
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	// El agente presenta un plan asentado (present_plan llamada y exitosa).
+	// The agent presents a settled plan (present_plan called and successful).
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "p1", ToolName: "present_plan"})
 	m = apply(t, m, EventMsg{Kind: session.KindToolSuccess, CallID: "p1"})
 
-	// 'y' acepta el plan: arranca la corrida y debe bombear el spinner.
+	// 'and' accepts the plan: he starts the run and must pump the spinner.
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
 	m, ok := updated.(Model)
 	if !ok {
@@ -6180,16 +5939,13 @@ func TestModel_AcceptPlanStartsSpinner(t *testing.T) {
 	}
 }
 
-// TRIANGULATE: la animacion no es de un solo uso. Una implementacion pobre con
-// estado del loop que no se reinicia (arranca solo en la primera corrida) deja
-// el spinner muerto en la segunda: tras RunDoneMsg, un nuevo Enter debe volver
-// a devolver el cmd de la animacion y su tick debe avanzar el glifo.
+// TRIANGULATE: the animation is not single use. A poor implementation with a loop state that does not restart (starts only on the first run) leaves the spinner dead on the second: after RunDoneMsg, a new Enter must return the cmd of the animation and its tick must advance the glyph.
 func TestModel_SecondRunRestartsSpinner(t *testing.T) {
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	// Primera corrida: Enter arranca el loop y RunDoneMsg lo apaga.
+	// First run: Enter starts the loop and RunDoneMsg turns it off.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
 	updated, cmd1 := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m, ok := updated.(Model)
@@ -6201,7 +5957,7 @@ func TestModel_SecondRunRestartsSpinner(t *testing.T) {
 	}
 	m = apply(t, m, activeRunDone(m, ""))
 
-	// Segunda corrida: el loop debe renacer con el nuevo Enter.
+	// Second run: the loop must be reborn with the new Enter.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("otra vez")})
 	updated, cmd2 := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m, ok = updated.(Model)
@@ -6224,20 +5980,13 @@ func TestModel_SecondRunRestartsSpinner(t *testing.T) {
 	}
 }
 
-// Contrato del historial de prompts: cada prompt ENVIADO (Enter con texto,
-// camino build o plan) se guarda en un historial en memoria de la sesion de
-// TUI, en orden de envio. Con el menu de autocompletado CERRADO y sin
-// permiso/plan pendientes, la flecha ARRIBA recorre el historial hacia atras
-// (el mas reciente primero) poniendo cada prompt en el input; en el tope, otra
-// flecha arriba se queda ahi (no cicla ni se vacia). La flecha ABAJO deshace
-// hacia adelante y, pasado el mas reciente, deja el input como estaba antes de
-// empezar a navegar. Sin historial, la flecha arriba no hace nada.
+// Prompt history contract: each SENT prompt (Enter with text, build path or plan) is saved in a history in memory of the TUI session, in order of sending. With the autocomplete menu CLOSED and no permission/plan pending, the UP arrow scrolls through history backwards (most recent first) putting each prompt in the input; At the top, another up arrow stays there (it does not cycle or empty). The DOWN arrow undoes forward and, after the most recent, leaves the entry as it was before starting to navigate. Without history, the up arrow does nothing.
 func TestModel_UpArrowRecallsPromptHistory(t *testing.T) {
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	// Dos prompts enviados: quedan en el historial en orden de envio.
+	// Two sent prompts: they remain in the history in order of sending.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("primero")})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("segundo")})
@@ -6269,10 +6018,7 @@ func TestModel_UpArrowRecallsPromptHistory(t *testing.T) {
 	}
 }
 
-// Con texto ya escrito, Up/Down no deben abrir el historial: el usuario debe
-// vaciar el composer antes de explorar prompts anteriores. Una vez dentro del
-// historial, Down sigue avanzando y al pasar el mas reciente deja el input
-// limpio.
+// With text already typed, Up/Down should not open the history: the user must clear the composer before exploring previous prompts. Once inside the history, Down continues advancing and when passing the most recent one, it leaves the input clean.
 func TestModel_NonEmptyInputBlocksHistoryExploration(t *testing.T) {
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
@@ -6291,7 +6037,7 @@ func TestModel_NonEmptyInputBlocksHistoryExploration(t *testing.T) {
 		t.Fatalf("input.Value() = %q, con texto escrito la flecha arriba no debe abrir ni reemplazar con el historial", got)
 	}
 
-	// Vaciando el composer se habilita la navegacion.
+	// Emptying the composer enables navigation.
 	m.input.SetValue("")
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
 	if got := m.input.Value(); got != "primero" {
@@ -6321,15 +6067,13 @@ func TestModel_HistoryKeepsOnlyLatestHundredPrompts(t *testing.T) {
 	}
 }
 
-// TRIANGULATE: con el menu de autocompletado abierto, Up/Down pertenecen a la
-// seleccion del popup, no al historial de prompts. Tumba un handler de
-// historial colocado ANTES del gate del menu en handleKey.
+// TRIANGULATE: with the autocomplete menu open, Up/Down belong to the popup selection, not to the prompt history. Drops a history handler placed BEFORE the menu gate in handleKey.
 func TestModel_MenuOpenKeepsUpDownForSelection(t *testing.T) {
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil).WithCompletions(menuCommands, nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	// Hay historial: sin el gate del menu, la flecha arriba lo recuperaria.
+	// There is history: without the menu gate, the up arrow would recover it.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("primero")})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
@@ -6347,15 +6091,13 @@ func TestModel_MenuOpenKeepsUpDownForSelection(t *testing.T) {
 	}
 }
 
-// TRIANGULATE: los prompts enviados en plan-mode (camino SendPlanPrompt)
-// tambien se apilan en el historial. Tumba una implementacion que apila solo
-// en el camino SendPrompt.
+// TRIANGULATE: Prompts sent in plan-mode (SendPlanPrompt path) are also stacked in history. Drop an implementation that stacks only in the SendPrompt path.
 func TestModel_HistoryRecordsPlanPrompts(t *testing.T) {
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	// Tab pasa a plan-mode: Enter envia por SendPlanPrompt.
+	// Tab goes to plan-mode: Enter sends by SendPlanPrompt.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyTab})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("plan-uno")})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -6370,9 +6112,7 @@ func TestModel_HistoryRecordsPlanPrompts(t *testing.T) {
 	}
 }
 
-// TRIANGULATE: Enter con input vacio no envia (cubierto aparte) y tampoco debe
-// apilar nada. Tumba una implementacion que apila todos los submits y deja un
-// "" colandose en el historial.
+// TRIANGULATE: Enter with empty input does not send (covered separately) and should not stack anything either. Take down an implementation that stacks all submits and leaves a "" sneaking into the history.
 func TestModel_EmptySubmitDoesNotPolluteHistory(t *testing.T) {
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
@@ -6381,7 +6121,7 @@ func TestModel_EmptySubmitDoesNotPolluteHistory(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("unico")})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
-	// Enter con input vacio: no envia y no debe tocar el historial.
+	// Enter with empty input: does not send and should not touch the history.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
@@ -6394,13 +6134,7 @@ func TestModel_EmptySubmitDoesNotPolluteHistory(t *testing.T) {
 	}
 }
 
-// Contrato del smooth streaming (paridad con el frontend de escritorio,
-// frontend/src/lib/reveal.ts): los deltas del assistant se ACUMULAN en la
-// entrada pero la vista NO los muestra completos de inmediato. Un loop de
-// ticks de reveal (revealTickMsg, analogo al spinner.TickMsg) avanza el texto
-// revelado: en cada tick se revelan ~max(base, ceil(backlog/8)) runas, con
-// base ~6-7 runas por tick (el ritmo del escritorio: 1 char cada 5ms a ticks
-// de ~33ms). Con suficientes ticks el texto completo queda visible.
+// Smooth streaming contract (parity with desktop frontend, frontend/src/lib/reveal.ts): assistant deltas ACCUMULATE in the input but the view does NOT show them in full immediately. A reveal tick loop (revealTickMsg, analogous to spinner.TickMsg) advances the revealed text: each tick reveals ~max(base, ceil(backlog/8)) runes, with a base of ~6-7 runes per tick (desktop pace: 1 char every 5ms at ~33ms ticks). With enough ticks the full text becomes visible.
 func TestModel_SmoothRevealsAssistantTextOnTicks(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
@@ -6408,14 +6142,12 @@ func TestModel_SmoothRevealsAssistantTextOnTicks(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
 
-	// (a) El delta NO aparece completo de golpe: la cola del texto todavia no
-	// esta revelada justo despues de acumular el delta.
+	// (a) The delta does NOT appear complete at once: the tail of the text is not yet revealed right after accumulating the delta.
 	if got := m.View(); strings.Contains(got, "final-del-texto") {
 		t.Fatalf("View() = %q, NO debe contener %q inmediatamente tras el delta: el texto se revela progresivamente con los ticks de reveal, no aparece completo de golpe", got, "final-del-texto")
 	}
 
-	// (b) Un tick de reveal avanza el texto visible: un prefijo ya se ve, pero
-	// la cola todavia no (revelado progresivo, no todo de golpe).
+	// (b) A reveal tick advances the visible text: a prefix is ​​already visible, but the tail is not yet (progressive reveal, not all at once).
 	m = apply(t, m, revealTickMsg{})
 	view := m.View()
 	if !strings.Contains(view, "palabra") {
@@ -6425,7 +6157,7 @@ func TestModel_SmoothRevealsAssistantTextOnTicks(t *testing.T) {
 		t.Fatalf("View() = %q, NO debe contener %q tras UN solo tick: un tick revela ~max(base, ceil(backlog/8)) runas, no el texto entero", view, "final-del-texto")
 	}
 
-	// (c) Con suficientes ticks el texto completo queda visible.
+	// (c) With enough ticks the full text becomes visible.
 	for i := 0; i < 200; i++ {
 		m = apply(t, m, revealTickMsg{})
 		if strings.Contains(m.View(), "final-del-texto") {
@@ -6437,28 +6169,22 @@ func TestModel_SmoothRevealsAssistantTextOnTicks(t *testing.T) {
 	}
 }
 
-// TRIANGULATE: el catch-up acota la latencia. Con paso constante puro (~7
-// runas por tick) un delta de ~4000 runas tardaria ~570 ticks (~19 segundos a
-// 33ms) en drenarse: el texto visible quedaria eternamente por detras de un
-// modelo rapido. El paso proporcional al backlog (ceil(backlog/8)) debe dejar
-// el texto completo visible en una cantidad acotada de ticks.
+// TRIANGULATE: the catch-up limits the latency. With pure constant pace (~7 runes per tick) a delta of ~4000 runes would take ~570 ticks (~19 seconds at 33ms) to drain: the visible text would be eternally behind a fast model. The step proportional to the backlog (ceil(backlog/8)) must leave the full text visible in a limited number of ticks.
 func TestModel_RevealCatchUpDrainsHugeDeltaInBoundedTicks(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
-	// ~4011 runas en un solo delta (modelo rapido volcando texto de golpe).
+	// ~4011 runes in a single delta (fast model dumping text at once).
 	text := strings.Repeat("palabra ", 500) + "fin-catchup"
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
 
-	// El primer tick no lo revela todo: el catch-up acelera el ritmo, no lo
-	// convierte en un reveal instantaneo (eso mataria la animacion).
+	// The first tick doesn't reveal everything: the catch-up speeds up the pace, it doesn't turn it into an instant reveal (that would kill the animation).
 	m = apply(t, m, revealTickMsg{})
 	if got := m.View(); strings.Contains(got, "fin-catchup") {
 		t.Fatalf("View() = %q, NO debe contener %q tras UN solo tick de un delta de ~4000 runas: el catch-up acota la latencia sin volverse un reveal instantaneo", got, "fin-catchup")
 	}
 
-	// A lo sumo 64 ticks en total (~2 segundos a 33ms) dejan visible el texto
-	// completo: el paso proporcional drena geometricamente el backlog.
+	// At most 64 ticks in total (~2 seconds at 33ms) leave the full text visible: the proportional step geometrically drains the backlog.
 	for i := 0; i < 63 && m.hasBacklog(); i++ {
 		m = apply(t, m, revealTickMsg{})
 	}
@@ -6467,29 +6193,23 @@ func TestModel_RevealCatchUpDrainsHugeDeltaInBoundedTicks(t *testing.T) {
 	}
 }
 
-// TRIANGULATE: el swap a markdown espera a que el reveal drene. Una
-// implementacion pobre rendiria markdown apenas el bloque se cierra (StepEnded)
-// aunque quede backlog: el texto completo flashearia de golpe a mitad de la
-// animacion. Cerrado el turno con backlog pendiente la vista debe seguir
-// mostrando solo el prefijo revelado, ya rendido como Markdown; recien al
-// drenar se muestra el contenido completo.
+// TRIANGULATE: the swap to markdown waits for the reveal to drain. A poor implementation would render markdown as soon as the block is closed (StepEnded) even if there is backlog: the entire text would flash suddenly in the middle of the animation. When the turn is closed with a pending backlog, the view should continue to show only the revealed prefix, already rendered as Markdown; Just when draining, the full content is shown.
 func TestModel_RevealMarkdownSwapWaitsForDrain(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	// ~502 runas: el primer tick revela ~63 (los ** iniciales incluidos) y
-	// deja mucha cola sin revelar.
+	// ~502 runes: The first tick reveals ~63 (initial ** included) and leaves a lot of tail unrevealed.
 	text := "**fuerte** " + strings.Repeat("relleno ", 60) + "fin-drenado"
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
 
-	// Un tick antes del cierre: el prefijo revelado ya se rinde como Markdown.
+	// One tick before closing: The revealed prefix is ​​now rendered as Markdown.
 	m = apply(t, m, revealTickMsg{})
 	if got := ansi.Strip(m.View()); strings.Contains(got, "**") || !strings.Contains(got, "fuerte") {
 		t.Fatalf("View() sin ANSI = %q, debe rendir el Markdown revelado durante streaming", got)
 	}
 
-	// El turno se cierra con backlog pendiente.
+	// The shift is closed with a pending backlog.
 	m = apply(t, m, EventMsg{
 		Kind:    session.KindStepEnded,
 		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: text},
@@ -6503,7 +6223,7 @@ func TestModel_RevealMarkdownSwapWaitsForDrain(t *testing.T) {
 		t.Fatalf("View() sin ANSI = %q, debe conservar el Markdown del prefijo revelado tras StepEnded", view)
 	}
 
-	// Drenado el backlog, el bloque cerrado se rinde como markdown.
+	// Once the backlog is drained, the closed block is rendered as markdown.
 	m = drainReveal(t, m)
 	view = ansi.Strip(m.View())
 	if strings.Contains(view, "**") {
@@ -6517,16 +6237,11 @@ func TestModel_RevealMarkdownSwapWaitsForDrain(t *testing.T) {
 	}
 }
 
-// TRIANGULATE: el corte del reveal es por runas, nunca por bytes. Una
-// implementacion que corte el prefijo con e.text[:n] parte los caracteres
-// multibyte a la mitad: la vista intermedia queda con UTF-8 invalido o con el
-// caracter de reemplazo U+FFFD. Tras cada tick intermedio la vista debe ser
-// UTF-8 valido y sin U+FFFD; al drenar, el texto multibyte completo intacto.
+// TRIANGULATE: the reveal cut is by runes, never by bytes. An implementation that cuts the prefix with e.text[:n] splits multibyte characters in half: the intermediate view is left with invalid UTF-8 or the replacement character U+FFFD. After each intermediate tick the view must be valid UTF-8 and without U+FFFD; when draining, entire multibyte text intact.
 func TestModel_RevealCutsByRunesNotBytes(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
-	// ~256 runas con acentos ausentes pero kanji y emoji de 3-4 bytes: casi
-	// cualquier corte por bytes cae a mitad de un caracter.
+	// ~256 runes with absent accents but kanji and emoji of 3-4 bytes: almost any byte break falls in the middle of a character.
 	text := strings.Repeat("cancion nunca japon 日本語テキスト 🚀🚀🚀 ", 8)
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
@@ -6546,8 +6261,7 @@ func TestModel_RevealCutsByRunesNotBytes(t *testing.T) {
 			t.Fatalf("View() = %q tras el tick %d, contiene el caracter de reemplazo U+FFFD: un caracter multibyte quedo partido por un corte por bytes", view, ticks)
 		}
 	}
-	// El drenado debe haber pasado por cortes intermedios: un reveal
-	// instantaneo pasaria las aserciones de arriba sin ejercitar nada.
+	// The drain must have gone through intermediate cuts: an instant reveal would pass the assertions above without exercising anything.
 	if ticks < 2 {
 		t.Fatalf("el backlog (%d runas) se dreno en %d tick(s), debe drenar en varios ticks para ejercitar los cortes intermedios", utf8.RuneCountInString(text), ticks)
 	}
@@ -6560,19 +6274,15 @@ func TestModel_RevealCutsByRunesNotBytes(t *testing.T) {
 	}
 }
 
-// TRIANGULATE (espejo del ciclo de vida del spinner): el loop de ticks del
-// reveal nace con el primer delta que deja backlog, no se duplica con deltas
-// siguientes, se rearma mientras quede backlog, muere al drenarse y renace con
-// un delta nuevo. Con canal de eventos nil la bomba es nil y el cmd devuelto
-// por Update es SOLO el tick del reveal: cada transicion es asertable directa.
+// TRIANGULATE (mirror of the spinner life cycle): the reveal tick loop is born with the first delta that leaves the backlog, it is not duplicated with subsequent deltas, it is rearmed while there is backlog, it dies when drained and is reborn with a new delta. With nil event channel the bomb is nil and the cmd returned by Update is ONLY the reveal tick: each transition is direct assertable.
 func TestModel_RevealTickLoopLifecycle(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
-	// 200 runas por delta: ningun tick individual drena el backlog completo.
+	// 200 runes per delta: no single tick drains the entire backlog.
 	delta := strings.Repeat("palabra ", 25)
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 
-	// a) El primer delta con backlog arranca el loop: el cmd produce el tick.
+	// a) The first delta with backlog starts the loop: the cmd produces the tick.
 	updated, cmd := m.Update(EventMsg{Kind: session.KindTextDelta, Text: delta})
 	m, ok := updated.(Model)
 	if !ok {
@@ -6586,8 +6296,7 @@ func TestModel_RevealTickLoopLifecycle(t *testing.T) {
 		t.Fatalf("cmd() = %T, el cmd del arranque del loop debe producir un revealTickMsg", msg)
 	}
 
-	// b) Un segundo delta con el loop ya corriendo NO duplica la cadena de
-	// ticks: dos cadenas doblarian el ritmo del reveal.
+	// b) A second delta with the loop already running DOES NOT double the chain of ticks: two chains would double the rhythm of the reveal.
 	updated, cmd = m.Update(EventMsg{Kind: session.KindTextDelta, Text: delta})
 	m, ok = updated.(Model)
 	if !ok {
@@ -6597,7 +6306,7 @@ func TestModel_RevealTickLoopLifecycle(t *testing.T) {
 		t.Fatalf("Update(delta) con el loop de reveal corriendo devolvio cmd no nil, un segundo delta NO debe arrancar otra cadena de ticks: cadenas duplicadas aceleran el reveal con cada delta")
 	}
 
-	// c) Un tick con backlog restante se rearma: el cmd produce el proximo tick.
+	// c) A tick with backlog remaining is reset: the cmd produces the next tick.
 	updated, cmd = m.Update(revealTickMsg{})
 	m, ok = updated.(Model)
 	if !ok {
@@ -6611,7 +6320,7 @@ func TestModel_RevealTickLoopLifecycle(t *testing.T) {
 		t.Fatalf("cmd() = %T, el cmd del rearme del loop debe producir el proximo revealTickMsg", msg)
 	}
 
-	// d) Con el backlog drenado el siguiente tick no se reagenda: el loop muere.
+	// d) With the backlog drained the next tick is not rescheduled: the loop dies.
 	m = drainReveal(t, m)
 	updated, cmd = m.Update(revealTickMsg{})
 	m, ok = updated.(Model)
@@ -6622,7 +6331,7 @@ func TestModel_RevealTickLoopLifecycle(t *testing.T) {
 		t.Fatalf("Update(tick) sin backlog devolvio cmd no nil, el loop de reveal debe morir al drenarse: sin este corte la TUI queda despertando cada 33ms para siempre")
 	}
 
-	// e) Un delta nuevo tras el drenado reenciende el loop.
+	// e) A new delta after the drain restarts the loop.
 	updated, cmd = m.Update(EventMsg{Kind: session.KindTextDelta, Text: delta})
 	if _, ok = updated.(Model); !ok {
 		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
@@ -6636,16 +6345,12 @@ func TestModel_RevealTickLoopLifecycle(t *testing.T) {
 	}
 }
 
-// TRIANGULATE: el loop de reveal NO esta atado a working como el del spinner.
-// Una implementacion que copie el corte del caso spinner.TickMsg (!working =>
-// cmd nil) deja el texto congelado a medio revelar cuando la corrida termina
-// antes de drenar el backlog: los ticks posteriores a RunDoneMsg deben seguir
-// revelando hasta drenar.
+// TRIANGULATE: the reveal loop is NOT tied to working like the spinner loop. An implementation that copies the spinner.TickMsg case cut (!working => cmd nil) leaves the text frozen half-revealed when the run ends before draining the backlog: ticks after RunDoneMsg should continue revealing until drained.
 func TestModel_RevealSurvivesRunDone(t *testing.T) {
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
 
-	// Corrida real en curso: working encendido via Enter con texto.
+	// Actual run in progress: working on via Enter with text.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
@@ -6653,8 +6358,7 @@ func TestModel_RevealSurvivesRunDone(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
 
-	// La corrida termina con backlog pendiente: working se apaga pero la cola
-	// del texto sigue sin revelar.
+	// The run ends with a pending backlog: working is turned off but the text queue remains unrevealed.
 	m = apply(t, m, activeRunDone(m, ""))
 	if m.Working() {
 		t.Fatalf("Working() = true, RunDoneMsg debe apagar el estado de trabajo")
@@ -6663,7 +6367,7 @@ func TestModel_RevealSurvivesRunDone(t *testing.T) {
 		t.Fatalf("View() = %q, RunDoneMsg NO debe revelar la cola de golpe: el reveal sigue su ritmo de ticks tambien al terminar la corrida", got)
 	}
 
-	// El tick posterior al fin de la corrida sigue avanzando y reagendando.
+	// The tick after the end of the run continues advancing and rescheduling.
 	updated, cmd := m.Update(revealTickMsg{})
 	m, ok := updated.(Model)
 	if !ok {
@@ -6679,11 +6383,7 @@ func TestModel_RevealSurvivesRunDone(t *testing.T) {
 	}
 }
 
-// Contrato del toggle de pensamiento (tecla Shift+Tab, ver handleKey y
-// toggleThinking): un pensamiento asentado (cerrado y con el reveal drenado)
-// colapsa a la linea de resumen "◆ Thought for <dur>"; Shift+Tab lo expande al
-// texto completo y un segundo Shift+Tab lo colapsa de nuevo. El hint " ⇧Tab"
-// acompana al resumen colapsado para descubrir la tecla.
+// Thinking toggle contract (Shift+Tab key, see handleKey and toggleThinking): a settled thought (closed and with reveal drained) collapses to the summary line "◆ Thought for <dur>"; Shift+Tab expands it to the full text and a second Shift+Tab collapses it again. The hint " ⇧Tab" accompanies the collapsed summary to reveal the key.
 func TestModel_ShiftTabExpandsAndCollapsesSettledThinking(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 	text := "razon-1\nrazon-2\nrazon-3"
@@ -6693,7 +6393,7 @@ func TestModel_ShiftTabExpandsAndCollapsesSettledThinking(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: text})
 	m = drainReveal(t, m)
 
-	// Asentado: colapsado por defecto.
+	// Seated: Collapsed by default.
 	view := m.View()
 	if !strings.Contains(view, "◆ Thought") {
 		t.Fatalf("View() = %q, el pensamiento asentado debe colapsar a %q", view, "◆ Thought")
@@ -6802,18 +6502,14 @@ func TestModel_LiveThinkingHeaderKeepsChatIndentWhenSettledWithExplorer(t *testi
 	liveView := ansi.Strip(m.View())
 	assistantLine := lineWith(t, liveView, "respuesta-visible")
 	liveHeaderLine := lineWith(t, liveView, "◆ Thinking…")
-	// Columna medida en celdas de display, no en offset de bytes: la fila del
-	// arbol en la linea del asistente lleva un icono de carpeta multibyte, asi
-	// que strings.Index (bytes) no cuadraria con la fila del encabezado (prefijo
-	// ASCII) aunque ambos caigan en la misma columna visible.
+	// Column measured in display cells, not byte offset: the tree row in the wizard line has a multibyte folder icon, so strings.Index (bytes) would not match the header row (ASCII prefix) even if they both fall in the same visible column.
 	column := func(line, sub string) int { return ansi.StringWidth(line[:strings.Index(line, sub)]) }
 	chatContentColumn := column(assistantLine, "respuesta-visible")
 	liveHeaderColumn := column(liveHeaderLine, "◆ Thinking…")
 	if got, want := liveHeaderColumn, chatContentColumn; got != want {
 		t.Fatalf("columna de ◆ Thinking… = %d, want %d: debe alinearse con el contenido visible del chat", got, want)
 	}
-	// Sin caja el chat ya no aporta borde: el encabezado arranca tras el arbol,
-	// su gutter de una columna y la sangria del propio bloque de pensamiento.
+	// Without a box, the chat no longer provides a border: the header starts after the tree, its gutter from a column and the indentation from the thought block itself.
 	if got, want := liveHeaderColumn, m.treePanelWidth()+1+len(thinkingInset); got != want {
 		t.Fatalf("columna de ◆ Thinking… = %d, want %d: arbol + gutter + sangria del pensamiento", got, want)
 	}
@@ -6894,17 +6590,14 @@ func TestModel_ShiftTabExpandsSettledThinkingWithViewerFocusWithoutScrollingFile
 	}
 }
 
-// Contrato: el toggle es inerte mientras el pensamiento sigue en vivo (preview
-// de las ultimas lineas, no el texto completo). Un Shift+Tab durante el stream
-// no debe fijar expanded ni revelar el texto entero antes de tiempo.
+// Contract: the toggle is inert while the thought is still live (preview of the last lines, not the full text). A Shift+Tab during the stream should not set expanded or reveal the entire text prematurely.
 func TestModel_ShiftTabIsInertWhileThinkingLive(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "vivo-1\nvivo-2\nvivo-3\nvivo-4\nvivo-5"})
 	m = drainReveal(t, m)
 
-	// El preview en vivo muestra la cabecera y las ultimas lineas, no el
-	// resumen ni el texto completo expandido.
+	// The live preview shows the header and last lines, not the summary or the full expanded text.
 	view := m.View()
 	if !strings.Contains(view, "◆ Thinking…") {
 		t.Fatalf("View() = %q, en vivo debe mostrar %q", view, "◆ Thinking…")
@@ -6954,9 +6647,7 @@ func TestModel_ShiftTabIsInertForLiveThinkingWithExplorerFocus(t *testing.T) {
 	}
 }
 
-// Contrato: Shift+Tab alterna TODOS los bloques de pensamiento asentados a la
-// vez. Con dos pensamientos terminados, un solo golpe los expande ambos y un
-// segundo los colapsa ambos.
+// Contract: Shift+Tab toggles ALL seated thought blocks at once. With two thoughts finished, a single blow expands them both and a second collapses them both.
 func TestModel_ShiftTabTogglesAllSettledThinkingBlocks(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 	for _, tag := range []string{"primero", "segundo"} {
@@ -6967,7 +6658,7 @@ func TestModel_ShiftTabTogglesAllSettledThinkingBlocks(t *testing.T) {
 		m = drainReveal(t, m)
 	}
 
-	// Ambos colapsados por defecto: dos resumenes, sin texto.
+	// Both collapsed by default: two summaries, no text.
 	view := m.View()
 	if n := strings.Count(view, "◆ Thought"); n != 2 {
 		t.Fatalf("View() = %q, dos pensamientos asentados deben colapsar a dos resumenes %q (n=%d)", view, "◆ Thought", n)
@@ -6976,7 +6667,7 @@ func TestModel_ShiftTabTogglesAllSettledThinkingBlocks(t *testing.T) {
 		t.Fatalf("View() = %q, ambos colapsados no deben mostrar texto", view)
 	}
 
-	// Un Shift+Tab expande ambos.
+	// A Shift+Tab expands both.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
 	view = m.View()
 	if !strings.Contains(view, "primero-a") || !strings.Contains(view, "segundo-a") {
@@ -6986,7 +6677,7 @@ func TestModel_ShiftTabTogglesAllSettledThinkingBlocks(t *testing.T) {
 		t.Fatalf("View() = %q, tras expandir siguen habiendo dos resumenes de cabecera (n=%d)", view, n)
 	}
 
-	// Un segundo Shift+Tab colapsa ambos.
+	// A second Shift+Tab collapses both.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
 	view = m.View()
 	if strings.Contains(view, "primero-a") || strings.Contains(view, "segundo-a") {
@@ -6994,11 +6685,7 @@ func TestModel_ShiftTabTogglesAllSettledThinkingBlocks(t *testing.T) {
 	}
 }
 
-// Contrato del toggle por clic (ver toggleThinkingAt y el caso tea.MouseMsg de
-// Update): un clic izquierdo sobre la linea del resumen de un pensamiento
-// asentado lo expande al texto completo, igual que Shift+Tab pero sobre el
-// bloque concreto bajo el cursor. El clic se mapea a la entrada via entryLines,
-// asi que la fila clicada debe caer sobre la linea del resumen.
+// Click toggle contract (see toggleThinkingAt and the tea.MouseMsg case of Update): a left click on the summary line of a settled thought expands it to the full text, just like Shift+Tab but on the specific block under the cursor. The click maps to the entry via entryLines, so the clicked row should fall on the summary line.
 func TestModel_ClickExpandsSettledThinking(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 20})
@@ -7009,7 +6696,7 @@ func TestModel_ClickExpandsSettledThinking(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: text})
 	m = drainReveal(t, m)
 
-	// Localiza la fila del resumen "◆ Thought" en el contenido del viewport.
+	// Locate the "◆Thought" summary row in the viewport content.
 	lines := m.entryLines()
 	summaryRow := -1
 	for i, l := range lines {
@@ -7021,8 +6708,7 @@ func TestModel_ClickExpandsSettledThinking(t *testing.T) {
 	if summaryRow < 0 {
 		t.Fatalf("entryLines() no contiene el resumen %q: %v", "◆ Thought", lines)
 	}
-	// La fila en pantalla es la del contenido menos el desplazamiento visible,
-	// mas la fila de la top bar que corre el cuerpo una fila hacia abajo.
+	// The row on the screen is the one with the content minus the visible scrolling, plus the row of the top bar that moves the body one row down.
 	clickY := topBarHeight + summaryRow - m.viewport.YOffset
 	if clickY < topBarHeight {
 		t.Fatalf("summaryRow=%d YOffset=%d, el resumen no esta visible para clicar", summaryRow, m.viewport.YOffset)
@@ -7037,17 +6723,12 @@ func TestModel_ClickExpandsSettledThinking(t *testing.T) {
 	}
 }
 
-// TRIANGULATE de la condicion compartida compactActivityJoin (su razon de
-// ser): con un grupo compacto de DOS tools antes de un pensamiento colapsado,
-// la fila del resumen se localiza en lo que el usuario VE (View), no en
-// entryLines, y el clic sobre esa fila debe expandir el pensamiento. Si
-// entryLines siguiera emitiendo el separador entre actividades, su numeracion
-// divergeria de la del viewport y el clic caeria en la linea equivocada.
+// TRIANGULATE the shared condition compactActivityJoin (its reason for being): with a compact group of DOS tools before a collapsed thought, the summary row is located in what the user SEES (View), not in entryLines, and the click on that row should expand the thought. If entryLines continued to output the separator between activities, its numbering would diverge from that of the viewport and the click would land on the wrong line.
 func TestModel_ClickTargetingStaysAlignedWithCompactGroups(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 20})
 
-	// Grupo compacto: dos tools asentadas contiguas (sin linea en blanco).
+	// Compact group: two tools sitting adjacent to each other (no blank line).
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"ls"}`)})
 	m = apply(t, m, EventMsg{
 		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash",
@@ -7067,9 +6748,7 @@ func TestModel_ClickTargetingStaysAlignedWithCompactGroups(t *testing.T) {
 	m = drainReveal(t, m)
 	target := len(m.entries) - 1
 
-	// La fila se busca en la pantalla real: el transcript corto se muestra
-	// desde arriba (sin scroll) y el viewport abre la vista, asi que la fila Y
-	// de la pantalla es la linea absoluta del contenido.
+	// The row is searched on the real screen: the short transcript is shown from the top (without scrolling) and the viewport opens the view, so the row Y of the screen is the absolute line of the content.
 	if m.viewport.YOffset != 0 {
 		t.Fatalf("viewport.YOffset = %d, want 0: el transcript corto se muestra desde arriba", m.viewport.YOffset)
 	}
@@ -7223,8 +6902,7 @@ func TestModel_ClickChatPanelTitleIsInertWithExplorerFocus(t *testing.T) {
 	}
 }
 
-// Contrato: un clic sobre el texto de un pensamiento YA expandido lo colapsa
-// de nuevo (toggle de ida y vuelta sobre el mismo bloque).
+// Contract: a click on the text of an ALREADY expanded thought collapses it again (toggle back and forth on the same block).
 func TestModel_ClickCollapsesExpandedThinking(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 20})
@@ -7235,13 +6913,13 @@ func TestModel_ClickCollapsesExpandedThinking(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: text})
 	m = drainReveal(t, m)
 
-	// Expandir primero con Shift+Tab.
+	// Expand first with Shift+Tab.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
 	if got := m.View(); !strings.Contains(got, "razon-1") {
 		t.Fatalf("View() = %q, precondicion: Shift+Tab debe expandir", got)
 	}
 
-	// Clic sobre la primera linea del texto expandido (la cabecera "◆ Thought").
+	// Click on the first line of the expanded text (the "◆ Thought" header).
 	lines := m.entryLines()
 	headerRow := -1
 	for i, l := range lines {
@@ -7261,9 +6939,7 @@ func TestModel_ClickCollapsesExpandedThinking(t *testing.T) {
 	}
 }
 
-// Contrato: un clic izquierdo sobre una linea que NO es de un pensamiento
-// asentado (una linea vacia de separacion o el texto de un mensaje user) es
-// inerte: no expande nada ni cambia la vista.
+// Contract: a left click on a line that is NOT a settled thought (an empty line of separation or the text of a user message) is inert: it does not expand anything or change the view.
 func TestModel_ClickOutsideThinkingIsInert(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 20})
@@ -7275,7 +6951,7 @@ func TestModel_ClickOutsideThinkingIsInert(t *testing.T) {
 	m = drainReveal(t, m)
 
 	before := m.View()
-	// Clic sobre la linea del mensaje user (primera entrada, fila 0).
+	// Click on the user message line (first entry, row 0).
 	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, Y: 0})
 	if got := m.View(); got != before {
 		t.Fatalf("View() cambio tras clic fuera del pensamiento:\nantes = %q\ndespues = %q, el clic solo alterna bloques de pensamiento asentados", before, got)
@@ -8687,8 +8363,7 @@ func TestModel_ClosingTreeWithViewerOpenExpandsChat(t *testing.T) {
 // through the Model against a real Engine: it is an integration test of the
 // presentation layer, so it lives here rather than in the engine package.
 func TestModel_SubmittingNewActivatesFreshSessionForFuturePrompts(t *testing.T) {
-	// TRIANGULATE: crear la fila durable no basta. El composer debe cambiar al
-	// ID nuevo para que el siguiente prompt no vuelva a la sesion anterior.
+	// TRIANGULATE: creating a durable row is not enough. The composer must change to the new ID so that the next prompt does not return to the previous session.
 	root := t.TempDir()
 	store := session.NewMemoryStore()
 	if _, err := store.AppendEvent(context.Background(), "s1", session.SessionEvent{
@@ -8739,8 +8414,7 @@ func TestModel_SubmittingNewActivatesFreshSessionForFuturePrompts(t *testing.T) 
 	}
 }
 
-// nextMsg y collectUntilRunDone drenan el canal del engine para los tests de
-// integracion Model+Engine (el engine tiene sus propias copias para sus tests).
+// nextMsg and collectUntilRunDone drain the engine channel for Model+Engine integration tests (the engine has its own copies for its tests).
 func nextMsg(t *testing.T, ch <-chan tea.Msg, timeout time.Duration) tea.Msg {
 	t.Helper()
 	select {
