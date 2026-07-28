@@ -1,6 +1,6 @@
 ---
 updated_at: 2026-07-27
-summary: Audit of how agnostic atenea's seams are, and what to change to enable third-party integrations, contributions, and a plugin system. R1 through R5, R7, and R8 are done; the remaining recommendations stay open.
+summary: Audit of how agnostic atenea's seams are, and what to change to enable third-party integrations, contributions, and a plugin system. R1 through R5 and R7 through R9 are done; the remaining recommendations stay open.
 ---
 
 # Agnosticism and extensibility audit — atenea
@@ -407,10 +407,13 @@ Gaps that keep it from being a plugin substrate:
 - **`AGENTS.md` points at two things that do not exist**: `CONTEXT.md` at the
   repo root and `.okf/architecture/adr/`. An agent or human following the stated
   way of working hits a dead end immediately.
-- **`skills-lock.json` is an orphan.** No Go code reads or writes it
-  (`grep -rn "skills-lock"` over `*.go` is empty); it is the lockfile of an
-  external third-party skill installer. It implies a distribution model atenea
-  does not have.
+- ~~**`skills-lock.json` is an orphan.**~~ `[done 2026-07-27]` R9.4 deleted it.
+  No atenea code read or wrote the external installer's lockfile, and the product
+  discovers skills already present on disk rather than installing, resolving or
+  updating them. Owning that file would require a source resolver, a content-hash
+  contract and install/update commands; none belongs to the current skill runtime.
+  If atenea later owns skill distribution, its manifest and lock format must be
+  designed as that feature's public contract rather than inherited accidentally.
 - **Comment language.** 120 of 143 non-test Go files still carry Spanish
   comments — including the files that would become the published contracts
   (`internal/llm/provider.go`, `internal/tool/registry.go`). `AGENTS.md` mandates
@@ -1223,9 +1226,9 @@ it.
      agent went on connecting it. Nothing was wrong except what the user would
      conclude. It now names the file that still declares it, reusing the sentence the
      refusal path already had.
-   R9.3's `atenea skill validate` is the part of R9 that lands here. The rest of R9
-   is untouched on purpose: no `version` field, no unified frontmatter parser, no
-   `atenea agent validate`, no `skills-lock.json` decision. One migration rode along,
+   R9.3's `atenea skill validate` is the part of R9 that landed with R4. The other
+   items were untouched at that point: no `version` field, no unified frontmatter
+   parser, no `atenea agent validate`, and no `skills-lock.json` decision. One migration rode along,
    under the rule that a touched file is migrated: `internal/skill` and
    `mcpclient`'s server errors are English now, which they had to be — a Spanish
    parse error was about to be the output of `atenea skill validate`.
@@ -1406,31 +1409,50 @@ right shape. Consolidate the plumbing:
    YAML decoding for both manifest types. Skill descriptions retain their
    one-line presentation, while agent tools accept both the legacy comma scalar
    and native YAML sequences.
-2. **Add a `version` field** to skill and agent manifests, and make unknown keys
-   tolerated *by design* (documented) rather than by accident.
-3. ~~**`atenea skill validate`**~~ / **`atenea agent validate`** (part of R4's CLI)
+2. ~~**Add a `version` field** to skill and agent manifests, and make unknown keys
+   tolerated *by design* (documented) rather than by accident.~~ `[done 2026-07-27]`
+   Both parsed definitions expose `Version`, and both manifests use the same
+   schema policy: `version: 1` is current, omission means legacy v1, and any other
+   version is rejected rather than guessed at. Unknown keys are intentionally
+   tolerated within v1 so compatible metadata owned by another host does not make
+   a skill or subagent disappear. Parser tests pin all four parts of that contract.
+3. ~~**`atenea skill validate` / `atenea agent validate`**~~ (part of R4's CLI)
    so a contributor gets a real error instead of silent non-discovery.
-   `[half done 2026-07-26]` — `atenea skill validate` shipped with R4.4: it walks
+   `[done 2026-07-27]` — `atenea skill validate` shipped with R4.4: it walks
    the discovery set (or the paths named), reports every `SKILL.md` that does not
    parse and every skill that declares no description — discovered but never
    announced, which is the same silence one step later — with the file that has the
    problem, and exits 1 if there is one. `skill.Scan` is what made it possible:
    `Discover` skipped a bad file inside its walk, so nothing could report on it, and
    `Discover` is now that scan minus the unusable and the shadowed.
-   **`atenea agent validate` remains open**, and it is the item that wants R9.1
-   first: subagents have their own hand-rolled frontmatter parser
-   (`internal/agent/agent.go`), so a validator for them written today would be a
-   second validator over a second parser — exactly the duplication this
-   recommendation exists to remove. R9.2's `version` field and R9.4's
-   `skills-lock.json` decision are also untouched.
-4. **Decide on `skills-lock.json`**: either own an install/pin model
+   `atenea agent validate` now does the same over the shared R9.1 parser: bare
+   invocations scan the exact `paths.AgentDirs` discovery order, while named files
+   and directories support drafts and CI. `agent.Scan` retains malformed and
+   shadowed definitions and `Discover` filters that same result. Missing
+   descriptions and empty prompts are failures because the task tool otherwise
+   cannot describe or instruct the child. Tool names remain runtime validation:
+   MCP extends the child registry dynamically, so a provider-free CLI cannot
+   reject an extension-owned tool honestly. R9.2's `version` field is complete;
+   R9.4 is resolved below.
+4. ~~**Decide on `skills-lock.json`**: either own an install/pin model
    (`atenea skill add gh:owner/repo` + lockfile with content hashes, which is what
    that file's format implies) or delete the orphan. Leaving it advertises a
-   system that does not exist.
-5. Slash commands: the TUI hardcodes `/new`, `/compact`, `/model`, `/mcp`,
+   system that does not exist.~~ `[done 2026-07-27]` The orphan was deleted.
+   Atenea owns discovery and validation of local skill directories, not package
+   installation or dependency pinning. A future distribution feature can define
+   a lockfile only together with the commands and integrity semantics that own it.
+5. ~~Slash commands: the TUI hardcodes `/new`, `/compact`, `/model`, `/mcp`,
    `/connect` (`internal/tui/complete.go:352-433`) while skill-derived commands
    are dynamic. Register the built-ins into the same `command.Set` so one list
-   feeds both frontends and name collisions are detectable.
+   feeds both frontends and name collisions are detectable.~~
+   `[done 2026-07-27]` — the TUI registers all of its local commands in the same
+   `command.Set` as skill and MCP commands. `Engine.Commands` and the completion
+   menu now read that one sorted registry, with `Command.BuiltIn` carrying local
+   dispatch identity instead of the menu inferring names. `command.NewChecked`
+   rejects duplicate names in both host composition paths, so an MCP prompt
+   cannot silently shadow a skill and, in the TUI, neither can shadow a local
+   command. A failed dynamic rebuild keeps the collision-free base catalog and
+   logs the conflicting name.
 
 ### R10 — Contributor experience
 
@@ -1452,7 +1474,7 @@ right shape. Consolidate the plumbing:
 ## 5. Phased plan
 
 **Phase 0 — unblock (days).** LICENSE. Module path. `internal/paths` (R7). Fix
-`AGENTS.md` pointers; resolve `skills-lock.json`. Delete the dead `replace`.
+`AGENTS.md` pointers; delete the orphaned `skills-lock.json`. Delete the dead `replace`.
 *Outcome: the repo becomes legally and technically contributable.*
 
 **Phase 1 — agnostic core (weeks). Complete.** R2 tool capability interfaces and
@@ -1492,10 +1514,10 @@ boundary test's ban on third-party imports.
 configuring what it will find when it starts, and the TTY-free end-to-end test the
 phase also unlocked is what its own tests are written as.*
 
-**Phase 3 — plugin substrate. R8 complete (2026-07-27).** R8 MCP transports,
+**Phase 3 — plugin substrate. Complete (2026-07-27).** R8 MCP transports,
 permissions, subagent exposure, prompts/resources/sampling, and lifecycle are
-complete. R9 unified manifests +
-`validate`.
+complete. R9 unified and versioned manifests, added subagent validation, removed
+the orphaned skill lockfile, and unified slash-command registration.
 *Outcome: a third party ships an extension without touching this repo.*
 
 **Phase 4 — hardening.** R5 event contract (default cases, generated TS union,

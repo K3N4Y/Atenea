@@ -1,6 +1,6 @@
 ---
-updated_at: 2026-07-26
-summary: The non-interactive command-line surface — the two-level subcommand dispatch, `atenea run`, the three output formats over the durable event stream, the three permission modes a host with nobody to ask can honestly offer, the exit codes, the rule that keeps a run from ever waiting on stdin, the refusal to answer from the offline demo, and the configuration commands `atenea mcp` and `atenea skill`, which need no provider at all.
+updated_at: 2026-07-27
+summary: The non-interactive command-line surface — the two-level subcommand dispatch, `atenea run`, durable event output, unattended permission modes, exit codes, and the provider-free MCP, skill, and subagent manifest commands.
 ---
 
 # Headless CLI
@@ -27,6 +27,7 @@ atenea mcp add NAME -- COMMAND [ARG...]    declare a stdio server globally
 atenea mcp remove NAME                     delete one from the global config
 atenea skill list                          every SKILL.md discovery walked
 atenea skill validate [PATH...]            report the skills that will not load
+atenea agent validate [PATH...]            report unusable subagent definitions
 atenea version                             print the build metadata
 atenea --version                           alias of the above
 atenea help | -h | --help                  the command list
@@ -625,9 +626,20 @@ now defined as that list minus the unusable and the shadowed. The two cannot
 describe different sets of files, which is the property the old arrangement — a
 `return nil` inside the walk — could not have.
 
-This is the R4 half of R9.3. The rest of R9 is untouched: no `version` field in the
-manifest, no unified frontmatter parser, no `atenea agent validate`, no decision on
-`skills-lock.json`.
+This is the R4 half of R9.3. R9.1 later unified frontmatter parsing, R9.2 added
+versioned skill and agent manifests, and R9.4 deleted the external installer's
+orphaned `skills-lock.json`: atenea owns local skill discovery and validation,
+not package installation or dependency pinning.
+
+`atenea agent validate` applies the same contract to subagent Markdown files. A
+bare invocation scans `paths.AgentDirs(root)`; named files are parsed regardless
+of their extension and named directories walk every `.md`. `agent.Scan` retains
+malformed and shadowed entries while `Discover` filters them, so validation and
+runtime discovery cannot disagree about what was walked. Malformed manifests,
+missing descriptions, and empty prompts are failures; shadowing is reported by
+the scan but is valid precedence. Tool names are not judged here because MCP
+extends the child tool catalog at runtime, and a static validator would reject
+valid extension-owned tools.
 
 ## Configuring without a provider
 
