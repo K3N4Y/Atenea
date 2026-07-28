@@ -715,6 +715,7 @@ func TestTUI_ConnectCommandFullFlowUnderPTY(t *testing.T) {
 	}
 	waitForPTYText(t, output, "Connect Provider")
 	waitForPTYText(t, output, "○ OpenRouter")
+	waitForPTYText(t, output, "○ OpenAI")
 	waitForPTYText(t, output, "○ OpenCode Zen")
 	waitForPTYText(t, output, "○ OpenCode Go")
 	waitForPTYText(t, output, "not connected")

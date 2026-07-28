@@ -20,10 +20,20 @@ const validateKeyTimeout = 10 * time.Second
 // the key is wrong; any other non-200 is surfaced as-is so network or gateway
 // trouble is distinguishable from a bad key.
 func ValidateOpenRouterKey(ctx context.Context, baseURL, apiKey string) error {
+	return validateBearerKey(ctx, strings.TrimRight(baseURL, "/")+"/key", apiKey)
+}
+
+// ValidateOpenAIKey checks an API key with OpenAI's read-only model listing
+// before it is stored. The request validates authentication without creating a
+// model response or incurring inference usage.
+func ValidateOpenAIKey(ctx context.Context, baseURL, apiKey string) error {
+	return validateBearerKey(ctx, strings.TrimRight(baseURL, "/")+"/models", apiKey)
+}
+
+func validateBearerKey(ctx context.Context, url, apiKey string) error {
 	ctx, cancel := context.WithTimeout(ctx, validateKeyTimeout)
 	defer cancel()
 
-	url := strings.TrimRight(baseURL, "/") + "/key"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -43,6 +53,10 @@ func ValidateOpenRouterKey(ctx context.Context, baseURL, apiKey string) error {
 		return errors.New("invalid API key")
 	default:
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return fmt.Errorf("validate key: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		detail := strings.TrimSpace(string(body))
+		if apiKey != "" {
+			detail = strings.ReplaceAll(detail, apiKey, "[redacted]")
+		}
+		return fmt.Errorf("validate key: %s: %s", resp.Status, detail)
 	}
 }

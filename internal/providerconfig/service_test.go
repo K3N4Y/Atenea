@@ -3,6 +3,8 @@ package providerconfig
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -344,7 +346,7 @@ func TestService_ConnectLeavesOtherSelectedProviderAlone(t *testing.T) {
 	}
 }
 
-func TestService_ConnectableListsOnlyOpenRouterWithConnectionState(t *testing.T) {
+func TestService_ConnectableListsOpenRouterAndOpenAIWithConnectionState(t *testing.T) {
 	dir := t.TempDir()
 	credentials := NewFileCredentialStore(filepath.Join(dir, "credentials.json"))
 	s, err := Open(context.Background(), filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, inertRegistry(), nil, nil, credentials, openRouterDefaults())
@@ -352,15 +354,71 @@ func TestService_ConnectableListsOnlyOpenRouterWithConnectionState(t *testing.T)
 		t.Fatal(err)
 	}
 	got := s.Connectable()
-	if len(got) != 1 || got[0].ID != "openrouter" || got[0].Connected {
-		t.Fatalf("connectable = %#v, want only OpenRouter, not connected", got)
+	if len(got) != 2 || got[0].ID != "openrouter" || got[0].Connected || got[1].ID != "openai" || got[1].Connected {
+		t.Fatalf("connectable = %#v, want OpenRouter and OpenAI, both not connected", got)
 	}
 	if err := credentials.Put("openrouter", Credential{Type: CredentialTypeAPIKey, APIKey: "sk"}); err != nil {
 		t.Fatal(err)
 	}
 	got = s.Connectable()
-	if len(got) != 1 || !got[0].Connected {
-		t.Fatalf("connectable = %#v, want OpenRouter connected after storing a key", got)
+	if len(got) != 2 || !got[0].Connected || got[1].Connected {
+		t.Fatalf("connectable = %#v, want only OpenRouter connected after storing its key", got)
+	}
+}
+
+func TestService_ConnectOpenAIStoresKeyAndActivatesDefaultModel(t *testing.T) {
+	dir := t.TempDir()
+	credentials := NewFileCredentialStore(filepath.Join(dir, "credentials.json"))
+	s, err := Open(context.Background(), filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, inertRegistry(), nil, nil, credentials, openRouterDefaults())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.validateKey = func(_ context.Context, provider Provider, apiKey string) error {
+		if provider.ID != "openai" || provider.Type != OpenAI || apiKey != "sk-oai" {
+			t.Fatalf("validator got provider=%#v key=%q", provider, apiKey)
+		}
+		return nil
+	}
+	active, err := s.Connect(context.Background(), "openai", "sk-oai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.ProviderID != "openai" || active.Model != "gpt-5.6" {
+		t.Fatalf("active = %#v, want OpenAI on its default model", active)
+	}
+	if credential, ok := credentials.Get("openai"); !ok || credential.Type != CredentialTypeAPIKey || credential.APIKey != "sk-oai" {
+		t.Fatalf("credential = %#v, ok = %v", credential, ok)
+	}
+}
+
+func TestService_ConnectOpenAIValidatesAgainstConfiguredEndpoint(t *testing.T) {
+	const key = "sk-oai-valid"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" || r.Header.Get("Authorization") != "Bearer "+key {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		w.Write([]byte(`{"data":[]}`))
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	credentials := NewFileCredentialStore(filepath.Join(dir, "credentials.json"))
+	defaults := Config{Providers: []Provider{{
+		ID: "openai", Name: "OpenAI", Type: OpenAI, BaseURL: server.URL + "/v1",
+		APIKeyEnv: "OPENAI_API_KEY", DisableModelDiscovery: true, Models: []string{"gpt-test"},
+	}}}
+	s, err := Open(context.Background(), filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, inertRegistry(), nil, nil, credentials, defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	active, err := s.Connect(context.Background(), "openai", key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.ProviderID != "openai" || active.Model != "gpt-test" {
+		t.Fatalf("active = %#v", active)
 	}
 }
 
@@ -372,7 +430,7 @@ func TestService_ConnectRejectsUnsupportedProviderAndEmptyKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.validateKey = func(context.Context, Provider, string) error { return nil }
-	if _, err := s.Connect(context.Background(), "openai", "sk-oai"); err == nil {
+	if _, err := s.Connect(context.Background(), "local", "secret"); err == nil {
 		t.Fatal("expected /connect to reject a provider outside the supported set")
 	}
 	if _, err := s.Connect(context.Background(), "openrouter", "   "); err == nil {

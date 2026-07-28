@@ -14,6 +14,7 @@ import (
 // the storage, resolution, and UI flow are already generic.
 var connectableProviderIDs = map[string]struct{}{
 	"anthropic":   {},
+	"openai":      {},
 	"openrouter":  {},
 	"opencode":    {},
 	"opencode-go": {},
@@ -37,6 +38,8 @@ func defaultKeyValidator(ctx context.Context, provider Provider, apiKey string) 
 	switch provider.ID {
 	case "anthropic":
 		return llm.ValidateAnthropicKey(ctx, provider.BaseURL, apiKey)
+	case "openai":
+		return llm.ValidateOpenAIKey(ctx, provider.BaseURL, apiKey)
 	case "openrouter":
 		return llm.ValidateOpenRouterKey(ctx, provider.BaseURL, apiKey)
 	case "opencode", "opencode-go":

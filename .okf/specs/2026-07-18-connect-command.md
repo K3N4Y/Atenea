@@ -1,6 +1,6 @@
 ---
-updated_at: 2026-07-26
-summary: Design specification for the /connect command, the shared credential store, and the production gating of .env loading.
+updated_at: 2026-07-27
+summary: Design specification for API-key provider connection, the shared credential store, and the production gating of .env loading.
 ---
 
 # /connect: provider connection by API key
@@ -43,24 +43,27 @@ directory it runs from.
   for a credential whose answer is ephemeral — and `Connectable()` still reports
   "a credential is stored", whichever arm it declares. See
   [Provider credentials](../architecture/provider-credentials.md).
-- **Scope (v1).** Only OpenRouter is connectable, only by API key. The flow,
-  storage, and resolution are generic: adding a provider means whitelisting
-  its id and giving it a validation strategy. The `/connect` UX exists only in
-  the TUI; the Wails app resolves stored credentials through the same
-  `providerconfig` code, so a key connected in the TUI works there too.
+- **Scope.** Anthropic, OpenAI, OpenRouter, OpenCode Zen, and OpenCode Go are
+  connectable by API key. OAuth for OpenAI is explicitly deferred; adding it
+  later uses another credential variant without changing API-key files. The
+  flow, storage, and resolution are shared by the TUI and Wails hosts through
+  `providerconfig`, including the desktop `ConnectProvider` binding.
 - **UX.** `/connect` opens a full-screen panel listing connectable providers
-  with their stored-credential state; `/connect openrouter` jumps straight to
-  the key entry. The key is typed or pasted into a masked input owned by the
-  panel — it never passes through the composer nor its persisted history.
+  with their stored-credential state; `/connect openai` and the other provider
+  ids jump straight to the key entry. The key is typed or pasted into a masked
+  input owned by the panel — it never passes through the composer nor its
+  persisted history.
   While validation is in flight the panel shows the state and ignores edits.
 - **Validation.** The key is checked against the provider before storing
-  (OpenRouter: `GET {base_url}/key` with the key as Bearer; 401/403 = invalid
-  key, other failures surface as-is). Nothing is persisted on failure — a bad
+  (OpenRouter: `GET {base_url}/key`; OpenAI: the read-only
+  `GET {base_url}/models`; both send the key as Bearer; 401/403 = invalid key,
+  other failures surface as-is). Nothing is persisted on failure — a bad
   key stored today is a confusing mid-chat failure tomorrow.
 - **Post-connect.** With no active selection, the provider activates
-  immediately on its default model — the first curated entry
-  (`openrouter/free`) — and the selection is persisted; connect → chat with no
-  intermediate step. If the connected provider is already selected, the live
+  immediately on its default model — the first curated entry (for example
+  `openrouter/free` or OpenAI's first shipped model) — and the selection is
+  persisted; connect → chat with no intermediate step. If the connected
+  provider is already selected, the live
   delegate is rebuilt so a rotated key applies without restart. A selection on
   another provider is untouched. The model catalog refreshes after a
   successful connect. Re-running `/connect` rotates the key; `/disconnect` is
@@ -80,9 +83,8 @@ directory it runs from.
   (`apiKeyFor`/`resolveAPIKey`) used by selection and the model catalog.
 - `internal/providerconfig/connect.go` — `Connect`, `Connectable`, the
   connectable whitelist, and the per-provider validation strategy.
-- `internal/llm/validate.go` — `ValidateOpenRouterKey`.
+- `internal/llm/validate.go` — `ValidateOpenRouterKey` and `ValidateOpenAIKey`.
 - `internal/tui/connect_panel.go` — the panel; `internal/tui/engine.go` — the
   optional `ConnectService` delegation.
 - `internal/dotenv/load_dev.go` / `load_production.go` — the build-tag gate.
-- `app.go` (Wails) — `openRouterAPIKey` resolution shared-by-convention with
-  the TUI.
+- `app.go` (Wails) — `ConnectProvider` delegates to the same service as the TUI.
