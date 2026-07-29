@@ -79,6 +79,7 @@ The project-wide vocabulary lives in the root [domain glossary](../CONTEXT.md).
 - [Anthropic Go SDK provider integration](research/2026-07-22-anthropic-go-sdk-provider-integration.md)
 - [LLM prompt-cache hit research and provider audit](research/2026-07-23-llm-prompt-cache-hit.md)
 - [Agent loops and graph orchestration](research/2026-07-27-graphs-over-agent-loops.md)
+- [OpenAI ChatGPT subscription: device-code OAuth and the codex backend](research/2026-07-27-openai-chatgpt-oauth-device-code.md)
 
 ## Specifications
 
@@ -89,6 +90,7 @@ The project-wide vocabulary lives in the root [domain glossary](../CONTEXT.md).
 - [TUI file viewer](specs/2026-07-09-tui-file-viewer.md)
 - [TUI provider and model selector](specs/2026-07-10-tui-model-selector.md)
 - [/connect command and credential store](specs/2026-07-18-connect-command.md)
+- [Driving atenea with a ChatGPT subscription](specs/2026-07-27-openai-subscription-oauth.md)
 - [Single permission gate for shell and local FS tools](specs/2026-07-23-single-permission-gate.md)
 - [Session-scoped permission grants](specs/2026-07-24-session-permission-grants.md)
 - [TUI dark canvas](specs/2026-07-10-tui-dark-canvas.md)

@@ -40,6 +40,23 @@ var openAIWindows = map[string]int{
 	"gpt-4o-mini":   128_000,
 }
 
+// codexWindows are the ids the codex backend serves a ChatGPT subscription. They
+// are their own table rather than an entry in openAIWindows for the reason stated
+// above: the same vendor reached through another dialect is another set of ids,
+// and this backend serves a codex-tuned list the public API does not.
+//
+// The windows are curated data, like the model list in the catalog they mirror:
+// the endpoint publishes no /models and no window, so the honest thing is one
+// number per id in one place that is cheap to correct. The gpt-5.4 family's
+// published window is what they all get, which is the conservative reading —
+// under-declaring costs an early compaction, over-declaring costs a failed turn.
+var codexWindows = map[string]int{
+	"gpt-5.5":             400_000,
+	"gpt-5.4":             400_000,
+	"gpt-5.4-mini":        400_000,
+	"gpt-5.3-codex-spark": 400_000,
+}
+
 // openRouterWindows are OpenRouter's ids, which prefix the model with its vendor.
 // The curated free models are here too: they are OpenRouter's catalog, and the
 // TUI used to carry them in a table of its own.
@@ -104,8 +121,39 @@ func (p *OpenAIProvider) Capabilities() Capabilities {
 	return caps
 }
 
+// Capabilities is what this adapter does with the codex backend's Responses API.
+//
+// DefaultMaxOutputTokens is zero and cannot be anything else: this dialect never
+// sends a ceiling, so there is none to declare. Reasoning is per-instance, like
+// the OpenAI adapter's, because asking for a reasoning summary is the option that
+// decides whether Reasoning* events can ever arrive.
+func (p *CodexProvider) Capabilities() Capabilities {
+	return Capabilities{
+		Streaming: true,
+		Tools:     true,
+		Reasoning: p.summary != "",
+		// prompt_cache_key carries Request.SessionKey.
+		PromptCaching:  KeyedPromptCaching,
+		RetryTelemetry: true,
+		ContextWindows: codexWindows,
+	}
+}
+
 // DescribeAnthropic is what NewAnthropicProvider builds, without building one.
 func DescribeAnthropic() Capabilities { return anthropicCapabilities }
+
+// DescribeCodex is what a codex-dialect adapter built with opts would declare,
+// without building one — which the catalog needs, since it has to describe every
+// configured provider and builds only the selected one. It resolves the options
+// through the same code the constructor runs, so the description cannot drift
+// away from the provider.
+func DescribeCodex(opts ...CodexOption) Capabilities {
+	p := &CodexProvider{}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p.Capabilities()
+}
 
 // DescribeOpenAI is what an OpenAI-dialect adapter built with opts would declare,
 // without building one. A registry needs this: it has to describe every provider

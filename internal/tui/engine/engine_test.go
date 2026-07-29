@@ -2628,7 +2628,12 @@ func TestEngine_MCPServersReadsWorkspaceConfig(t *testing.T) {
 type connectModelService struct {
 	connectable []providerconfig.ConnectableProvider
 	connects    []struct{ providerID, key string }
-	active      providerconfig.Active
+	logins      []string
+	cancels     []struct {
+		providerID string
+		attempt    uint64
+	}
+	active providerconfig.Active
 }
 
 func (s *connectModelService) Active() providerconfig.Active            { return s.active }
@@ -2645,6 +2650,19 @@ func (s *connectModelService) Connectable() []providerconfig.ConnectableProvider
 func (s *connectModelService) Connect(_ context.Context, providerID, apiKey string) (providerconfig.Active, error) {
 	s.connects = append(s.connects, struct{ providerID, key string }{providerID, apiKey})
 	return s.active, nil
+}
+func (s *connectModelService) StartDeviceLogin(_ context.Context, providerID string) (providerconfig.DeviceLogin, error) {
+	s.logins = append(s.logins, providerID)
+	return providerconfig.DeviceLogin{ProviderID: providerID, UserCode: "V3H5-1MW96", Attempt: uint64(len(s.logins))}, nil
+}
+func (s *connectModelService) AwaitDeviceLogin(_ context.Context, providerID string) (providerconfig.Active, error) {
+	return s.active, nil
+}
+func (s *connectModelService) CancelDeviceLoginAttempt(providerID string, attempt uint64) {
+	s.cancels = append(s.cancels, struct {
+		providerID string
+		attempt    uint64
+	}{providerID, attempt})
 }
 
 func TestEngine_ConnectProviderDelegatesToConnectService(t *testing.T) {
@@ -2667,6 +2685,36 @@ func TestEngine_ConnectProviderDelegatesToConnectService(t *testing.T) {
 	}
 }
 
+// TestEngine_DeviceLoginDelegatesToConnectService: the login half of /connect goes
+// through the same optional surface, so a provider connected by logging in is
+// drivable from the terminal exactly as far as one connected by key.
+func TestEngine_DeviceLoginDelegatesToConnectService(t *testing.T) {
+	service := &connectModelService{
+		connectable: []providerconfig.ConnectableProvider{{ID: "openai-codex", Name: "OpenAI (ChatGPT subscription)", Kind: providerconfig.ConnectDeviceCode}},
+		active:      providerconfig.Active{ProviderID: "openai-codex", Model: "gpt-5.5"},
+	}
+	engine := New(Config{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore(), Models: service})
+	defer engine.Shutdown(context.Background())
+
+	login, err := engine.StartDeviceLogin("openai-codex")
+	if err != nil || login.UserCode != "V3H5-1MW96" {
+		t.Fatalf("StartDeviceLogin = %#v err=%v", login, err)
+	}
+	active, err := engine.AwaitDeviceLogin("openai-codex")
+	if err != nil || active.Model != "gpt-5.5" {
+		t.Fatalf("AwaitDeviceLogin = %#v err=%v", active, err)
+	}
+	// The attempt handle travels with the cancellation, so the service can tell the
+	// login the panel started from whichever one is pending by the time it lands.
+	engine.CancelDeviceLogin("openai-codex", login.Attempt)
+	if len(service.logins) != 1 || len(service.cancels) != 1 {
+		t.Fatalf("logins = %#v cancels = %#v", service.logins, service.cancels)
+	}
+	if service.cancels[0].providerID != "openai-codex" || service.cancels[0].attempt != login.Attempt {
+		t.Fatalf("cancels = %#v, want the attempt this panel started", service.cancels)
+	}
+}
+
 func TestEngine_ConnectUnavailableWithoutConnectService(t *testing.T) {
 	engine := New(Config{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore()})
 	defer engine.Shutdown(context.Background())
@@ -2677,6 +2725,15 @@ func TestEngine_ConnectUnavailableWithoutConnectService(t *testing.T) {
 	if _, err := engine.ConnectProvider("openrouter", "sk"); err == nil {
 		t.Fatal("expected an error without a connect-capable model service")
 	}
+	if _, err := engine.StartDeviceLogin("openai-codex"); err == nil {
+		t.Fatal("expected an error without a connect-capable model service")
+	}
+	if _, err := engine.AwaitDeviceLogin("openai-codex"); err == nil {
+		t.Fatal("expected an error without a connect-capable model service")
+	}
+	// Cancelling without a service is a no-op rather than a panic: the panel
+	// cancels on its way out whatever the host can do.
+	engine.CancelDeviceLogin("openai-codex", 1)
 }
 
 // TestEngine_RequestCompactionDuringShutdownReleasesCompactingSlot pins the

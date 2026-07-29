@@ -41,7 +41,7 @@ func TestRegistry_BuildsWireFormatDeclaredByType(t *testing.T) {
 			defer server.Close()
 
 			def := Provider{ID: "same-id-every-time", Type: test.providerType, BaseURL: server.URL, OpenRouterReasoning: test.reasoning}
-			provider, err := DefaultRegistry().Build(def, "model", "key")
+			provider, err := DefaultRegistry().Build(BuildParams{Provider: def, Model: "model", APIKey: "key"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -69,7 +69,7 @@ func TestRegistry_BuildsWireFormatDeclaredByType(t *testing.T) {
 }
 
 func TestRegistry_BuildsNativeAnthropicProvider(t *testing.T) {
-	provider, err := DefaultRegistry().Build(Provider{ID: "anthropic", Type: Anthropic, BaseURL: "https://api.anthropic.com"}, "claude-opus-4-8", "key")
+	provider, err := DefaultRegistry().Build(BuildParams{Provider: Provider{ID: "anthropic", Type: Anthropic, BaseURL: "https://api.anthropic.com"}, Model: "claude-opus-4-8", APIKey: "key"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestRegistry_BuildsNativeAnthropicProvider(t *testing.T) {
 // TestRegistry_BuildUnknownTypeNamesRegisteredTypes: the registry is the only
 // place that knows what this build speaks, so its error has to say it.
 func TestRegistry_BuildUnknownTypeNamesRegisteredTypes(t *testing.T) {
-	_, err := DefaultRegistry().Build(Provider{ID: "x", Type: "bedrock", BaseURL: "http://x"}, "model", "key")
+	_, err := DefaultRegistry().Build(BuildParams{Provider: Provider{ID: "x", Type: "bedrock", BaseURL: "http://x"}, Model: "model", APIKey: "key"})
 	if err == nil {
 		t.Fatal("expected an unsupported type error")
 	}
@@ -94,7 +94,7 @@ func TestRegistry_BuildUnknownTypeNamesRegisteredTypes(t *testing.T) {
 
 func TestRegistry_DefaultRegistryCopiesAreIndependent(t *testing.T) {
 	extended := DefaultRegistry()
-	extended["bedrock"] = Format{Build: func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil }}
+	extended["bedrock"] = Format{Build: func(BuildParams) (llm.Provider, error) { return inertProvider{}, nil }}
 	if _, ok := DefaultRegistry()["bedrock"]; ok {
 		t.Fatal("extending one registry reached the defaults")
 	}
@@ -111,8 +111,8 @@ func TestRegistry_ExtraTypeIsUsableEndToEnd(t *testing.T) {
 	}
 	registry := DefaultRegistry()
 	built := ""
-	registry["bedrock"] = Format{Build: func(def Provider, model, _ string) (llm.Provider, error) {
-		built = def.ID + ":" + model
+	registry["bedrock"] = Format{Build: func(params BuildParams) (llm.Provider, error) {
+		built = params.Provider.ID + ":" + params.Model
 		return inertProvider{}, nil
 	}}
 
@@ -190,7 +190,7 @@ func TestRegistry_DescribeReadsTheProviderDefinition(t *testing.T) {
 // as "unknown", never as "declares nothing".
 func TestRegistry_DescribeIsSilentForWhatItCannotSpeak(t *testing.T) {
 	registry := DefaultRegistry()
-	registry["bedrock"] = Format{Build: func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil }}
+	registry["bedrock"] = Format{Build: func(BuildParams) (llm.Provider, error) { return inertProvider{}, nil }}
 
 	if _, ok := registry.Describe(Provider{ID: "x", Type: "vertex"}); ok {
 		t.Error("a type this build does not know cannot be described")

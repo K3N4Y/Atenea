@@ -5,7 +5,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+// fullOAuth is a well-formed login: every field Validate insists on.
+func fullOAuth() *OAuthCredential {
+	return &OAuthCredential{AccessToken: "at", RefreshToken: "rt", AccountID: "acct", ExpiresAt: time.Now().Add(time.Hour)}
+}
 
 // TestCredential_ValidateRefusesABagOfArms is the property that keeps Credential
 // a tagged variant: exactly the arm Type names is populated. Without it the type
@@ -22,6 +28,15 @@ func TestCredential_ValidateRefusesABagOfArms(t *testing.T) {
 		"exec with a negative timeout": {Type: CredentialTypeExec, Exec: &ExecCredential{
 			Command: []string{"print-token"}, TimeoutSeconds: -1,
 		}},
+		"exec with an oauth login":    {Type: CredentialTypeExec, Exec: &ExecCredential{Command: []string{"print-token"}}, OAuth: fullOAuth()},
+		"api_key with an oauth login": {Type: CredentialTypeAPIKey, APIKey: "sk", OAuth: fullOAuth()},
+		"oauth with an api_key":       {Type: CredentialTypeOAuth, APIKey: "sk", OAuth: fullOAuth()},
+		"oauth with no arm":           {Type: CredentialTypeOAuth},
+		"oauth with no access token":  {Type: CredentialTypeOAuth, OAuth: &OAuthCredential{RefreshToken: "rt", AccountID: "acct"}},
+		// Without a refresh token the login dies within the hour with no way back,
+		// and without an account id no request can be routed at all.
+		"oauth with no refresh token": {Type: CredentialTypeOAuth, OAuth: &OAuthCredential{AccessToken: "at", AccountID: "acct"}},
+		"oauth with no account":       {Type: CredentialTypeOAuth, OAuth: &OAuthCredential{AccessToken: "at", RefreshToken: "rt"}},
 	} {
 		if err := credential.Validate(); err == nil {
 			t.Errorf("%s: Validate() = nil, want a refusal", name)
@@ -35,6 +50,12 @@ func TestCredential_ValidateAcceptsEachArmOnItsOwn(t *testing.T) {
 		"exec":    {Type: CredentialTypeExec, Exec: &ExecCredential{Command: []string{"print-token", "--quiet"}}},
 		"exec with declared bounds": {Type: CredentialTypeExec, Exec: &ExecCredential{
 			Command: []string{"print-token"}, TimeoutSeconds: 5, TTLSeconds: 300,
+		}},
+		"oauth": {Type: CredentialTypeOAuth, OAuth: fullOAuth()},
+		// An unknown expiry is legitimate: it reads as "renew on first use", which
+		// costs one request and settles it.
+		"oauth with no known expiry": {Type: CredentialTypeOAuth, OAuth: &OAuthCredential{
+			AccessToken: "at", RefreshToken: "rt", AccountID: "acct",
 		}},
 	} {
 		if err := credential.Validate(); err != nil {

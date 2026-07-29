@@ -693,14 +693,25 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.revealing = true
 		return m.syncViewportActivity(), revealTick()
+	case deviceLoginStartedMsg:
+		return m.startedDeviceLogin(ev)
 	case connectDoneMsg:
 		if ev.generation != m.connectGen {
-			// A stale failure only mattered to the panel that launched it; a
-			// stale success still stored the credential and must land.
+			// A stale success still stored the credential and must land.
 			if ev.err == "" {
 				return m.applyStaleConnectSuccess(ev)
 			}
-			return m, nil
+			// A stale failure has nowhere on the current panel to go, so it either
+			// reaches the transcript or is dropped, and the two kinds of attempt want
+			// opposite answers. A login the user dismissed reports the death of a code
+			// they never saw, minutes later, over whatever they are doing by then. A
+			// key they typed and the provider rejected is the opposite: drop it and
+			// they walk away believing they connected, and find out at the next turn
+			// through "no credential stored for provider".
+			if ev.login {
+				return m, nil
+			}
+			return m.appendError(ev.err).syncViewport(), nil
 		}
 		return m.finishConnect(ev)
 	case mcpToggleDoneMsg:

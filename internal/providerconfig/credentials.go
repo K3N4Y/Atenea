@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/K3N4Y/atenea/internal/paths"
 )
@@ -18,22 +19,24 @@ import (
 const (
 	CredentialTypeAPIKey = "api_key"
 	CredentialTypeExec   = "exec"
+	CredentialTypeOAuth  = "oauth"
 )
 
 // credentialTypes is what an error naming the alternatives prints. Same reason
 // the registry names its known wire formats: the answer is data, and an error
 // that does not say which data this build was given sends the reader to source
 // that no longer holds it.
-var credentialTypes = []string{CredentialTypeAPIKey, CredentialTypeExec}
+var credentialTypes = []string{CredentialTypeAPIKey, CredentialTypeExec, CredentialTypeOAuth}
 
 // Credential is one stored provider secret, as a tagged variant: Type names an
 // arm, and exactly that arm is populated. [Credential.Validate] is what keeps
 // that true, so the type never degenerates into a bag where an exec credential
 // also carries an api_key and the reader has to guess which one was meant.
 type Credential struct {
-	Type   string          `json:"type"`
-	APIKey string          `json:"api_key,omitempty"`
-	Exec   *ExecCredential `json:"exec,omitempty"`
+	Type   string           `json:"type"`
+	APIKey string           `json:"api_key,omitempty"`
+	Exec   *ExecCredential  `json:"exec,omitempty"`
+	OAuth  *OAuthCredential `json:"oauth,omitempty"`
 }
 
 // ExecCredential reads a bearer token from a command's standard output —
@@ -55,6 +58,32 @@ type ExecCredential struct {
 	TTLSeconds int `json:"ttl_seconds,omitempty"`
 }
 
+// OAuthCredential is a subscription the user logged into rather than a key they
+// pasted: a short-lived bearer, the token that renews it, and the account the
+// endpoint routes on.
+//
+// It is its own arm, and not an api_key with extra fields, because every field
+// here answers a question an api_key never raises — when does this stop working,
+// what replaces it, whose account is it. A single string could carry the first
+// field and nothing else, and the reader of a flat shape would have to decide for
+// itself which fields the type makes meaningful.
+type OAuthCredential struct {
+	// AccessToken is what a request carries. It lives about an hour, which is why
+	// nothing may treat it as a stored constant; resolution renews it.
+	AccessToken string `json:"access_token"`
+	// RefreshToken renews AccessToken and ROTATES when it does. The renewed one
+	// must be written back here, or the user is logged out at the following
+	// renewal — which is the one failure mode of this arm that is silent.
+	RefreshToken string `json:"refresh_token"`
+	// ExpiresAt is when AccessToken stops being accepted. Zero reads as "already
+	// expired": renewing a token that was still good costs one request, and
+	// sending one that is not costs a failed turn.
+	ExpiresAt time.Time `json:"expires_at,omitzero"`
+	// AccountID is a header on every request, not a claim about identity. A
+	// credential without one cannot be routed, so login refuses to store one.
+	AccountID string `json:"account_id"`
+}
+
 // Validate reports whether this credential is a well-formed instance of the
 // variant it declares. It runs on the way in ([CredentialStore.Put]) and on the
 // way out (resolution), because credentials.json is user-editable by design: a
@@ -69,13 +98,16 @@ func (c Credential) Validate() error {
 		if c.APIKey == "" {
 			return errors.New("an api_key credential needs a non-empty api_key")
 		}
-		if c.Exec != nil {
-			return errors.New("an api_key credential must not declare exec")
+		if c.Exec != nil || c.OAuth != nil {
+			return errors.New("an api_key credential must not declare exec or oauth")
 		}
 		return nil
 	case CredentialTypeExec:
 		if c.APIKey != "" {
 			return errors.New("an exec credential must not carry an api_key")
+		}
+		if c.OAuth != nil {
+			return errors.New("an exec credential must not declare oauth")
 		}
 		if c.Exec == nil || len(c.Exec.Command) == 0 {
 			return errors.New("an exec credential needs a non-empty command")
@@ -85,6 +117,26 @@ func (c Credential) Validate() error {
 		}
 		if c.Exec.TimeoutSeconds < 0 || c.Exec.TTLSeconds < 0 {
 			return errors.New("an exec credential cannot declare a negative timeout_seconds or ttl_seconds")
+		}
+		return nil
+	case CredentialTypeOAuth:
+		if c.APIKey != "" || c.Exec != nil {
+			return errors.New("an oauth credential must not carry an api_key or declare exec")
+		}
+		if c.OAuth == nil {
+			return errors.New("an oauth credential needs an oauth object")
+		}
+		if strings.TrimSpace(c.OAuth.AccessToken) == "" {
+			return errors.New("an oauth credential needs a non-empty access_token")
+		}
+		// Without a refresh token the credential dies within the hour and there is
+		// no way back except logging in again — which is exactly what a stored
+		// credential is supposed to save the user from.
+		if strings.TrimSpace(c.OAuth.RefreshToken) == "" {
+			return errors.New("an oauth credential needs a non-empty refresh_token, or it cannot be renewed")
+		}
+		if strings.TrimSpace(c.OAuth.AccountID) == "" {
+			return errors.New("an oauth credential needs a non-empty account_id, which requests cannot be routed without")
 		}
 		return nil
 	case "":

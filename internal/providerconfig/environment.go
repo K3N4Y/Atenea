@@ -42,7 +42,9 @@ func EnvironmentFallback(cfg Config, getenv func(string) string, registry Regist
 		if model == "" {
 			continue
 		}
-		delegate, err := registry.Build(provider, model, apiKey)
+		// Only the environment is read here, so a provider whose credential is a
+		// login has no key to be selected by and never reaches this.
+		delegate, err := registry.Build(BuildParams{Provider: provider, Model: model, APIKey: apiKey})
 		if err != nil {
 			continue
 		}

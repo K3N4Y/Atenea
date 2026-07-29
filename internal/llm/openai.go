@@ -126,7 +126,14 @@ func providerLabel(baseURL string) string {
 	}
 }
 
-// retryTiming keeps the SDK's built-in retry policy, but gives its two retries
+// retryDelays is the wait, in seconds, before each retry the SDK makes when the
+// provider named none itself. Its length IS the retry bound: what retryTiming
+// writes into Retry-After and what retryTelemetry announces are read from the same
+// table, so raising the policy cannot leave one of them promising a wait that is
+// not real — or indexing past the end of it.
+var retryDelays = [...]string{"2", "5"}
+
+// retryTiming keeps the SDK's built-in retry policy, but gives its retries
 // predictable delays and refuses provider-requested waits longer than 10s.
 func retryTiming(req *http.Request, next option.MiddlewareNext) (*http.Response, error) {
 	resp, err := next(req)
@@ -149,13 +156,40 @@ func retryTiming(req *http.Request, next option.MiddlewareNext) (*http.Response,
 		resp.Header.Set("Retry-After", "10")
 	}
 	if resp.Header.Get("Retry-After") == "" && resp.Header.Get("Retry-After-Ms") == "" {
-		delays := [...]string{"2", "5"}
 		attempt, _ := strconv.Atoi(req.Header.Get("X-Stainless-Retry-Count"))
-		if attempt < len(delays) {
-			resp.Header.Set("Retry-After", delays[attempt])
+		if attempt < len(retryDelays) {
+			resp.Header.Set("Retry-After", retryDelays[attempt])
 		}
 	}
 	return resp, err
+}
+
+// retryTelemetry applies retryTiming and tells the host, through out, that a
+// retry is coming and how long it will wait.
+//
+// It is one helper rather than one per adapter because the sentence it writes is
+// a claim about retryTiming's policy: the bound and the delays are that policy's,
+// and a second copy of them is a copy that drifts the first time the policy moves
+// — leaving one adapter announcing a wait nobody will honor and indexing past the
+// table it copied. label is the adapter's own name for the endpoint, which is the
+// only part that legitimately differs.
+func retryTelemetry(ctx context.Context, out chan Event, label, model string) option.RequestOption {
+	return option.WithMiddleware(retryNotice(ctx, out, label, model))
+}
+
+// retryNotice is the middleware retryTelemetry installs, named apart from the
+// option that installs it so a test can drive it one attempt at a time — the
+// attempt past the last delay included, which is where a bound and a table that
+// disagreed used to index out of range.
+func retryNotice(ctx context.Context, out chan Event, label, model string) option.Middleware {
+	return func(req *http.Request, next option.MiddlewareNext) (*http.Response, error) {
+		resp, err := retryTiming(req, next)
+		attempt, _ := strconv.Atoi(req.Header.Get("X-Stainless-Retry-Count"))
+		if attempt >= 0 && attempt < len(retryDelays) && retryableResponse(resp, err) {
+			emit(ctx, out, Event{Kind: StepRetrying, Text: fmt.Sprintf("%s (%s): %s Retrying in %ss…", label, model, retryReason(resp), retryDelays[attempt])})
+		}
+		return resp, err
+	}
 }
 
 // Stream abre un turno completo. Resuelve el modelo (req.Model con fallback al
@@ -212,17 +246,7 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request) (<-chan Event,
 		if !emit(ctx, out, Event{Kind: StepStarted}) {
 			return
 		}
-		stream := p.client.Chat.Completions.NewStreaming(ctx, params,
-			option.WithMiddleware(func(req *http.Request, next option.MiddlewareNext) (*http.Response, error) {
-				resp, err := retryTiming(req, next)
-				attempt, _ := strconv.Atoi(req.Header.Get("X-Stainless-Retry-Count"))
-				if attempt < 2 && retryableResponse(resp, err) {
-					delay := [...]string{"2", "5"}[attempt]
-					emit(ctx, out, Event{Kind: StepRetrying, Text: fmt.Sprintf("%s (%s): %s Retrying in %ss…", p.label, model, retryReason(resp), delay)})
-				}
-				return resp, err
-			}),
-		)
+		stream := p.client.Chat.Completions.NewStreaming(ctx, params, retryTelemetry(ctx, out, p.label, model))
 
 		var usage *Usage
 		textOpen := false

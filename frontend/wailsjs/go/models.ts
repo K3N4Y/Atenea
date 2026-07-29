@@ -39,6 +39,26 @@ export namespace main {
 	        this.contextWindow = source["contextWindow"];
 	    }
 	}
+	export class DeviceLogin {
+	    providerID: string;
+	    providerName: string;
+	    userCode: string;
+	    verificationURI: string;
+	    expiresAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DeviceLogin(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.providerID = source["providerID"];
+	        this.providerName = source["providerName"];
+	        this.userCode = source["userCode"];
+	        this.verificationURI = source["verificationURI"];
+	        this.expiresAt = source["expiresAt"];
+	    }
+	}
 	export class ProviderEntry {
 	    id: string;
 	    name: string;
@@ -46,6 +66,7 @@ export namespace main {
 	    builtIn: boolean;
 	    connectable: boolean;
 	    connected: boolean;
+	    connectKind: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ProviderEntry(source);
@@ -59,6 +80,7 @@ export namespace main {
 	        this.builtIn = source["builtIn"];
 	        this.connectable = source["connectable"];
 	        this.connected = source["connected"];
+	        this.connectKind = source["connectKind"];
 	    }
 	}
 

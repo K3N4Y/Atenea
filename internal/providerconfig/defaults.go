@@ -29,10 +29,17 @@ import (
 //     because the dialects differ: OpenAI answers to prompt_cache_key and
 //     rejects OpenRouter's top-level `reasoning`. The declared type — never the
 //     id — is what decides how a request is shaped.
+//   - `openai-codex` is the same vendor again and a third type, because a ChatGPT
+//     subscription is not an API key: its tokens are refused by api.openai.com
+//     and by chat completions, and the endpoint that accepts them takes a
+//     different request. It declares no api_key_env for the same reason — there
+//     is no variable that could hold a login — so it is connected, never
+//     inherited from the environment.
 //   - Model discovery is off everywhere but OpenRouter. OpenAI's GET /models
-//     lists embedding, audio and image models the agent loop cannot drive, and
-//     the OpenCode endpoints publish a catalog that ignores plan entitlement. A
-//     curated list is more honest than a filtered one.
+//     lists embedding, audio and image models the agent loop cannot drive, the
+//     codex backend publishes no /models at all, and the OpenCode endpoints
+//     publish a catalog that ignores plan entitlement. A curated list is more
+//     honest than a filtered one.
 //   - A provider's first model is its default: /connect activates it when
 //     nothing is selected yet. OpenRouter leads with openrouter/free, which
 //     routes to a free model, so a fresh connection always works.

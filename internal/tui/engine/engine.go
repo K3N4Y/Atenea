@@ -81,9 +81,20 @@ type ModelsRefreshedMsg struct {
 // ConnectService is the optional surface a ModelService can implement to
 // support /connect. providerconfig.Service does; fakes that do not care about
 // connection simply omit it.
+//
+// It carries both kinds of connection because they are one command: the panel
+// asks Connectable which kind a provider is and then drives the matching pair,
+// and a service that offered only one of the two would leave half the catalog
+// unconnectable through a surface that lists all of it.
 type ConnectService interface {
 	Connectable() []providerconfig.ConnectableProvider
 	Connect(ctx context.Context, providerID, apiKey string) (providerconfig.Active, error)
+	StartDeviceLogin(ctx context.Context, providerID string) (providerconfig.DeviceLogin, error)
+	AwaitDeviceLogin(ctx context.Context, providerID string) (providerconfig.Active, error)
+	// CancelDeviceLoginAttempt takes the attempt to retire, not just the provider:
+	// the panel abandons attempts it started and may get to one after the user has a
+	// second code on screen, which the blunt version would cancel instead.
+	CancelDeviceLoginAttempt(providerID string, attempt uint64)
 }
 
 // Engine is the headless agent: it assembles runner + tools + permissions
@@ -331,6 +342,38 @@ func (e *Engine) ConnectProvider(providerID, apiKey string) (providerconfig.Acti
 	return service.Connect(e.ctx, providerID, apiKey)
 }
 
+// StartDeviceLogin mints the code the user approves elsewhere, for a provider
+// whose credential is a login rather than a key. Blocking, like ConnectProvider:
+// the TUI calls it from a tea.Cmd.
+func (e *Engine) StartDeviceLogin(providerID string) (providerconfig.DeviceLogin, error) {
+	service, ok := e.models.(ConnectService)
+	if !ok {
+		return providerconfig.DeviceLogin{}, errors.New("provider connection is unavailable")
+	}
+	return service.StartDeviceLogin(e.ctx, providerID)
+}
+
+// AwaitDeviceLogin waits for the user to approve the code. It blocks for as long
+// as a human takes, so the caller runs it off the UI goroutine; e.ctx is what ends
+// it when the process shuts down.
+func (e *Engine) AwaitDeviceLogin(providerID string) (providerconfig.Active, error) {
+	service, ok := e.models.(ConnectService)
+	if !ok {
+		return providerconfig.Active{}, errors.New("provider connection is unavailable")
+	}
+	return service.AwaitDeviceLogin(e.ctx, providerID)
+}
+
+// CancelDeviceLogin abandons the attempt the panel started, which is what closing
+// it means. Idempotent, and a no-op when the provider has moved on to a newer
+// attempt: a code that already resolved is not there to cancel, and one the user
+// is looking at is not this caller's to retire.
+func (e *Engine) CancelDeviceLogin(providerID string, attempt uint64) {
+	if service, ok := e.models.(ConnectService); ok {
+		service.CancelDeviceLoginAttempt(providerID, attempt)
+	}
+}
+
 func (e *Engine) RefreshModels() {
 	e.mu.Lock()
 	if e.models == nil || e.refreshingModels {
@@ -360,7 +403,7 @@ func (e *Engine) Commands() []command.Command {
 func localCommands() []command.Command {
 	return []command.Command{
 		{Name: "compact", Description: "Compact conversation context", BuiltIn: true},
-		{Name: "connect", Description: "Connect a provider with an API key", BuiltIn: true},
+		{Name: "connect", Description: "Connect a provider by API key or ChatGPT login", BuiltIn: true},
 		{Name: "mcp", Description: "Toggle MCP servers on or off", BuiltIn: true},
 		{Name: "model", Description: "Select provider and model", BuiltIn: true},
 		{Name: "new", Description: "Start a new session", BuiltIn: true},

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -776,9 +777,191 @@ func TestTUI_ConnectCommandFullFlowUnderPTY(t *testing.T) {
 	waitForPTYText(t, output, "● OpenRouter")
 }
 
+// fakeChatGPTAuth is OpenAI's device-code authorization server, locally. The token
+// endpoint answers "not approved yet" until approve is closed, which is what lets
+// the test see the code on screen before the login completes — the state a real
+// user spends the whole flow in.
+//
+// The access token is an unsigned JWT carrying the account claim; nothing verifies
+// these signatures, on purpose, because we are not their audience.
+func fakeChatGPTAuth(approve <-chan struct{}, userCode, refreshToken string) *httptest.Server {
+	claims := base64.RawURLEncoding.EncodeToString([]byte(`{"chatgpt_account_id":"acct_e2e"}`))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/accounts/deviceauth/usercode", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintf(w, `{"device_auth_id":"deviceauth_e2e","user_code":%q,"interval":"1","expires_at":%q}`,
+			userCode, time.Now().Add(10*time.Minute).UTC().Format(time.RFC3339))
+	})
+	mux.HandleFunc("/api/accounts/deviceauth/token", func(w http.ResponseWriter, _ *http.Request) {
+		select {
+		case <-approve:
+			fmt.Fprint(w, `{"authorization_code":"ac_e2e","code_verifier":"cv_e2e"}`)
+		default:
+			// The status a login nobody has approved yet really answers with.
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, `{"detail":"not approved"}`)
+		}
+	})
+	mux.HandleFunc("/oauth/token", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintf(w, `{"access_token":"h.%s.s","refresh_token":%q,"id_token":"h.%s.s","expires_in":3600}`,
+			claims, refreshToken, claims)
+	})
+	return httptest.NewServer(mux)
+}
+
+// fakeCodexBackend is the backend a subscription talks to: one Responses turn over
+// SSE. It refuses a request that does not carry the bearer AND the account header,
+// so a reply proves the whole credential — not just the token — reached the wire.
+func fakeCodexBackend() *httptest.Server {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/responses", func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer h.") || r.Header.Get("chatgpt-account-id") != "acct_e2e" {
+			http.Error(w, `{"error":{"message":"unauthorized"}}`, http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: response.output_text.delta\ndata: "+
+			`{"type":"response.output_text.delta","sequence_number":1,"item_id":"m","output_index":0,"content_index":0,"delta":"SUBSCRIPTION-OK from fake codex"}`+"\n\n")
+		fmt.Fprint(w, "event: response.completed\ndata: "+
+			`{"type":"response.completed","sequence_number":2,"response":{"id":"r","status":"completed","usage":{"input_tokens":8,"output_tokens":4,"total_tokens":12}}}`+"\n\n")
+	})
+	return httptest.NewServer(mux)
+}
+
+// TestTUI_ChatGPTSubscriptionLoginUnderPTY pins the other half of /connect through
+// the real binary: a provider connected by approving a code somewhere else rather
+// than by pasting a secret.
+//
+// It drives what a user actually does — run /connect, read the code, approve it
+// elsewhere — and then insists on the four things that make the feature real rather
+// than demonstrated: the code and the page are on screen, no token ever is, the
+// credential lands in credentials.json as an oauth arm at 0600, and the very next
+// prompt streams from the codex backend using it.
+func TestTUI_ChatGPTSubscriptionLoginUnderPTY(t *testing.T) {
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "atenea")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, output)
+	}
+
+	const userCode = "V3H5-1MW96"
+	const refreshToken = "refresh-token-e2e-secret"
+	approve := make(chan struct{})
+	auth := fakeChatGPTAuth(approve, userCode, refreshToken)
+	defer auth.Close()
+	backend := fakeCodexBackend()
+	defer backend.Close()
+
+	// The subscription declared with its issuer and its backend pointed at the local
+	// stubs. It is the only provider, so there is nothing else the flow could pick.
+	configRoot := t.TempDir()
+	configDir := filepath.Join(configRoot, "atenea")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	config := `{"providers":[{"id":"openai-codex","name":"OpenAI (ChatGPT subscription)","type":"openai-codex","base_url":"` +
+		backend.URL + `","oauth_issuer":"` + auth.URL + `","disable_model_discovery":true,"models":["gpt-5.5"]}]}`
+	if err := os.WriteFile(filepath.Join(configDir, "providers.json"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(binary)
+	cmd.Dir = filepath.Join(repoRoot, "cmd/atenea/testdata/file-viewer/project")
+	cmd.Env = append(append(os.Environ(), blankProviderKeys()...), "XDG_CONFIG_HOME="+configRoot,
+		"ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
+	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stopPTYProcess(cmd, terminal)
+	output := &lockedBuffer{}
+	copyPTYAnsweringTerminalQueries(terminal, output)
+
+	waitForPTYText(t, output, " demo ─╯")
+
+	// The panel says the subscription is not connected, and selecting it starts the
+	// login straight away: there is no key to type.
+	if _, err := terminal.Write([]byte("/connect\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, output, "○ OpenAI (ChatGPT subscription)")
+	if _, err := terminal.Write([]byte("\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, output, userCode)
+	waitForPTYText(t, output, "/codex/device")
+	waitForPTYText(t, output, "waiting for approval")
+	if strings.Contains(ansi.Strip(output.String()), "API key:") {
+		t.Fatalf("the subscription must not be offered a key entry:\n%s", ansi.Strip(output.String()))
+	}
+
+	// The user approves the code in their browser. The next poll is an interval
+	// away, which is why this wait is longer than the UI's own.
+	close(approve)
+	waitForPTYTextWithin(t, output, "Connected to OpenAI (ChatGPT subscription)", 30*time.Second)
+	waitForPTYText(t, output, " gpt-5.5 ─╯")
+
+	// The credential is stored as its own arm, privately, and the selection is saved.
+	credentialsPath := filepath.Join(configDir, "credentials.json")
+	credentials, err := os.ReadFile(credentialsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(credentials), `"type": "oauth"`) || !strings.Contains(string(credentials), refreshToken) {
+		t.Fatalf("credentials.json does not hold the subscription login:\n%s", credentials)
+	}
+	if info, err := os.Stat(credentialsPath); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("credentials.json permissions = %v, %v; want 0600", info.Mode().Perm(), err)
+	}
+	persisted, err := os.ReadFile(filepath.Join(configDir, "providers.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(persisted), `"provider": "openai-codex"`) {
+		t.Fatalf("selection was not persisted after the login:\n%s", persisted)
+	}
+
+	// Nothing secret was ever drawn. The code is single-use and worthless without the
+	// account that approves it; the tokens are not, and a terminal gets scrolled
+	// back, screenshotted and pasted into issues.
+	screen := ansi.Strip(output.String())
+	for _, secret := range []string{refreshToken, "ac_e2e", "cv_e2e", "acct_e2e"} {
+		if strings.Contains(screen, secret) {
+			t.Fatalf("the terminal rendered the secret %q:\n%s", secret, screen)
+		}
+	}
+
+	// The live provider swapped: the next turn streams from the codex backend, which
+	// answers only a request carrying both halves of the credential.
+	before := output.String()
+	if _, err := terminal.Write([]byte("hola\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYTextAfter(t, output, before, "SUBSCRIPTION-OK from fake codex")
+
+	// Reopening the panel reflects the stored login.
+	if _, err := terminal.Write([]byte("/connect\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, output, "● OpenAI (ChatGPT subscription)")
+}
+
 func waitForPTYText(t *testing.T, output *lockedBuffer, want string) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	waitForPTYTextWithin(t, output, want, 3*time.Second)
+}
+
+// waitForPTYTextWithin is waitForPTYText with the deadline named, for the waits
+// whose length is not the UI's to control: an OAuth device flow only asks the
+// authorization server again after the interval it was given, so the second poll
+// is seconds away by protocol rather than by slowness.
+func waitForPTYTextWithin(t *testing.T, output *lockedBuffer, want string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if strings.Contains(ansi.Strip(output.String()), want) {
 			return

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -34,10 +35,31 @@ type ProviderEntry struct {
 	// BuiltIn marks the providers that ship with atenea, which are the ones the UI
 	// must not offer to remove: they would be back at the next launch.
 	BuiltIn bool `json:"builtIn"`
-	// Connectable is whether an API key can be stored for this provider from here.
-	// Connected is whether one already is.
+	// Connectable is whether a credential can be stored for this provider from
+	// here. Connected is whether one already is.
 	Connectable bool `json:"connectable"`
 	Connected   bool `json:"connected"`
+	// ConnectKind is HOW it is connected: "api_key" takes a pasted secret,
+	// "device_code" takes a code approved elsewhere. The UI reads it instead of
+	// inferring from the id, so a catalog change cannot leave it drawing a password
+	// field for a provider that has no password.
+	ConnectKind string `json:"connectKind"`
+}
+
+// DeviceLogin is a pending device-code login as the settings panel shows it: what
+// to open, what to type there, and when the code dies.
+//
+// ExpiresAt is RFC3339, and the panel renders it as the clock time the code stops
+// being approvable — the same sentence the terminal writes, so a user with both
+// open is not told two different things about one code. It is empty when the
+// authorization server named no expiry, and then neither host says anything: a
+// deadline invented downstream would be worse than silence.
+type DeviceLogin struct {
+	ProviderID      string `json:"providerID"`
+	ProviderName    string `json:"providerName"`
+	UserCode        string `json:"userCode"`
+	VerificationURI string `json:"verificationURI"`
+	ExpiresAt       string `json:"expiresAt"`
 }
 
 // ActiveProvider is the selection the UI shows and sizes the context bar with.
@@ -139,16 +161,17 @@ func (a *App) RefreshModels() ([]ProviderEntry, error) {
 // can manage: the catalog knows about models and the credential store knows about
 // keys, and a row needs both.
 func (a *App) providerEntries(providers []providerconfig.ProviderModels) []ProviderEntry {
-	connectable := map[string]bool{}
+	connectable := map[string]providerconfig.ConnectableProvider{}
 	for _, provider := range a.providers.Connectable() {
-		connectable[provider.ID] = provider.Connected
+		connectable[provider.ID] = provider
 	}
 	entries := make([]ProviderEntry, 0, len(providers))
 	for _, provider := range providers {
-		connected, isConnectable := connectable[provider.ID]
+		connection, isConnectable := connectable[provider.ID]
 		entries = append(entries, ProviderEntry{
 			ID: provider.ID, Name: provider.Name, Models: provider.Models,
-			BuiltIn: provider.BuiltIn, Connectable: isConnectable, Connected: connected,
+			BuiltIn: provider.BuiltIn, Connectable: isConnectable,
+			Connected: connection.Connected, ConnectKind: connection.Kind,
 		})
 	}
 	return entries
@@ -185,6 +208,75 @@ func (a *App) ConnectProvider(providerID, apiKey string) error {
 		_, err := a.providers.Connect(context.Background(), providerID, apiKey)
 		return err
 	})
+}
+
+// StartProviderLogin begins a device-code login and returns the code to show. It
+// is the binding the settings panel calls for a provider whose credential is a
+// login: there is no key to paste, so the UI's job is to show where to go and what
+// to type there.
+//
+// It does not wait. Painting the code and waiting for the user are two calls
+// because a binding that did both would hold the frontend for as long as a human
+// takes, and the code would arrive with the answer.
+func (a *App) StartProviderLogin(providerID string) (DeviceLogin, error) {
+	login, err := a.providers.StartDeviceLogin(context.Background(), providerID)
+	if err != nil {
+		return DeviceLogin{}, err
+	}
+	return deviceLogin(login), nil
+}
+
+// AwaitProviderLogin waits for the user to approve the code and then rebuilds the
+// workspace, which is what cuts the runs that came from the previous credential.
+// The wait itself happens outside Reconfigure: a human takes minutes, and holding
+// the workspace lock for one would freeze every turn in the window.
+//
+// A cancelled login comes back as no error at all. The settings panel paints
+// whatever this rejects with in red, and the user pressing Cancel is not something
+// to report back to them as a failure.
+func (a *App) AwaitProviderLogin(providerID string) error {
+	if _, err := a.providers.AwaitDeviceLogin(context.Background(), providerID); err != nil {
+		if errors.Is(err, providerconfig.ErrLoginCancelled) {
+			return nil
+		}
+		return err
+	}
+	return a.workspace.Reconfigure(func() error { return nil })
+}
+
+// CancelProviderLogin abandons a pending login — what closing the form means.
+// Idempotent, so the UI may call it on its way out without checking.
+func (a *App) CancelProviderLogin(providerID string) {
+	a.providers.CancelDeviceLogin(providerID)
+}
+
+// OpenLoginPage opens the verification page of a pending login in the user's
+// browser. It is an affordance and nothing depends on it: the code and the URL are
+// on screen, which is the whole point of the device flow — the machine running
+// atenea may have no browser at all.
+//
+// It takes a provider id rather than a URL so the frontend cannot ask this process
+// to open somewhere the authorization server did not name.
+func (a *App) OpenLoginPage(providerID string) error {
+	login, ok := a.providers.PendingDeviceLogin(providerID)
+	if !ok {
+		return providerconfig.ErrNoPendingLogin
+	}
+	runtime.BrowserOpenURL(a.ctx, login.VerificationURI)
+	return nil
+}
+
+func deviceLogin(login providerconfig.DeviceLogin) DeviceLogin {
+	out := DeviceLogin{
+		ProviderID:      login.ProviderID,
+		ProviderName:    login.ProviderName,
+		UserCode:        login.UserCode,
+		VerificationURI: login.VerificationURI,
+	}
+	if !login.ExpiresAt.IsZero() {
+		out.ExpiresAt = login.ExpiresAt.Format(time.RFC3339)
+	}
+	return out
 }
 
 // DeclareEndpoint adds a user's OpenAI-compatible endpoint (LM Studio, Ollama) to

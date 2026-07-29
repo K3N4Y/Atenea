@@ -156,11 +156,11 @@ func TestCredentialResolver_TimeoutKillsTheCommand(t *testing.T) {
 
 func TestCredentialResolver_UnknownTypeIsRefusedByName(t *testing.T) {
 	resolver := NewCredentialResolver(memoryCredentials{
-		"unknown": {Type: "oauth"},
+		"unknown": {Type: "sigv4"},
 		"untyped": {APIKey: "sk-stored"},
 	})
 	_, err := resolver.Token(context.Background(), "unknown")
-	if err == nil || !strings.Contains(err.Error(), `unknown credential type "oauth"`) || !strings.Contains(err.Error(), "api_key, exec") {
+	if err == nil || !strings.Contains(err.Error(), `unknown credential type "sigv4"`) || !strings.Contains(err.Error(), "api_key, exec, oauth") {
 		t.Fatalf("err = %v, want the unknown type named alongside the known ones", err)
 	}
 	// A credential that declares nothing is its own answer: it is not an api_key

@@ -13,18 +13,32 @@ import (
 // means adding the entry here plus a validation strategy in defaultKeyValidator;
 // the storage, resolution, and UI flow are already generic.
 var connectableProviderIDs = map[string]struct{}{
-	"anthropic":   {},
-	"openai":      {},
-	"openrouter":  {},
-	"opencode":    {},
-	"opencode-go": {},
+	"anthropic":    {},
+	"openai":       {},
+	"openai-codex": {},
+	"openrouter":   {},
+	"opencode":     {},
+	"opencode-go":  {},
 }
 
-// ConnectableProvider is one row of the /connect picker: a provider the user
-// can connect plus whether a credential is already stored for it.
+// The ways a provider is connected. They are two different conversations with the
+// user — paste a secret, or approve a code somewhere else — so a UI has to know
+// which one it is about to have before it draws anything.
+const (
+	ConnectAPIKey     = "api_key"
+	ConnectDeviceCode = "device_code"
+)
+
+// ConnectableProvider is one row of the /connect picker: a provider the user can
+// connect, how it is connected, and whether a credential is already stored for it.
 type ConnectableProvider struct {
-	ID        string
-	Name      string
+	ID   string
+	Name string
+	// Kind is [ConnectAPIKey] or [ConnectDeviceCode]. It is reported rather than
+	// inferred by the host: a UI that guessed from the id would be one release
+	// behind the catalog, and the wrong guess is a masked input where a code should
+	// be.
+	Kind      string
 	Connected bool
 }
 
@@ -68,9 +82,19 @@ func (s *Service) Connectable() []ConnectableProvider {
 		if s.credentials != nil {
 			_, connected = s.credentials.Get(provider.ID)
 		}
-		out = append(out, ConnectableProvider{ID: provider.ID, Name: provider.Name, Connected: connected})
+		out = append(out, ConnectableProvider{ID: provider.ID, Name: provider.Name, Kind: s.connectKindLocked(provider), Connected: connected})
 	}
 	return out
+}
+
+// connectKindLocked is how a provider is connected, answered by the registry: the
+// format that decides how a request is shaped is the same one that decides how it
+// is authenticated. The caller holds s.mu.
+func (s *Service) connectKindLocked(provider Provider) string {
+	if _, ok := s.registry.OAuth(provider.Type); ok {
+		return ConnectDeviceCode
+	}
+	return ConnectAPIKey
 }
 
 // Connect validates an API key against the provider, persists it, and makes
@@ -96,9 +120,15 @@ func (s *Service) Connect(ctx context.Context, providerID, apiKey string) (Activ
 	s.mu.RLock()
 	provider, ok := findProvider(s.config, providerID)
 	validate := s.validateKey
+	_, isLogin := s.registry.OAuth(provider.Type)
 	s.mu.RUnlock()
 	if !ok {
 		return s.Active(), fmt.Errorf("provider %q is not configured", providerID)
+	}
+	// Storing a pasted string for a provider whose credential is a login would
+	// produce a credential nothing can refresh and no request can route.
+	if isLogin {
+		return s.Active(), fmt.Errorf("provider %q is connected by logging in, not with an API key", providerID)
 	}
 	if validate == nil {
 		validate = defaultKeyValidator

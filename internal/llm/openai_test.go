@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -586,6 +587,45 @@ func TestRetryTimingDefaultsAndCapsProviderDelay(t *testing.T) {
 		})
 		if err != nil || resp.Header.Get("Retry-After") != tc.want {
 			t.Fatalf("attempt %s: Retry-After = %q, err = %v, want %q", tc.attempt, resp.Header.Get("Retry-After"), err, tc.want)
+		}
+	}
+}
+
+// TestRetryNotice_AnnouncesTheWaitRetryTimingActuallySets: what the user is told
+// is a claim about the policy retryTiming writes, and both OpenAI-family adapters
+// make it through this one middleware. The attempt past the last delay is the case
+// worth pinning: a bound kept apart from the table used to index out of range there
+// and take the turn down with a panic instead of just staying quiet.
+func TestRetryNotice_AnnouncesTheWaitRetryTimingActuallySets(t *testing.T) {
+	for attempt := 0; attempt <= len(retryDelays); attempt++ {
+		out := make(chan Event, 1)
+		req := httptest.NewRequest(http.MethodPost, "https://example.test", nil)
+		req.Header.Set("X-Stainless-Retry-Count", strconv.Itoa(attempt))
+		resp, err := retryNotice(context.Background(), out, "ChatGPT", "gpt-5.5")(req, func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: http.Header{}}, nil
+		})
+		if err != nil {
+			t.Fatalf("attempt %d: %v", attempt, err)
+		}
+		if attempt == len(retryDelays) {
+			select {
+			case ev := <-out:
+				t.Fatalf("attempt %d is past the last retry: announced %q anyway", attempt, ev.Text)
+			default:
+			}
+			continue
+		}
+		select {
+		case ev := <-out:
+			want := "ChatGPT (gpt-5.5): " + retryReason(resp) + " Retrying in " + retryDelays[attempt] + "s…"
+			if ev.Kind != StepRetrying || ev.Text != want {
+				t.Fatalf("attempt %d: notice = %v %q, want %q", attempt, ev.Kind, ev.Text, want)
+			}
+			if got := resp.Header.Get("Retry-After"); got != retryDelays[attempt] {
+				t.Fatalf("attempt %d: Retry-After = %q but the user was told %qs", attempt, got, retryDelays[attempt])
+			}
+		default:
+			t.Fatalf("attempt %d: a retry the SDK will make was not announced", attempt)
 		}
 	}
 }

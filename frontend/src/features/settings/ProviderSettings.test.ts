@@ -11,6 +11,7 @@ const row = (
     builtIn: boolean
     connectable: boolean
     connected: boolean
+    connectKind: string
   }> = {},
 ) => ({
   id,
@@ -19,6 +20,7 @@ const row = (
   builtIn: extra.builtIn ?? true,
   connectable: extra.connectable ?? false,
   connected: extra.connected ?? false,
+  connectKind: extra.connectKind ?? 'api_key',
 })
 
 const cloud = row('anthropic', ['claude-opus-4-8', 'claude-sonnet-5'], {
@@ -29,6 +31,20 @@ const local = row('lm-studio', ['qwen'], {
   name: 'LM Studio',
   builtIn: false,
 })
+// A subscription is connected by approving a code somewhere else, which is a
+// different row entirely: no field to paste into.
+const subscription = row('openai-codex', ['gpt-5.5'], {
+  name: 'OpenAI (ChatGPT subscription)',
+  connectable: true,
+  connectKind: 'device_code',
+})
+const pendingLogin = {
+  providerID: 'openai-codex',
+  providerName: 'OpenAI (ChatGPT subscription)',
+  userCode: 'V3H5-1MW96',
+  verificationURI: 'https://auth.openai.com/codex/device',
+  expiresAt: '2026-07-28T01:58:53Z',
+}
 
 // ProviderSettings es presentacional: recibe el catalogo y la seleccion vigente por
 // props y emite `select`, `connect`, `forget`, `declare`, `refresh` y `list-models`.
@@ -116,6 +132,101 @@ describe('ProviderSettings', () => {
     await wrapper.find('[data-connect-form="anthropic"]').trigger('submit')
 
     expect(wrapper.emitted('connect')?.[0]).toEqual(['anthropic', 'sk-ant'])
+  })
+
+  // A provider whose credential is a login has no password to ask for. Drawing one
+  // would be asking the user for something that does not exist.
+  it('offers a sign-in button instead of a key field for a subscription', async () => {
+    const wrapper = mount(ProviderSettings, {
+      props: { providers: [cloud, subscription] },
+    })
+
+    expect(wrapper.find('[data-api-key-input="openai-codex"]').exists()).toBe(
+      false,
+    )
+    expect(wrapper.find('[data-connect-form="openai-codex"]').exists()).toBe(
+      false,
+    )
+    expect(wrapper.find('[data-login-form="anthropic"]').exists()).toBe(false)
+
+    const button = wrapper.find('[data-start-login="openai-codex"]')
+    expect(button.text()).toBe('Sign in with ChatGPT')
+    await button.trigger('click')
+    expect(wrapper.emitted('login')?.[0]).toEqual(['openai-codex'])
+  })
+
+  // The code is the whole interaction: without it on screen there is nothing for
+  // the user to do, and a spinner alone would look like the app hung.
+  it('shows the device code and where to enter it while a login is pending', async () => {
+    const wrapper = mount(ProviderSettings, {
+      props: { providers: [subscription], pendingLogin },
+    })
+
+    expect(wrapper.find('[data-login-code="openai-codex"]').text()).toBe(
+      'V3H5-1MW96',
+    )
+    expect(wrapper.find('[data-login-form="openai-codex"]').text()).toContain(
+      'https://auth.openai.com/codex/device',
+    )
+    expect(wrapper.find('[data-start-login="openai-codex"]').exists()).toBe(
+      false,
+    )
+
+    await wrapper.find('[data-open-login-page="openai-codex"]').trigger('click')
+    expect(wrapper.emitted('open-login-page')?.[0]).toEqual(['openai-codex'])
+    await wrapper.find('[data-cancel-login="openai-codex"]').trigger('click')
+    expect(wrapper.emitted('cancel-login')?.[0]).toEqual(['openai-codex'])
+  })
+
+  // A code dies in ten minutes and then the sign-in fails for a reason nothing on
+  // screen predicted. Both hosts say when: the terminal panel writes the same
+  // sentence, and a clock time stays true whether or not anything redraws it.
+  it('says when the pending code expires', () => {
+    const wrapper = mount(ProviderSettings, {
+      props: { providers: [subscription], pendingLogin },
+    })
+
+    const expected = new Date(pendingLogin.expiresAt).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+    expect(wrapper.find('[data-login-status="openai-codex"]').text()).toBe(
+      `Waiting for approval in your browser… the code expires at ${expected}`,
+    )
+  })
+
+  // A server that named no expiry gets no deadline invented for it: a made-up one
+  // is worse than saying nothing.
+  it('invents no deadline when the server named none', () => {
+    const wrapper = mount(ProviderSettings, {
+      props: {
+        providers: [subscription],
+        pendingLogin: { ...pendingLogin, expiresAt: '' },
+      },
+    })
+
+    expect(wrapper.find('[data-login-status="openai-codex"]').text()).toBe(
+      'Waiting for approval in your browser…',
+    )
+  })
+
+  // A login pending on one provider must not put a code on another provider's row.
+  it('shows the pending code only on the provider it belongs to', () => {
+    const other = row('openai-codex-2', ['gpt-5.4'], {
+      connectable: true,
+      connectKind: 'device_code',
+    })
+    const wrapper = mount(ProviderSettings, {
+      props: { providers: [subscription, other], pendingLogin },
+    })
+
+    expect(wrapper.find('[data-login-code="openai-codex"]').exists()).toBe(true)
+    expect(wrapper.find('[data-login-code="openai-codex-2"]').exists()).toBe(
+      false,
+    )
+    expect(wrapper.find('[data-start-login="openai-codex-2"]').exists()).toBe(
+      true,
+    )
   })
 
   // Solo los endpoints declarados por el usuario se pueden quitar: uno de fabrica

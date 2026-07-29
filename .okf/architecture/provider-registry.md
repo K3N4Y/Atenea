@@ -1,6 +1,6 @@
 ---
-updated_at: 2026-07-26
-summary: How a provider's declared wire format resolves to the adapter that speaks it — the factory registry that replaced two closed switches, and why the dialect became the type.
+updated_at: 2026-07-27
+summary: How a provider's declared wire format resolves to the adapter that speaks it — the factory registry that replaced two closed switches, why the dialect became the type, and how a format declares that its credential is a login rather than a string.
 ---
 
 # Provider registry
@@ -41,13 +41,29 @@ neither could be extended from outside:
 ## The shape
 
 ```go
-type Factory func(def Provider, model, apiKey string) (llm.Provider, error)
+type BuildParams struct {
+    Provider Provider
+    Model    string
+    APIKey   string
+    Tokens   llm.OAuthTokenSource
+}
+
+type Factory func(BuildParams) (llm.Provider, error)
 type Registry map[string]Format
 
 func DefaultRegistry() Registry
-func (r Registry) Build(def Provider, model, apiKey string) (llm.Provider, error)
+func (r Registry) Build(params BuildParams) (llm.Provider, error)
 func (r Registry) Types() []string
+func (r Registry) OAuth(providerType string) (*OAuthFlow, bool)
 ```
+
+> `[updated 2026-07-27]` `Factory` took `(def, model, apiKey)` until the
+> `openai-codex` format arrived, whose credential is a login rather than a string:
+> its bearer expires within the hour and travels with an account id, so what a
+> factory needs is not the credential but the way to ask for one. The parameters
+> became a struct so the next kind of auth arrives as a field instead of as a
+> signature change in every factory that does not care. See
+> [Driving atenea with a ChatGPT subscription](../specs/2026-07-27-openai-subscription-oauth.md).
 
 > R3.2 widened the map's value from a bare `Factory` to a `Format` that also
 > describes the wire format without building it. See
@@ -75,7 +91,7 @@ can never reach another — the failure mode of a shared package-level registry.
 
 ## The type is the dialect
 
-Four wire formats ship:
+Five wire formats ship:
 
 | Type | Adapter | What it means |
 |---|---|---|
@@ -83,6 +99,26 @@ Four wire formats ship:
 | `openai` | OpenAI adapter, `WithOpenAICompatibility` | official OpenAI: `prompt_cache_key`, no `reasoning` |
 | `openrouter` | OpenAI adapter, `WithOpenRouterCompatibility` | OpenRouter routing: `session_id`, `reasoning` unless opted out |
 | `openai-compatible` | OpenAI adapter, `WithoutOpenRouterReasoning` | the neutral dialect: chat completions, no vendor extension |
+| `openai-codex` | `llm.NewCodexProvider` | a ChatGPT subscription: the codex backend's Responses API, authenticated by a login |
+
+`openai-codex` is the same vendor a third time, and the clearest case yet for the
+type deciding everything: a subscription token is refused by `api.openai.com` and
+by chat completions, and the endpoint that accepts it wants the system prompt in a
+field, refuses an output ceiling, and identifies the caller with a header. Nothing
+about that could have been an option on `openai`.
+
+### A format declares how it is authenticated
+
+`[updated 2026-07-27]` `Format` gained an optional `OAuth *OAuthFlow` carrying the
+two halves of a login — renew a stored credential, run the login that creates one.
+Everything that has to tell a login-authenticated provider from a key-authenticated
+one asks `Registry.OAuth`: which credential seam to wire into `BuildParams`, which
+affordance a UI draws, which `/connect` branch to take.
+
+It lives on the format for the same reason the dialect became the type. The
+alternative is the credential wiring switching on type names, which is the coupling
+this registry exists to remove — and worse, it would hand a third party's OAuth
+format OpenAI's refresh protocol.
 
 Keying the registry on `Type` alone would have left the `ID` switch alive inside
 the `openai-compatible` factory — a registry with a switch in it. Promoting the

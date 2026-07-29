@@ -1,9 +1,9 @@
 ---
 updated_at: 2026-07-27
-summary: Design specification for API-key provider connection, the shared credential store, and the production gating of .env loading.
+summary: Design specification for provider connection — the API-key flow, the shared credential store, and the production gating of .env loading.
 ---
 
-# /connect: provider connection by API key
+# /connect: provider connection
 
 ## Problem
 
@@ -44,16 +44,33 @@ directory it runs from.
   "a credential is stored", whichever arm it declares. See
   [Provider credentials](../architecture/provider-credentials.md).
 - **Scope.** Anthropic, OpenAI, OpenRouter, OpenCode Zen, and OpenCode Go are
-  connectable by API key. OAuth for OpenAI is explicitly deferred; adding it
-  later uses another credential variant without changing API-key files. The
-  flow, storage, and resolution are shared by the TUI and Wails hosts through
-  `providerconfig`, including the desktop `ConnectProvider` binding.
+  connectable by API key. The flow, storage, and resolution are shared by the TUI
+  and Wails hosts through `providerconfig`, including the desktop
+  `ConnectProvider` binding.
+  `[updated 2026-07-27]` OAuth is no longer deferred: `openai-codex` connects a
+  ChatGPT Plus/Pro subscription through a device-code login, which uses the
+  `oauth` credential variant and leaves API-key files untouched — exactly the
+  shape this note anticipated. `/connect` now branches on how a provider is
+  connected, which `Connectable()` reports as `Kind` (`api_key` or
+  `device_code`), so neither host infers it from a provider id. See
+  [Driving atenea with a ChatGPT subscription](2026-07-27-openai-subscription-oauth.md).
 - **UX.** `/connect` opens a full-screen panel listing connectable providers
   with their stored-credential state; `/connect openai` and the other provider
   ids jump straight to the key entry. The key is typed or pasted into a masked
   input owned by the panel — it never passes through the composer nor its
   persisted history.
   While validation is in flight the panel shows the state and ignores edits.
+  `[updated 2026-07-27]` A provider whose credential is a login takes the other
+  branch: selecting it starts the login at once (there is nothing to type) and the
+  panel shows the page to open, the code to enter, and that it is waiting for
+  approval; `esc` cancels the login and steps back to the list, and pressed while
+  the code is still being minted it retires that attempt — by name, so a mint that
+  answers late cannot cancel the code the user is looking at by then — instead of
+  leaving one polling behind a closed panel.
+  `esc` over a key *validation* closes the panel without silencing anything: the
+  key is already at the provider and a rejection still reaches the transcript.
+  Dropping it would let the user believe they connected until the next turn
+  answered "no credential stored for provider".
 - **Validation.** The key is checked against the provider before storing
   (OpenRouter: `GET {base_url}/key`; OpenAI: the read-only
   `GET {base_url}/models`; both send the key as Bearer; 401/403 = invalid key,

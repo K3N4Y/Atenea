@@ -36,7 +36,7 @@ func everyType(build Factory) Registry {
 // inertRegistry builds a provider that streams nothing, for the tests whose
 // subject is the config round trip rather than the adapter.
 func inertRegistry() Registry {
-	return everyType(func(Provider, string, string) (llm.Provider, error) { return inertProvider{}, nil })
+	return everyType(func(BuildParams) (llm.Provider, error) { return inertProvider{}, nil })
 }
 
 func fallbackSnapshot() llm.ProviderSnapshot {
@@ -110,8 +110,8 @@ func TestService_LegacyDialectSurvivesTheRoundTripToDisk(t *testing.T) {
 		t.Fatal(err)
 	}
 	var built []string
-	factory := func(def Provider, _ string, _ string) (llm.Provider, error) {
-		built = append(built, def.Type)
+	factory := func(params BuildParams) (llm.Provider, error) {
+		built = append(built, params.Provider.Type)
 		return inertProvider{}, nil
 	}
 	s, err := Open(context.Background(), path, "", fallbackSnapshot(), os.Getenv, everyType(factory), nil, nil, nil)
@@ -146,8 +146,8 @@ func TestService_OpenResolvesKeyFromCredentialStoreWhenEnvIsEmpty(t *testing.T) 
 		t.Fatal(err)
 	}
 	gotKey := ""
-	factory := func(_ Provider, _ string, apiKey string) (llm.Provider, error) {
-		gotKey = apiKey
+	factory := func(params BuildParams) (llm.Provider, error) {
+		gotKey = params.APIKey
 		return inertProvider{}, nil
 	}
 	s, err := Open(context.Background(), path, "", fallbackSnapshot(), func(string) string { return "" }, everyType(factory), nil, nil, credentials)
@@ -174,8 +174,8 @@ func TestService_EnvironmentKeyWinsOverStoredCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	gotKey := ""
-	factory := func(_ Provider, _ string, apiKey string) (llm.Provider, error) {
-		gotKey = apiKey
+	factory := func(params BuildParams) (llm.Provider, error) {
+		gotKey = params.APIKey
 		return inertProvider{}, nil
 	}
 	getenv := func(name string) string {
@@ -202,7 +202,7 @@ func openRouterDefaults() Config {
 func TestService_ConnectStoresKeyAndActivatesDefaultModelWhenNothingSelected(t *testing.T) {
 	dir := t.TempDir()
 	credentials := NewFileCredentialStore(filepath.Join(dir, "credentials.json"))
-	factory := func(_ Provider, _ string, apiKey string) (llm.Provider, error) { return inertProvider{}, nil }
+	factory := func(BuildParams) (llm.Provider, error) { return inertProvider{}, nil }
 	s, err := Open(context.Background(), filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, everyType(factory), nil, nil, credentials, openRouterDefaults())
 	if err != nil {
 		t.Fatal(err)
@@ -242,8 +242,8 @@ func TestService_ConnectAnthropicStoresKeyAndActivatesNativeProvider(t *testing.
 		DisableModelDiscovery: true, Models: []string{"claude-sonnet-4-5-20250929"},
 	}}}
 	var built Provider
-	factory := func(provider Provider, _ string, _ string) (llm.Provider, error) {
-		built = provider
+	factory := func(params BuildParams) (llm.Provider, error) {
+		built = params.Provider
 		return inertProvider{}, nil
 	}
 	s, err := Open(context.Background(), filepath.Join(dir, "providers.json"), "", fallbackSnapshot(), func(string) string { return "" }, everyType(factory), nil, nil, credentials, defaults)
@@ -298,8 +298,8 @@ func TestService_ConnectRotatesKeyOfSelectedProviderLive(t *testing.T) {
 		t.Fatal(err)
 	}
 	keys := []string{}
-	factory := func(_ Provider, _ string, apiKey string) (llm.Provider, error) {
-		keys = append(keys, apiKey)
+	factory := func(params BuildParams) (llm.Provider, error) {
+		keys = append(keys, params.APIKey)
 		return inertProvider{}, nil
 	}
 	s, err := Open(context.Background(), path, "", fallbackSnapshot(), func(string) string { return "" }, everyType(factory), nil, nil, credentials)
@@ -716,8 +716,8 @@ func TestService_SelectBuildsTheAdapterWithTheTokenTheCommandPrinted(t *testing.
 		return []byte(token + "\n"), nil
 	})
 	var built []string
-	s.registry = everyType(func(_ Provider, _ string, apiKey string) (llm.Provider, error) {
-		built = append(built, apiKey)
+	s.registry = everyType(func(params BuildParams) (llm.Provider, error) {
+		built = append(built, params.APIKey)
 		return inertProvider{}, nil
 	})
 
@@ -761,8 +761,8 @@ func TestService_EnvironmentKeyWinsOverAnExecCredentialWithoutRunningIt(t *testi
 		return ""
 	}
 	gotKey := ""
-	s.registry = everyType(func(_ Provider, _ string, apiKey string) (llm.Provider, error) {
-		gotKey = apiKey
+	s.registry = everyType(func(params BuildParams) (llm.Provider, error) {
+		gotKey = params.APIKey
 		return inertProvider{}, nil
 	})
 	if _, err := s.Select(context.Background(), "p", "one"); err != nil {

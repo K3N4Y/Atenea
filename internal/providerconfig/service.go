@@ -53,6 +53,17 @@ type Service struct {
 	// validateKey guards Connect: nil means defaultKeyValidator (real network
 	// check); tests inject their own.
 	validateKey KeyValidator
+	// logins are the device-code logins in flight, one per provider at most, under
+	// a lock of their own. Waiting for a human must not hold the lock the model
+	// picker and the composer footer read the configuration through.
+	//
+	// loginSeq numbers the attempts in the order they STARTED, which is not the
+	// order they finish minting: the code arrives after a network round trip, so two
+	// attempts can land inverted. The number is what tells the newer of the two from
+	// the older once both are back.
+	loginMu  sync.Mutex
+	loginSeq uint64
+	logins   map[string]*pendingLogin
 }
 
 // Open loads the provider configuration and activates the persisted selection.
@@ -108,7 +119,7 @@ func Open(ctx context.Context, path, cachePath string, fallback llm.ProviderSnap
 	if err != nil {
 		return s, err
 	}
-	delegate, err := registry.Build(provider, cfg.Selected.Model, apiKey)
+	delegate, err := registry.Build(s.buildParams(provider, cfg.Selected.Model, apiKey))
 	if err != nil {
 		return s, err
 	}
@@ -309,7 +320,7 @@ func (s *Service) selectLocked(providerID, model, apiKey string) (Active, error)
 	if !ok {
 		return s.activeLocked(), fmt.Errorf("provider %q is not configured", providerID)
 	}
-	delegate, err := s.registry.Build(provider, model, apiKey)
+	delegate, err := s.registry.Build(s.buildParams(provider, model, apiKey))
 	if err != nil {
 		return s.activeLocked(), err
 	}
@@ -322,6 +333,26 @@ func (s *Service) selectLocked(providerID, model, apiKey string) (Active, error)
 	s.switcher.Swap(snapshot(provider, model, delegate))
 	return s.activeLocked(), nil
 }
+
+// buildParams is what the registry needs to construct one live provider: the
+// declared endpoint, the model, the resolved static credential, and — for a format
+// whose credential is a login — the seam that resolves one per request.
+func (s *Service) buildParams(provider Provider, model, apiKey string) BuildParams {
+	return BuildParams{Provider: provider, Model: model, APIKey: apiKey, Tokens: s.tokenSource(provider)}
+}
+
+// tokenSource is the per-request credential seam for a provider whose format
+// authenticates with a login, and nil for every other one. Which of the two a
+// provider is comes from the registry rather than from its declared type read here:
+// the registry is where a wire format's facts live.
+func (s *Service) tokenSource(provider Provider) llm.OAuthTokenSource {
+	flow, ok := s.registry.OAuth(provider.Type)
+	if !ok || flow.Refresh == nil {
+		return nil
+	}
+	return s.tokens.OAuthTokenSource(provider.ID, flow.Refresh(provider))
+}
+
 func findProvider(cfg Config, id string) (Provider, bool) {
 	for _, provider := range cfg.Providers {
 		if provider.ID == id {

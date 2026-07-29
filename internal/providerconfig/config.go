@@ -25,6 +25,13 @@ type Provider struct {
 	// convention can offer the override.
 	ModelEnv            string `json:"model_env,omitempty"`
 	OpenRouterReasoning bool   `json:"openrouter_reasoning,omitempty"`
+	// OAuthIssuer is the authorization server that issues this provider's
+	// credential, for the wire formats whose auth is a login rather than a key. It
+	// is declared beside BaseURL and for the same reason: which host a credential
+	// comes from is a fact about the endpoint, and one compiled into an adapter
+	// cannot be pointed anywhere else — not at a stub, not at an enterprise tenant.
+	// Empty means the format's own default.
+	OAuthIssuer string `json:"oauth_issuer,omitempty"`
 	// LocalModels declares an endpoint whose models run on the user's own machine
 	// (LM Studio, Ollama, vLLM). It is a fact about the endpoint, not a request:
 	// a host that shapes anything around the difference — atenea picks the system
@@ -118,6 +125,7 @@ func normalizeAndValidate(cfg *Config) error {
 		provider.BaseURL = strings.TrimRight(strings.TrimSpace(provider.BaseURL), "/")
 		provider.APIKeyEnv = strings.TrimSpace(provider.APIKeyEnv)
 		provider.ModelEnv = strings.TrimSpace(provider.ModelEnv)
+		provider.OAuthIssuer = strings.TrimRight(strings.TrimSpace(provider.OAuthIssuer), "/")
 		if provider.ID == "" || provider.Name == "" || provider.Type == "" || provider.BaseURL == "" {
 			return fmt.Errorf("provider %d requires id, name, type, and base_url", i)
 		}

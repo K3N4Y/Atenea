@@ -204,10 +204,17 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
             :discoveredModels="discovered"
             :refreshing="refreshing"
             :error="providerError"
+            :pendingLogin="chat.pendingLogin"
+            :startingLogin="chat.startingLogin"
             @select="(id, m) => runProvider(() => chat.selectModel(id, m))"
             @connect="
               (id, key) => runProvider(() => chat.connectProvider(id, key))
             "
+            @login="(id) => runProvider(() => chat.startProviderLogin(id))"
+            @cancel-login="
+              (id) => runProvider(() => chat.cancelProviderLogin(id))
+            "
+            @open-login-page="(id) => runProvider(() => chat.openLoginPage(id))"
             @forget="(id) => runProvider(() => chat.forgetProvider(id))"
             @declare="declareEndpoint"
             @refresh="refreshModels"

@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-26
+updated_at: 2026-07-27
 summary: Which providers a fresh install offers and which one a bare environment lands on — the embedded default catalog that replaced a table in an unimportable main package, and the environment fallback derived from it.
 ---
 
@@ -104,6 +104,17 @@ Two behaviours are deliberate:
 host, not here: it is a fake for driving the TUI, and `providerconfig` has no
 business shipping one.
 
+## A provider without an API-key variable
+
+`[updated 2026-07-27]` Every shipped entry declares `api_key_env` except
+`openai-codex`, whose credential is a ChatGPT subscription login. There is no
+variable that could hold one, and declaring a name anyway would cost twice: an
+unconnected subscription would look configured, and `EnvironmentFallback` could
+select a provider it has no way to authenticate. `defaults_test.go` pins the rule
+as "an `api_key_env` exactly when the credential is not a login", asking the
+registry which is which rather than listing ids. See
+[Driving atenea with a ChatGPT subscription](../specs/2026-07-27-openai-subscription-oauth.md).
+
 ## The model override is declared, not derived
 
 A provider names the variable that overrides which model it starts on:
@@ -123,8 +134,9 @@ override; a provider that omits the field simply has no override.
 ## What the JSON cannot hold
 
 Comments. The rationale for each entry — why Anthropic leads, why model discovery
-is off everywhere but OpenRouter, why OpenAI and OpenRouter declare different
-types for the same protocol, why the first model matters — lives in the doc
+is off everywhere but OpenRouter, why OpenAI, OpenRouter and the ChatGPT
+subscription declare three different types for the same vendor, why the first model
+matters — lives in the doc
 comment on `defaultCatalogJSON` in `defaults.go`, next to the `//go:embed` that
 pulls the file in. The invariants that comment asserts are pinned by
 `defaults_test.go`, so the prose and the data cannot drift apart silently.

@@ -5,10 +5,23 @@ import (
 	"strings"
 )
 
+// What must never reach the transcript, even under Details. A provider's error can
+// quote the request that caused it, and this is the last stop before a secret is
+// drawn on a screen that gets scrolled back, screenshotted and pasted into issues.
 var providerSecretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)(api[_-]?key["' :=?&]+)[^&\s,"'}]+`),
+	// Both halves of a device-code grant. They go first because the generic
+	// authorization pattern below stops at the word boundary and would never see
+	// `authorization_code`, and because a leaked pair is a login an attacker can
+	// complete.
+	regexp.MustCompile(`(?i)((?:authorization[_-]?code|code[_-]?verifier)["' :=?&]+)[^&\s,"'}]+`),
 	regexp.MustCompile(`(?i)(authorization["' :=]+(?:bearer\s+)?)[^\s,"'}]+`),
 	regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{8,}\b`),
+	// The OAuth arm's own field names, however they are spelled in a body.
+	regexp.MustCompile(`(?i)((?:access|refresh|id)[_-]?token["' :=?&]+)[^&\s,"'}]+`),
+	// A JWT, wherever it appears. Base64url-encoded JSON always starts `eyJ`, which
+	// is what makes a bare token recognizable with no field name around it.
+	regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]*`),
 }
 
 // friendlyProviderError keeps provider internals available under Details while

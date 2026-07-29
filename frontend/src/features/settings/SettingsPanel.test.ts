@@ -34,6 +34,10 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   RefreshModels: vi.fn(() => Promise.resolve([])),
   SelectModel: vi.fn(() => Promise.resolve()),
   ConnectProvider: vi.fn(() => Promise.resolve()),
+  StartProviderLogin: vi.fn(),
+  AwaitProviderLogin: vi.fn(),
+  CancelProviderLogin: vi.fn(() => Promise.resolve()),
+  OpenLoginPage: vi.fn(() => Promise.resolve()),
   DeclareEndpoint: vi.fn(() => Promise.resolve('lm-studio')),
   ForgetProvider: vi.fn(() => Promise.resolve()),
   ListModels: vi.fn(() => Promise.resolve([])),
@@ -57,10 +61,40 @@ import SettingsPanel from './SettingsPanel.vue'
 import ProviderSettings from './ProviderSettings.vue'
 import * as App from '../../../wailsjs/go/main/App'
 
+// A catalog with both kinds of connection, because the panel wires a different
+// pair of actions to each: a key row submits a form, a subscription row starts a
+// login and later cancels it.
+const anthropicRow = {
+  id: 'anthropic',
+  name: 'Anthropic',
+  models: ['claude-opus-4-8', 'claude-sonnet-5'],
+  builtIn: true,
+  connectable: true,
+  connected: false,
+  connectKind: 'api_key',
+}
+const subscriptionRow = {
+  id: 'openai-codex',
+  name: 'OpenAI (ChatGPT subscription)',
+  models: ['gpt-5.5'],
+  builtIn: true,
+  connectable: true,
+  connected: false,
+  connectKind: 'device_code',
+}
+const deviceCode = {
+  providerID: 'openai-codex',
+  providerName: 'OpenAI (ChatGPT subscription)',
+  userCode: 'V3H5-1MW96',
+  verificationURI: 'https://auth.openai.com/codex/device',
+  expiresAt: '2026-07-28T01:58:53Z',
+}
+
 beforeEach(() => {
   setActivePinia(createPinia())
   vi.clearAllMocks()
   vi.mocked(App.ListMCPs).mockResolvedValue([])
+  vi.mocked(App.ProviderCatalog).mockResolvedValue([anthropicRow])
 })
 
 function mcpsTabOf(wrapper: ReturnType<typeof mount>) {
@@ -264,6 +298,82 @@ describe('SettingsPanel', () => {
     await flushPromises()
 
     expect(App.ConnectProvider).toHaveBeenCalledWith('anthropic', 'sk-ant')
+  })
+
+  // The panel owns the login the way it owns every other provider action: it runs
+  // it, shows the code the store holds, and lowers whatever it fails with. None of
+  // that was wired to anything until this row existed.
+  it('starts a device-code login and shows the code the backend minted', async () => {
+    vi.mocked(App.ProviderCatalog).mockResolvedValue([subscriptionRow])
+    vi.mocked(App.StartProviderLogin).mockResolvedValue(deviceCode)
+    vi.mocked(App.AwaitProviderLogin).mockReturnValue(new Promise(() => {}))
+    const wrapper = mount(SettingsPanel)
+    await flushPromises()
+
+    await wrapper.find('[data-start-login="openai-codex"]').trigger('click')
+    await flushPromises()
+
+    expect(App.StartProviderLogin).toHaveBeenCalledWith('openai-codex')
+    expect(App.AwaitProviderLogin).toHaveBeenCalledWith('openai-codex')
+    expect(wrapper.get('[data-login-code="openai-codex"]').text()).toBe(
+      'V3H5-1MW96',
+    )
+    await wrapper.find('[data-open-login-page="openai-codex"]').trigger('click')
+    expect(App.OpenLoginPage).toHaveBeenCalledWith('openai-codex')
+  })
+
+  // Cancelling is a decision the user took. Painting "context canceled" in red next
+  // to the row blames them for the button they just pressed.
+  it('does not report a cancelled login as a failure', async () => {
+    vi.mocked(App.ProviderCatalog).mockResolvedValue([subscriptionRow])
+    vi.mocked(App.StartProviderLogin).mockResolvedValue(deviceCode)
+    // Cancelling is what ends the wait, and the backend answers a cancelled one
+    // with nothing to report — which is what this panel depends on, because it
+    // lowers whatever a provider action rejects with into the error line.
+    let endTheWait: () => void = () => {}
+    vi.mocked(App.AwaitProviderLogin).mockReturnValue(
+      new Promise<void>((resolve) => {
+        endTheWait = resolve
+      }),
+    )
+    vi.mocked(App.CancelProviderLogin).mockImplementationOnce(async () =>
+      endTheWait(),
+    )
+    const wrapper = mount(SettingsPanel)
+    await flushPromises()
+
+    await wrapper.find('[data-start-login="openai-codex"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-cancel-login="openai-codex"]').trigger('click')
+    await flushPromises()
+
+    expect(App.CancelProviderLogin).toHaveBeenCalledWith('openai-codex')
+    expect(wrapper.find('[data-provider-error]').exists()).toBe(false)
+    expect(wrapper.find('[data-login-code="openai-codex"]').exists()).toBe(
+      false,
+    )
+    expect(wrapper.get('[data-start-login="openai-codex"]').text()).toBe(
+      'Sign in with ChatGPT',
+    )
+  })
+
+  // The mint round trip is the one window with nothing on screen. A live button
+  // there lets a double click retire the code the first click is about to show.
+  it('deadens the sign-in button while the code is being minted', async () => {
+    vi.mocked(App.ProviderCatalog).mockResolvedValue([subscriptionRow])
+    vi.mocked(App.StartProviderLogin).mockReturnValue(new Promise(() => {}))
+    const wrapper = mount(SettingsPanel)
+    await flushPromises()
+
+    await wrapper.find('[data-start-login="openai-codex"]').trigger('click')
+    await flushPromises()
+
+    const button = wrapper.get('[data-start-login="openai-codex"]')
+    expect(button.attributes('disabled')).toBeDefined()
+    expect(button.text()).toBe('Signing in…')
+    await button.trigger('click')
+    await flushPromises()
+    expect(App.StartProviderLogin).toHaveBeenCalledTimes(1)
   })
 
   it('probes an endpoint for its models before it is declared', async () => {

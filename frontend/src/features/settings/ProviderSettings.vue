@@ -8,7 +8,8 @@ import {
   PhPlus,
   PhX,
 } from '@phosphor-icons/vue'
-import type { ProviderRow } from './provider'
+import type { DeviceLogin, ProviderRow } from './provider'
+import { CONNECT_DEVICE_CODE } from './provider'
 
 // Selector de modelo del panel de ajustes (pestania General). Presentacional: el
 // catalogo y la seleccion vigente llegan por props y las acciones salen como
@@ -27,6 +28,14 @@ const props = withDefaults(
     discoveredModels?: string[]
     refreshing?: boolean
     error?: string
+    // pendingLogin is the device-code login in flight, if any. Nothing in it is a
+    // secret: the code is single-use and worthless without the account it is
+    // approved from, which is why it can be shown.
+    pendingLogin?: DeviceLogin | null
+    // startingLogin is the provider whose code is still being minted. That round
+    // trip is the only part of the flow with nothing on screen, so the button that
+    // opened it has to say so and stop taking clicks.
+    startingLogin?: string
   }>(),
   {
     providers: () => [],
@@ -35,17 +44,50 @@ const props = withDefaults(
     discoveredModels: () => [],
     refreshing: false,
     error: '',
+    pendingLogin: null,
+    startingLogin: '',
   },
 )
 
 const emit = defineEmits<{
   select: [providerID: string, model: string]
   connect: [providerID: string, apiKey: string]
+  login: [providerID: string]
+  'cancel-login': [providerID: string]
+  'open-login-page': [providerID: string]
   forget: [providerID: string]
   declare: [name: string, baseURL: string, model: string]
   refresh: []
   'list-models': [baseURL: string]
 }>()
+
+// A provider connected by logging in has no key to paste: it gets a button and,
+// once a code exists, the code. Which of the two a row is comes from the backend —
+// inferring it from the id here is how the UI ends up one release behind the
+// catalog, showing a password field for something that has no password.
+function isLogin(provider: ProviderRow): boolean {
+  return provider.connectKind === CONNECT_DEVICE_CODE
+}
+
+function loginFor(provider: ProviderRow): DeviceLogin | null {
+  if (props.pendingLogin?.providerID === provider.id) return props.pendingLogin
+  return null
+}
+
+// deviceCodeDeadline says when the code dies, as a clock time. It is the same
+// sentence the terminal panel writes, because a user who has both open must not be
+// told two different things about one code — and an absolute instant is the reading
+// that stays true whether or not anything redraws, which a countdown is not.
+//
+// Nothing is rendered when the authorization server named no expiry, or named one
+// this build cannot parse: a deadline invented here would be worse than silence.
+function deviceCodeDeadline(login: DeviceLogin | null): string {
+  const expiresAt = login?.expiresAt
+  if (!expiresAt) return ''
+  const at = new Date(expiresAt)
+  if (Number.isNaN(at.getTime())) return ''
+  return ` the code expires at ${at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+}
 
 // Presets de endpoints locales conocidos: LM Studio y Ollama exponen una API
 // OpenAI-compatible en estos puertos por defecto.
@@ -200,10 +242,69 @@ defineExpose({ resetForm })
           No models yet — reload models to see what this endpoint serves.
         </p>
 
-        <!-- Pegar la key es la unica forma de conectar un provider desde el
-             escritorio: aqui no hay /connect donde escribirla. -->
+        <!-- A subscription is approved on another device, so this row shows the
+             code and where to enter it instead of asking for a secret. Opening the
+             browser is offered, never required: this machine may not have one. -->
+        <div
+          v-if="provider.connectable && isLogin(provider)"
+          :data-login-form="provider.id"
+          class="mt-3"
+        >
+          <template v-if="loginFor(provider)">
+            <p class="text-sm opacity-70">
+              Open
+              <button
+                type="button"
+                :data-open-login-page="provider.id"
+                class="text-accent underline underline-offset-2 transition hover:opacity-80"
+                @click="emit('open-login-page', provider.id)"
+              >
+                {{ loginFor(provider)?.verificationURI }}
+              </button>
+              and enter this code:
+            </p>
+            <p
+              :data-login-code="provider.id"
+              class="mt-2 select-all font-mono text-2xl tracking-[0.2em]"
+            >
+              {{ loginFor(provider)?.userCode }}
+            </p>
+            <div class="mt-3 flex items-center gap-3">
+              <span :data-login-status="provider.id" class="text-xs opacity-50"
+                >Waiting for approval in your browser…{{
+                  deviceCodeDeadline(loginFor(provider))
+                }}</span
+              >
+              <button
+                type="button"
+                :data-cancel-login="provider.id"
+                class="rounded-full bg-black/[0.05] px-3 py-1 text-xs opacity-80 transition hover:bg-black/[0.08] hover:opacity-100 active:scale-[0.97]"
+                @click="emit('cancel-login', provider.id)"
+              >
+                Cancel
+              </button>
+            </div>
+          </template>
+          <button
+            v-else
+            type="button"
+            :data-start-login="provider.id"
+            :disabled="startingLogin === provider.id"
+            class="rounded-full bg-ink px-4 py-2 text-sm text-paper transition hover:opacity-90 active:scale-[0.98] disabled:opacity-40"
+            @click="emit('login', provider.id)"
+          >
+            <template v-if="startingLogin === provider.id"
+              >Signing in…</template
+            >
+            <template v-else-if="provider.connected">Sign in again</template>
+            <template v-else>Sign in with ChatGPT</template>
+          </button>
+        </div>
+
+        <!-- Pasting the key is the only way to connect a key provider from the
+             desktop: there is no /connect here to type it into. -->
         <form
-          v-if="provider.connectable"
+          v-if="provider.connectable && !isLogin(provider)"
           :data-connect-form="provider.id"
           class="mt-3 flex items-center gap-2"
           @submit.prevent="

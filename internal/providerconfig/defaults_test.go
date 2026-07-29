@@ -10,7 +10,7 @@ import (
 func TestDefaultCatalog_DeclaresTheCuratedProviders(t *testing.T) {
 	cfg := DefaultCatalog()
 
-	wantIDs := []string{"anthropic", "openrouter", "openai", "opencode", "opencode-go"}
+	wantIDs := []string{"anthropic", "openrouter", "openai", "openai-codex", "opencode", "opencode-go"}
 	gotIDs := make([]string, 0, len(cfg.Providers))
 	for _, provider := range cfg.Providers {
 		gotIDs = append(gotIDs, provider.ID)
@@ -23,22 +23,30 @@ func TestDefaultCatalog_DeclaresTheCuratedProviders(t *testing.T) {
 	}
 
 	wantModels := map[string][]string{
-		"anthropic": {"claude-opus-4-8", "claude-fable-5", "claude-sonnet-5", "claude-haiku-4-5"},
-		"openai":    {"gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"},
+		"anthropic":    {"claude-opus-4-8", "claude-fable-5", "claude-sonnet-5", "claude-haiku-4-5"},
+		"openai":       {"gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"},
+		"openai-codex": {"gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark"},
 	}
 	wantBaseURLs := map[string]string{
-		"anthropic":   "https://api.anthropic.com",
-		"openrouter":  "https://openrouter.ai/api/v1",
-		"openai":      "https://api.openai.com/v1",
-		"opencode":    "https://opencode.ai/zen/v1",
-		"opencode-go": "https://opencode.ai/zen/go/v1",
+		"anthropic":    "https://api.anthropic.com",
+		"openrouter":   "https://openrouter.ai/api/v1",
+		"openai":       "https://api.openai.com/v1",
+		"openai-codex": "https://chatgpt.com/backend-api/codex",
+		"opencode":     "https://opencode.ai/zen/v1",
+		"opencode-go":  "https://opencode.ai/zen/go/v1",
 	}
 	for _, provider := range cfg.Providers {
 		if got := provider.BaseURL; got != wantBaseURLs[provider.ID] {
 			t.Errorf("%s base_url = %q, want %q", provider.ID, got, wantBaseURLs[provider.ID])
 		}
-		if provider.Name == "" || provider.APIKeyEnv == "" {
-			t.Errorf("%s = %#v, want a display name and an api_key_env", provider.ID, provider)
+		if provider.Name == "" {
+			t.Errorf("%s = %#v, want a display name", provider.ID, provider)
+		}
+		// Every provider names the variable that overrides its key, except the one
+		// whose credential is a login: there is no variable that could hold one, and
+		// declaring one would make an unconnected subscription look configured.
+		if _, login := DefaultRegistry().OAuth(provider.Type); login == (provider.APIKeyEnv != "") {
+			t.Errorf("%s = %#v, want an api_key_env exactly when its credential is not a login", provider.ID, provider)
 		}
 		// The first model is the default /connect activates when nothing is
 		// selected yet: a provider without one connects to nothing.
@@ -70,23 +78,35 @@ func TestDefaultCatalog_ReturnsIndependentCopies(t *testing.T) {
 	}
 }
 
+// buildParamsFor is what a host hands the registry for one provider of the shipped
+// catalog: a resolved key for a format that authenticates with one, and a
+// per-request credential source for a format whose credential is a login.
+func buildParamsFor(provider Provider, model string) BuildParams {
+	params := BuildParams{Provider: provider, Model: model, APIKey: "test-key"}
+	if _, ok := DefaultRegistry().OAuth(provider.Type); ok {
+		params.Tokens = NewCredentialResolver(nil).OAuthTokenSource(provider.ID, nil)
+	}
+	return params
+}
+
 // TestDefaultCatalog_DeclaresBuildableWireFormats: an unregistered type is no
 // longer a config error, so a typo here would ship silently and only surface when
 // a user selects that provider.
 func TestDefaultCatalog_DeclaresBuildableWireFormats(t *testing.T) {
 	registry := DefaultRegistry()
 	want := map[string]string{
-		"anthropic":   Anthropic,
-		"openrouter":  OpenRouter,
-		"openai":      OpenAI,
-		"opencode":    OpenAICompatible,
-		"opencode-go": OpenAICompatible,
+		"anthropic":    Anthropic,
+		"openrouter":   OpenRouter,
+		"openai":       OpenAI,
+		"openai-codex": OpenAICodex,
+		"opencode":     OpenAICompatible,
+		"opencode-go":  OpenAICompatible,
 	}
 	for _, provider := range DefaultCatalog().Providers {
 		if got := provider.Type; got != want[provider.ID] {
 			t.Errorf("provider %q type = %q, want %q", provider.ID, got, want[provider.ID])
 		}
-		if _, err := registry.Build(provider, provider.Models[0], "test-key"); err != nil {
+		if _, err := registry.Build(buildParamsFor(provider, provider.Models[0])); err != nil {
 			t.Errorf("provider %q declares type %q, which the default registry cannot build: %v", provider.ID, provider.Type, err)
 		}
 		if _, ok := registry.Describe(provider); !ok {

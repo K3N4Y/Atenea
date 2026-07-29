@@ -1,0 +1,4 @@
+interface:
+  display_name: "Implementation Review Loop"
+  short_description: "Implement, review, fix, and repeat to green"
+  default_prompt: "Use $implementation-review-loop to implement this change and iterate until both reviewers approve."

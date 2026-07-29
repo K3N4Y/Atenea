@@ -18,6 +18,10 @@ export function ConnectMCP(arg1:mcpclient.ServerConfig):Promise<mcpclient.Server
 
 export function ConnectProvider(arg1:string,arg2:string):Promise<void>;
 
+export function AwaitProviderLogin(arg1:string):Promise<void>;
+
+export function CancelProviderLogin(arg1:string):Promise<void>;
+
 export function DeclareEndpoint(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function DeleteSession(arg1:string):Promise<void>;
@@ -44,7 +48,11 @@ export function ListProjectFiles():Promise<Array<string>>;
 
 export function ListSessions():Promise<Array<session.SessionSummary>>;
 
+export function OpenLoginPage(arg1:string):Promise<void>;
+
 export function ProviderCatalog():Promise<Array<main.ProviderEntry>>;
+
+export function StartProviderLogin(arg1:string):Promise<main.DeviceLogin>;
 
 export function RefreshModels():Promise<Array<main.ProviderEntry>>;
 

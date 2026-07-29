@@ -26,6 +26,14 @@ export function ConnectProvider(arg1, arg2) {
   return window['go']['main']['App']['ConnectProvider'](arg1, arg2);
 }
 
+export function AwaitProviderLogin(arg1) {
+  return window['go']['main']['App']['AwaitProviderLogin'](arg1);
+}
+
+export function CancelProviderLogin(arg1) {
+  return window['go']['main']['App']['CancelProviderLogin'](arg1);
+}
+
 export function DeclareEndpoint(arg1, arg2, arg3) {
   return window['go']['main']['App']['DeclareEndpoint'](arg1, arg2, arg3);
 }
@@ -78,8 +86,16 @@ export function ListSessions() {
   return window['go']['main']['App']['ListSessions']();
 }
 
+export function OpenLoginPage(arg1) {
+  return window['go']['main']['App']['OpenLoginPage'](arg1);
+}
+
 export function ProviderCatalog() {
   return window['go']['main']['App']['ProviderCatalog']();
+}
+
+export function StartProviderLogin(arg1) {
+  return window['go']['main']['App']['StartProviderLogin'](arg1);
 }
 
 export function RefreshModels() {

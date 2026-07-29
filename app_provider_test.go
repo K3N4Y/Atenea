@@ -1,14 +1,21 @@
 package main
 
 import (
+	"context"
+	"encoding/base64"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/providerconfig"
+	"github.com/K3N4Y/atenea/internal/session"
 )
 
 // testCatalog es el catalogo de fabrica de los tests del selector: dos providers
@@ -329,6 +336,188 @@ func TestApp_ConnectProviderStoresTheKeyAndActivatesTheProvider(t *testing.T) {
 	if got := app.ActiveProvider(); got != active {
 		t.Fatalf("ActiveProvider() = %#v tras una key rechazada, want %#v", got, active)
 	}
+}
+
+// TestApp_ProviderLoginConnectsAChatGPTSubscriptionAndActivatesIt: connecting a
+// subscription from the desktop is not "paste a key somewhere else" — there is no
+// key. The bindings hand the UI a code to show, wait for the user to approve it,
+// and leave the provider active on its default model.
+func TestApp_ProviderLoginConnectsAChatGPTSubscriptionAndActivatesIt(t *testing.T) {
+	issuer := deviceIssuerStub(t)
+	catalog := testCatalog()
+	catalog.Providers = append(catalog.Providers, providerconfig.Provider{
+		ID: "openai-codex", Name: "OpenAI (ChatGPT subscription)", Type: providerconfig.OpenAICodex,
+		BaseURL: "https://chatgpt.com/backend-api/codex", OAuthIssuer: issuer.URL,
+		DisableModelDiscovery: true, Models: []string{"gpt-5.5", "gpt-5.4"},
+	})
+	app, _ := newAppWithProviders(t, demoProvider(), catalog)
+
+	// The row tells the UI which affordance to draw, so it cannot be inferred from
+	// the id: a password field for something with no password is the failure here.
+	subscription, ok := entry(app.ProviderCatalog(), "openai-codex")
+	if !ok || subscription.ConnectKind != providerconfig.ConnectDeviceCode {
+		t.Fatalf("openai-codex row = %#v (ok=%v), want it reported as device_code", subscription, ok)
+	}
+	if key, _ := entry(app.ProviderCatalog(), "openrouter"); key.ConnectKind != providerconfig.ConnectAPIKey {
+		t.Fatalf("openrouter row = %#v, want it reported as api_key", key)
+	}
+
+	login, err := app.StartProviderLogin("openai-codex")
+	if err != nil {
+		t.Fatalf("StartProviderLogin: %v", err)
+	}
+	if login.UserCode != "V3H5-1MW96" || login.VerificationURI == "" {
+		t.Fatalf("StartProviderLogin() = %#v, want the code and the page to type it into", login)
+	}
+	if login.ExpiresAt == "" {
+		t.Error("StartProviderLogin() names no expiry: the panel cannot then say when the code dies, and the sign-in just fails")
+	}
+	if _, err := time.Parse(time.RFC3339, login.ExpiresAt); err != nil {
+		t.Errorf("StartProviderLogin() expiry = %q: the panel parses it to render a clock time (%v)", login.ExpiresAt, err)
+	}
+	if err := app.AwaitProviderLogin("openai-codex"); err != nil {
+		t.Fatalf("AwaitProviderLogin: %v", err)
+	}
+
+	active := app.ActiveProvider()
+	if active.ProviderID != "openai-codex" || active.Model != "gpt-5.5" {
+		t.Fatalf("ActiveProvider() = %#v, want the subscription on its first curated model", active)
+	}
+	connected, _ := entry(app.ProviderCatalog(), "openai-codex")
+	if !connected.Connected {
+		t.Fatalf("openai-codex row = %#v, want it reported as connected", connected)
+	}
+	// Pasting a key into a subscription would store a credential nothing can
+	// refresh and no request can route.
+	if err := app.ConnectProvider("openai-codex", "sk-pasted"); err == nil {
+		t.Fatal("ConnectProvider on a subscription: expected an error")
+	}
+}
+
+// TestApp_CancelProviderLoginAbandonsThePendingCode: closing the form has to end
+// the polling, and cancelling a login nobody started must not fail.
+func TestApp_CancelProviderLoginAbandonsThePendingCode(t *testing.T) {
+	issuer := deviceIssuerStub(t)
+	catalog := testCatalog()
+	catalog.Providers = append(catalog.Providers, providerconfig.Provider{
+		ID: "openai-codex", Name: "OpenAI (ChatGPT subscription)", Type: providerconfig.OpenAICodex,
+		BaseURL: "https://chatgpt.com/backend-api/codex", OAuthIssuer: issuer.URL,
+		DisableModelDiscovery: true, Models: []string{"gpt-5.5"},
+	})
+	app, _ := newAppWithProviders(t, demoProvider(), catalog)
+
+	if _, err := app.StartProviderLogin("openai-codex"); err != nil {
+		t.Fatalf("StartProviderLogin: %v", err)
+	}
+	app.CancelProviderLogin("openai-codex")
+	if err := app.AwaitProviderLogin("openai-codex"); !errors.Is(err, providerconfig.ErrNoPendingLogin) {
+		t.Fatalf("AwaitProviderLogin after cancelling = %v, want ErrNoPendingLogin", err)
+	}
+	if connected, _ := entry(app.ProviderCatalog(), "openai-codex"); connected.Connected {
+		t.Fatal("a cancelled login stored a credential")
+	}
+	// Opening the page of a login that no longer exists is refused rather than
+	// opening nothing, and cancelling twice is a no-op.
+	if err := app.OpenLoginPage("openai-codex"); !errors.Is(err, providerconfig.ErrNoPendingLogin) {
+		t.Fatalf("OpenLoginPage with no pending login = %v, want ErrNoPendingLogin", err)
+	}
+	app.CancelProviderLogin("openai-codex")
+}
+
+// TestApp_AwaitProviderLoginReportsALoginCancelledUnderneathItAsNothingToReport:
+// the order the settings panel actually uses is await first, cancel second — it
+// calls AwaitProviderLogin the moment the code is on screen and the user presses
+// Cancel afterwards. Whatever this rejects with is painted red next to the row, so
+// rejecting here blames the user for the button they just pressed.
+func TestApp_AwaitProviderLoginReportsALoginCancelledUnderneathItAsNothingToReport(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		app := newAppWithHeldLogin(t)
+		if _, err := app.StartProviderLogin("openai-codex"); err != nil {
+			t.Fatalf("StartProviderLogin: %v", err)
+		}
+
+		awaited := make(chan error, 1)
+		go func() { awaited <- app.AwaitProviderLogin("openai-codex") }()
+		// Every goroutine of this test is blocked once Wait returns, so the wait is
+		// attached to the pending login before anything cancels it. That ordering is
+		// the subject here, and a bare `go` statement would leave it to the scheduler.
+		synctest.Wait()
+
+		app.CancelProviderLogin("openai-codex")
+		if err := <-awaited; err != nil {
+			t.Fatalf("AwaitProviderLogin() = %v, want nothing to report: cancelling is what the user asked for", err)
+		}
+		if connected, _ := entry(app.ProviderCatalog(), "openai-codex"); connected.Connected {
+			t.Fatal("a cancelled login stored a credential")
+		}
+	})
+}
+
+// newAppWithHeldLogin is an app whose only provider logs in against no
+// authorization server at all: the code is minted at once and the wait ends only
+// when the flow's own context is cancelled, which is the shape a poll has while
+// the user is still in their browser. No socket, so every goroutine of the test
+// blocks on something synctest can see — which is what makes the ordering above
+// exact instead of a race.
+func newAppWithHeldLogin(t *testing.T) *App {
+	t.Helper()
+	catalog := providerconfig.Config{Providers: []providerconfig.Provider{{
+		ID: "openai-codex", Name: "OpenAI (ChatGPT subscription)", Type: providerconfig.OpenAICodex,
+		BaseURL: "https://chatgpt.com/backend-api/codex", DisableModelDiscovery: true,
+		Models: []string{"gpt-5.5"},
+	}}}
+	registry := providerconfig.Registry{providerconfig.OpenAICodex: providerconfig.Format{
+		Build: func(providerconfig.BuildParams) (llm.Provider, error) { return demoProvider(), nil },
+		OAuth: &providerconfig.OAuthFlow{
+			Login: func(context.Context, providerconfig.Provider) (providerconfig.DeviceCode, error) {
+				return providerconfig.DeviceCode{
+					UserCode: "V3H5-1MW96", VerificationURI: "https://auth.openai.com/codex/device",
+					ExpiresAt: time.Now().Add(10 * time.Minute),
+					Await: func(ctx context.Context) (providerconfig.OAuthCredential, error) {
+						<-ctx.Done()
+						return providerconfig.OAuthCredential{}, ctx.Err()
+					},
+				}, nil
+			},
+		},
+	}}
+	dir := t.TempDir()
+	offline := func(context.Context, string, string) ([]string, error) {
+		return nil, errors.New("model discovery is offline in tests")
+	}
+	service, err := providerconfig.Open(
+		context.Background(), filepath.Join(dir, "providers.json"), "", testSnapshot(demoProvider()),
+		envNothing, registry, nil, offline,
+		providerconfig.NewFileCredentialStore(filepath.Join(dir, "credentials.json")), catalog,
+	)
+	if err != nil {
+		t.Fatalf("open provider service: %v", err)
+	}
+	return newAppWithStore(session.NewMemoryStore(), service, func(string, ...interface{}) {})
+}
+
+// deviceIssuerStub answers OpenAI's device-code endpoints with a login that is
+// already approved, so the whole flow runs without a browser and without a
+// ChatGPT account. The access token is an unsigned JWT: nothing verifies these
+// signatures, on purpose — we are not their audience.
+func deviceIssuerStub(t *testing.T) *httptest.Server {
+	t.Helper()
+	claims := base64.RawURLEncoding.EncodeToString([]byte(`{"chatgpt_account_id":"acct_desktop"}`))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/accounts/deviceauth/usercode":
+			io.WriteString(w, `{"device_auth_id":"deviceauth_1","user_code":"V3H5-1MW96","interval":"0","expires_at":"`+
+				time.Now().Add(10*time.Minute).UTC().Format(time.RFC3339)+`"}`)
+		case "/api/accounts/deviceauth/token":
+			io.WriteString(w, `{"authorization_code":"ac","code_verifier":"cv"}`)
+		case "/oauth/token":
+			io.WriteString(w, `{"access_token":"h.`+claims+`.s","refresh_token":"refresh-desktop","expires_in":3600}`)
+		default:
+			t.Errorf("unexpected request to %s", r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server
 }
 
 // TestApp_ListModelsProbesAnEndpointBeforeItIsDeclared: el formulario de agregar

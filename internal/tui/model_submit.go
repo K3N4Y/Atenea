@@ -82,17 +82,15 @@ func (m Model) submitPrompt() (Model, tea.Cmd) {
 			return m.appendError("no connectable providers configured").syncViewport(), nil
 		}
 		panel := newConnectPanel(providers)
+		jump := -1
 		if len(parts) == 2 {
-			found := false
 			for index, provider := range providers {
 				if provider.ID == parts[1] {
-					panel.selected = index
-					panel.entering = true
-					found = true
+					jump = index
 					break
 				}
 			}
-			if !found {
+			if jump < 0 {
 				return m.appendError(fmt.Sprintf("usage: /connect [provider-id]; %q is not connectable", parts[1])).syncViewport(), nil
 			}
 		}
@@ -100,7 +98,14 @@ func (m Model) submitPrompt() (Model, tea.Cmd) {
 		m.menuItems = nil
 		m.connectGen++
 		m.connectPanel = panel
-		return m.resizeViewport(), nil
+		if jump < 0 {
+			return m.resizeViewport(), nil
+		}
+		// Naming a provider skips the list and starts that provider's own kind of
+		// connection, which is the key entry for one and a login for the other.
+		m.connectPanel.selected = jump
+		next, cmd := m.beginConnect()
+		return next.(Model).resizeViewport(), cmd
 	}
 	if strings.HasPrefix(strings.TrimSpace(text), "/model") {
 		controller, ok := m.agent.(modelAgent)

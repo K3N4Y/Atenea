@@ -1,6 +1,6 @@
 ---
-updated_at: 2026-07-26
-summary: How a stored provider secret becomes the bearer token an adapter authenticates with — the tagged Credential variant, the exec arm that covers Bedrock/Vertex/gateway auth, and the resolver that separates persisting a credential from running one.
+updated_at: 2026-07-27
+summary: How a stored provider secret becomes the credential an adapter authenticates with — the tagged Credential variant, the exec arm that covers Bedrock/Vertex/gateway auth, the oauth arm that carries a subscription login, and the resolver that separates persisting a credential from running or renewing one.
 ---
 
 # Provider credentials
@@ -36,18 +36,27 @@ providers a third party would register.
 const (
     CredentialTypeAPIKey = "api_key"
     CredentialTypeExec   = "exec"
+    CredentialTypeOAuth  = "oauth"
 )
 
 type Credential struct {
-    Type   string          `json:"type"`
-    APIKey string          `json:"api_key,omitempty"`
-    Exec   *ExecCredential `json:"exec,omitempty"`
+    Type   string           `json:"type"`
+    APIKey string           `json:"api_key,omitempty"`
+    Exec   *ExecCredential  `json:"exec,omitempty"`
+    OAuth  *OAuthCredential `json:"oauth,omitempty"`
 }
 
 type ExecCredential struct {
     Command        []string `json:"command"`
     TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
     TTLSeconds     int      `json:"ttl_seconds,omitempty"`
+}
+
+type OAuthCredential struct {
+    AccessToken  string    `json:"access_token"`
+    RefreshToken string    `json:"refresh_token"`
+    ExpiresAt    time.Time `json:"expires_at,omitzero"`
+    AccountID    string    `json:"account_id"`
 }
 
 func (c Credential) Validate() error
@@ -79,8 +88,18 @@ command is refused, and so is an `exec` credential carrying an `api_key`. The
 flat alternative — `{Type, APIKey, Command, Timeout, TTL}` — is a shape where
 every reader has to decide for itself which fields the type makes meaningful, and
 where the first reader that gets it wrong resolves a credential the user did not
-write. A third arm (OAuth, SigV4) is a new pointer field and a new `case`, which
-is the same promise the original comment made, now backed by a check.
+write. A third arm is a new pointer field and a new `case`, which is the same
+promise the original comment made, now backed by a check.
+
+`[updated 2026-07-27]` The third arm arrived: `oauth` carries a ChatGPT
+subscription login (see
+[Driving atenea with a ChatGPT subscription](../specs/2026-07-27-openai-subscription-oauth.md)),
+and the exercise was as cheap as the shape promised — one field, one `case`, and
+no reader of the other two arms changed. `Validate` refuses a login with no
+refresh token (it dies within the hour with no way back) and one with no account
+id (no request could be routed); a zero `expires_at` is accepted and reads as
+"renew on first use", because an unknown lifetime and an expired one cost the same
+to get wrong.
 
 **Validation runs at both ends, and deliberately not in the middle.** `Put`
 refuses a malformed credential so one never reaches disk; resolution refuses one
@@ -113,10 +132,11 @@ type CredentialStore interface {
     Put(providerID string, credential Credential) error
 }
 
-type CredentialResolver struct{ /* store, runner, clock, token cache */ }
+type CredentialResolver struct{ /* store, runner, clock, token cache, refresh gates */ }
 
 func (r *CredentialResolver) Token(ctx context.Context, providerID string) (string, error)
 func (r *CredentialResolver) CachedToken(ctx context.Context, providerID string) (string, error)
+func (r *CredentialResolver) OAuthTokenSource(providerID string, refresh OAuthRefresher) llm.OAuthTokenSource
 ```
 
 The store was the obvious place to put resolution and it is the wrong one. A
@@ -124,7 +144,8 @@ store persists; making it execute would mean an OS-keyring backend — the reaso
 the interface exists — has to know what a subprocess is. So the store keeps
 answering *what is stored*, including a credential this build cannot honor, and
 `CredentialResolver` answers *what token to send*, dispatching on `Type`:
-`api_key` resolves to itself, `exec` runs the command.
+`api_key` resolves to itself, `exec` runs the command, and `oauth` resolves to
+**nothing static** — see below.
 
 `Service` holds both, as two fields, because they are two jobs: `/connect` reads
 and writes the store, and everything that needs an actual bearer string goes
@@ -207,18 +228,84 @@ The path is discovered through `CredentialFile`, an optional capability
 provider capabilities already use. A keyring-backed store does not implement it
 and has nothing to check.
 
+### The oauth arm resolves per request instead
+
+`[updated 2026-07-27]`
+
+`Token` and `CachedToken` both answer `("", nil)` for an `oauth` credential, and
+that is not a gap — it is the honest answer. A login has no static bearer: the one
+it holds expires within the hour, and it travels with an account id that no string
+could have carried. Answering "nothing static" is also what makes a provider
+authenticated this way build on the keyless placeholder rather than on a secret its
+adapter would ignore.
+
+What an adapter gets instead is a seam:
+
+```go
+// internal/llm declares what an adapter may ask for
+type OAuthToken struct{ AccessToken, AccountID string }
+type OAuthTokenSource interface {
+    OAuthToken(ctx context.Context) (OAuthToken, error)
+}
+```
+
+`CredentialResolver.OAuthTokenSource` binds this resolver to one provider and
+implements it. The direction matters: `internal/llm` declares the interface and
+`providerconfig` implements it, so the adapter package never imports the storage
+package and knows nothing about files, arms or refresh protocols.
+
+Resolution renews the credential a configurable margin **before** it expires
+(`DefaultOAuthRefreshMargin`, five minutes), because a token that expires
+mid-request fails a turn that is minutes long. Four properties hold it together:
+
+- **Single flight per provider, inside one process.** A main turn and its subagents
+  share one adapter and notice the same expiry at the same instant. Without
+  serialization each would refresh and each would rotate the refresh token, and
+  every rotation but the last would already be retired — leaving the stored
+  credential naming a token the server has dropped. Waiters re-read the store after
+  the gate, which is also what makes them refresh from the *current* token rather
+  than from the copy they read before waiting.
+- **Across processes the race is absorbed, not prevented.** `oauthGate` is a
+  `sync.Mutex` and `FileCredentialStore` is coordination-free by design, so the TUI
+  and the desktop app can both notice the same expiry in the same second and both
+  renew. OpenAI honors whichever lands first and answers the other `invalid_grant`
+  about a credential that is, by then, perfectly good. After a failed renewal the
+  resolver re-reads the store once and serves what it finds if another process
+  already rotated it, which turns the collision into a no-op. A lock file would
+  prevent the second request instead of absorbing it; it is a file to reason about,
+  to clean up after a crash and to share between two binaries, for a collision that
+  costs one wasted request.
+- **The rotation is persisted, or the turn fails.** OpenAI rotates the refresh
+  token on every renewal. A renewal the store could not write is reported rather
+  than served: the credential is already broken at that point, and serving the turn
+  anyway buys an hour and then a logout with no cause the user could see.
+- **The renewal does not run on the caller's context.** `[updated 2026-07-27]` The
+  ctx that reaches the resolver is the turn's, and the runner cancels it when the
+  user presses Stop. The refresh runs on `context.WithoutCancel` of it under
+  `oauthRefreshTimeout`, because a cancellation landing between the server
+  committing the rotation and this process reading the body loses a token the
+  server has already retired — the same silent logout the point above protects
+  against, arriving through a different door.
+- **A failed renewal says what to do.** "log in again" is the one thing a user can
+  act on, so it is in the error rather than in a log line.
+
 ## What this does not close
 
-**A token is resolved once per selection and lives in the adapter until the
-next one.** `gcloud auth print-access-token` returns an hour; a gateway may
-return fifteen minutes. A conversation that outlives its token fails at the wire
-with the provider's own 401, and the fix a user has today is `/model` — selecting
-the same model again re-resolves and rebuilds the adapter, and so does
-`/connect`. What would actually close it is a lazily-resolved token threaded into
-the SDK clients so every request asks for one, which reaches inside both adapters
-and is out of scope here.
+**A resolved *string* still lives in the adapter until the next selection.**
+`gcloud auth print-access-token` returns an hour; a gateway may return fifteen
+minutes. A conversation that outlives an `api_key` or `exec` token fails at the
+wire with the provider's own 401, and the fix a user has is `/model` — selecting
+the same model again re-resolves and rebuilds the adapter, and so does `/connect`.
+`[updated 2026-07-27]` The `oauth` arm closes this for itself, through the seam
+above; doing the same for the exec arm means the same seam with a different
+resolver behind it, and is a smaller job now that the shape exists.
 
-**`/connect` stays a paste-an-API-key flow.** It is a masked input plus a
+**`/connect` is no longer only a paste-an-API-key flow.** `[updated 2026-07-27]`
+It branches on how a provider is connected, which `Connectable()` now reports as
+`Kind`, and the `oauth` arm gets a device-code login instead of a masked input. The
+paragraph below still holds for `exec`, which has no login and no key to validate.
+
+**`/connect` stays a paste-an-API-key flow for the exec arm.** It is a masked input plus a
 per-provider network check, and neither half means anything for an exec
 credential: "the command produced a token" is not a validation of the command,
 because the answer is ephemeral and the next run is what matters. An exec
@@ -242,3 +329,6 @@ executed.
   credential in the first place.
 - [`/connect` command and credential store](../specs/2026-07-18-connect-command.md)
   — the flow that writes the `api_key` arm.
+- [Driving atenea with a ChatGPT subscription](../specs/2026-07-27-openai-subscription-oauth.md)
+  — the flow that writes the `oauth` arm, and the per-request seam it resolves
+  through.

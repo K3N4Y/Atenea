@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-26
+updated_at: 2026-07-27
 summary: What an adapter declares about itself beyond streaming a turn — the optional Capabilities interface that replaced the global model-to-context-window table, and why the registry describes a format without building it.
 ---
 
@@ -127,9 +127,9 @@ pretending an unread field is verified.
 
 ## Windows are declared per dialect, not per model id
 
-`internal/llm/capabilities.go` holds three tables — `anthropicWindows`,
-`openAIWindows`, `openRouterWindows` — and the neutral dialect declares none.
-That split is the point:
+`internal/llm/capabilities.go` holds four tables — `anthropicWindows`,
+`openAIWindows`, `openRouterWindows` and `codexWindows` — and the neutral dialect
+declares none. That split is the point:
 
 ```go
 openAI     := llm.DescribeOpenAI(llm.WithOpenAICompatibility())
@@ -140,6 +140,14 @@ openAI.ContextWindow("openai/gpt-4o")     // 0, false — that is OpenRouter's s
 openRouter.ContextWindow("openai/gpt-4o") // 128_000, true
 openRouter.ContextWindow("claude-opus-4-8") // 0, false — that is Anthropic's
 ```
+
+`codexWindows` is the case that makes the split unavoidable rather than merely
+tidy. `[updated 2026-07-27]` The codex backend serves a ChatGPT subscription a
+codex-tuned model list the public API does not, at ids that overlap it (`gpt-5.4-mini`
+is in both), and it publishes neither a `/models` nor a window. One table keyed by
+id could not have said which adapter either entry belonged to. `DescribeCodex` also
+declares `DefaultMaxOutputTokens: 0`, and that one is not a default — the dialect
+never sends a ceiling, so there is none to declare.
 
 The neutral dialect declaring nothing is a real answer, not a gap: an
 `openai-compatible` endpoint is LM Studio, Ollama, vLLM or an unrecognized

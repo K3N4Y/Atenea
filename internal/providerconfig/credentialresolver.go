@@ -52,9 +52,17 @@ type CredentialResolver struct {
 	store CredentialStore
 	run   CommandRunner
 	now   func() time.Time
+	// oauthMargin is how long before expiry an OAuth credential is renewed. Zero
+	// means [DefaultOAuthRefreshMargin]; a test shortens it to make the renewal
+	// happen on demand.
+	oauthMargin time.Duration
 
 	mu     sync.Mutex
 	tokens map[string]cachedToken
+	// gates serialize the OAuth renewals of one provider, so several turns
+	// noticing the same expiry produce one refresh and one rotation rather than
+	// one each. See [CredentialResolver.oauthToken].
+	gates map[string]*sync.Mutex
 }
 
 // cachedToken is one reusable exec result. fingerprint is the command it came
@@ -70,7 +78,7 @@ type cachedToken struct {
 // legitimate — a host may have no credential storage at all — and resolves
 // everything to "no credential".
 func NewCredentialResolver(store CredentialStore) *CredentialResolver {
-	return &CredentialResolver{store: store, run: runCommand, now: time.Now, tokens: map[string]cachedToken{}}
+	return &CredentialResolver{store: store, run: runCommand, now: time.Now, tokens: map[string]cachedToken{}, gates: map[string]*sync.Mutex{}}
 }
 
 // Token resolves the credential stored for providerID, running an exec
@@ -79,7 +87,8 @@ func NewCredentialResolver(store CredentialStore) *CredentialResolver {
 // must be as fresh as this process can make it.
 //
 // Absence is not an error — no store, or no entry, is ("", nil), which is how a
-// keyless endpoint and an unconnected provider both read. A credential that is
+// keyless endpoint and an unconnected provider both read. So is an OAuth login,
+// which has no static token at all: see the arm in resolve. A credential that is
 // stored and cannot be honored is an error, because the alternative is an
 // unauthenticated request failing later with a worse message.
 //
@@ -138,6 +147,13 @@ func (r *CredentialResolver) resolve(ctx context.Context, providerID string, cre
 		return credential.APIKey, nil
 	case CredentialTypeExec:
 		return r.runExec(ctx, providerID, credential.Exec)
+	case CredentialTypeOAuth:
+		// An OAuth login has no static token to hand out. Its bearer expires within
+		// the hour and travels with an account id, so it is resolved per request
+		// through [CredentialResolver.OAuthTokenSource] instead — and answering
+		// "nothing static" here is what makes a provider authenticated that way
+		// build with the keyless placeholder rather than with a secret it ignores.
+		return "", nil
 	default:
 		// Unreachable while Validate and this switch agree; a guard rather than
 		// dead code, because the failure it prevents is a new arm being run as if

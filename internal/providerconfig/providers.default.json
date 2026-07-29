@@ -52,6 +52,19 @@
       ]
     },
     {
+      "id": "openai-codex",
+      "name": "OpenAI (ChatGPT subscription)",
+      "type": "openai-codex",
+      "base_url": "https://chatgpt.com/backend-api/codex",
+      "disable_model_discovery": true,
+      "models": [
+        "gpt-5.5",
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.3-codex-spark"
+      ]
+    },
+    {
       "id": "opencode",
       "name": "OpenCode Zen",
       "type": "openai-compatible",

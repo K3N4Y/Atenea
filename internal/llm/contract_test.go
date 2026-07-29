@@ -151,6 +151,38 @@ func TestOpenAIProvider_FailedTurnContract(t *testing.T) {
 	})
 }
 
+// TestCodexProvider_Contract covers the ChatGPT-subscription dialect: a different
+// wire vocabulary (Responses items instead of chat choices) and a credential
+// resolved per request rather than baked in, over the same turn shape.
+func TestCodexProvider_Contract(t *testing.T) {
+	llmtest.Contract(t, func(t *testing.T) llmtest.Subject {
+		server := sseServer(t, func(w io.Writer) { io.WriteString(w, codexTurn) })
+		return llmtest.Subject{
+			Provider: NewCodexProvider(&staticTokens{token: OAuthToken{AccessToken: "access", AccountID: "acct"}}, server.URL, "gpt-5.5"),
+			Request:  contractRequest("gpt-5.5"),
+		}
+	})
+}
+
+// TestCodexProvider_FailedTurnContract runs the contract over the other way this
+// dialect's turn ends. The status is the one a spent subscription answers with, so
+// the check reads the failure rather than the waiting.
+func TestCodexProvider_FailedTurnContract(t *testing.T) {
+	llmtest.Contract(t, func(t *testing.T) llmtest.Subject {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("x-should-retry", "false")
+			w.WriteHeader(http.StatusTooManyRequests)
+			io.WriteString(w, `{"error":{"type":"usage_limit_reached","message":"You've hit your usage limit."}}`)
+		}))
+		t.Cleanup(server.Close)
+		return llmtest.Subject{
+			Provider: NewCodexProvider(&staticTokens{token: OAuthToken{AccessToken: "access", AccountID: "acct"}}, server.URL, "gpt-5.5"),
+			Request:  contractRequest("gpt-5.5"),
+		}
+	})
+}
+
 func TestAnthropicProvider_Contract(t *testing.T) {
 	llmtest.Contract(t, func(t *testing.T) llmtest.Subject {
 		server := sseServer(t, func(w io.Writer) {

@@ -144,11 +144,20 @@ func inertProviderService(t *testing.T, provider llm.Provider) *providerconfig.S
 // persistir la eleccion.
 func newAppWithProviders(t *testing.T, provider llm.Provider, catalog providerconfig.Config) (*App, *providerconfig.Service) {
 	t.Helper()
+	// Every wire format builds the injected provider — the subject of these tests is
+	// the selection, not the adapter — but each keeps its real login flow, because
+	// how a provider is CONNECTED is part of what the bindings answer for and a
+	// format stripped of it would report the wrong kind of connection.
+	defaults := providerconfig.DefaultRegistry()
 	registry := providerconfig.Registry{}
-	for _, format := range providerconfig.DefaultRegistry().Types() {
-		registry[format] = providerconfig.Format{
-			Build: func(providerconfig.Provider, string, string) (llm.Provider, error) { return provider, nil },
+	for _, format := range defaults.Types() {
+		entry := providerconfig.Format{
+			Build: func(providerconfig.BuildParams) (llm.Provider, error) { return provider, nil },
 		}
+		if flow, ok := defaults.OAuth(format); ok {
+			entry.OAuth = flow
+		}
+		registry[format] = entry
 	}
 	offline := func(context.Context, string, string) ([]string, error) {
 		return nil, errors.New("model discovery is offline in tests")
