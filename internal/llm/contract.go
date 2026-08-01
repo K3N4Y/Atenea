@@ -14,6 +14,8 @@ import contract "github.com/K3N4Y/atenea/agentcore/llm"
 type (
 	Provider             = contract.Provider
 	Request              = contract.Request
+	ReasoningEffort      = contract.ReasoningEffort
+	ReasoningPreference  = contract.ReasoningPreference
 	Message              = contract.Message
 	Part                 = contract.Part
 	PartKind             = contract.PartKind
@@ -59,4 +61,11 @@ const (
 	ToolInputStarted = contract.ToolInputStarted
 	ToolInputDelta   = contract.ToolInputDelta
 	ToolInputEnded   = contract.ToolInputEnded
+)
+
+const (
+	ReasoningEffortMinimal = contract.ReasoningEffortMinimal
+	ReasoningEffortLow     = contract.ReasoningEffortLow
+	ReasoningEffortMedium  = contract.ReasoningEffortMedium
+	ReasoningEffortHigh    = contract.ReasoningEffortHigh
 )

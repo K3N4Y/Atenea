@@ -27,14 +27,10 @@ type AnthropicProvider struct {
 	model  string
 	// tokens resolves the OAuth credential one request carries. nil means the
 	// client itself holds a static key, which is the Anthropic-API case.
-	tokens OAuthTokenSource
-	// capabilities is per-instance because the same wire format serves different
-	// model catalogs: Anthropic's ids through one door, the gateway's through the
-	// other.
+	tokens       OAuthTokenSource
 	capabilities Capabilities
-	// label names the endpoint in the sentences a user reads when a turn fails.
-	// "Anthropic" would be the wrong author of a PostHog gateway failure.
-	label string
+	label        string
+	posthog      bool
 }
 
 var _ Provider = (*AnthropicProvider)(nil)
@@ -66,6 +62,7 @@ func NewAnthropicOAuthProvider(tokens OAuthTokenSource, baseURL, model string) *
 		tokens:       tokens,
 		capabilities: posthogCapabilities,
 		label:        "PostHog",
+		posthog:      true,
 	}
 }
 
@@ -92,6 +89,15 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req Request) (<-chan Eve
 	model := req.Model
 	if model == "" {
 		model = p.model
+	}
+	if p.posthog && !posthogAnthropicModel(model) {
+		return nil, fmt.Errorf("PostHog does not recognize model family %q", model)
+	}
+	// Claude thinking on PostHog is intentionally gated until its wire behavior
+	// is verified. Reject the host's explicit preference before doing any work
+	// that could resolve credentials or contact the gateway.
+	if p.posthog && req.Reasoning != nil && req.Reasoning.Effort != "" {
+		return nil, fmt.Errorf("PostHog Claude does not support requested reasoning effort %q", req.Reasoning.Effort)
 	}
 	messages, err := toAnthropicMessages(req.Messages)
 	if err != nil {

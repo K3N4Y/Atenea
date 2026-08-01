@@ -83,12 +83,24 @@ type responsesProfile struct {
 	subscriptionErrors  bool
 	contextWindows      map[string]int
 	sendMaxOutputTokens bool
+	requestReasoning    bool
+	validateModelFamily bool
 }
 
 var (
-	codexResponsesProfile   = responsesProfile{label: codexLabel, requireAccount: true, chatGPTHeaders: true, subscriptionErrors: true, contextWindows: codexWindows}
-	posthogResponsesProfile = responsesProfile{label: "PostHog", contextWindows: posthogWindows, sendMaxOutputTokens: true}
+	codexResponsesProfile = responsesProfile{label: codexLabel, requireAccount: true, chatGPTHeaders: true, subscriptionErrors: true, contextWindows: codexWindows}
+	// PostHog's GPT catalog uses the stable Responses effort levels. Keep this
+	// policy separate from ChatGPT Codex, whose constructor semantics are unchanged.
+	posthogResponsesProfile = responsesProfile{label: "PostHog", contextWindows: posthogWindows, sendMaxOutputTokens: true, requestReasoning: true, validateModelFamily: true}
 )
+
+func posthogResponsesModel(model string) bool {
+	return strings.HasPrefix(model, "gpt-")
+}
+
+func posthogAnthropicModel(model string) bool {
+	return strings.HasPrefix(model, "claude-")
+}
 
 var _ Provider = (*CodexProvider)(nil)
 var _ Provider = (*responsesProvider)(nil)
@@ -144,6 +156,14 @@ func NewCodexProvider(tokens OAuthTokenSource, baseURL, model string, opts ...Co
 // the long default.
 func newCodexProviderWithTimeout(tokens OAuthTokenSource, baseURL, model string, timeout time.Duration, opts ...CodexOption) *CodexProvider {
 	return &CodexProvider{responsesProvider: newOAuthResponsesProvider(tokens, baseURL, model, timeout, codexResponsesProfile, opts...)}
+}
+
+// NewPosthogResponsesProvider builds PostHog's GPT Responses profile. Its
+// constructor default is medium effort plus an automatic summary; per-call
+// Request.Reasoning can override effort without changing shared state.
+func NewPosthogResponsesProvider(tokens OAuthTokenSource, baseURL, model string) Provider {
+	return newOAuthResponsesProvider(tokens, baseURL, model, defaultRequestTimeout, posthogResponsesProfile,
+		WithCodexReasoning(CodexEffortMedium, CodexSummaryAuto))
 }
 
 // NewOAuthResponsesProvider builds the standard OAuth Responses adapter used by
@@ -209,15 +229,46 @@ func (p *responsesProvider) authorize(ctx context.Context) ([]option.RequestOpti
 	return opts, nil
 }
 
+func resolvePosthogEffort(req Request, profile responsesProfile, defaultEffort shared.ReasoningEffort) (shared.ReasoningEffort, error) {
+	if req.Reasoning == nil || req.Reasoning.Effort == "" {
+		return defaultEffort, nil
+	}
+	if !profile.requestReasoning {
+		return "", fmt.Errorf("%s does not support per-request reasoning preferences", profile.label)
+	}
+	effort := string(req.Reasoning.Effort)
+	switch effort {
+	case CodexEffortMinimal, CodexEffortLow, CodexEffortMedium, CodexEffortHigh:
+		return shared.ReasoningEffort(effort), nil
+	default:
+		return "", fmt.Errorf("unsupported PostHog reasoning effort %q (supported: minimal, low, medium, high)", effort)
+	}
+}
+
+func validateResponsesModel(model string, profile responsesProfile) error {
+	if profile.validateModelFamily && !posthogResponsesModel(model) {
+		return fmt.Errorf("PostHog Responses does not support model %q: the model must belong to the GPT model family", model)
+	}
+	return nil
+}
+
 func (p *responsesProvider) Stream(ctx context.Context, req Request) (<-chan Event, error) {
 	model := req.Model
 	if model == "" {
 		model = p.model
 	}
+	if err := validateResponsesModel(model, p.profile); err != nil {
+		return nil, err
+	}
+	effort, err := resolvePosthogEffort(req, p.profile, p.effort)
+	if err != nil {
+		return nil, err
+	}
 	input, err := toCodexInput(req.Messages)
 	if err != nil {
 		return nil, err
 	}
+
 	credential, err := p.authorize(ctx)
 	if err != nil {
 		return nil, err
@@ -248,8 +299,8 @@ func (p *responsesProvider) Stream(ctx context.Context, req Request) (<-chan Eve
 	if req.SessionKey != "" {
 		params.PromptCacheKey = openai.String(req.SessionKey)
 	}
-	if p.effort != "" || p.summary != "" {
-		params.Reasoning = shared.ReasoningParam{Effort: p.effort, Summary: p.summary}
+	if effort != "" || p.summary != "" {
+		params.Reasoning = shared.ReasoningParam{Effort: effort, Summary: p.summary}
 	}
 	if p.verbosity != "" {
 		params.Text = responses.ResponseTextConfigParam{Verbosity: p.verbosity}

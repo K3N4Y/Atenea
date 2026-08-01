@@ -1,6 +1,7 @@
 package llm
 
 import contract "github.com/K3N4Y/atenea/agentcore/llm"
+import "strings"
 
 // What each adapter shipped here declares about itself, and the context windows
 // of the models it serves.
@@ -113,17 +114,32 @@ var anthropicCapabilities = Capabilities{
 	ContextWindows:         anthropicWindows,
 }
 
-// posthogCapabilities is anthropicCapabilities pointed at the gateway's own
-// model catalog: same wire format, same adapter behavior, different ids and
-// windows.
+// posthogCapabilities is the gateway's catalog-wide behavior. Reasoning is
+// intentionally represented per model: Claude uses the Anthropic adapter and
+// GPT uses Responses with a requested summary.
 var posthogCapabilities = Capabilities{
 	Streaming:              true,
 	Tools:                  true,
-	Reasoning:              false,
 	PromptCaching:          ImplicitPromptCaching,
 	RetryTelemetry:         false,
 	DefaultMaxOutputTokens: defaultAnthropicMaxOutputTokens,
 	ContextWindows:         posthogWindows,
+}
+
+func posthogCapabilitiesFor(models ...string) Capabilities {
+	caps := posthogCapabilities
+	if len(models) == 0 {
+		return caps
+	}
+	caps.ReasoningModels = make(map[string]bool, len(models))
+	for _, model := range models {
+		if strings.HasPrefix(model, "gpt-") {
+			caps.ReasoningModels[model] = true
+		} else if strings.HasPrefix(model, "claude-") {
+			caps.ReasoningModels[model] = false
+		}
+	}
+	return caps
 }
 
 // Capabilities is what this adapter does with the anthropic-messages wire
@@ -184,7 +200,7 @@ func DescribeAnthropic() Capabilities { return anthropicCapabilities }
 
 // DescribePosthog is what NewAnthropicOAuthProvider builds, without building
 // one — the same wire format serving the gateway's catalog.
-func DescribePosthog() Capabilities { return posthogCapabilities }
+func DescribePosthog(models ...string) Capabilities { return posthogCapabilitiesFor(models...) }
 
 // DescribeCodex is what a codex-dialect adapter built with opts would declare,
 // without building one — which the catalog needs, since it has to describe every

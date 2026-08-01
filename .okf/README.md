@@ -80,6 +80,7 @@ The project-wide vocabulary lives in the root [domain glossary](../CONTEXT.md).
 - [LLM prompt-cache hit research and provider audit](research/2026-07-23-llm-prompt-cache-hit.md)
 - [Agent loops and graph orchestration](research/2026-07-27-graphs-over-agent-loops.md)
 - [OpenAI ChatGPT subscription: device-code OAuth and the codex backend](research/2026-07-27-openai-chatgpt-oauth-device-code.md)
+- [PostHog reasoning levels](research/2026-08-01-posthog-reasoning-levels.md)
 
 ## Specifications
 

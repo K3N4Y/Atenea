@@ -211,3 +211,48 @@ func TestListPosthogModels_ReportsFailures(t *testing.T) {
 		}
 	})
 }
+func TestPosthogClaude_RejectsExplicitReasoningBeforeCredentialOrHTTP(t *testing.T) {
+	gateway := newPosthogGateway(t)
+	tokens := &staticTokens{err: errors.New("credential resolution must not run")}
+	provider := NewAnthropicOAuthProvider(tokens, gateway.server.URL, "claude-opus-4-8")
+	req := contractRequest("claude-opus-4-8")
+	req.Reasoning = &ReasoningPreference{Effort: ReasoningEffortHigh}
+
+	_, err := provider.Stream(context.Background(), req)
+	if err == nil || !strings.Contains(err.Error(), "PostHog Claude") || !strings.Contains(err.Error(), string(ReasoningEffortHigh)) {
+		t.Fatalf("Stream error = %v, want PostHog Claude and the requested effort", err)
+	}
+	if tokens.count() != 0 {
+		t.Fatalf("credential resolutions = %d, want zero", tokens.count())
+	}
+	gateway.mu.Lock()
+	defer gateway.mu.Unlock()
+	if len(gateway.auths) != 0 {
+		t.Fatalf("HTTP requests = %d, want zero", len(gateway.auths))
+	}
+}
+
+func TestPosthogCapabilitiesMatchModelAwareDescription(t *testing.T) {
+	claude := NewAnthropicOAuthProvider(&staticTokens{}, "https://gateway.test", "claude-opus-4-8").Capabilities()
+	gpt := NewPosthogResponsesProvider(&staticTokens{}, "https://gateway.test", "gpt-5.5").(Describing).Capabilities()
+	described := DescribePosthog("claude-opus-4-8", "gpt-5.5")
+
+	for name, item := range map[string]struct {
+		caps  Capabilities
+		model string
+	}{
+		"Claude": {caps: claude, model: "claude-opus-4-8"},
+		"GPT":    {caps: gpt, model: "gpt-5.5"},
+	} {
+		built, model := item.caps, item.model
+		if built.Streaming != described.Streaming || built.Tools != described.Tools {
+			t.Errorf("%s capabilities disagree on shared behavior: built=%#v described=%#v", name, built, described)
+		}
+		if got, ok := built.ContextWindow(model); !ok || got != described.ContextWindows[model] {
+			t.Errorf("%s ContextWindow(%q) = %d, %v; described %d", name, model, got, ok, described.ContextWindows[model])
+		}
+		if built.Reasoning != described.ReasoningModels[model] {
+			t.Errorf("%s Reasoning = %v, want model-aware description %v", name, built.Reasoning, described.ReasoningModels[model])
+		}
+	}
+}

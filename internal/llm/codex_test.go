@@ -589,3 +589,74 @@ func TestCodexProvider_AsksForReasoningAndVerbosityWhenTold(t *testing.T) {
 		t.Errorf("text = %v with no option set, want the field omitted", bare["text"])
 	}
 }
+func TestPosthogResponsesProvider_RequestReasoningOverride(t *testing.T) {
+	server := newCodexServer(t, codexTurn)
+	req := codexRequest()
+	req.Reasoning = &ReasoningPreference{Effort: ReasoningEffortHigh}
+	provider := NewPosthogResponsesProvider(&staticTokens{token: OAuthToken{AccessToken: "a"}}, server.server.URL, req.Model)
+	drainCodex(t, provider, req)
+	body, _, _ := server.request(t, 0)
+	got, _ := json.Marshal(body["reasoning"])
+	if string(got) != `{"effort":"high","summary":"auto"}` {
+		t.Fatalf("reasoning = %s, want per-call high effort with the provider summary", got)
+	}
+}
+
+func TestPosthogResponsesProvider_RejectsUnknownReasoningBeforeHTTP(t *testing.T) {
+	server := newCodexServer(t, codexTurn)
+	req := codexRequest()
+	req.Reasoning = &ReasoningPreference{Effort: ReasoningEffort("turbo")}
+	provider := NewPosthogResponsesProvider(&staticTokens{token: OAuthToken{AccessToken: "a"}}, server.server.URL, req.Model)
+	if _, err := provider.Stream(context.Background(), req); err == nil || !strings.Contains(err.Error(), "unsupported PostHog reasoning effort") {
+		t.Fatalf("Stream error = %v, want conservative validation error", err)
+	}
+	if server.requests() != 0 {
+		t.Fatalf("validation sent %d requests", server.requests())
+	}
+}
+func TestCodexProvider_RejectsExplicitReasoningBeforeCredentialResolution(t *testing.T) {
+	server := newCodexServer(t, codexTurn)
+	tokens := &staticTokens{err: errors.New("credential resolution must not run")}
+	req := codexRequest()
+	req.Reasoning = &ReasoningPreference{Effort: ReasoningEffortHigh}
+
+	_, err := NewCodexProvider(tokens, server.server.URL, req.Model).Stream(context.Background(), req)
+	if err == nil || !strings.Contains(err.Error(), "does not support per-request reasoning") {
+		t.Fatalf("Stream error = %v, want unsupported explicit reasoning error", err)
+	}
+	if tokens.count() != 0 || server.requests() != 0 {
+		t.Fatalf("unsupported preference touched credential or HTTP: credential resolutions=%d, requests=%d", tokens.count(), server.requests())
+	}
+}
+
+func TestPosthogResponsesProvider_RejectsIncompatibleModelBeforeCredentialResolution(t *testing.T) {
+	server := newCodexServer(t, codexTurn)
+	tokens := &staticTokens{err: errors.New("credential resolution must not run")}
+	provider := NewPosthogResponsesProvider(tokens, server.server.URL, "gpt-5.5")
+	req := codexRequest()
+	req.Model = "gemini-x"
+
+	_, err := provider.Stream(context.Background(), req)
+	if err == nil || !strings.Contains(err.Error(), "PostHog") || !strings.Contains(err.Error(), "model family") {
+		t.Fatalf("Stream error = %v, want PostHog model-family validation error", err)
+	}
+	if tokens.count() != 0 || server.requests() != 0 {
+		t.Fatalf("incompatible model touched credential or HTTP: credential resolutions=%d, requests=%d", tokens.count(), server.requests())
+	}
+}
+
+func TestPosthogResponsesProvider_RejectsClaudeModelBeforeCredentialResolution(t *testing.T) {
+	server := newCodexServer(t, codexTurn)
+	tokens := &staticTokens{err: errors.New("credential resolution must not run")}
+	provider := NewPosthogResponsesProvider(tokens, server.server.URL, "gpt-5.5")
+	req := codexRequest()
+	req.Model = "claude-opus-4-8"
+
+	_, err := provider.Stream(context.Background(), req)
+	if err == nil || !strings.Contains(err.Error(), "GPT model family") {
+		t.Fatalf("Stream error = %v, want GPT-family validation error", err)
+	}
+	if tokens.count() != 0 || server.requests() != 0 {
+		t.Fatalf("incompatible Claude model touched credential or HTTP: credential resolutions=%d, requests=%d", tokens.count(), server.requests())
+	}
+}

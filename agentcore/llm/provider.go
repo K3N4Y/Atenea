@@ -36,6 +36,27 @@ type Request struct {
 	Messages        []Message // projected history in the provider's format
 	Tools           []ToolDef // tool schemas the model may call in this turn
 	MaxOutputTokens int
+	// Reasoning is an optional per-call preference. The zero value preserves the
+	// provider constructor's default.
+	Reasoning *ReasoningPreference
+}
+
+// ReasoningEffort is the provider-neutral level of effort requested for a turn.
+// An empty value means that the provider's configured default should be used.
+type ReasoningEffort string
+
+const (
+	ReasoningEffortMinimal ReasoningEffort = "minimal"
+	ReasoningEffortLow     ReasoningEffort = "low"
+	ReasoningEffortMedium  ReasoningEffort = "medium"
+	ReasoningEffortHigh    ReasoningEffort = "high"
+)
+
+// ReasoningPreference contains optional per-call model reasoning settings.
+// Providers may support only a subset of efforts and must reject unsupported
+// explicit values rather than silently changing the request.
+type ReasoningPreference struct {
+	Effort ReasoningEffort
 }
 
 // Message is one history message projected into the provider's format. The

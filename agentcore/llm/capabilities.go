@@ -29,7 +29,14 @@ type Capabilities struct {
 	// reports it as Reasoning* events. False does not promise the stream never
 	// carries them — an endpoint may volunteer reasoning the adapter forwards
 	// anyway — it means a host should not expect them.
+	// For catalogs serving multiple model families, use ReasoningModels to avoid
+	// turning a per-model fact into an unsafe global claim.
 	Reasoning bool
+
+	// ReasoningModels records model-specific reasoning behavior when Reasoning
+	// cannot honestly describe every model in the catalog. An absent model is
+	// unknown, not unsupported.
+	ReasoningModels map[string]bool
 
 	// Vision: the adapter translates a Message part that is an image or a
 	// document, not only text. Message carries content parts now, so the seam is
