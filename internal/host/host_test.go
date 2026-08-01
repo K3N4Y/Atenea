@@ -35,6 +35,18 @@ func TestNew_PreservesInjectedIdentityAndDefaultsDevelopment(t *testing.T) {
 	}
 }
 
+func TestNewSitting_AutoAcceptStartsDisabledAndDoesNotPersist(t *testing.T) {
+	first := NewSitting()
+	first.AutoAccept.Set("resumed-session", true)
+	second := NewSitting()
+	if second.AutoAccept.Enabled("resumed-session") {
+		t.Fatal("new process sitting inherited auto-accept")
+	}
+	if second.AutoAccept.Enabled("new-session") {
+		t.Fatal("new session did not default to ask")
+	}
+}
+
 // Which environment key selects which provider is providerconfig's answer and its
 // tests pin it. What is the host's own is the last resort: with no key anywhere
 // the app still has to be usable, so the host supplies the offline demo and the

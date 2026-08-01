@@ -74,8 +74,32 @@ func TestApp_ListCommandsReturnsRegisteredCommands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListCommands: %v", err)
 	}
-	if len(cmds) != 2 || cmds[0].Name != "abc" || cmds[1].Name != "commit" {
-		t.Fatalf("ListCommands = %+v, want [abc commit]", cmds)
+	if len(cmds) != 5 || cmds[0].Name != "abc" || cmds[1].Name != "commit" || cmds[2].Name != "mode" || cmds[3].Name != "mode:auto-accept" || cmds[4].Name != "mode:ask" {
+		t.Fatalf("ListCommands = %+v, want [abc commit mode mode:auto-accept mode:ask]", cmds)
+	}
+}
+
+func TestApp_PermissionModeStaysLocalAndIsSessionScoped(t *testing.T) {
+	app := newApp(t, demoProvider(), func(string, ...interface{}) {})
+	if got, err := app.PermissionMode("one", "/mode:auto-accept"); err != nil || got != "auto-accept" {
+		t.Fatalf("enable = %q, %v", got, err)
+	}
+	if got, _ := app.PermissionMode("two", "/mode"); got != "ask" {
+		t.Fatalf("other session = %q", got)
+	}
+	if got, err := app.PermissionMode("one", "/mode:ask"); err != nil || got != "ask" {
+		t.Fatalf("disable = %q, %v", got, err)
+	}
+}
+
+func TestApp_DeleteSessionClearsAutoAccept(t *testing.T) {
+	app := newApp(t, demoProvider(), func(string, ...interface{}) {})
+	if _, err := app.PermissionMode("deleted", "/mode:auto-accept"); err != nil {
+		t.Fatal(err)
+	}
+	_ = app.DeleteSession("deleted")
+	if got, _ := app.PermissionMode("deleted", "/mode"); got != "ask" {
+		t.Fatalf("mode after deletion = %q", got)
 	}
 }
 

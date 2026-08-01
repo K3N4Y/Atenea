@@ -107,12 +107,13 @@ type Engine struct {
 	// inbox, gate, grants and agent come from the sitting: they outlive every
 	// rewire, so the user's permission answers and the turn lifecycle are not
 	// dropped when the wiring is rebuilt.
-	inbox  session.Inbox
-	gate   *permission.MemoryGate
-	grants *permission.SessionGrants
-	agent  *agent.Service
-	ctx    context.Context
-	cancel context.CancelFunc
+	inbox      session.Inbox
+	gate       *permission.MemoryGate
+	grants     *permission.SessionGrants
+	autoAccept *permission.AutoAcceptModes
+	agent      *agent.Service
+	ctx        context.Context
+	cancel     context.CancelFunc
 
 	// runner, glob and tools are the mutable pieces of the assembly: rewire (on an MCP connect or disconnect) replaces them, so they are read under mu. glob feeds the composer's @-menu of files (the mirror of App.ListProjectFiles); tools is the catalog the TUI asks about a tool it only knows by name.
 	runner *runner.Runner
@@ -165,6 +166,7 @@ func New(cfg Config) *Engine {
 		inbox:              sitting.Inbox,
 		gate:               sitting.Gate,
 		grants:             sitting.Grants,
+		autoAccept:         sitting.AutoAccept,
 		agent:              sitting.Agent,
 		pendingCompactions: map[string]bool{},
 		compacting:         map[string]bool{},
@@ -196,14 +198,15 @@ func New(cfg Config) *Engine {
 		return cfg.Models.Active().Model
 	})
 	e.wiring = wiring.Config{
-		Root:     cfg.Root,
-		Provider: cfg.Provider,
-		Store:    e.store,
-		Inbox:    e.inbox,
-		Gate:     e.gate,
-		Grants:   e.grants,
-		Snaps:    sitting.Snapshots,
-		Bus:      bus,
+		Root:       cfg.Root,
+		Provider:   cfg.Provider,
+		Store:      e.store,
+		Inbox:      e.inbox,
+		Gate:       e.gate,
+		Grants:     e.grants,
+		AutoAccept: e.autoAccept,
+		Snaps:      sitting.Snapshots,
+		Bus:        bus,
 		// The selection answers this, so switching to or from a local endpoint with
 		// /model changes the prompt on the next turn instead of the next launch.
 		LocalPrompt: e.localModels,
@@ -400,6 +403,9 @@ func (e *Engine) Commands() []command.Command {
 	return e.agent.Commands()
 }
 
+func (e *Engine) SetAutoAccept(sessionID string, enabled bool) { e.autoAccept.Set(sessionID, enabled) }
+func (e *Engine) AutoAcceptEnabled(sessionID string) bool      { return e.autoAccept.Enabled(sessionID) }
+
 func localCommands() []command.Command {
 	return []command.Command{
 		{Name: "compact", Description: "Compact conversation context", BuiltIn: true},
@@ -407,6 +413,9 @@ func localCommands() []command.Command {
 		{Name: "mcp", Description: "Toggle MCP servers on or off", BuiltIn: true},
 		{Name: "model", Description: "Select provider and model", BuiltIn: true},
 		{Name: "new", Description: "Start a new session", BuiltIn: true},
+		{Name: "mode", Description: "Show safe auto-accept mode", BuiltIn: true},
+		{Name: "mode:auto-accept", Description: "Auto-accept safe workspace edits", BuiltIn: true},
+		{Name: "mode:ask", Description: "Ask before workspace edits", BuiltIn: true},
 		{Name: "resume", Description: "Resume a TUI session in this workspace", BuiltIn: true},
 		{Name: "undo", Description: "Undo the last prompt and its file changes", BuiltIn: true},
 	}

@@ -82,6 +82,11 @@ type Agent interface {
 	Stop(sessionID string)
 }
 
+type autoAcceptAgent interface {
+	SetAutoAccept(sessionID string, enabled bool)
+	AutoAcceptEnabled(sessionID string) bool
+}
+
 type modelAgent interface {
 	ModelCatalog() []providerconfig.ProviderModels
 	CurrentModel() providerconfig.Active

@@ -15,6 +15,26 @@ func (m Model) submitPrompt() (Model, tea.Cmd) {
 		return m, nil
 	}
 	trimmed := strings.TrimSpace(text)
+	if trimmed == "/mode" || trimmed == "/mode:auto-accept" || trimmed == "/mode:ask" {
+		controller, ok := m.agent.(autoAcceptAgent)
+		if !ok {
+			return m.appendError("permission mode is unavailable"), nil
+		}
+		if trimmed == "/mode:auto-accept" {
+			controller.SetAutoAccept(m.sessionID, true)
+		}
+		if trimmed == "/mode:ask" {
+			controller.SetAutoAccept(m.sessionID, false)
+		}
+		mode := "ask"
+		if controller.AutoAcceptEnabled(m.sessionID) {
+			mode = "auto-accept"
+		}
+		m.input.SetValue("")
+		m.menuItems = nil
+		m.Transcript = m.Transcript.appendNotice("permission mode: " + mode)
+		return m.syncViewport(), nil
+	}
 	if next, handled := m.handleCacheStatsCommand(trimmed); handled {
 		return next, nil
 	}

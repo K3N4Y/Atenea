@@ -8,6 +8,7 @@ import {
   ResolveToolPermission,
   ListProjectFiles,
   ListCommands,
+  PermissionMode,
 } from '../../../wailsjs/go/main/App'
 import { EventsOn } from '../../../wailsjs/runtime/runtime'
 import type { Command } from './command'
@@ -109,6 +110,7 @@ export const useChatStore = defineStore(
     const items = ref<TurnItem[]>([])
     const running = ref(false)
     const errorText = ref<string | null>(null)
+    const statusText = ref<string | null>(null)
     // Modo de envio: 'normal' manda prompts directos; 'plan' pide al agente que
     // planifique antes de ejecutar. `plan` guarda el plan vigente que la tool
     // present_plan abre a pantalla completa (null = sin overlay de plan).
@@ -401,6 +403,7 @@ export const useChatStore = defineStore(
 
     function applyError(msg: string): void {
       running.value = false
+      statusText.value = null
       errorText.value = msg
     }
 
@@ -421,6 +424,7 @@ export const useChatStore = defineStore(
       resolveSessionByCall = new Map()
       running.value = false
       errorText.value = null
+      statusText.value = null
       // Un lienzo nuevo/cargado arranca en modo normal sin overlay de plan.
       // Reproducir un historial que termina en present_plan reabre `plan` via
       // applyEvent durante la rehidratacion.
@@ -480,6 +484,21 @@ export const useChatStore = defineStore(
     async function send(text: string): Promise<void> {
       const trimmed = text.trim()
       if (!trimmed) return
+      if (
+        trimmed === '/mode' ||
+        trimmed === '/mode:auto-accept' ||
+        trimmed === '/mode:ask'
+      ) {
+        try {
+          const permissionMode = await PermissionMode(sessionID.value, trimmed)
+          errorText.value = null
+          statusText.value = `Permission mode: ${permissionMode}`
+        } catch (error) {
+          applyError(error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+      statusText.value = null
       errorText.value = null
       running.value = true
       // Un envio nuevo cierra cualquier plan vigente; el agente lo reabrira con
@@ -589,6 +608,7 @@ export const useChatStore = defineStore(
       items,
       running,
       errorText,
+      statusText,
       sessions,
       workspace,
       mode,

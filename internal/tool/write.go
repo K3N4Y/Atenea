@@ -86,6 +86,29 @@ func (*WriteTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}`)
 }
 
+// AutoAcceptSafe proves this remains the write tool's new-file-only operation.
+func (wt *WriteTool) AutoAcceptSafe(call Call) bool {
+	var in struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	if json.Unmarshal(call.Input, &in) != nil || in.Path == "" {
+		return false
+	}
+	abs, err := sandboxJoin(wt.Root, in.Path, "write")
+	if err != nil {
+		return false
+	}
+	if _, ok := wt.FS.(osWriteFS); !ok {
+		return false
+	}
+	if rejectRealParentOutside(wt.Root, abs, in.Path, "write") != nil {
+		return false
+	}
+	_, err = os.Lstat(abs)
+	return os.IsNotExist(err)
+}
+
 // Execute parsea {path, content}, resuelve la ruta dentro de Root (compuerta de
 // sandbox fail-closed, igual que read/edit), normaliza el contenido a LF, crea los
 // directorios padre, escribe el archivo y graba el snapshot con todas las lineas

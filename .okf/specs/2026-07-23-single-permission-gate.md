@@ -5,6 +5,10 @@ summary: Design specification for the single ask-before-run permission gate cove
 
 # Single permission gate for shell and local FS tools
 
+The session-local decorator is specified in [Safe auto-accept permission
+mode](2026-07-31-safe-auto-accept-mode.md). Arbitrary shell and undeclared MCP
+effects continue through this gate.
+
 ## Problem
 
 Ask-before-run existed only for `bash`, and the pieces were scattered: the

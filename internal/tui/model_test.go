@@ -66,6 +66,101 @@ type fakeAgent struct {
 	// as "unknown" rather than as "no window".
 	capabilities llm.Capabilities
 	declared     bool
+	autoAccept   map[string]bool
+}
+
+func (f *fakeAgent) SetAutoAccept(sessionID string, enabled bool) {
+	if f.autoAccept == nil {
+		f.autoAccept = make(map[string]bool)
+	}
+	f.autoAccept[sessionID] = enabled
+}
+func (f *fakeAgent) AutoAcceptEnabled(sessionID string) bool { return f.autoAccept[sessionID] }
+
+func TestModel_ModeCommandsStayLocal(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	for _, input := range []string{"/mode:auto-accept", "/mode", "/mode:ask"} {
+		m = typeRunes(t, m, input)
+		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		if cmd != nil {
+			t.Fatalf("%s returned async command", input)
+		}
+		m = updated.(Model)
+	}
+	if len(fake.sent) != 0 || fake.AutoAcceptEnabled("s1") {
+		t.Fatalf("commands reached provider or left mode enabled: sent=%v mode=%v", fake.sent, fake.AutoAcceptEnabled("s1"))
+	}
+}
+
+func TestModel_ModeUnavailableIsAnError(t *testing.T) {
+	m := NewModel(struct{ Agent }{Agent: &fakeAgent{}}, "s1", nil)
+	m = typeRunes(t, m, "/mode:auto-accept")
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+
+	if len(m.entries) == 0 || m.entries[len(m.entries)-1].kind != entryError {
+		t.Fatalf("entries = %+v, want genuine mode failure rendered as error", m.entries)
+	}
+}
+
+func TestModeNoticeAlignsWithTwoCellTranscriptMargin(t *testing.T) {
+	got := ansi.Strip(renderEntry(entry{kind: entryNotice, text: "permission mode: auto-accept"}, 80))
+	wantPrefix := strings.Repeat(" ", composerOuterMargin) + "permission mode: auto-accept"
+	if !strings.HasPrefix(got, wantPrefix) {
+		t.Fatalf("notice = %q, want prefix %q", got, wantPrefix)
+	}
+}
+
+func TestModeNoticeDoesNotOverflowTinyTerminal(t *testing.T) {
+	for width := 1; width <= 4; width++ {
+		t.Run(fmt.Sprintf("width_%d", width), func(t *testing.T) {
+			m := NewModel(&fakeAgent{}, "s1", nil)
+			m = apply(t, m, tea.WindowSizeMsg{Width: width, Height: 12})
+			m.Transcript = m.Transcript.appendNotice("permission mode: auto-accept")
+			m = m.syncViewport()
+
+			assertNoLineWiderThan(t, m.View(), width)
+		})
+	}
+}
+
+func TestModel_ModeAutocompleteExecutesOnFirstEnter(t *testing.T) {
+	for _, tt := range []struct {
+		input, status string
+		enabled       bool
+	}{
+		{input: "/mode", status: "permission mode: ask"},
+		{input: "/mode:auto-accept", status: "permission mode: auto-accept", enabled: true},
+		{input: "/mode:ask", status: "permission mode: ask"},
+	} {
+		t.Run(tt.input, func(t *testing.T) {
+			fake := &fakeAgent{}
+			commands := []command.Command{{Name: "mode", BuiltIn: true}, {Name: "mode:auto-accept", BuiltIn: true}, {Name: "mode:ask", BuiltIn: true}}
+			m := NewModel(fake, "s1", nil).WithCompletions(commands, nil)
+			m = typeRunes(t, m, tt.input)
+			updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			if cmd != nil {
+				t.Fatal("local mode selection returned an async prompt command")
+			}
+			m = updated.(Model)
+			if got := m.input.Value(); got != "" {
+				t.Fatalf("composer = %q, want cleared after one Enter", got)
+			}
+			if fake.AutoAcceptEnabled("s1") != tt.enabled {
+				t.Fatalf("enabled = %v, want %v", fake.AutoAcceptEnabled("s1"), tt.enabled)
+			}
+			if len(fake.sent) != 0 || len(fake.planSent) != 0 || len(m.history) != 0 {
+				t.Fatalf("mode leaked: sent=%v plan=%v history=%v", fake.sent, fake.planSent, m.history)
+			}
+			if len(m.entries) == 0 || !strings.Contains(m.entries[len(m.entries)-1].text, tt.status) {
+				t.Fatalf("status not shown: %+v", m.entries)
+			}
+			if got := m.entries[len(m.entries)-1].kind; got != entryNotice {
+				t.Fatalf("status kind = %v, want informational notice (not error)", got)
+			}
+		})
+	}
 }
 
 func (f *fakeAgent) ModelCatalog() []providerconfig.ProviderModels {

@@ -14,6 +14,7 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   DeleteSession: vi.fn(() => Promise.resolve()),
   ListProjectFiles: vi.fn(() => Promise.resolve([])),
   ListCommands: vi.fn(() => Promise.resolve([])),
+  PermissionMode: vi.fn(() => Promise.resolve('ask')),
   Workspace: vi.fn(() => Promise.resolve('/home/u/a')),
   SetWorkspace: vi.fn(() => Promise.resolve()),
   SelectWorkspace: vi.fn(() => Promise.resolve('/home/u/picked')),
@@ -780,6 +781,46 @@ describe('chat store: acciones sobre los bindings', () => {
 
     expect(store.running).toBe(false)
     expect(App.SendPrompt).not.toHaveBeenCalled()
+  })
+
+  it('send maneja /mode localmente sin crear un prompt', async () => {
+    const store = useChatStore()
+    const sessionID = store.sessionID
+    vi.mocked(App.PermissionMode).mockResolvedValueOnce('auto-accept')
+
+    await store.send('/mode:auto-accept')
+
+    expect(App.PermissionMode).toHaveBeenCalledWith(
+      sessionID,
+      '/mode:auto-accept',
+    )
+    expect(App.SendPrompt).not.toHaveBeenCalled()
+    expect(App.SendPlanPrompt).not.toHaveBeenCalled()
+    expect(store.running).toBe(false)
+    expect(store.errorText).toBeNull()
+    expect(store.statusText).toBe('Permission mode: auto-accept')
+  })
+
+  it('un chat nuevo no arrastra el estado de permisos de la sesion anterior', async () => {
+    const store = useChatStore()
+    vi.mocked(App.PermissionMode).mockResolvedValueOnce('auto-accept')
+    await store.send('/mode:auto-accept')
+
+    store.reset()
+
+    expect(store.statusText).toBeNull()
+  })
+
+  it('un fallo de /mode se conserva como error, no como estado', async () => {
+    const store = useChatStore()
+    vi.mocked(App.PermissionMode).mockRejectedValueOnce(
+      new Error('permission mode unavailable'),
+    )
+
+    await store.send('/mode:auto-accept')
+
+    expect(store.statusText).toBeNull()
+    expect(store.errorText).toBe('permission mode unavailable')
   })
 
   it('stop llama Stop con el sessionID', () => {

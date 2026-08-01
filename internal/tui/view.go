@@ -159,7 +159,8 @@ func (e entry) render(width int, p tool.Presentation) string {
 		}
 		return statusStyle.Render("[context] " + sanitizeTerminalText(e.text))
 	case entryNotice:
-		return statusStyle.Render(sanitizeTerminalText(e.text))
+		margin := min(composerOuterMargin, width/2)
+		return lipgloss.NewStyle().Margin(0, margin).Render(statusStyle.Render(sanitizeTerminalText(e.text)))
 	case entryEvent:
 		return statusStyle.Render("[" + sanitizeTerminalText(e.eventKind) + "] " + sanitizeTerminalText(e.text))
 	default:

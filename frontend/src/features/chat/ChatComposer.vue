@@ -164,9 +164,21 @@ function chooseCommand(name: string) {
   replaceText(next, caret)
 }
 
-function chooseActive() {
+function isImmediateModeCommand(name: string): boolean {
+  return name === 'mode' || name === 'mode:auto-accept' || name === 'mode:ask'
+}
+
+function chooseActive(executeImmediate = false) {
   if (commandMenuOpen.value) {
-    chooseCommand(commandSuggestions.value[activeIndex.value].name)
+    const name = commandSuggestions.value[activeIndex.value].name
+    if (executeImmediate && isImmediateModeCommand(name)) {
+      emit('send', `/${name}`)
+      text.value = ''
+      closeMenu()
+      nextTick(autoGrow)
+      return
+    }
+    chooseCommand(name)
   } else if (mentionMenuOpen.value) {
     chooseFile(fileSuggestions.value[activeIndex.value])
   }
@@ -201,6 +213,9 @@ function onKeydown(e: KeyboardEvent) {
         moveActive(-1)
         return
       case 'Enter':
+        e.preventDefault()
+        chooseActive(true)
+        return
       case 'Tab':
         e.preventDefault()
         chooseActive()

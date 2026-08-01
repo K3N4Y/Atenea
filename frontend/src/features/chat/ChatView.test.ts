@@ -13,6 +13,7 @@ vi.mock('../../../wailsjs/runtime/runtime', () => ({
 vi.mock('../../../wailsjs/go/main/App', () => ({
   SendPrompt: vi.fn(() => Promise.resolve()),
   SendPlanPrompt: vi.fn(() => Promise.resolve()),
+  PermissionMode: vi.fn(() => Promise.resolve('auto-accept')),
   AcceptPlan: vi.fn(() => Promise.resolve()),
   Stop: vi.fn(),
   ListSessions: vi.fn(() => Promise.resolve([])),
@@ -181,6 +182,37 @@ describe('ChatView', () => {
     const alert = wrapper.find('[role="alert"]')
     expect(alert.exists()).toBe(true)
     expect(alert.text()).toContain('the provider is unavailable')
+  })
+
+  it('muestra el modo de permisos como estado informativo, no como error', async () => {
+    vi.clearAllMocks()
+    const wrapper = mountView()
+    const chat = useChatStore()
+
+    await chat.send('/mode:auto-accept')
+    await nextTick()
+
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(wrapper.find('[role="status"]').text()).toContain(
+      'Permission mode: auto-accept',
+    )
+  })
+
+  it('muestra un fallo real de /mode como error', async () => {
+    vi.clearAllMocks()
+    vi.mocked(App.PermissionMode).mockRejectedValueOnce(
+      new Error('permission mode unavailable'),
+    )
+    const wrapper = mountView()
+    const chat = useChatStore()
+
+    await chat.send('/mode:auto-accept')
+    await nextTick()
+
+    expect(wrapper.find('[role="status"]').exists()).toBe(false)
+    expect(wrapper.find('[role="alert"]').text()).toContain(
+      'permission mode unavailable',
+    )
   })
 
   it('sale de Working y muestra el error cuando SendPrompt rechaza', async () => {

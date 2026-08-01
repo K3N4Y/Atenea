@@ -197,6 +197,14 @@ onUnmounted(() => chat.teardown())
             </div>
           </Transition>
 
+          <p
+            v-if="chat.statusText"
+            role="status"
+            class="pb-2 text-center text-sm text-zinc-500"
+          >
+            {{ chat.statusText }}
+          </p>
+
           <ChatComposer
             :running="chat.running"
             :mode="chat.mode"
@@ -243,6 +251,14 @@ onUnmounted(() => chat.teardown())
             <ErrorNotice :message="chat.errorText" @dismiss="chat.clearError" />
           </div>
         </Transition>
+
+        <p
+          v-if="chat.statusText"
+          role="status"
+          class="mx-auto w-full max-w-3xl px-6 pt-2 text-sm text-zinc-500"
+        >
+          {{ chat.statusText }}
+        </p>
 
         <ChatComposer
           :running="chat.running"

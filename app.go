@@ -363,6 +363,23 @@ func (a *App) SendPrompt(sessionID, text string) error {
 	})
 }
 
+// PermissionMode handles the exact local /mode commands without recording a turn.
+func (a *App) PermissionMode(sessionID, command string) (string, error) {
+	switch command {
+	case "/mode:auto-accept":
+		a.workspace.Sitting().AutoAccept.Set(sessionID, true)
+	case "/mode:ask":
+		a.workspace.Sitting().AutoAccept.Set(sessionID, false)
+	case "/mode":
+	default:
+		return "", fmt.Errorf("unknown permission mode command")
+	}
+	if a.workspace.Sitting().AutoAccept.Enabled(sessionID) {
+		return "auto-accept", nil
+	}
+	return "ask", nil
+}
+
 // Workspace returns the working folder in force. The UI shows it in the sidebar and
 // uses it to decide whether opening a chat from another folder changes the
 // workspace.
@@ -482,7 +499,13 @@ func (a *App) ListProjectFiles() ([]string, error) {
 // composer menu, sorted by name. The frontend filters and sorts client-side as the
 // user types after "/"; on send, the backend expands the command.
 func (a *App) ListCommands() ([]command.Command, error) {
-	return a.workspace.Commands(), nil
+	commands := a.workspace.Commands()
+	commands = append(commands,
+		command.Command{Name: "mode", Description: "Show safe auto-accept mode", BuiltIn: true},
+		command.Command{Name: "mode:auto-accept", Description: "Auto-accept safe workspace edits", BuiltIn: true},
+		command.Command{Name: "mode:ask", Description: "Ask before workspace edits", BuiltIn: true},
+	)
+	return commands, nil
 }
 
 // ResolveToolPermission delivers the user's decision on a gated tool call
@@ -497,6 +520,7 @@ func (a *App) ResolveToolPermission(sessionID, callID string, approved bool) {
 // flight (if any), forgets its mode, and deletes its durable log from the store. It is
 // the binding the frontend calls when a chat is deleted from the sidebar.
 func (a *App) DeleteSession(sessionID string) error {
+	a.workspace.Sitting().AutoAccept.Set(sessionID, false)
 	return a.sessions.Delete(context.Background(), sessionID)
 }
 

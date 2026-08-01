@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/K3N4Y/atenea/agentcore/permission"
@@ -52,6 +53,33 @@ func (et *EditTool) GrantRule(Call) (permission.Rule, bool) {
 
 func (*EditTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"patch":{"type":"string"}},"required":["patch"]}`)
+}
+
+// AutoAcceptSafe rejects aliases: edit writes through the existing inode.
+func (et *EditTool) AutoAcceptSafe(call Call) bool {
+	var in struct {
+		Patch string `json:"patch"`
+	}
+	if json.Unmarshal(call.Input, &in) != nil {
+		return false
+	}
+	patch, err := hashline.ParsePatch(in.Patch)
+	if err != nil || len(patch.Sections) != 1 {
+		return false
+	}
+	rel := patch.Sections[0].Path
+	abs, err := sandboxJoin(et.Root, rel, "edit")
+	if err != nil {
+		return false
+	}
+	if _, ok := et.FS.(hashline.OSFilesystem); !ok {
+		return false
+	}
+	if rejectRealPathOutside(et.Root, abs, rel, "edit") != nil {
+		return false
+	}
+	info, err := os.Stat(abs)
+	return err == nil && info.Mode().IsRegular() && hasSingleLink(info)
 }
 
 // Execute parsea el patch, resuelve la ruta relativa dentro de Root (compuerta

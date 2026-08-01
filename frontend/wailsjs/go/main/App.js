@@ -70,6 +70,10 @@ export function ListCommands() {
   return window['go']['main']['App']['ListCommands']();
 }
 
+export function PermissionMode(arg1, arg2) {
+  return window['go']['main']['App']['PermissionMode'](arg1, arg2);
+}
+
 export function ListMCPs() {
   return window['go']['main']['App']['ListMCPs']();
 }

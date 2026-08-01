@@ -3,6 +3,8 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -217,6 +219,103 @@ func TestRunner_GateSkippedWhenPolicyAllows(t *testing.T) {
 	}
 	if _, ok := seqOfKind(log, session.KindToolSuccess, "c1"); !ok {
 		t.Errorf("non-gated tool was not settled (missing Tool.Success)")
+	}
+}
+
+func TestRunner_AutoAcceptSafeBashSkipsPermissionButExpansionAsks(t *testing.T) {
+	for _, tt := range []struct {
+		name, command string
+		wantAsk       bool
+	}{
+		{name: "safe", command: "touch safe.txt"},
+		{name: "expansion", command: "touch ~/escaped", wantAsk: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := newRecordingStore()
+			seedUser(t, store, "s1")
+			input, err := json.Marshal(map[string]string{"command": tt.command})
+			if err != nil {
+				t.Fatal(err)
+			}
+			provider := llm.NewFakeProvider(llm.Event{Kind: llm.StepStarted}, llm.Event{Kind: llm.ToolCall, CallID: "c1", ToolName: "bash", Input: input}, llm.Event{Kind: llm.StepEnded})
+			root := t.TempDir()
+			bash := tool.NewBashTool(root)
+			reg := tool.NewRegistry(tool.NewOutputStore(0), bash)
+			r := NewRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"bash": true}, func() string { return "a1" })
+			modes := permission.NewAutoAcceptModes()
+			modes.Set("s1", true)
+			r.gate = &fakeGate{approved: false}
+			r.policy = permission.NewAutoAcceptPolicy(permission.NewEffectsPolicy(reg), modes, reg)
+			if _, err := r.runTurn(ctx, "s1"); err != nil {
+				t.Fatal(err)
+			}
+			_, asked := seqOfKind(store.snapshot(), session.KindToolPermissionRequested, "c1")
+			if asked != tt.wantAsk {
+				t.Fatalf("permission event = %v, want %v", asked, tt.wantAsk)
+			}
+			_, statErr := os.Stat(filepath.Join(root, "safe.txt"))
+			if !tt.wantAsk && statErr != nil {
+				t.Fatalf("safe command did not execute: %v", statErr)
+			}
+		})
+	}
+}
+
+func TestRunner_AutoAcceptStillAsksForUndeclaredMCPShape(t *testing.T) {
+	store := newRecordingStore()
+	seedUser(t, store, "s1")
+	provider := llm.NewFakeProvider(llm.Event{Kind: llm.StepStarted}, llm.Event{Kind: llm.ToolCall, CallID: "m1", ToolName: "counter", Input: json.RawMessage(`{}`)}, llm.Event{Kind: llm.StepEnded})
+	calls := 0
+	reg := tool.NewRegistry(tool.NewOutputStore(0), countingTool{calls: &calls})
+	r := NewRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"counter": true}, func() string { return "a1" })
+	modes := permission.NewAutoAcceptModes()
+	modes.Set("s1", true)
+	r.gate = &fakeGate{approved: false}
+	r.policy = permission.NewAutoAcceptPolicy(permission.NewEffectsPolicy(reg), modes, reg)
+	if _, err := r.runTurn(context.Background(), "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, asked := seqOfKind(store.snapshot(), session.KindToolPermissionRequested, "m1"); !asked {
+		t.Fatal("undeclared MCP-shaped tool did not request permission")
+	}
+	if calls != 0 {
+		t.Fatalf("undeclared tool executed %d times after denial", calls)
+	}
+}
+
+func TestRunner_AutoAcceptHardLinkAsksAndPreservesOutsideAlias(t *testing.T) {
+	root := t.TempDir()
+	victim := filepath.Join(root, "victim.txt")
+	if err := os.WriteFile(victim, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.Link(victim, outside); err != nil {
+		t.Skipf("hard links unavailable: %v", err)
+	}
+	store := newRecordingStore()
+	seedUser(t, store, "s1")
+	provider := llm.NewFakeProvider(llm.Event{Kind: llm.StepStarted}, llm.Event{Kind: llm.ToolCall, CallID: "h1", ToolName: "bash", Input: json.RawMessage(`{"command":"touch victim.txt"}`)}, llm.Event{Kind: llm.StepEnded})
+	bash := tool.NewBashTool(root)
+	reg := tool.NewRegistry(tool.NewOutputStore(0), bash)
+	r := NewRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"bash": true}, func() string { return "a1" })
+	modes := permission.NewAutoAcceptModes()
+	modes.Set("s1", true)
+	r.gate = &fakeGate{approved: false}
+	r.policy = permission.NewAutoAcceptPolicy(permission.NewEffectsPolicy(reg), modes, reg)
+	if _, err := r.runTurn(context.Background(), "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, asked := seqOfKind(store.snapshot(), session.KindToolPermissionRequested, "h1"); !asked {
+		t.Fatal("hard-linked mutation did not ask")
+	}
+	got, err := os.ReadFile(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "keep" {
+		t.Fatalf("outside alias changed to %q", got)
 	}
 }
 

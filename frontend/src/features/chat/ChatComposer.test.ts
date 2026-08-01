@@ -183,6 +183,28 @@ describe('ChatComposer slash-commands', () => {
     { name: 'deep-research', description: 'investigacion profunda' },
   ]
 
+  it.each(['/mode', '/mode:auto-accept', '/mode:ask'])(
+    'Enter ejecuta %s seleccionado y limpia el composer en una pulsacion',
+    async (selected) => {
+      const wrapper = mount(ChatComposer, {
+        props: {
+          running: false,
+          commands: [
+            { name: 'mode', description: 'status' },
+            { name: 'mode:auto-accept', description: 'enable' },
+            { name: 'mode:ask', description: 'disable' },
+          ],
+        },
+      })
+      const ta = wrapper.find('textarea')
+      await ta.setValue(selected)
+      await ta.trigger('keydown', { key: 'Enter' })
+      expect(wrapper.emitted('send')).toEqual([[selected]])
+      expect((ta.element as HTMLTextAreaElement).value).toBe('')
+      expect(wrapper.find('[role="listbox"]').exists()).toBe(false)
+    },
+  )
+
   it('escribir "/" al inicio abre el menu con los comandos', async () => {
     const wrapper = mount(ChatComposer, { props: { running: false, commands } })
 

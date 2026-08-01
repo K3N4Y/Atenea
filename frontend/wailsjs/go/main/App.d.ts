@@ -40,6 +40,8 @@ export function InitRepo():Promise<void>;
 
 export function ListCommands():Promise<Array<command.Command>>;
 
+export function PermissionMode(arg1:string,arg2:string):Promise<string>;
+
 export function ListMCPs():Promise<Array<mcpclient.ServerStatus>>;
 
 export function ListModels(arg1:string):Promise<Array<string>>;

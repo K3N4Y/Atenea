@@ -172,6 +172,8 @@ func (m *Manager) MCPStatus() []mcpclient.ServerStatus {
 // Commands returns the commands from the currently configured agent.
 func (m *Manager) Commands() []command.Command { return m.sitting.Agent.Commands() }
 
+func (m *Manager) Sitting() *host.Sitting { return m.sitting }
+
 // Close stops all connected MCP processes after excluding lifecycle changes.
 func (m *Manager) Close() {
 	m.lifecycleMu.Lock()
@@ -190,7 +192,8 @@ func (m *Manager) rebuildLocked(root string) {
 	built := wiring.Build(wiring.Config{
 		Root: root, Provider: m.provider, Store: m.store, Inbox: m.sitting.Inbox,
 		Gate: m.sitting.Gate, Snaps: m.sitting.Snapshots, Bus: m.bus, LocalPrompt: m.localPrompt,
-		NextID: wiring.NewIDGen(), Mode: m.sitting.Agent.Mode, MCPTools: m.mcp.Tools(),
+		AutoAccept: m.sitting.AutoAccept,
+		NextID:     wiring.NewIDGen(), Mode: m.sitting.Agent.Mode, MCPTools: m.mcp.Tools(),
 		PersistentGrants: m.mcp.PermissionRules(),
 	})
 	m.mu.Lock()

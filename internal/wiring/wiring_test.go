@@ -260,6 +260,37 @@ func TestBuild_GrantsLayerOverTheInstalledPolicy(t *testing.T) {
 	}
 }
 
+func TestBuild_AutoAcceptSurvivesRewireButDoesNotReachChildSessionOrMCP(t *testing.T) {
+	modes := permission.NewAutoAcceptModes()
+	modes.Set("parent", true)
+	root := t.TempDir()
+	remote := undeclaredTool{name: "remote"}
+	first := buildWith(t, Config{Root: root, AutoAccept: modes, MCPTools: []tool.Tool{remote}})
+	second := buildWith(t, Config{Root: root, AutoAccept: modes, MCPTools: []tool.Tool{remote}})
+	safe := tool.Call{Name: "bash", Input: json.RawMessage(`{"command":"touch safe.txt"}`)}
+	for index, built := range []Built{first, second} {
+		if got := built.Policy.Decide("parent", safe); got != permission.Allow {
+			t.Fatalf("build %d parent safe = %v", index, got)
+		}
+		if got := built.Policy.Decide("child", safe); got != permission.Ask {
+			t.Fatalf("build %d child inherited = %v", index, got)
+		}
+		if got := built.Policy.Decide("parent", tool.Call{Name: "remote", Input: json.RawMessage(`{}`)}); got != permission.Ask {
+			t.Fatalf("build %d MCP = %v", index, got)
+		}
+	}
+}
+
+func TestBuild_AutoAcceptIsOrthogonalToPlanMode(t *testing.T) {
+	modes := permission.NewAutoAcceptModes()
+	modes.Set("s", true)
+	built := buildWith(t, Config{AutoAccept: modes, Mode: func(string) session.Mode { return session.ModePlan }})
+	call := tool.Call{Name: "bash", Input: json.RawMessage(`{"command":"touch safe.txt"}`)}
+	if got := built.Policy.Decide("s", call); got != permission.Allow {
+		t.Fatalf("plan-mode policy = %v, want Allow independent of prompt mode", got)
+	}
+}
+
 // TestBuild_ZeroOutputLimitCapsAtTheDefault is the field whose zero value would be
 // dangerous if it were passed through: tool.OutputStore reads a zero as no limit,
 // so a caller that left the field alone would get uncapped tool output in the

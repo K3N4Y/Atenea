@@ -5,6 +5,9 @@ summary: Design specification for session-scoped permission grants ("allow this 
 
 # Session-scoped permission grants
 
+Safe auto-accept is a separate sitting-owned, per-session mode rather than a
+grant. See [Safe auto-accept permission mode](2026-07-31-safe-auto-accept-mode.md).
+
 ## Problem
 
 Every approval applied to a single pending execution. A session that touches

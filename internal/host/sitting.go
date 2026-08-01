@@ -30,6 +30,8 @@ type Sitting struct {
 	// call means asking the tool that would settle it, which comes from the
 	// registry of the moment. See permission.SessionGrants.
 	Grants *permission.SessionGrants
+	// AutoAccept is the per-session safe-edit mode for this process sitting.
+	AutoAccept *permission.AutoAcceptModes
 	// Inbox is the prompt queue the runner drains per session.
 	Inbox session.Inbox
 	// Agent is the UI-independent turn lifecycle both hosts drive. It is
@@ -51,10 +53,11 @@ type Sitting struct {
 func NewSitting() *Sitting {
 	inbox := session.NewMemoryInbox()
 	return &Sitting{
-		Gate:      permission.NewMemoryGate(),
-		Grants:    permission.NewSessionGrants(),
-		Inbox:     inbox,
-		Agent:     agent.NewService(inbox),
-		Snapshots: tool.NewSessionSnapshots(),
+		Gate:       permission.NewMemoryGate(),
+		Grants:     permission.NewSessionGrants(),
+		AutoAccept: permission.NewAutoAcceptModes(),
+		Inbox:      inbox,
+		Agent:      agent.NewService(inbox),
+		Snapshots:  tool.NewSessionSnapshots(),
 	}
 }
