@@ -71,6 +71,25 @@ var openRouterWindows = map[string]int{
 	"cohere/north-mini-code:free": 256_000,
 }
 
+// posthogWindows are the ids PostHog's LLM gateway serves off its
+// anthropic-messages surface. Their own table, per the note above: the same
+// vendor's models reached through the gateway are the gateway's catalog, and it
+// advertises 1M windows for the opus/sonnet family where Anthropic's public API
+// declares 200K.
+//
+// The numbers mirror what the gateway's /v1/models declares. They are trusted
+// as given — under-declaring costs an early compaction, over-declaring costs a
+// failed turn — and this table is the one place to correct if real requests
+// disagree.
+var posthogWindows = map[string]int{
+	"claude-opus-5":     1_000_000,
+	"claude-opus-4-8":   1_000_000,
+	"claude-opus-4-7":   1_000_000,
+	"claude-sonnet-5":   1_000_000,
+	"claude-sonnet-4-6": 1_000_000,
+	"claude-haiku-4-5":  200_000,
+}
+
 var anthropicCapabilities = Capabilities{
 	Streaming: true,
 	Tools:     true,
@@ -87,8 +106,22 @@ var anthropicCapabilities = Capabilities{
 	ContextWindows:         anthropicWindows,
 }
 
-// Capabilities is what this adapter does with Anthropic's native Messages API.
-func (p *AnthropicProvider) Capabilities() Capabilities { return anthropicCapabilities }
+// posthogCapabilities is anthropicCapabilities pointed at the gateway's own
+// model catalog: same wire format, same adapter behavior, different ids and
+// windows.
+var posthogCapabilities = Capabilities{
+	Streaming:              true,
+	Tools:                  true,
+	Reasoning:              false,
+	PromptCaching:          ImplicitPromptCaching,
+	RetryTelemetry:         false,
+	DefaultMaxOutputTokens: defaultAnthropicMaxOutputTokens,
+	ContextWindows:         posthogWindows,
+}
+
+// Capabilities is what this adapter does with the anthropic-messages wire
+// format, against whichever catalog the instance was built for.
+func (p *AnthropicProvider) Capabilities() Capabilities { return p.capabilities }
 
 // capabilities is what the dialect this profile selects can do. It is the profile
 // made observable: what used to be decided at construction and then forgotten is
@@ -141,6 +174,10 @@ func (p *CodexProvider) Capabilities() Capabilities {
 
 // DescribeAnthropic is what NewAnthropicProvider builds, without building one.
 func DescribeAnthropic() Capabilities { return anthropicCapabilities }
+
+// DescribePosthog is what NewAnthropicOAuthProvider builds, without building
+// one — the same wire format serving the gateway's catalog.
+func DescribePosthog() Capabilities { return posthogCapabilities }
 
 // DescribeCodex is what a codex-dialect adapter built with opts would declare,
 // without building one — which the catalog needs, since it has to describe every

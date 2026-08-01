@@ -16,22 +16,57 @@ import (
 const defaultAnthropicMaxOutputTokens = 8192
 
 // AnthropicProvider adapts Anthropic's native Messages API to Provider.
+//
+// It serves two endpoints that speak the same wire format with different
+// credentials: Anthropic's own API, authenticated by the key the client was
+// built with, and PostHog's LLM gateway, authenticated per request through
+// tokens. The translation is identical either way, which is why this is one
+// adapter with two constructors rather than two adapters.
 type AnthropicProvider struct {
 	client anthropic.Client
 	model  string
+	// tokens resolves the OAuth credential one request carries. nil means the
+	// client itself holds a static key, which is the Anthropic-API case.
+	tokens OAuthTokenSource
+	// capabilities is per-instance because the same wire format serves different
+	// model catalogs: Anthropic's ids through one door, the gateway's through the
+	// other.
+	capabilities Capabilities
+	// label names the endpoint in the sentences a user reads when a turn fails.
+	// "Anthropic" would be the wrong author of a PostHog gateway failure.
+	label string
 }
 
 var _ Provider = (*AnthropicProvider)(nil)
 
 func NewAnthropicProvider(apiKey, baseURL, model string) *AnthropicProvider {
+	return newAnthropicProviderWithTimeout(apiKey, baseURL, model, defaultRequestTimeout)
+}
+
+// NewAnthropicOAuthProvider builds the adapter for an endpoint that speaks
+// anthropic-messages but authenticates with an OAuth login — PostHog's LLM
+// gateway. tokens is required: an adapter with no way to resolve a credential
+// could only ever produce 401s.
+//
+// The client is deliberately built with no API key — and with the SDK's
+// env-derived one deleted, because NewClient reads ANTHROPIC_API_KEY on its own
+// and a stray key in the environment must never end up authenticating a
+// gateway request. authorize sets the bearer per request.
+func NewAnthropicOAuthProvider(tokens OAuthTokenSource, baseURL, model string) *AnthropicProvider {
 	opts := []option.RequestOption{
-		option.WithAPIKey(apiKey),
 		option.WithRequestTimeout(defaultRequestTimeout),
+		option.WithHeaderDel("X-Api-Key"),
 	}
 	if baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}
-	return &AnthropicProvider{client: anthropic.NewClient(opts...), model: model}
+	return &AnthropicProvider{
+		client:       anthropic.NewClient(opts...),
+		model:        model,
+		tokens:       tokens,
+		capabilities: posthogCapabilities,
+		label:        "PostHog",
+	}
 }
 
 func newAnthropicProviderWithTimeout(apiKey, baseURL, model string, timeout time.Duration) *AnthropicProvider {
@@ -39,7 +74,7 @@ func newAnthropicProviderWithTimeout(apiKey, baseURL, model string, timeout time
 	if baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}
-	return &AnthropicProvider{client: anthropic.NewClient(opts...), model: model}
+	return &AnthropicProvider{client: anthropic.NewClient(opts...), model: model, capabilities: anthropicCapabilities, label: "Anthropic"}
 }
 
 // ValidateAnthropicKey verifies credentials against Anthropic's official Models API.
@@ -80,10 +115,32 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req Request) (<-chan Eve
 	if req.System != "" {
 		params.System = []anthropic.TextBlockParam{{Text: req.System}}
 	}
+	credential, err := p.authorize(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	out := make(chan Event)
-	go p.runStream(ctx, out, params, model)
+	go p.runStream(ctx, out, params, model, credential)
 	return out, nil
+}
+
+// authorize resolves the credential this request will carry, as request options
+// rather than as a middleware — one resolution per request is what the seam
+// promises, and a refresh that just failed would fail the same way on every SDK
+// retry (see the same decision on CodexProvider.authorize).
+//
+// The gateway reads the token as a bearer, which is what its own tooling sends;
+// the SDK's default x-api-key header is never set on this path.
+func (p *AnthropicProvider) authorize(ctx context.Context) ([]option.RequestOption, error) {
+	if p.tokens == nil {
+		return nil, nil
+	}
+	token, err := p.tokens.OAuthToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return []option.RequestOption{option.WithAuthToken(token.AccessToken)}, nil
 }
 
 type anthropicBlock struct {
@@ -93,13 +150,13 @@ type anthropicBlock struct {
 	args []byte
 }
 
-func (p *AnthropicProvider) runStream(ctx context.Context, out chan Event, params anthropic.MessageNewParams, model string) {
+func (p *AnthropicProvider) runStream(ctx context.Context, out chan Event, params anthropic.MessageNewParams, model string, credential []option.RequestOption) {
 	defer close(out)
 	if !emit(ctx, out, Event{Kind: StepStarted}) {
 		return
 	}
 
-	stream := p.client.Messages.NewStreaming(ctx, params)
+	stream := p.client.Messages.NewStreaming(ctx, params, credential...)
 	defer stream.Close()
 	blocks := make(map[int64]*anthropicBlock)
 	var usage *Usage
@@ -166,7 +223,7 @@ func (p *AnthropicProvider) runStream(ctx context.Context, out chan Event, param
 				}
 				if !json.Valid(block.args) {
 					err := fmt.Errorf("anthropic tool call %q input: invalid JSON", block.id)
-					emit(ctx, out, Event{Kind: StepFailed, Err: err, Text: fmt.Sprintf("Anthropic (%s): %v", model, err)})
+					emit(ctx, out, Event{Kind: StepFailed, Err: err, Text: fmt.Sprintf("%s (%s): %v", p.label, model, err)})
 					return
 				}
 				if !emit(ctx, out, Event{Kind: ToolCall, CallID: block.id, ToolName: block.name, Input: json.RawMessage(block.args)}) {
@@ -192,7 +249,7 @@ func (p *AnthropicProvider) runStream(ctx context.Context, out chan Event, param
 		if isAnthropicContextOverflow(err) {
 			err = &ContextOverflowError{Message: err.Error()}
 		}
-		emit(ctx, out, Event{Kind: StepFailed, Err: err, Text: fmt.Sprintf("Anthropic (%s): %v", model, err)})
+		emit(ctx, out, Event{Kind: StepFailed, Err: err, Text: fmt.Sprintf("%s (%s): %v", p.label, model, err)})
 		return
 	}
 	emit(ctx, out, Event{Kind: StepEnded, Usage: usage})
