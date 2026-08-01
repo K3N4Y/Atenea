@@ -19,6 +19,7 @@ var connectableProviderIDs = map[string]struct{}{
 	"openrouter":   {},
 	"opencode":     {},
 	"opencode-go":  {},
+	"posthog":      {},
 }
 
 // The ways a provider is connected. They are two different conversations with the

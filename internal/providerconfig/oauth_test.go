@@ -713,7 +713,8 @@ func TestService_ALateMintDoesNotRetireTheCodeThatReplacedIt(t *testing.T) {
 			entered <- index
 			<-release[index]
 			return DeviceCode{
-				UserCode: codes[index],
+				UserCode:        codes[index],
+				VerificationURI: "https://issuer.test/device",
 				Await: func(ctx context.Context) (OAuthCredential, error) {
 					<-ctx.Done()
 					cancelled <- codes[index]

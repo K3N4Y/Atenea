@@ -128,8 +128,11 @@ func (s *Service) StartDeviceLogin(ctx context.Context, providerID string) (Devi
 	if err != nil {
 		return DeviceLogin{}, err
 	}
-	if code.UserCode == "" || code.Await == nil {
-		return DeviceLogin{}, fmt.Errorf("provider %q started a login with no code to approve", providerID)
+	// An empty UserCode is legitimate — a browser-redirect login (PostHog) has
+	// nothing for the user to type. A login with no page to open or no wait to
+	// collect is broken whichever flow minted it.
+	if code.VerificationURI == "" || code.Await == nil {
+		return DeviceLogin{}, fmt.Errorf("provider %q started a login with nothing to approve", providerID)
 	}
 	login := DeviceLogin{
 		ProviderID:      providerID,

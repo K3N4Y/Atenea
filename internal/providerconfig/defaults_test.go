@@ -10,7 +10,7 @@ import (
 func TestDefaultCatalog_DeclaresTheCuratedProviders(t *testing.T) {
 	cfg := DefaultCatalog()
 
-	wantIDs := []string{"anthropic", "openrouter", "openai", "openai-codex", "opencode", "opencode-go"}
+	wantIDs := []string{"anthropic", "openrouter", "openai", "openai-codex", "posthog", "opencode", "opencode-go"}
 	gotIDs := make([]string, 0, len(cfg.Providers))
 	for _, provider := range cfg.Providers {
 		gotIDs = append(gotIDs, provider.ID)
@@ -26,12 +26,14 @@ func TestDefaultCatalog_DeclaresTheCuratedProviders(t *testing.T) {
 		"anthropic":    {"claude-opus-4-8", "claude-fable-5", "claude-sonnet-5", "claude-haiku-4-5"},
 		"openai":       {"gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"},
 		"openai-codex": {"gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark"},
+		"posthog":      {"claude-opus-4-8", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"},
 	}
 	wantBaseURLs := map[string]string{
 		"anthropic":    "https://api.anthropic.com",
 		"openrouter":   "https://openrouter.ai/api/v1",
 		"openai":       "https://api.openai.com/v1",
 		"openai-codex": "https://chatgpt.com/backend-api/codex",
+		"posthog":      "https://gateway.us.posthog.com/posthog_code",
 		"opencode":     "https://opencode.ai/zen/v1",
 		"opencode-go":  "https://opencode.ai/zen/go/v1",
 	}
@@ -56,10 +58,12 @@ func TestDefaultCatalog_DeclaresTheCuratedProviders(t *testing.T) {
 		if want, ok := wantModels[provider.ID]; ok && strings.Join(provider.Models, ",") != strings.Join(want, ",") {
 			t.Errorf("%s models = %#v, want %#v", provider.ID, provider.Models, want)
 		}
-		// OpenRouter is the only endpoint whose GET /models the picker can trust:
-		// the others publish models the agent loop cannot drive.
-		if wantDiscovery := provider.ID == "openrouter"; provider.DisableModelDiscovery == wantDiscovery {
-			t.Errorf("%s disable_model_discovery = %v; only OpenRouter should discover models remotely", provider.ID, provider.DisableModelDiscovery)
+		// Two endpoints publish a model list the picker can trust: OpenRouter's
+		// GET /models, and PostHog's plan-gated /v1/models (through the posthog
+		// format's own Discover). The others publish models the agent loop cannot
+		// drive, so their curated lists stand.
+		if wantDiscovery := provider.ID == "openrouter" || provider.ID == "posthog"; provider.DisableModelDiscovery == wantDiscovery {
+			t.Errorf("%s disable_model_discovery = %v; only OpenRouter and PostHog should discover models remotely", provider.ID, provider.DisableModelDiscovery)
 		}
 	}
 }
@@ -99,6 +103,7 @@ func TestDefaultCatalog_DeclaresBuildableWireFormats(t *testing.T) {
 		"openrouter":   OpenRouter,
 		"openai":       OpenAI,
 		"openai-codex": OpenAICodex,
+		"posthog":      Posthog,
 		"opencode":     OpenAICompatible,
 		"opencode-go":  OpenAICompatible,
 	}

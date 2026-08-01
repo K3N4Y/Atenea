@@ -35,11 +35,21 @@ import (
 //     different request. It declares no api_key_env for the same reason — there
 //     is no variable that could hold a login — so it is connected, never
 //     inherited from the environment.
-//   - Model discovery is off everywhere but OpenRouter. OpenAI's GET /models
-//     lists embedding, audio and image models the agent loop cannot drive, the
-//     codex backend publishes no /models at all, and the OpenCode endpoints
-//     publish a catalog that ignores plan entitlement. A curated list is more
-//     honest than a filtered one.
+//   - `posthog` is PostHog's LLM gateway: the anthropic wire format behind an
+//     OAuth login (a browser redirect, not a device code). The entry points at
+//     the US cloud; an EU account edits base_url and oauth_issuer in its own
+//     providers.json and the login follows the issuer. No api_key_env, same
+//     reason as codex. Only its Claude-family models are offered — the gateway
+//     also serves GPT models over a different wire surface this build does not
+//     speak yet.
+//   - Model discovery is off everywhere but OpenRouter and PostHog. OpenAI's
+//     GET /models lists embedding, audio and image models the agent loop cannot
+//     drive, the codex backend publishes no /models at all, and the OpenCode
+//     endpoints publish a catalog that ignores plan entitlement. A curated list
+//     is more honest than a filtered one. PostHog is the exception the other
+//     way: its /v1/models is plan-gated per account, so discovery — through the
+//     posthog format's own Discover — is what keeps the picker from offering a
+//     model the user's plan refuses.
 //   - A provider's first model is its default: /connect activates it when
 //     nothing is selected yet. OpenRouter leads with openrouter/free, which
 //     routes to a free model, so a fresh connection always works.

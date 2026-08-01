@@ -1,6 +1,7 @@
 package providerconfig
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -25,6 +26,12 @@ const (
 	// — the system prompt is a field, no output ceiling may be sent, and the account
 	// travels as a header.
 	OpenAICodex = "openai-codex"
+	// Posthog is PostHog's LLM gateway: the anthropic wire format, authenticated
+	// by an OAuth login (browser redirect, not device code) whose bearer the
+	// gateway routes on. It is a separate format and not an option on Anthropic
+	// because the credential is a login and the model catalog is the gateway's
+	// own, plan-gated per account.
+	Posthog = "posthog"
 )
 
 // BuildParams is everything a factory needs to construct one live provider.
@@ -90,6 +97,13 @@ type Format struct {
 	// OAuth is set when this format's credential is a login. nil is the common
 	// case: an API key, an exec command, or no credential at all.
 	OAuth *OAuthFlow
+	// Discover lists what one provider of this format serves, when the generic
+	// OpenAI-compatible lister cannot: a different path, a different response
+	// shape, results that need filtering. bearer is whatever credential the
+	// catalog resolved — an OAuth access token for a login format, an API key
+	// otherwise. nil means the format has nothing special to say and discovery
+	// follows the provider's disable_model_discovery flag down the generic path.
+	Discover func(ctx context.Context, def Provider, bearer string) ([]string, error)
 }
 
 // Registry maps a declared wire format to what this build knows about it. It is
@@ -131,6 +145,19 @@ func DefaultRegistry() Registry {
 			},
 			Describe: func(Provider) llm.Capabilities { return llm.DescribeCodex(codexOptions()...) },
 			OAuth:    openAIOAuthFlow(),
+		},
+		Posthog: Format{
+			Build: func(params BuildParams) (llm.Provider, error) {
+				// Same reasoning as codex: an adapter with no token source could only
+				// ever produce 401s, and refusing here names the wiring.
+				if params.Tokens == nil {
+					return nil, fmt.Errorf("provider %q authenticates with a PostHog login and no credential source is wired for it", params.Provider.ID)
+				}
+				return llm.NewAnthropicOAuthProvider(params.Tokens, params.Provider.BaseURL, params.Model), nil
+			},
+			Describe: func(Provider) llm.Capabilities { return llm.DescribePosthog() },
+			OAuth:    posthogOAuthFlow(),
+			Discover: posthogDiscover,
 		},
 	}
 }

@@ -159,7 +159,13 @@ func (c *Catalog) refresh(ctx context.Context) ([]ProviderModels, error) {
 		}
 		models, err := c.listModels(ctx, provider)
 		if err != nil {
-			warnings = append(warnings, fmt.Errorf("refresh %s: %w", provider.ID, err))
+			// A skipped discovery is not trouble to report: a login provider the
+			// user never connected sits in every catalog, and warning about it on
+			// every refresh would tell them to log in to something they did not ask
+			// for. The curated list stands, and whatever was cached is kept.
+			if !errors.Is(err, errDiscoverySkipped) {
+				warnings = append(warnings, fmt.Errorf("refresh %s: %w", provider.ID, err))
+			}
 			c.mu.RLock()
 			cached := append([]string(nil), c.cached[provider.ID]...)
 			c.mu.RUnlock()
@@ -182,16 +188,51 @@ func (c *Catalog) refresh(ctx context.Context) ([]ProviderModels, error) {
 	return c.Snapshot(), errors.Join(warnings...)
 }
 
+// errDiscoverySkipped marks a provider whose discovery cannot run yet — a
+// login format with nothing stored to authenticate as. It is a condition the
+// refresh recognizes and stays quiet about, not a failure to report.
+var errDiscoverySkipped = errors.New("model discovery skipped: no credential stored")
+
 // listModels asks one endpoint what it serves. A credential that cannot be
 // resolved fails here rather than being flattened into an empty key, so the
 // refresh reports "your token command failed" instead of the 401 it would have
 // caused — and skips a request that could only have been rejected.
+//
+// A format with a Discover of its own is asked through it; everything else
+// goes down the generic OpenAI-compatible path.
 func (c *Catalog) listModels(ctx context.Context, provider Provider) ([]string, error) {
+	if format, ok := c.registry[provider.Type]; ok && format.Discover != nil {
+		bearer, err := c.discoveryBearer(ctx, provider)
+		if err != nil {
+			return nil, err
+		}
+		return format.Discover(ctx, provider, bearer)
+	}
 	apiKey, err := apiKeyFor(ctx, provider, c.getenv, c.credentials)
 	if err != nil {
 		return nil, err
 	}
 	return c.list(ctx, provider.BaseURL, apiKey)
+}
+
+// discoveryBearer resolves what a Discover call authenticates with. For a
+// login format that is the OAuth access token — resolved through the same
+// freshness margin every turn uses, so the common case is a store read and not
+// a network call — and an unconnected provider is a silent skip rather than a
+// "run /connect" warning on every refresh.
+func (c *Catalog) discoveryBearer(ctx context.Context, provider Provider) (string, error) {
+	flow, isLogin := c.registry.OAuth(provider.Type)
+	if !isLogin {
+		return apiKeyFor(ctx, provider, c.getenv, c.credentials)
+	}
+	if _, ok := c.credentials.stored(provider.ID); !ok {
+		return "", errDiscoverySkipped
+	}
+	token, err := c.credentials.OAuthTokenSource(provider.ID, flow.Refresh(provider)).OAuthToken(ctx)
+	if err != nil {
+		return "", err
+	}
+	return token.AccessToken, nil
 }
 
 func cachedFetchedAt(cache Cache, providerID, baseURL string) time.Time {
