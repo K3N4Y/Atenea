@@ -33,10 +33,8 @@ func TestCredential_ValidateRefusesABagOfArms(t *testing.T) {
 		"oauth with an api_key":       {Type: CredentialTypeOAuth, APIKey: "sk", OAuth: fullOAuth()},
 		"oauth with no arm":           {Type: CredentialTypeOAuth},
 		"oauth with no access token":  {Type: CredentialTypeOAuth, OAuth: &OAuthCredential{RefreshToken: "rt", AccountID: "acct"}},
-		// Without a refresh token the login dies within the hour with no way back,
-		// and without an account id no request can be routed at all.
+		// Without a refresh token the login dies within the hour with no way back.
 		"oauth with no refresh token": {Type: CredentialTypeOAuth, OAuth: &OAuthCredential{AccessToken: "at", AccountID: "acct"}},
-		"oauth with no account":       {Type: CredentialTypeOAuth, OAuth: &OAuthCredential{AccessToken: "at", RefreshToken: "rt"}},
 	} {
 		if err := credential.Validate(); err == nil {
 			t.Errorf("%s: Validate() = nil, want a refusal", name)
@@ -56,6 +54,12 @@ func TestCredential_ValidateAcceptsEachArmOnItsOwn(t *testing.T) {
 		// costs one request and settles it.
 		"oauth with no known expiry": {Type: CredentialTypeOAuth, OAuth: &OAuthCredential{
 			AccessToken: "at", RefreshToken: "rt", AccountID: "acct",
+		}},
+		// No account id is legitimate too: it is the ChatGPT flow that routes on
+		// one, and its own login refuses to issue a credential without it. A
+		// PostHog login has none to store.
+		"oauth with no account": {Type: CredentialTypeOAuth, OAuth: &OAuthCredential{
+			AccessToken: "at", RefreshToken: "rt",
 		}},
 	} {
 		if err := credential.Validate(); err != nil {

@@ -363,6 +363,23 @@ func TestCodexProvider_RefusesTheTurnWhenTheCredentialCannotBeResolved(t *testin
 	}
 }
 
+// TestCodexProvider_RefusesACredentialWithNoAccount: the stored oauth arm no
+// longer insists on an account id (other flows have none), so the adapter that
+// sends the header is where its absence has to be refused — before a request
+// the endpoint could only reject as unroutable.
+func TestCodexProvider_RefusesACredentialWithNoAccount(t *testing.T) {
+	server := newCodexServer(t, codexTurn)
+	tokens := &staticTokens{token: OAuthToken{AccessToken: "access"}}
+
+	_, err := NewCodexProvider(tokens, server.server.URL, "gpt-5.5").Stream(context.Background(), codexRequest())
+	if err == nil || !strings.Contains(err.Error(), "log in again") {
+		t.Fatalf("Stream() error = %v, want a refusal telling the user to log in again", err)
+	}
+	if server.requests() != 0 {
+		t.Fatalf("the adapter sent %d requests with an unroutable credential", server.requests())
+	}
+}
+
 // TestCodexProvider_RefusesToStreamWithNoCredentialSource: an adapter wired
 // without one could only ever produce 401s, and saying so beats letting the
 // endpoint say something else.

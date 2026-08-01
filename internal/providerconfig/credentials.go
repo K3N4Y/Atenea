@@ -79,9 +79,11 @@ type OAuthCredential struct {
 	// expired": renewing a token that was still good costs one request, and
 	// sending one that is not costs a failed turn.
 	ExpiresAt time.Time `json:"expires_at,omitzero"`
-	// AccountID is a header on every request, not a claim about identity. A
-	// credential without one cannot be routed, so login refuses to store one.
-	AccountID string `json:"account_id"`
+	// AccountID is a header on every request, not a claim about identity. It is
+	// a fact of the ChatGPT flow: that endpoint routes on it, so its login
+	// refuses to issue a credential without one (see internal/openaiauth). A
+	// flow whose endpoint routes on the bearer alone — PostHog — stores none.
+	AccountID string `json:"account_id,omitempty"`
 }
 
 // Validate reports whether this credential is a well-formed instance of the
@@ -135,9 +137,10 @@ func (c Credential) Validate() error {
 		if strings.TrimSpace(c.OAuth.RefreshToken) == "" {
 			return errors.New("an oauth credential needs a non-empty refresh_token, or it cannot be renewed")
 		}
-		if strings.TrimSpace(c.OAuth.AccountID) == "" {
-			return errors.New("an oauth credential needs a non-empty account_id, which requests cannot be routed without")
-		}
+		// AccountID is deliberately not required here: whether a credential needs
+		// one is the flow's fact, not the arm's. The ChatGPT login refuses to
+		// issue a credential without an account id and its adapter refuses to send
+		// one; a PostHog credential legitimately has none.
 		return nil
 	case "":
 		return fmt.Errorf("credential declares no type (known types: %s)", strings.Join(credentialTypes, ", "))

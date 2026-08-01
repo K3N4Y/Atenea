@@ -156,6 +156,12 @@ func (p *CodexProvider) authorize(ctx context.Context) ([]option.RequestOption, 
 	if err != nil {
 		return nil, err
 	}
+	// The account id is required by this endpoint specifically, and since the
+	// stored credential no longer enforces it (other flows have none), the
+	// adapter that sends the header is where its absence must be refused.
+	if token.AccountID == "" {
+		return nil, errors.New("the ChatGPT credential names no account, which requests cannot be routed without; log in again")
+	}
 	return []option.RequestOption{
 		option.WithHeader("Authorization", "Bearer "+token.AccessToken),
 		option.WithHeader("chatgpt-account-id", token.AccountID),
