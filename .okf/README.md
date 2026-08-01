@@ -97,6 +97,7 @@ The project-wide vocabulary lives in the root [domain glossary](../CONTEXT.md).
 - [Session-scoped permission grants](specs/2026-07-24-session-permission-grants.md)
 - [Safe auto-accept permission mode](specs/2026-07-31-safe-auto-accept-mode.md)
 - [Interactive YOLO permission mode](specs/2026-08-01-interactive-yolo-mode.md)
+- [TUI assistant text selection](specs/2026-08-01-tui-assistant-text-selection.md)
 - [TUI dark canvas](specs/2026-07-10-tui-dark-canvas.md)
 - [TUI inline model completion](specs/2026-07-10-tui-inline-model-completion.md)
 - [TUI manual context compaction](specs/2026-07-11-tui-manual-context-compaction.md)

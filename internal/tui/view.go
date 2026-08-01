@@ -400,8 +400,12 @@ func (m Model) syncViewportContent(agentActivity bool) Model {
 	}
 	rawTranscript := m.renderTranscript()
 	contentChanged := rawTranscript != m.lastTranscript
+	if contentChanged && m.selection != nil {
+		m.selection = nil
+	}
 	offset := m.viewport.YOffset
 	transcript := hardWrapOverflow(rawTranscript, m.viewport.Width)
+	transcript = m.renderSelection(transcript)
 	m.viewport.SetContent(transcript)
 	if m.followAgent {
 		m.viewport.GotoBottom()
@@ -461,6 +465,7 @@ func (m Model) View() string {
 	if !m.ready {
 		return canvas
 	}
+	canvas = m.renderSnackbar(canvas)
 	return m.topBar() + "\n" + canvas
 }
 

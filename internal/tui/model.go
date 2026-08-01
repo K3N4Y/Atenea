@@ -312,6 +312,11 @@ type Model struct {
 	focus           panelFocus
 	terminalFocused bool
 
+	selection       *transcriptSelection
+	copyToClipboard func(string) error
+	copyGeneration  uint64
+	snackbar        copySnackbar
+
 	permissionChoice permissionChoice
 	permissionScroll int
 }
@@ -549,6 +554,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch ev := msg.(type) {
 	case EventMsg:
+		m = m.cancelSelection()
 		permissionHeight := m.permissionPanelHeight()
 		m = m.foldEvent(ev)
 		permissionLayoutChanged := permissionHeight != m.permissionPanelHeight()
@@ -575,6 +581,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case CompactionStatusMsg:
 		if ev.SessionID == m.sessionID {
+			m = m.cancelSelection()
 			m = m.foldCompactionStatus(ev)
 		}
 		return m.syncViewportActivity(), waitForEvent(m.events)
@@ -658,6 +665,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m.resizeViewport(), cmd
 	case revealTickMsg:
+		m = m.cancelSelection()
 		m = m.advanceReveal()
 		if !m.hasBacklog() {
 			m.revealing = false
@@ -732,13 +740,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = m.syncViewport()
 		}
 		return m, cmd
+	case snackbarExpiredMsg:
+		if ev.generation == m.snackbar.generation {
+			m.snackbar = copySnackbar{}
+		}
+		return m, nil
 	case tea.BlurMsg:
+		m = m.cancelSelection()
 		m.terminalFocused = false
 		return m, nil
 	case tea.FocusMsg:
 		m.terminalFocused = true
 		return m, nil
 	case tea.WindowSizeMsg:
+		m = m.cancelSelection()
 		m.ready = true
 		m.width = ev.Width
 		m.height = ev.Height
@@ -765,6 +780,23 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleConnectPanelMouse(ev)
 		}
 		ev.Y -= m.layout().mouseBodyYOffset
+		if m.selection != nil {
+			switch {
+			case ev.Action == tea.MouseActionMotion && ev.Button == tea.MouseButtonLeft:
+				return m.dragSelection(ev), nil
+			case ev.Action == tea.MouseActionRelease && ev.Button == tea.MouseButtonLeft:
+				if m.snackbarHit(ev) {
+					return m.cancelSelection(), nil
+				}
+				m = m.dragSelection(ev)
+				return m.finishSelection()
+			case ev.Action == tea.MouseActionRelease:
+				return m.cancelSelection(), nil
+			}
+		}
+		if m.snackbarHit(ev) && ev.Button != tea.MouseButtonWheelUp && ev.Button != tea.MouseButtonWheelDown {
+			return m, nil
+		}
 		if m.activeInputTarget() == targetPermissionGate {
 			perm, _ := m.pendingPermission()
 			if next, handled := m.handlePermissionMouse(ev, perm); handled {
@@ -775,9 +807,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if ev.Action == tea.MouseActionPress && (ev.Button == tea.MouseButtonWheelUp || ev.Button == tea.MouseButtonWheelDown) {
+			m = m.cancelSelection()
 			return m.scrollViewport(ev)
 		}
 		if ev.Action == tea.MouseActionPress && ev.Button == tea.MouseButtonLeft {
+			if next, started := m.startSelection(ev); started {
+				return next, nil
+			}
 			if viewportLine, ok := m.transcriptLineAtMouse(ev); ok {
 				if next, ok := m.toggleExpandableAt(viewportLine); ok {
 					return next.syncViewport(), nil
@@ -799,6 +835,7 @@ func (m Model) newActivityIndicatorHit(msg tea.MouseMsg) bool {
 }
 
 func (m Model) scrollViewport(msg tea.Msg) (Model, tea.Cmd) {
+	m = m.cancelSelection()
 	var cmd tea.Cmd
 	m.viewport, cmd = m.viewport.Update(msg)
 	m.followAgent = m.viewport.AtBottom()

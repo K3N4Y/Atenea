@@ -123,6 +123,44 @@ func TestTUI_PromptHistorySurvivesRestartUnderPTY(t *testing.T) {
 	waitForPTYExit(t, secondDone)
 }
 
+func TestTUI_DragAssistantTextCopiesSelectionUnderPTY(t *testing.T) {
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "atenea")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, output)
+	}
+	cmd, terminal, output, done := startTUIUnderPTY(t, binary, repoRoot, filepath.Join(t.TempDir(), "atenea.db"))
+	defer stopPTYProcess(cmd, terminal)
+	waitForPTYText(t, output, " demo ─╯")
+	if _, err := terminal.Write([]byte("copy this\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, output, "Hello from atenea.")
+
+	// SGR mouse coordinates are one-based. Try every body row because the exact
+	// transcript row depends on startup notices; only the row containing the
+	// settled assistant response can begin a selection. Columns 3..7 select
+	// "Hello", whose OSC 52 payload is SGVsbG8=.
+	before := output.String()
+	for row := 4; row <= 20; row++ {
+		sequence := fmt.Sprintf("\x1b[<0;3;%dM\x1b[<32;7;%dM\x1b[<0;7;%dm", row, row, row)
+		if _, err := terminal.Write([]byte(sequence)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitForPTYRawAfter(t, output, before, "\x1b]52;c;SGVsbG8=\a")
+	waitForPTYTextAfter(t, output, before, "Copied to clipboard")
+	if _, err := terminal.Write([]byte("\x03")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYExit(t, done)
+}
+
 func TestTUI_YoloLaunchShowsWarningIndicatorAndModeTransitionsUnderPTY(t *testing.T) {
 	repoRoot, err := filepath.Abs("../..")
 	if err != nil {
@@ -987,6 +1025,19 @@ func waitForPTYTextAfter(t *testing.T, output *lockedBuffer, previous, want stri
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("PTY output after restart did not contain %q:\n%s", want, ansi.Strip(output.String()))
+}
+
+func waitForPTYRawAfter(t *testing.T, output *lockedBuffer, previous, want string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		current := output.String()
+		if len(current) >= len(previous) && strings.Contains(current[len(previous):], want) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("PTY raw output after interaction did not contain %q:\n%q", want, output.String())
 }
 
 func stopPTYProcess(cmd *exec.Cmd, terminal *os.File) func() {
