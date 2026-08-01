@@ -13,16 +13,16 @@ import (
 	"github.com/K3N4Y/atenea/internal/tool/hashline"
 )
 
-// FileWriter es lo que el write necesita del FS: crear los directorios padre y
-// escribir el archivo. El default envuelve os; los tests inyectan un fake en
-// memoria para afirmar lo escrito sin tocar disco.
+// FileWriter defines the filesystem operations write needs: creating parent
+// directories and writing the file. The default wraps os; tests inject an
+// in-memory fake to verify writes without touching disk.
 type FileWriter interface {
 	MkdirAll(path string, perm os.FileMode) error
 	WriteFile(name string, data []byte, perm os.FileMode) error
 	Exists(name string) (bool, error)
 }
 
-// osWriteFS es el FileWriter por defecto: crea directorios y escribe en disco real.
+// osWriteFS is the default FileWriter: it creates directories and writes to disk.
 type osWriteFS struct{}
 
 func (osWriteFS) MkdirAll(path string, perm os.FileMode) error { return os.MkdirAll(path, perm) }
@@ -39,12 +39,12 @@ func (osWriteFS) Exists(name string) (bool, error) {
 	}
 }
 
-// WriteTool crea un archivo nuevo bajo Root con el contenido completo dado.
-// Es la via para archivos NUEVOS: el edit hashline ancla contra un archivo
-// existente (lo lee primero), asi que un archivo que no existe se crea con write.
-// Comparte el SnapshotStore con read/edit: tras escribir graba el snapshot del
-// contenido y marca todas sus lineas como vistas, de modo que el modelo puede
-// encadenar un edit sin re-leer.
+// WriteTool creates a new file under Root with the complete given content.
+// It handles NEW files: hashline edit anchors to an existing file (after reading
+// it), so write creates files that do not exist.
+// It shares the SnapshotStore with read/edit: after writing, it records a content
+// snapshot and marks all its lines as seen, allowing the model to chain an edit
+// without reading again.
 type WriteTool struct {
 	Root             string
 	FS               FileWriter
@@ -52,9 +52,9 @@ type WriteTool struct {
 	SnapshotProvider SnapshotProvider
 }
 
-// NewWriteTool arma un WriteTool con el FS de disco por defecto. Recibe el mismo
-// Root y SnapshotStore que read/edit para que el snapshot del archivo escrito sea
-// el que un edit posterior lee.
+// NewWriteTool builds a WriteTool with the default disk filesystem. It receives
+// the same Root and SnapshotStore as read/edit so a later edit sees the snapshot
+// of the written file.
 func NewWriteTool(root string, snaps hashline.SnapshotStore) *WriteTool {
 	return &WriteTool{Root: root, FS: osWriteFS{}, Snapshots: snaps}
 }
@@ -83,7 +83,7 @@ func (wt *WriteTool) GrantRule(Call) (permission.Rule, bool) {
 }
 
 func (*WriteTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","minLength":1,"description":"Path for the new workspace file."},"content":{"type":"string","description":"Complete file content."}},"required":["path","content"],"additionalProperties":false}`)
 }
 
 // AutoAcceptSafe proves this remains the write tool's new-file-only operation.
@@ -109,18 +109,18 @@ func (wt *WriteTool) AutoAcceptSafe(call Call) bool {
 	return os.IsNotExist(err)
 }
 
-// Execute parsea {path, content}, resuelve la ruta dentro de Root (compuerta de
-// sandbox fail-closed, igual que read/edit), normaliza el contenido a LF, crea los
-// directorios padre, escribe el archivo y graba el snapshot con todas las lineas
-// marcadas como vistas. Devuelve el header [path#HASH] con la ruta RELATIVA (la que
-// el modelo encadena en el siguiente edit).
+// Execute parses {path, content}, resolves the path within Root (using the same
+// fail-closed sandbox gate as read/edit), normalizes content to LF, creates parent
+// directories, writes the file, and records the snapshot with every line marked
+// as seen. It returns the [path#HASH] header with the RELATIVE path (which the
+// model uses in the next edit).
 func (wt *WriteTool) Execute(ctx context.Context, input json.RawMessage) (Result, error) {
 	var in struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`
 	}
 	if err := json.Unmarshal(input, &in); err != nil {
-		return Result{}, fmt.Errorf("write: input invalido: %w", err)
+		return Result{}, fmt.Errorf("write: invalid input: %w", err)
 	}
 
 	abs, err := sandboxJoin(wt.Root, in.Path, "write")
@@ -137,11 +137,11 @@ func (wt *WriteTool) Execute(ctx context.Context, input json.RawMessage) (Result
 		return Result{}, err
 	}
 	if exists {
-		return Result{}, fmt.Errorf("write: el archivo ya existe; usa read+edit: %s", in.Path)
+		return Result{}, fmt.Errorf("write: file already exists; use read+edit: %s", in.Path)
 	}
 
-	// Normaliza igual que read/edit: sin BOM inicial y saltos unificados a LF. Asi el
-	// hash del snapshot coincide con el que un read posterior computaria.
+	// Normalize like read/edit: remove an initial BOM and unify line endings as LF,
+	// so the snapshot hash matches one computed by a later read.
 	norm := strings.TrimPrefix(in.Content, string(rune(0xFEFF)))
 	norm = strings.ReplaceAll(norm, "\r\n", "\n")
 	norm = strings.ReplaceAll(norm, "\r", "\n")
@@ -153,8 +153,8 @@ func (wt *WriteTool) Execute(ctx context.Context, input json.RawMessage) (Result
 		return Result{}, err
 	}
 
-	// Graba el snapshot del archivo recien escrito y marca TODAS sus lineas como
-	// vistas: el modelo las autoreo, asi un edit posterior ancla sin re-leer.
+	// Record the newly written file's snapshot and mark ALL its lines as seen: the
+	// model authored them, so a later edit can anchor without reading again.
 	snaps := wt.snapshots(ctx)
 	tag, recorded := snaps.Record(abs, norm)
 	lines := hashline.SplitLines(norm)
@@ -166,8 +166,8 @@ func (wt *WriteTool) Execute(ctx context.Context, input json.RawMessage) (Result
 		snaps.RecordSeenLines(abs, tag, seen)
 	}
 
-	// Diff SOLO para la UI: archivo nuevo = todo adicion (old vacio), con la ruta
-	// relativa que el modelo encadena.
+	// Diff ONLY for the UI: a new file is entirely additions (empty old content),
+	// using the relative path that the model chains into the next operation.
 	diff := hashline.UnifiedDiff(in.Path, "", norm, 3)
 	if !recorded {
 		return Result{Output: "[File " + in.Path + " was created, but its snapshot could not be retained safely; no hashline header was issued. To make it editable, change or reduce the content or start a new session, then use read.]", Diff: diff}, nil

@@ -1,11 +1,29 @@
-Lee un archivo del workspace y devuelve sus lineas numeradas.
+Read a workspace file through `path` and return numbered lines for anchored edits.
 
-Uso:
-- path es la ruta del archivo relativa al workspace.
-- La salida empieza con un header [path#HASH] y sigue con las lineas en formato NUM:TEXTO. El HASH identifica el contenido que leiste; edit lo necesita para anclar cambios. Si el snapshot no puede retenerse de forma segura por limite o colision de hash, read devuelve un aviso sin header. Para habilitar la edicion, cambia o reduce el contenido o inicia una sesion nueva, y despues vuelve a usar read.
-- Por defecto devuelve hasta 2000 lineas (y ~30KB) desde el inicio del archivo. Si se trunca, anexa un aviso del tipo [N more lines in file. Use :M to continue].
-- Para leer un tramo concreto, añade un selector al final del path: "path:N" lee la linea N y "path:N-M" lee el rango N..M (1-indexed, inclusive). Para continuar tras un truncado, vuelve a leer con el selector que indica el aviso.
-- Prefiere leer una ventana amplia antes que muchos trozos chicos. Si el archivo es grande, usa grep para ubicar lo que buscas y luego lee alrededor.
-- Para encontrar archivos por nombre usa glob; para buscar por contenido usa grep.
-- Puedes leer varios archivos en paralelo en una sola respuesta.
-- Los archivos binarios (con bytes NUL) no se pueden leer ni editar por este camino.
+<instruction>
+- You SHOULD parallelize independent reads.
+- Use glob to find files by name and grep to find content; use read once you know which file and range you need.
+- Prefer one broad range over many small reads.
+</instruction>
+
+<conditions>
+- `path` names a local text file inside the workspace.
+- Append a supported selector when only part of the file is needed.
+- File names containing `:` are not supported because the final colon starts the selector.
+</conditions>
+
+## Selectors — append `:<sel>` to `path` (for example `src/foo.go:50-200`)
+- `:50` reads line 50; `:50-200` reads an inclusive range. Lines are 1-indexed.
+- With no selector, read returns at most 2,000 lines and about 30 KiB from the start of the file.
+- A truncated result ends with `[N more lines in file. Use :M to continue]`; re-read using the named selector.
+
+## Output
+- Text output starts with a `[path#HASH]` snapshot header followed by `LINE:TEXT` lines.
+- Copy the exact `[path#HASH]` header into edit patches. The hash identifies the content you read; NEVER fabricate the hash.
+- If the snapshot cannot be retained safely because of a limit or collision, read returns a notice without a header. Change or reduce the content or start a new session, then use read again before editing.
+- Files containing NUL bytes are treated as binary and cannot be read or edited through this tool.
+
+<critical>
+- A selector exposes only the requested lines. NEVER guess omitted content; read another range when needed.
+- Read does not support directories, URLs, archives, databases, documents, images, or internal URIs; use the tool dedicated to that source when available.
+</critical>

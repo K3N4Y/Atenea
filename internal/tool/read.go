@@ -12,21 +12,21 @@ import (
 	"github.com/K3N4Y/atenea/internal/tool/hashline"
 )
 
-// FileReader lee el contenido de un archivo por su ruta. Es la unica dependencia
-// de FS del read, asi los tests inyectan contenido sin tocar el disco.
+// FileReader reads a file's contents by path. It is the read tool's only FS
+// dependency, allowing tests to inject content without touching the disk.
 type FileReader interface {
 	ReadFile(name string) ([]byte, error)
 }
 
-// osFS es el FileReader por defecto: delega en os.ReadFile.
+// osFS is the default FileReader and delegates to os.ReadFile.
 type osFS struct{}
 
 func (osFS) ReadFile(name string) ([]byte, error) { return os.ReadFile(name) }
 
-// ReadTool lee un archivo bajo Root, lo numera con un header [path#HASH] y graba
-// el snapshot para que el edit pueda anclar contra las lineas vistas. MaxLines es
-// el limite de lineas por lectura: al superarlo se trunca la salida y se anexa un
-// notice de continuacion con el selector :N para leer el resto.
+// ReadTool reads a file under Root, numbers it with a [path#HASH] header, and
+// records the snapshot so edit can anchor against the viewed lines. MaxLines is
+// the maximum number of lines per read; output beyond it is truncated and a
+// continuation notice with the :N selector is appended to read the rest.
 type ReadTool struct {
 	Root             string
 	FS               FileReader
@@ -38,8 +38,8 @@ type ReadTool struct {
 
 const defaultReadMaxBytes = 30 * 1024
 
-// NewReadTool arma un ReadTool con el FS de disco por defecto y el limite estandar
-// de lineas.
+// NewReadTool creates a ReadTool with the default disk FS and standard line
+// limit.
 func NewReadTool(root string, snaps hashline.SnapshotStore) *ReadTool {
 	return &ReadTool{Root: root, FS: osFS{}, Snapshots: snaps, MaxLines: 2000, MaxBytes: defaultReadMaxBytes}
 }
@@ -60,27 +60,27 @@ func (*ReadTool) Description() string { return readDescription }
 func (*ReadTool) Effects() Effects { return NoEffects }
 
 func (*ReadTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","minLength":1,"description":"Workspace file path. Append :N or :N-M to read an inclusive 1-indexed line range."}},"required":["path"],"additionalProperties":false}`)
 }
 
-// Execute parsea el input (path con selector embebido), resuelve la ruta dentro
-// de Root (compuerta de sandbox), lee y normaliza, graba el snapshot del archivo
-// completo y emite la ventana pedida numerada bajo el header hashline, marcando
-// como vistas exactamente las lineas emitidas.
+// Execute parses the input (a path with an embedded selector), resolves the path
+// within Root (the sandbox gate), reads and normalizes it, records the complete
+// file snapshot, and emits the requested numbered window under the hashline
+// header, marking exactly the emitted lines as seen.
 func (rt *ReadTool) Execute(ctx context.Context, input json.RawMessage) (Result, error) {
 	var in struct {
 		Path string `json:"path"`
 	}
 	if err := json.Unmarshal(input, &in); err != nil {
-		return Result{}, fmt.Errorf("read: input invalido: %w", err)
+		return Result{}, fmt.Errorf("read: invalid input: %w", err)
 	}
 
-	// Selector embebido: si el path lleva ':', se parte en el ULTIMO ':'; el
-	// prefijo es la ruta (= display path) y el sufijo el selector. Limitacion v1:
-	// no se soportan nombres de archivo con ':'.
+	// Embedded selector: if the path contains ':', split it at the LAST ':'; the
+	// prefix is the path (= display path) and the suffix is the selector. v1
+	// limitation: filenames containing ':' are not supported.
 	displayPath := in.Path
 	hasSel := false
-	var fromSel, toSel int // 0 = sin selector
+	var fromSel, toSel int // 0 = no selector
 	if i := strings.LastIndex(in.Path, ":"); i >= 0 {
 		displayPath = in.Path[:i]
 		from, to, err := parseSelector(in.Path[i+1:])
@@ -106,7 +106,7 @@ func (rt *ReadTool) Execute(ctx context.Context, input json.RawMessage) (Result,
 		return Result{}, err
 	}
 
-	// Binario: un byte NUL -> notice, sin snapshot (no es editable por hashline).
+	// Binary: a NUL byte produces a notice and no snapshot (not editable via hashline).
 	for _, by := range b {
 		if by == 0 {
 			notice := "[Cannot read binary file " + displayPath + "; content contains NUL bytes (binary or UTF-16)]"
@@ -114,12 +114,12 @@ func (rt *ReadTool) Execute(ctx context.Context, input json.RawMessage) (Result,
 		}
 	}
 
-	// Normaliza: quita el BOM UTF-8 inicial si esta y unifica los saltos de linea.
+	// Normalize: remove an initial UTF-8 BOM if present and unify line endings.
 	norm := strings.TrimPrefix(string(b), "\uFEFF")
 	norm = strings.ReplaceAll(norm, "\r\n", "\n")
 	norm = strings.ReplaceAll(norm, "\r", "\n")
 
-	// El snapshot guarda SIEMPRE el archivo completo, aun en un read por rango.
+	// The snapshot ALWAYS stores the complete file, even for a ranged read.
 	snaps := rt.snapshots(ctx)
 	tag, recorded := snaps.Record(abs, norm)
 	if !recorded {
@@ -129,8 +129,8 @@ func (rt *ReadTool) Execute(ctx context.Context, input json.RawMessage) (Result,
 	lines := hashline.SplitLines(norm)
 	total := len(lines)
 
-	// Elige la ventana [from..to] (1-indexed sobre el archivo) y el notice de
-	// truncado si la corta el limite de lineas.
+	// Choose the window [from..to] (1-indexed over the file) and the truncation
+	// notice if the line limit shortens it.
 	var from, to int
 	var truncNotice string
 	if hasSel {
@@ -140,26 +140,26 @@ func (rt *ReadTool) Execute(ctx context.Context, input json.RawMessage) (Result,
 		}
 		from, to = fromSel, toSel
 		if to > total {
-			to = total // el fin que excede el total se clampa en silencio.
+			to = total // silently clamp an end beyond the total.
 		}
 	} else {
 		from = 1
 		to = total
 		if rt.MaxLines > 0 && total > rt.MaxLines {
 			to = rt.MaxLines
-			restantes := total - to
-			truncNotice = "\n\n[" + strconv.Itoa(restantes) + " more lines in file. Use :" + strconv.Itoa(to+1) + " to continue]"
+			remaining := total - to
+			truncNotice = "\n\n[" + strconv.Itoa(remaining) + " more lines in file. Use :" + strconv.Itoa(to+1) + " to continue]"
 		}
 	}
 
 	header := hashline.FormatHeader(displayPath, tag)
 	to, truncNotice = rt.capWindow(lines, from, to, total, header, truncNotice)
 
-	cuerpo := ""
+	body := ""
 	if to >= from {
-		cuerpo = hashline.NumberLines(lines, from, to)
+		body = hashline.NumberLines(lines, from, to)
 	}
-	output := header + "\n" + cuerpo + truncNotice
+	output := header + "\n" + body + truncNotice
 
 	seen := make([]int, 0, max(0, to-from+1))
 	for i := from; i <= to; i++ {
@@ -197,12 +197,12 @@ func continuationNotice(remaining, next int) string {
 	return "\n\n[" + strconv.Itoa(remaining) + " more lines in file. Use :" + strconv.Itoa(next) + " to continue]"
 }
 
-// parseSelector interpreta el sufijo del path: "N" (una linea) o "N-M" (rango),
-// enteros con 1 <= N y, en rango, N <= M. Cualquier otra forma es un error de
-// tool accionable. Devuelve [from, to] 1-indexed (en "N" from == to).
+// parseSelector interprets the path suffix: "N" (one line) or "N-M" (a range),
+// integers where 1 <= N and, for a range, N <= M. Any other form is an
+// actionable tool error. It returns 1-indexed [from, to] (for "N", from == to).
 func parseSelector(sel string) (from, to int, err error) {
 	invalid := func() (int, int, error) {
-		return 0, 0, fmt.Errorf("read: selector invalido: %s", sel)
+		return 0, 0, fmt.Errorf("read: invalid selector: %s", sel)
 	}
 	if i := strings.IndexByte(sel, '-'); i >= 0 {
 		n, err1 := strconv.Atoi(sel[:i])

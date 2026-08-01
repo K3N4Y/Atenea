@@ -1,8 +1,19 @@
-Crea un archivo NUEVO en el workspace con el contenido exacto que le pasas.
+Creates a new file at the specified workspace path with the complete content provided, normalized as described below.
 
-Uso:
-- path es la ruta del archivo relativa al workspace; content es el contenido completo. Los directorios padre que falten se crean solos.
-- Solo crea archivos nuevos. Si el archivo YA existe, write falla: para modificar uno existente usa read + edit (edit ancla contra el contenido que leiste). No uses write para sobrescribir.
-- Tras escribir devuelve el header [path#HASH] del contenido nuevo para encadenar un edit sin re-leer. Si el snapshot no puede retenerse de forma segura por limite o colision de hash, confirma la escritura sin header. Cambia o reduce el contenido o inicia una sesion nueva, y despues usa read antes de editar.
-- Prefiere modificar archivos existentes antes que crear nuevos; crea un archivo solo cuando hace falta de verdad.
-- Los archivos se escriben con saltos de linea LF.
+<instruction>
+- `path` is the file path relative to the workspace; `content` is the complete file content.
+- After writing, the tool returns a `[path#HASH]` snapshot header so edit can modify the file without another read.
+- If the snapshot cannot be retained safely because of a limit or collision, the file is still created but the result is returned without a header. Change or reduce the content or start a new session, then use read before editing.
+</instruction>
+
+<conditions>
+- Creating a new file is explicitly required by the task.
+- Missing parent directories are created automatically.
+- An initial UTF-8 BOM is removed and line endings are normalized to LF.
+</conditions>
+
+<critical>
+- You SHOULD use the edit tool for modifying existing files.
+- NEVER overwrite an existing file with write; write fails if the path already exists.
+- Prefer modifying an existing file over creating a new one. Create a file only when it is genuinely necessary.
+</critical>

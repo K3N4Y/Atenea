@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-10
+updated_at: 2026-08-01
 summary: Design for hashline-based read and edit tools in Go.
 ---
 
@@ -8,6 +8,13 @@ summary: Design for hashline-based read and edit tools in Go.
 This implementation is pinned to upstream `can1357/oh-my-pi` commit
 `09a7c865636457c50ed75fc3b1a7cc21ef72c105` (packages `coding-agent` and
 `hashline`), adapted to Atenea's deliberately smaller public grammar.
+
+The model-facing `read` and `write` definitions follow the upstream prompt
+structure (`instruction`, `conditions`, and `critical`) and use English. They
+advertise only Atenea's implemented subset: local text files, `:N`/`:N-M`
+selectors, hashline output, and new-file-only writes. Upstream capabilities
+such as directories, URLs, archives, SQLite, images, raw mode, and overwriting
+existing files are intentionally not exposed.
 
 It is the most difficult part of the agent, which is why it is written in detail: the
 correctness of `edit` decides whether the agent corrupts files or not.
@@ -21,13 +28,13 @@ by line number simply (fragile: the file changes and the number points to someth
 
 It uses a hybrid scheme called **hashline**:
 
-- The `read` numbers each line and prefixes a **header with a hash of the entire
- file**: `[ruta#HASH]`.
-- The `edit` addresses by **line number**, but is only valid if the file
- **continues hashing the same `HASH`**.
+- `read` numbers each line and prefixes a **header with a hash of the entire
+ file**: `[path#HASH]`.
+- `edit` addresses by **line number**, but is only valid if the file **still
+ hashes to the same `HASH`**.
 - If the file changed, the `HASH` diverges and the edit **fails for sure** (or recovers
- by 3-way-merge against the snapshot that the hash names). Never apply a diff
- stale blindly.
+ via a 3-way merge against the snapshot named by the hash). Never blindly apply a
+ stale diff.
 
 That is to say: the **anchor is the line number**, and the **hash of the full content is
 the freshness gate**. That's all the magic.
@@ -37,11 +44,11 @@ the freshness gate**. That's all the magic.
 From `packages/hashline/src/format.ts`:
 
 ```ts
-// Normalizar antes de hashear: quitar [ \t\r] al final de cada linea y del final.
+// Normalize before hashing: remove trailing [ \t\r] from each line and the end.
 function normalizeFileHashText(text) {
   return text.replace(/[ \t\r]+(?=\n|$)/g, "");
 }
-// Tag = 4 hex chars, uppercase, de los 16 bits bajos de xxHash32 sobre el texto normalizado.
+// Tag = 4 uppercase hex chars from the low 16 bits of xxHash32 over the normalized text.
 function computeFileHash(text) {
   const normalized = normalizeFileHashText(text);
   const low16 = Bun.hash.xxHash32(normalized, 0) & 0xffff;
@@ -57,7 +64,7 @@ Details that matter:
  trailing spaces do not invalidate the tag.
 - Any `read` of identical bytes produces the **same** tag (read fusion).
 
-Port a Go:
+Port to Go:
 
 ```go
 // internal/tool/hashline/hash.go
@@ -67,7 +74,7 @@ func normalizeForHash(text string) string {
     return trailingWS.ReplaceAllString(text, "$1")
 }
 
-// xxHash32 con seed 0; usar p.ej. github.com/pierrec/xxHash/xxHash32.
+// xxHash32 with seed 0; use, for example, github.com/pierrec/xxHash/xxHash32.
 func ComputeFileHash(text string) string {
     sum := xxHash32.Checksum([]byte(normalizeForHash(text)), 0)
     low16 := sum & 0xFFFF
@@ -83,7 +90,7 @@ oh-my-pi exposes a single parameter:
 
 ```ts
 const readSchema = type({
-  path: "string", // p.ej. "src/foo.ts", o con selector "src/foo.ts:50-100"
+  path: "string", // e.g. "src/foo.ts", or with selector "src/foo.ts:50-100"
 });
 ```
 
@@ -103,9 +110,9 @@ For a text file, `read` outputs:
 5:}
 ```
 
-- First line: header `[ruta#HASH]`.
-- Each line of content: `NUM:TEXTO` (number, colon, content).
-- In readings by range, the numbers reflect the actual position in the file.
+- First line: header `[path#HASH]`.
+- Each content line: `NUM:TEXT` (number, colon, content).
+- In range reads, the numbers reflect the actual position in the file.
 
 ### Key behavior
 
@@ -122,10 +129,10 @@ For a text file, `read` outputs:
 
 ## Tool `edit` (via `write` with hashline content)
 
-On oh-my-pi the `write` has `{ path, content }`. If the `content` starts with a
-header `[ruta#HASH]` followed by hashline operations, it is treated as **patch**; if
-no, it is a **complete write** of the file. For Atenea it is convenient to separate it into an explicit
-tool `edit`, but the engine is the same.
+In oh-my-pi, `write` has `{ path, content }`. If `content` starts with a
+header `[path#HASH]` followed by hashline operations, it is treated as a **patch**;
+otherwise, it is a **complete write** of the file. For Atenea, it is convenient to
+separate it into an explicit `edit` tool, but the engine is the same.
 
 ### Operations
 
@@ -150,16 +157,16 @@ section:
 
 1. Parse the operations; require that the section contain `HASH` (no tag -> error).
 2. Read file, remove BOM, normalize to LF.
-3. Calculate `live = ComputeFileHash(contenidoActual)`.
-4. Compare with the expected `HASH` of the section:
- - **`live == esperado` (no drift)**: the lines index the exact content.
-     - Chequear `seenLines`: rechazar anclas a lineas que el read nunca mostro.
-     - Aplicar las operaciones (`applyEdits`).
-- **Only inserts HEAD/TAIL** and tag stale: stable position, not fatal. Applies
-     sobre el contenido vivo y avisa con warning.
-- **Drift with concrete anchors**: try `recovery.tryRecover()` (3-way-merge
-     del edit contra el snapshot que el tag nombra, sobre el contenido vivo). Si
-     funciona, aplica el merge; si no, **`MismatchError`** (re-leer).
+3. Calculate `live = ComputeFileHash(currentContent)`.
+4. Compare it with the section's expected `HASH`:
+ - **`live == expected` (no drift)**: the lines index the exact content.
+     - Check `seenLines`: reject anchors on lines that `read` never showed.
+     - Apply the operations (`applyEdits`).
+- **Only HEAD/TAIL inserts** and stale tag: stable position, not fatal. Apply
+     them to the live content and issue a warning.
+- **Drift with concrete anchors**: try `recovery.tryRecover()` (3-way merge
+     of the edit against the snapshot named by the tag, onto the live content). If
+     it succeeds, apply the merge; otherwise, return **`MismatchError`** (re-read).
 5. `commit`: restore line endings, BOM, and the complete file mode, then perform
    same-directory atomic replacement. Per canonical path, edit serializes the
    full read/validate/replace interval. A post-rename directory-sync failure is
@@ -186,9 +193,9 @@ failing. It is a per-path store with short full file version history:
 // internal/tool/hashline/snapshot.go
 type Snapshot struct {
     Path      string
-    Text      string          // texto completo normalizado (LF, sin BOM)
+    Text      string          // full normalized text (LF, no BOM)
     Hash      string          // ComputeFileHash(Text)
-    SeenLines map[int]struct{} // lineas 1-indexed que un read/search mostro
+    SeenLines map[int]struct{} // 1-indexed lines shown by a read/search
 }
 
 type SnapshotStore interface {
@@ -216,16 +223,16 @@ tools `read`/`edit` in `internal/tool` that use it.
 ```text
 internal/tool/hashline/
   hash.go        // ComputeFileHash, normalizeForHash
-  format.go      // formato [path#HASH], "NUM:TEXTO", headers de hunk
+  format.go      // [path#HASH] format, "NUM:TEXT", hunk headers
   types.go       // Anchor, Cursor, Edit, ApplyResult
-  parser.go      // texto de patch -> []Edit  (SWAP/DEL/INS...)
+  parser.go      // patch text -> []Edit  (SWAP/DEL/INS...)
   apply.go       // applyEdits(text, edits) -> ApplyResult
-  patcher.go     // prepare/commit, verificacion de hash, recovery
-  snapshot.go    // SnapshotStore + impl en memoria
-  recovery.go    // 3-way-merge contra el snapshot del tag
+  patcher.go     // prepare/commit, hash verification, recovery
+  snapshot.go    // SnapshotStore + in-memory implementation
+  recovery.go    // 3-way merge against the tag's snapshot
 internal/tool/
-  read.go        // ReadTool: lee, numera, formatea, graba snapshot
-  edit.go        // EditTool: arma Patch, llama Patcher
+  read.go        // ReadTool: reads, numbers, formats, records snapshot
+  edit.go        // EditTool: builds Patch, calls Patcher
 ```
 
 Core types (mirror of `hashline/types.ts`):
@@ -235,10 +242,10 @@ type Anchor struct{ Line int } // 1-indexed
 
 type Edit struct {
     Kind   EditKind // Insert | Delete | Replace | Block
-    Cursor Cursor   // para Insert: BOF/EOF/BeforeAnchor/AfterAnchor
-    Anchor Anchor   // para Delete/Block
-    Range  *Range   // para Replace (start.=end)
-    Text   string   // payload (lineas +)
+    Cursor Cursor   // for Insert: BOF/EOF/BeforeAnchor/AfterAnchor
+    Anchor Anchor   // for Delete/Block
+    Range  *Range   // for Replace (start.=end)
+    Text   string   // payload (+ lines)
 }
 
 type ApplyResult struct {
@@ -254,10 +261,10 @@ type ApplyResult struct {
 type Patcher struct {
     FS        Filesystem
     Snapshots SnapshotStore
-    // BlockResolver opcional (tree-sitter); nil en v1.
+    // Optional BlockResolver (tree-sitter); nil in v1.
 }
 
-// All-or-nothing: prepara todo en memoria, luego commitea.
+// All-or-nothing: prepare everything in memory, then commit.
 func (p *Patcher) Apply(patch Patch) (PatchResult, error)
 ```
 
@@ -284,7 +291,7 @@ func (p *Patcher) Apply(patch Patch) (PatchResult, error)
 
 1. `ComputeFileHash` + normalization. NETWORK: same text (CRLF/LF, trailing ws) ->
  same tag; real change -> different tag.
-2. `format` + `read` numbering. RED: a file produces header + `NUM:TEXTO`.
+2. `format` + `read` numbering. RED: a file produces header + `NUM:TEXT`.
 3. `parser`: patch text -> `[]Edit` for `SWAP/DEL/INS.*`. NETWORK per operation.
 4. `apply`: apply edits to text. RED: replace/delete/insert and combinations; The
  line numbers are respected when making several splices.
