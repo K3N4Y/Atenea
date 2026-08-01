@@ -55,7 +55,7 @@ const (
 //
 // It holds no credential. Every request asks tokens for one, which is what lets a
 // turn outlive the hour an access token lives; see [OAuthTokenSource].
-type CodexProvider struct {
+type responsesProvider struct {
 	client openai.Client
 	tokens OAuthTokenSource
 	model  string
@@ -66,12 +66,35 @@ type CodexProvider struct {
 	effort    shared.ReasoningEffort
 	summary   shared.ReasoningSummary
 	verbosity responses.ResponseTextConfigVerbosity
+	profile   responsesProfile
 }
 
+// CodexProvider preserves the ChatGPT-specific public constructor and type while
+// delegating the wire translation to the neutral private implementation.
+type CodexProvider struct{ *responsesProvider }
+
+// responsesProfile contains the endpoint policy around the otherwise shared
+// Responses translation. Keeping it private prevents gateway authentication
+// details from becoming part of agentcore's contract.
+type responsesProfile struct {
+	label               string
+	requireAccount      bool
+	chatGPTHeaders      bool
+	subscriptionErrors  bool
+	contextWindows      map[string]int
+	sendMaxOutputTokens bool
+}
+
+var (
+	codexResponsesProfile   = responsesProfile{label: codexLabel, requireAccount: true, chatGPTHeaders: true, subscriptionErrors: true, contextWindows: codexWindows}
+	posthogResponsesProfile = responsesProfile{label: "PostHog", contextWindows: posthogWindows, sendMaxOutputTokens: true}
+)
+
 var _ Provider = (*CodexProvider)(nil)
+var _ Provider = (*responsesProvider)(nil)
 
 // CodexOption adjusts a CodexProvider at construction.
-type CodexOption func(*CodexProvider)
+type CodexOption func(*responsesProvider)
 
 // The reasoning and verbosity values this dialect accepts, as plain strings so a
 // caller does not have to depend on the vendor SDK to name one.
@@ -94,7 +117,7 @@ const (
 // it. The summary is what becomes Reasoning* events: the raw chain of thought is
 // never sent in the clear, so a turn with no summary shows no thinking at all.
 func WithCodexReasoning(effort, summary string) CodexOption {
-	return func(p *CodexProvider) {
+	return func(p *responsesProvider) {
 		p.effort = shared.ReasoningEffort(effort)
 		p.summary = shared.ReasoningSummary(summary)
 	}
@@ -102,7 +125,7 @@ func WithCodexReasoning(effort, summary string) CodexOption {
 
 // WithCodexVerbosity constrains how much prose the model writes around its work.
 func WithCodexVerbosity(verbosity string) CodexOption {
-	return func(p *CodexProvider) {
+	return func(p *responsesProvider) {
 		p.verbosity = responses.ResponseTextConfigVerbosity(verbosity)
 	}
 }
@@ -120,22 +143,39 @@ func NewCodexProvider(tokens OAuthTokenSource, baseURL, model string, opts ...Co
 // timeout injectable so a test can prove a hung stream is cut without waiting out
 // the long default.
 func newCodexProviderWithTimeout(tokens OAuthTokenSource, baseURL, model string, timeout time.Duration, opts ...CodexOption) *CodexProvider {
-	p := &CodexProvider{tokens: tokens, model: model}
+	return &CodexProvider{responsesProvider: newOAuthResponsesProvider(tokens, baseURL, model, timeout, codexResponsesProfile, opts...)}
+}
+
+// NewOAuthResponsesProvider builds the standard OAuth Responses adapter used by
+// gateways such as PostHog. It resolves a bearer per request and deliberately
+// has none of the account, beta, originator, user-agent, or session headers that
+// are specific to the ChatGPT subscription backend.
+func NewOAuthResponsesProvider(tokens OAuthTokenSource, baseURL, model string, opts ...CodexOption) Provider {
+	return newOAuthResponsesProvider(tokens, baseURL, model, defaultRequestTimeout, posthogResponsesProfile, opts...)
+}
+
+func newOAuthResponsesProvider(tokens OAuthTokenSource, baseURL, model string, timeout time.Duration, profile responsesProfile, opts ...CodexOption) *responsesProvider {
+	p := &responsesProvider{tokens: tokens, model: model, profile: profile}
 	for _, opt := range opts {
 		opt(p)
 	}
-	p.client = openai.NewClient(
+	clientOptions := []option.RequestOption{
 		// The bearer is blanked here and set per request by authorize, so a stray
 		// OPENAI_API_KEY in the environment cannot end up authenticating a
 		// subscription request.
 		option.WithAPIKey(""),
-		option.WithBaseURL(strings.TrimRight(baseURL, "/")+"/"),
+		option.WithBaseURL(strings.TrimRight(baseURL, "/") + "/"),
 		option.WithRequestTimeout(timeout),
-		option.WithHeader("originator", codexOriginator),
-		option.WithHeader("User-Agent", codexUserAgent),
-		option.WithHeader("OpenAI-Beta", codexBetaHeader),
 		option.WithHeader("accept", "text/event-stream"),
-	)
+	}
+	if profile.chatGPTHeaders {
+		clientOptions = append(clientOptions,
+			option.WithHeader("originator", codexOriginator),
+			option.WithHeader("User-Agent", codexUserAgent),
+			option.WithHeader("OpenAI-Beta", codexBetaHeader),
+		)
+	}
+	p.client = openai.NewClient(clientOptions...)
 	return p
 }
 
@@ -148,9 +188,9 @@ func newCodexProviderWithTimeout(tokens OAuthTokenSource, baseURL, model string,
 // them to log in. One resolution per request is what the seam promises, and the
 // SDK's whole retry window is a few seconds inside the freshness margin the
 // source already keeps.
-func (p *CodexProvider) authorize(ctx context.Context) ([]option.RequestOption, error) {
+func (p *responsesProvider) authorize(ctx context.Context) ([]option.RequestOption, error) {
 	if p.tokens == nil {
-		return nil, errors.New("no ChatGPT credential source is wired for this provider")
+		return nil, fmt.Errorf("no %s credential source is wired for this provider", p.profile.label)
 	}
 	token, err := p.tokens.OAuthToken(ctx)
 	if err != nil {
@@ -159,16 +199,17 @@ func (p *CodexProvider) authorize(ctx context.Context) ([]option.RequestOption, 
 	// The account id is required by this endpoint specifically, and since the
 	// stored credential no longer enforces it (other flows have none), the
 	// adapter that sends the header is where its absence must be refused.
-	if token.AccountID == "" {
+	if p.profile.requireAccount && token.AccountID == "" {
 		return nil, errors.New("the ChatGPT credential names no account, which requests cannot be routed without; log in again")
 	}
-	return []option.RequestOption{
-		option.WithHeader("Authorization", "Bearer "+token.AccessToken),
-		option.WithHeader("chatgpt-account-id", token.AccountID),
-	}, nil
+	opts := []option.RequestOption{option.WithHeader("Authorization", "Bearer "+token.AccessToken)}
+	if p.profile.requireAccount {
+		opts = append(opts, option.WithHeader("chatgpt-account-id", token.AccountID))
+	}
+	return opts, nil
 }
 
-func (p *CodexProvider) Stream(ctx context.Context, req Request) (<-chan Event, error) {
+func (p *responsesProvider) Stream(ctx context.Context, req Request) (<-chan Event, error) {
 	model := req.Model
 	if model == "" {
 		model = p.model
@@ -213,11 +254,12 @@ func (p *CodexProvider) Stream(ctx context.Context, req Request) (<-chan Event, 
 	if p.verbosity != "" {
 		params.Text = responses.ResponseTextConfigParam{Verbosity: p.verbosity}
 	}
-	// req.MaxOutputTokens is DROPPED, deliberately and only here. The codex backend
-	// rejects a subscription request that names a ceiling; the Codex CLI never
-	// sends one and neither does any other client that works against it. A host
-	// that reserves the ceiling in its context estimate is unaffected — it reserves
-	// what it would have asked for, which is more conservative than what happens.
+	if p.profile.sendMaxOutputTokens && req.MaxOutputTokens > 0 {
+		params.MaxOutputTokens = param.NewOpt(int64(req.MaxOutputTokens))
+	}
+	// Codex deliberately drops req.MaxOutputTokens: its subscription backend
+	// rejects a request that names a ceiling. Standard Responses endpoints retain
+	// it through the profile above.
 
 	out := make(chan Event)
 	go p.runStream(ctx, out, params, model, req.SessionKey, credential)
@@ -233,17 +275,19 @@ type codexCall struct {
 	args   strings.Builder
 }
 
-func (p *CodexProvider) runStream(ctx context.Context, out chan Event, params responses.ResponseNewParams, model, sessionKey string, credential []option.RequestOption) {
+func (p *responsesProvider) runStream(ctx context.Context, out chan Event, params responses.ResponseNewParams, model, sessionKey string, credential []option.RequestOption) {
 	defer close(out)
 	if !emit(ctx, out, Event{Kind: StepStarted}) {
 		return
 	}
 
-	opts := append(credential,
-		option.WithHeader("session-id", codexSessionID(sessionKey)),
-		option.WithHeader("x-client-request-id", randomUUID()),
-		retryTelemetry(ctx, out, codexLabel, model),
-	)
+	opts := append(credential, retryTelemetry(ctx, out, p.profile.label, model))
+	if p.profile.chatGPTHeaders {
+		opts = append(opts,
+			option.WithHeader("session-id", codexSessionID(sessionKey)),
+			option.WithHeader("x-client-request-id", randomUUID()),
+		)
+	}
 	stream := p.client.Responses.NewStreaming(ctx, params, opts...)
 	defer stream.Close()
 
@@ -311,7 +355,7 @@ func (p *CodexProvider) runStream(ctx context.Context, out chan Event, params re
 			}
 			if !json.Valid([]byte(arguments)) {
 				err := fmt.Errorf("codex tool call %q input: invalid JSON", call.callID)
-				emit(ctx, out, Event{Kind: StepFailed, Err: err, Text: fmt.Sprintf("ChatGPT (%s): %v", model, err)})
+				emit(ctx, out, Event{Kind: StepFailed, Err: err, Text: fmt.Sprintf("%s (%s): %v", p.profile.label, model, err)})
 				return
 			}
 			if !emit(ctx, out, Event{Kind: ToolCall, CallID: call.callID, ToolName: call.name, Input: json.RawMessage(arguments)}) {
@@ -369,15 +413,15 @@ func (p *CodexProvider) runStream(ctx context.Context, out chan Event, params re
 			if message == "" {
 				message = event.Response.IncompleteDetails.Reason
 			}
-			err := codexResponseError(message, string(event.Response.Error.Code))
-			emit(ctx, out, Event{Kind: StepFailed, Err: err, Text: fmt.Sprintf("ChatGPT (%s): %v", model, err)})
+			err := responsesError(message, string(event.Response.Error.Code), p.profile)
+			emit(ctx, out, Event{Kind: StepFailed, Err: err, Text: fmt.Sprintf("%s (%s): %v", p.profile.label, model, err)})
 			return
 		case "error":
 			if !closeBlocks() {
 				return
 			}
-			err := codexResponseError(event.Message, event.Code)
-			emit(ctx, out, Event{Kind: StepFailed, Err: err, Text: fmt.Sprintf("ChatGPT (%s): %v", model, err)})
+			err := responsesError(event.Message, event.Code, p.profile)
+			emit(ctx, out, Event{Kind: StepFailed, Err: err, Text: fmt.Sprintf("%s (%s): %v", p.profile.label, model, err)})
 			return
 		}
 	}
@@ -389,8 +433,8 @@ func (p *CodexProvider) runStream(ctx context.Context, out chan Event, params re
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return
 		}
-		err = codexError(err)
-		emit(ctx, out, Event{Kind: StepFailed, Err: err, Text: fmt.Sprintf("ChatGPT (%s): %v", model, err)})
+		err = codexErrorForProfile(err, p.profile)
+		emit(ctx, out, Event{Kind: StepFailed, Err: err, Text: fmt.Sprintf("%s (%s): %v", p.profile.label, model, err)})
 		return
 	}
 	// A call the backend opened and never closed leaves a host waiting for input
@@ -400,7 +444,7 @@ func (p *CodexProvider) runStream(ctx context.Context, out chan Event, params re
 			return
 		}
 		err := fmt.Errorf("codex tool call %q was never completed", call.callID)
-		emit(ctx, out, Event{Kind: StepFailed, Err: err, Text: fmt.Sprintf("ChatGPT (%s): %v", model, err)})
+		emit(ctx, out, Event{Kind: StepFailed, Err: err, Text: fmt.Sprintf("%s (%s): %v", p.profile.label, model, err)})
 		return
 	}
 	emit(ctx, out, Event{Kind: StepEnded, Usage: usage})
@@ -447,6 +491,40 @@ func codexError(err error) error {
 	default:
 		return err
 	}
+}
+
+func codexErrorForProfile(err error, profile responsesProfile) error {
+	if profile.subscriptionErrors {
+		return codexError(err)
+	}
+	var apiErr *openai.Error
+	if !errors.As(err, &apiErr) {
+		return err
+	}
+	message := codexReason(apiErr.Message, apiErr.Code)
+	if isCodexContextOverflow(apiErr.StatusCode, message) {
+		return &ContextOverflowError{Message: message}
+	}
+	if message != "" {
+		return errors.New(message)
+	}
+	return err
+}
+
+func responsesError(message, code string, profile responsesProfile) error {
+	if profile.subscriptionErrors {
+		return codexResponseError(message, code)
+	}
+	if message == "" {
+		message = code
+	}
+	if isCodexContextOverflow(0, message) {
+		return &ContextOverflowError{Message: message}
+	}
+	if message != "" {
+		return errors.New(message)
+	}
+	return fmt.Errorf("the %s gateway ended the turn without a reason", profile.label)
 }
 
 // codexResponseError is codexError for a failure the backend reported INSIDE the

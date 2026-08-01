@@ -70,6 +70,16 @@ func TestPosthogProvider_FailedTurnContract(t *testing.T) {
 	})
 }
 
+func TestPosthogResponsesProvider_Contract(t *testing.T) {
+	llmtest.Contract(t, func(t *testing.T) llmtest.Subject {
+		server := sseServer(t, func(w io.Writer) { io.WriteString(w, codexTurn) })
+		return llmtest.Subject{
+			Provider: NewOAuthResponsesProvider(&staticTokens{token: OAuthToken{AccessToken: "access"}}, server.URL, "gpt-5.5"),
+			Request:  contractRequest("gpt-5.5"),
+		}
+	})
+}
+
 // TestPosthogProvider_SendsTheBearerAndNoAPIKey pins the auth decision: the
 // gateway reads the OAuth access token as a bearer, and the SDK's own x-api-key
 // header must not appear — an ANTHROPIC_API_KEY from the environment has no
@@ -152,6 +162,8 @@ func TestListPosthogModels_FiltersByPlanAndFamily(t *testing.T) {
 			{"id":"claude-haiku-4-5","owned_by":"anthropic","allowed":true},
 			{"id":"claude-opus-5","owned_by":"anthropic","allowed":false},
 			{"id":"gpt-5.5","owned_by":"openai"},
+			{"id":"text-embedding-3-small","owned_by":"openai"},
+			{"id":"gpt-cloudflare","owned_by":"cloudflare"},
 			{"id":"@cf/zai-org/glm-5.2","owned_by":"cloudflare"},
 			{"id":"","owned_by":"anthropic"}
 		]}`)
@@ -162,7 +174,7 @@ func TestListPosthogModels_FiltersByPlanAndFamily(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListPosthogModels: %v", err)
 	}
-	want := []string{"claude-opus-4-8", "claude-haiku-4-5"}
+	want := []string{"claude-opus-4-8", "claude-haiku-4-5", "gpt-5.5"}
 	if len(models) != len(want) {
 		t.Fatalf("models = %v, want %v", models, want)
 	}

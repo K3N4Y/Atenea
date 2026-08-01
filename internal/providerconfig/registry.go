@@ -153,7 +153,15 @@ func DefaultRegistry() Registry {
 				if params.Tokens == nil {
 					return nil, fmt.Errorf("provider %q authenticates with a PostHog login and no credential source is wired for it", params.Provider.ID)
 				}
-				return llm.NewAnthropicOAuthProvider(params.Tokens, params.Provider.BaseURL, params.Model), nil
+				switch {
+				case strings.HasPrefix(params.Model, "claude-"):
+					return llm.NewAnthropicOAuthProvider(params.Tokens, params.Provider.BaseURL, params.Model), nil
+				case strings.HasPrefix(params.Model, "gpt-"):
+					baseURL := strings.TrimRight(params.Provider.BaseURL, "/") + "/v1"
+					return llm.NewOAuthResponsesProvider(params.Tokens, baseURL, params.Model, codexOptions()...), nil
+				default:
+					return nil, fmt.Errorf("provider %q does not recognize model family %q", params.Provider.ID, params.Model)
+				}
 			},
 			Describe: func(Provider) llm.Capabilities { return llm.DescribePosthog() },
 			OAuth:    posthogOAuthFlow(),

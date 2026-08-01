@@ -147,6 +147,11 @@ gates models by plan, so the curated list is the pre-login display and the
 discovered one is what the account actually gets. See
 [the registry's Discover hook](provider-registry.md#a-format-can-discover-its-own-models).
 
+`[updated 2026-08-01]` The same PostHog row now includes its seven reference GPT
+models after the Claude models. Live discovery remains authoritative for plan
+access and preserves allowed Claude and GPT ids in gateway order; the curated
+list is the useful pre-login fallback.
+
 ## The user can declare providers too
 
 The shipped catalog is one input; the other is whatever the user added. `Declare`

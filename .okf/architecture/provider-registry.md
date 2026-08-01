@@ -100,7 +100,7 @@ Six wire formats ship:
 | `openrouter` | OpenAI adapter, `WithOpenRouterCompatibility` | OpenRouter routing: `session_id`, `reasoning` unless opted out |
 | `openai-compatible` | OpenAI adapter, `WithoutOpenRouterReasoning` | the neutral dialect: chat completions, no vendor extension |
 | `openai-codex` | `llm.NewCodexProvider` | a ChatGPT subscription: the codex backend's Responses API, authenticated by a login |
-| `posthog` | `llm.NewAnthropicOAuthProvider` | PostHog's LLM gateway: the anthropic wire format, authenticated by an OAuth login whose bearer travels per request |
+| `posthog` | model-aware PostHog factory | Claude uses Anthropic Messages; GPT uses standard OAuth Responses under `/v1` |
 
 `openai-codex` is the same vendor a third time, and the clearest case yet for the
 type deciding everything: a subscription token is refused by `api.openai.com` and
@@ -108,11 +108,11 @@ by chat completions, and the endpoint that accepts it wants the system prompt in
 field, refuses an output ceiling, and identifies the caller with a header. Nothing
 about that could have been an option on `openai`.
 
-`[updated 2026-07-31]` `posthog` is the inverse case: the *same wire format* as
-`anthropic` behind a different credential and a different catalog. It is still its
-own type — the credential is a login and the model list is the gateway's own — but
-the adapter is the Anthropic one built through a second constructor that takes an
-`llm.OAuthTokenSource` instead of a key. See
+`[updated 2026-08-01]` `posthog` is model-aware within one catalog row. Its type
+still owns the decision: `claude-*` builds Anthropic OAuth at the gateway root,
+`gpt-*` builds standard OAuth Responses at `<root>/v1`, and an unknown family is
+refused rather than guessed. Both resolve the bearer per request. The Responses
+profile deliberately excludes every ChatGPT-only account and session header. See
 [Driving atenea with a PostHog account](../specs/2026-07-31-posthog-oauth-provider.md).
 
 ### A format declares how it is authenticated

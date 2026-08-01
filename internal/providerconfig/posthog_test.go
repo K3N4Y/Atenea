@@ -107,6 +107,38 @@ func TestRegistry_PosthogRefusesToBuildWithNoTokenSource(t *testing.T) {
 	}
 }
 
+func TestRegistry_PosthogDispatchesByModelFamily(t *testing.T) {
+	registry := DefaultRegistry()
+	params := BuildParams{Provider: Provider{ID: "posthog", Type: Posthog, BaseURL: "https://gateway.test"}, Tokens: NewCredentialResolver(nil).OAuthTokenSource("posthog", nil)}
+
+	params.Model = "claude-opus-4-8"
+	claude, err := registry.Build(params)
+	if err != nil {
+		t.Fatalf("Build Claude: %v", err)
+	}
+	if _, ok := claude.(*llm.AnthropicProvider); !ok {
+		t.Fatalf("Claude provider = %T, want Anthropic Messages", claude)
+	}
+
+	params.Model = "gpt-5.5"
+	gpt, err := registry.Build(params)
+	if err != nil {
+		t.Fatalf("Build GPT: %v", err)
+	}
+	gptResponses, ok := gpt.(interface{ Capabilities() llm.Capabilities })
+	if !ok {
+		t.Fatalf("GPT provider = %T, want Responses", gpt)
+	}
+	if caps := gptResponses.Capabilities(); !caps.Reasoning || caps.ContextWindows["gpt-5.5"] != 1_050_000 {
+		t.Fatalf("GPT capabilities = %+v, want precise Responses behavior and PostHog windows", caps)
+	}
+
+	params.Model = "gemini-unknown"
+	if _, err := registry.Build(params); err == nil || !strings.Contains(err.Error(), "model family") {
+		t.Fatalf("Build unknown = %v, want an explicit family error", err)
+	}
+}
+
 // TestService_DeviceLoginAcceptsACodelessLogin: the guard that used to insist
 // on a user code now insists on what every flow owes — a page and a wait — so
 // a browser-redirect login runs through the same service path, stores its

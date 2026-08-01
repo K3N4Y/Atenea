@@ -26,7 +26,7 @@ func TestDefaultCatalog_DeclaresTheCuratedProviders(t *testing.T) {
 		"anthropic":    {"claude-opus-4-8", "claude-fable-5", "claude-sonnet-5", "claude-haiku-4-5"},
 		"openai":       {"gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"},
 		"openai-codex": {"gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark"},
-		"posthog":      {"claude-opus-4-8", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"},
+		"posthog":      {"claude-opus-4-8", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.3-codex", "gpt-5-mini"},
 	}
 	wantBaseURLs := map[string]string{
 		"anthropic":    "https://api.anthropic.com",
@@ -133,6 +133,7 @@ func TestDefaultCatalog_CuratedModelsKeepTheirContextWindows(t *testing.T) {
 			"poolside/laguna-xs-2.1:free": 262_144,
 			"cohere/north-mini-code:free": 256_000,
 		},
+		"posthog": {"gpt-5.6-sol": 1_050_000, "gpt-5.3-codex": 272_000, "gpt-5-mini": 272_000},
 	}
 	for _, provider := range DefaultCatalog().Providers {
 		capabilities, _ := registry.Describe(provider)

@@ -1,6 +1,6 @@
 ---
 updated_at: 2026-08-01
-summary: Design specification for driving atenea with a PostHog account — the PKCE loopback login, OAuth-authenticated Anthropic adapter, plan-gated model discovery, and usage-presence semantics for gateways that omit token counts.
+summary: Design specification for driving atenea with a PostHog account — PKCE login, OAuth-authenticated Claude and GPT adapters, and plan-gated model discovery.
 ---
 
 # Driving atenea with a PostHog account
@@ -17,7 +17,7 @@ summary: Design specification for driving atenea with a PostHog account — the 
 ## Problem
 
 PostHog ships an LLM gateway (`gateway.us.posthog.com/posthog_code`) that serves
-Claude-family models to PostHog accounts, authenticated by an OAuth login rather
+Claude- and GPT-family models to PostHog accounts, authenticated by an OAuth login rather
 than an API key. atenea had the whole OAuth substrate — the credential arm, the
 per-request token seam, the device-login orchestration in the service both hosts
 share — but every piece of it assumed OpenAI's shape: a device code the user
@@ -59,8 +59,8 @@ PostHog differs in all three places:
   success or failure — OAuth `error` param, missing code, state mismatch —
   *before* writing the success/error page, so the browser never says
   "authentication complete" on a path the client rejects.
-- **The adapter is the Anthropic one with a second constructor.** The gateway
-  speaks anthropic-messages, so `NewAnthropicOAuthProvider(tokens, baseURL,
+- **The Claude adapter is the Anthropic one with a second constructor.** The gateway
+  speaks anthropic-messages for `claude-*`, so `NewAnthropicOAuthProvider(tokens, baseURL,
   model)` reuses the whole translation and differs only in auth: no static key
   (and the SDK's env-derived `ANTHROPIC_API_KEY` header explicitly deleted — a
   stray key in the environment must never authenticate a gateway request), a
@@ -68,7 +68,11 @@ PostHog differs in all three places:
   `Authorization: Bearer` — the header every direct caller in the reference
   implementation uses. Capabilities are per-instance, because the gateway
   declares 1M windows for the opus/sonnet family where Anthropic's public API
-  declares 200K.
+  declares 200K. For `gpt-*`, the registry instead builds the standard OAuth
+  Responses adapter at `{gateway}/v1`. Its shared Responses translation is the
+  same mature implementation Codex uses, but its explicit PostHog profile needs
+  no account id and emits none of Codex's originator, beta, account, user-agent,
+  request-id, or session headers. Unknown model families fail at construction.
 - **Missing token usage stays unknown.** The gateway may omit `usage`, return an
   empty object, or split fields across stream events. The adapter reads the
   Anthropic SDK's JSON-presence metadata: omitted and empty usage produce nil,
@@ -85,9 +89,11 @@ PostHog differs in all three places:
   gateway. An EU account edits `base_url` and `oauth_issuer` in its own
   `providers.json`; the OAuth client id follows the issuer host, so the region
   is one fact, not two the user must keep consistent. No region-selection UI.
-- **Claude models only.** The gateway also serves GPT models over
-  openai-responses (off `/v1`) and Cloudflare-hosted models; both are out of
-  scope, and discovery filters them out along with `allowed: false` entries.
+- **Claude and GPT models share one provider row.** Discovery preserves allowed
+  models from both recognized families and filters Cloudflare, unknown, and
+  `allowed: false` entries. The curated fallback adds the seven reference GPT
+  models; curated windows are 1,050,000 for GPT 5.4–5.6 and 272,000 for
+  `gpt-5.3-codex` and `gpt-5-mini`.
 - **Model discovery through `Format.Discover`.** The registry gained an
   optional per-format hook (see
   [the registry doc](../architecture/provider-registry.md#a-format-can-discover-its-own-models)),
@@ -116,7 +122,6 @@ PostHog differs in all three places:
 
 ## What this does not close
 
-- GPT models through the gateway's openai-responses surface.
 - A region picker at login (the reference implementation has one; here region
   is config).
 - Auto-opening the browser from the TUI *when the login starts*. What the TUI

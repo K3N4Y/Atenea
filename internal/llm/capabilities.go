@@ -88,6 +88,13 @@ var posthogWindows = map[string]int{
 	"claude-sonnet-5":   1_000_000,
 	"claude-sonnet-4-6": 1_000_000,
 	"claude-haiku-4-5":  200_000,
+	"gpt-5.6-sol":       1_050_000,
+	"gpt-5.6-terra":     1_050_000,
+	"gpt-5.6-luna":      1_050_000,
+	"gpt-5.5":           1_050_000,
+	"gpt-5.4":           1_050_000,
+	"gpt-5.3-codex":     272_000,
+	"gpt-5-mini":        272_000,
 }
 
 var anthropicCapabilities = Capabilities{
@@ -160,7 +167,7 @@ func (p *OpenAIProvider) Capabilities() Capabilities {
 // sends a ceiling, so there is none to declare. Reasoning is per-instance, like
 // the OpenAI adapter's, because asking for a reasoning summary is the option that
 // decides whether Reasoning* events can ever arrive.
-func (p *CodexProvider) Capabilities() Capabilities {
+func (p *responsesProvider) Capabilities() Capabilities {
 	return Capabilities{
 		Streaming: true,
 		Tools:     true,
@@ -168,7 +175,7 @@ func (p *CodexProvider) Capabilities() Capabilities {
 		// prompt_cache_key carries Request.SessionKey.
 		PromptCaching:  KeyedPromptCaching,
 		RetryTelemetry: true,
-		ContextWindows: codexWindows,
+		ContextWindows: p.profile.contextWindows,
 	}
 }
 
@@ -185,7 +192,7 @@ func DescribePosthog() Capabilities { return posthogCapabilities }
 // through the same code the constructor runs, so the description cannot drift
 // away from the provider.
 func DescribeCodex(opts ...CodexOption) Capabilities {
-	p := &CodexProvider{}
+	p := &responsesProvider{profile: codexResponsesProfile}
 	for _, opt := range opts {
 		opt(p)
 	}

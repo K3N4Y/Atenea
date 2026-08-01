@@ -127,8 +127,9 @@ pretending an unread field is verified.
 
 ## Windows are declared per dialect, not per model id
 
-`internal/llm/capabilities.go` holds four tables — `anthropicWindows`,
-`openAIWindows`, `openRouterWindows` and `codexWindows` — and the neutral dialect
+`internal/llm/capabilities.go` holds provider-specific tables including
+`anthropicWindows`, `openAIWindows`, `openRouterWindows`, `codexWindows`, and
+`posthogWindows` — and the neutral dialect
 declares none. That split is the point:
 
 ```go
@@ -148,6 +149,13 @@ is in both), and it publishes neither a `/models` nor a window. One table keyed 
 id could not have said which adapter either entry belonged to. `DescribeCodex` also
 declares `DefaultMaxOutputTokens: 0`, and that one is not a default — the dialect
 never sends a ceiling, so there is none to declare.
+
+`[updated 2026-08-01]` `posthogWindows` spans both gateway surfaces. Its GPT
+entries use the curated reference windows (1,050,000 for `gpt-5.6-sol`,
+`gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, and `gpt-5.4`; 272,000 for
+`gpt-5.3-codex` and `gpt-5-mini`). The provider-level description stays
+conservative across families, while a built GPT adapter reports Responses
+behavior and the same PostHog window table.
 
 The neutral dialect declaring nothing is a real answer, not a gap: an
 `openai-compatible` endpoint is LM Studio, Ollama, vLLM or an unrecognized

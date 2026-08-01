@@ -18,8 +18,8 @@ import (
 // base URL is the product root, the gateway marks models outside the caller's
 // plan with allowed=false — offering those would sell the user a model that
 // fails at selection — and this build only speaks the gateway's
-// anthropic-messages surface, so the GPT and Cloudflare families it also lists
-// are filtered out here rather than failing in the adapter.
+// Claude and GPT wire surfaces, so Cloudflare and unknown families it also
+// lists are filtered out here rather than failing in the adapter.
 func ListPosthogModels(ctx context.Context, baseURL, bearer string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, listModelsTimeout)
 	defer cancel()
@@ -63,7 +63,9 @@ func ListPosthogModels(ctx context.Context, baseURL, bearer string) ([]string, e
 		if m.ID == "" || (m.Allowed != nil && !*m.Allowed) {
 			continue
 		}
-		if m.OwnedBy != "anthropic" && !strings.HasPrefix(m.ID, "claude-") {
+		claude := m.OwnedBy == "anthropic" && strings.HasPrefix(m.ID, "claude-")
+		gpt := m.OwnedBy == "openai" && strings.HasPrefix(m.ID, "gpt-")
+		if !claude && !gpt {
 			continue
 		}
 		models = append(models, m.ID)

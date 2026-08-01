@@ -143,7 +143,7 @@ func codexRequest() Request {
 	}
 }
 
-func drainCodex(t *testing.T, provider *CodexProvider, req Request) []Event {
+func drainCodex(t *testing.T, provider Provider, req Request) []Event {
 	t.Helper()
 	out, err := provider.Stream(context.Background(), req)
 	if err != nil {
@@ -154,6 +154,34 @@ func drainCodex(t *testing.T, provider *CodexProvider, req Request) []Event {
 		events = append(events, event)
 	}
 	return events
+}
+
+func TestOAuthResponsesProvider_SendsOnlyTheStandardOAuthPolicy(t *testing.T) {
+	server := newCodexServer(t, codexTurn)
+	provider := NewOAuthResponsesProvider(&staticTokens{token: OAuthToken{AccessToken: "posthog-token"}}, server.server.URL, "gpt-5.5")
+	drainCodex(t, provider, codexRequest())
+
+	body, headers, path := server.request(t, 0)
+	if path != "/responses" {
+		t.Fatalf("path = %q, want the standard Responses endpoint", path)
+	}
+	if got := headers.Get("Authorization"); got != "Bearer posthog-token" {
+		t.Fatalf("Authorization = %q, want the per-request bearer", got)
+	}
+	if got := headers.Get("x-api-key"); got != "" {
+		t.Fatalf("x-api-key = %q, want none on the PostHog OAuth path", got)
+	}
+	if got := body["max_output_tokens"]; got != float64(codexRequest().MaxOutputTokens) {
+		t.Fatalf("max_output_tokens = %#v, want %d", got, codexRequest().MaxOutputTokens)
+	}
+	for _, name := range []string{"chatgpt-account-id", "originator", "OpenAI-Beta", "session-id", "x-client-request-id"} {
+		if got := headers.Get(name); got != "" {
+			t.Errorf("%s = %q, want no ChatGPT-only header", name, got)
+		}
+	}
+	if got := headers.Get("User-Agent"); got == codexUserAgent {
+		t.Fatalf("User-Agent = %q, want no ChatGPT-only identity", got)
+	}
 }
 
 // TestCodexProvider_SendsTheSubscriptionHeadersTheBackendDemands: the codex

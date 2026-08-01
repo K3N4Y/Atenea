@@ -35,13 +35,13 @@ import (
 //     different request. It declares no api_key_env for the same reason — there
 //     is no variable that could hold a login — so it is connected, never
 //     inherited from the environment.
-//   - `posthog` is PostHog's LLM gateway: the anthropic wire format behind an
+//   - `posthog` is PostHog's LLM gateway: Anthropic Messages and OpenAI
+//     Responses behind an
 //     OAuth login (a browser redirect, not a device code). The entry points at
 //     the US cloud; an EU account edits base_url and oauth_issuer in its own
 //     providers.json and the login follows the issuer. No api_key_env, same
-//     reason as codex. Only its Claude-family models are offered — the gateway
-//     also serves GPT models over a different wire surface this build does not
-//     speak yet.
+//     reason as codex. Its Claude and GPT families share this catalog row; the
+//     registry chooses their wire adapter from the selected model family.
 //   - Model discovery is off everywhere but OpenRouter and PostHog. OpenAI's
 //     GET /models lists embedding, audio and image models the agent loop cannot
 //     drive, the codex backend publishes no /models at all, and the OpenCode
