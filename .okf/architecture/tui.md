@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-26
+updated_at: 2026-08-01
 summary: Architecture and behavior of the Atenea terminal user interface — what a bare `atenea` does, one of the binary's two surfaces alongside the headless CLI.
 ---
 
@@ -48,10 +48,10 @@ transcripts from previous runs. Earlier `tui-` sessions whose persisted
 which rehydrates the selected transcript and restores its last submitted build
 or plan mode. The composer prompt history does persist across launches.
 
-Workspace globbing for the explorer and `@` completion, plus file reading and
-Chroma highlighting for the viewer, run as `tea.Cmd` work. The model renders
-loading/error states and applies only results whose generation still matches
-the latest request, so slow disk work cannot block or overwrite newer input.
+Workspace globbing for `@` completion runs as `tea.Cmd` work. The model renders
+loading/error states in the completion menu and applies only results whose
+generation still matches the latest request, so slow disk work cannot block or
+overwrite newer input.
 
 All model, tool, filesystem, Git, provider, and error text crosses a terminal
 text boundary before Markdown, Chroma, or Lip Gloss render it. The boundary
@@ -134,9 +134,8 @@ Three surfaces, one pipeline: only the last arrow differs.
   and non-ignored untracked files, executable modes, and symlinks. Ignored
   files remain untouched, and the workspace's main `.git` directory, index,
   branch, HEAD, refs, and staged changes are never mutated.
-- `internal/tui/model.go` + `transcript.go` + `explorer.go` +
-  `file_viewer_panel.go` + `composer.go` + `complete.go` + `view.go` +
-  `reveal.go` — the
+- `internal/tui/model.go` + `transcript.go` + `composer.go` + `complete.go` +
+  `view.go` + `reveal.go` — the
   Model of Bubble Tea. `transcript.go` is the `Transcript` module: a pure,
   I/O-free value type (embedded on `Model`) that projects durable
   `SessionEvent` to conversation inputs (streaming assistant text, collapsible
@@ -151,58 +150,30 @@ Three surfaces, one pipeline: only the last arrow differs.
   `foldCompactionStatus` wrappers thread the session id into the module).
   `input_router.go` owns the input-precedence ORDER once as
   `Model.activeInputTarget` (resume/model/mcp pickers, connect panel,
-  permission gate, plan gate, then the focused viewer/explorer/composer): the
-  keyboard router, `syncComposerFocus`, and the mouse branch's modal
-  short-circuits all consult that single resolver instead of re-listing the
-  chain, so the three sites cannot drift out of lockstep. Per-context leaf
-  behavior stays put — the pointer path keeps its own differences (the resume
-  picker swallows mouse events, the plan gate has no pointer short-circuit,
-  wheel scrolling follows the hovered panel);
-  `explorer.go` is the `explorer` module: the workspace file tree panel
-  (the left column) extracted into a self-contained value type embedded on
-  `Model` (its tree state fields promote onto `Model` the same way the
-  `Transcript` fields do), the first panel decomposed behind that router. It
-  owns the tree's open/close/load lifecycle, its keyboard and mouse handling,
-  its windowed rendering, and the async listing it shares with the `@`
-  completion (both feed through the same `listFiles`/`fileListTree` path). It
-  never reaches into the file viewer: activating a file surfaces an
-  `explorerIntent{openPath}` and `Esc`/`q` an `explorerIntent{closePanel}` that
-  the root `Model` applies, driving the viewer panel and the chat-column resize;
-  `file_viewer_panel.go` is the `fileViewerPanel` module: the read-only file
-  viewer (the main-area file view opened from the explorer) extracted into a
-  self-contained value type embedded on `Model` the same way the `explorer` is
-  (its viewer state fields — `viewer`, `fileReader`, `viewerLoading`,
-  `viewerGen`, `viewerPending`, `viewerReturnY` — promote onto `Model`), the
-  second panel decomposed behind that router. It owns the viewer's open/close
-  lifecycle, the generation/pending-guarded async load (a stale `fileOpenedMsg`
-  whose generation or path no longer matches is discarded so slow disk work
-  never overwrites a newer request; scroll deltas requested while loading queue
-  into `viewerPending` and replay on landing), its keyboard and wheel handling,
-  and its rendering (`fileViewerPanel.view`, deferring to the `fileViewer`
-  content/scroll type in `file_viewer.go`). It never reaches into focus or the
-  transcript viewport: `Esc` surfaces a `viewerIntent{closeToChat}` that the
-  root applies by returning focus to the chat and restoring the transcript
-  scroll offset the panel captured at open (`returnY`);
+  permission gate, plan gate, then the composer): the keyboard router,
+  `syncComposerFocus`, and the mouse branch's modal short-circuits all consult
+  that single resolver instead of re-listing the chain, so the three sites
+  cannot drift out of lockstep. Per-context leaf behavior stays put — the
+  pointer path keeps its own differences (the resume picker swallows mouse
+  events and the plan gate has no pointer short-circuit);
   `composer.go` (with its autocomplete logic in `complete.go`) is the `composer`
   module: the chat input crossroads extracted into a self-contained value type
-  embedded on `Model` the same way the `explorer` and `fileViewerPanel` are (its
-  state fields — `input`, `history`/`histIdx`, `menuItems`/`menuSelected`,
-  `modelSearch`, and the `@`-file cache `files`/`filesLoaded`/`filesLoading`/
-  `filesError`/`filesGen` — promote onto `Model`), the third panel decomposed
-  behind that router. It owns the editable textarea (draft, cursor, growth to
+  embedded on `Model` (its state fields — `input`, `history`/`histIdx`,
+	  `menuItems`/`menuSelected`,
+	  `modelSearch`, and the `@`-file cache `files`/`filesLoaded`/`filesLoading`/
+	  `filesError`/`filesGen` — promote onto `Model`). It owns the editable textarea (draft, cursor, growth to
   five visible rows then scroll with literal newlines preserved), the in-memory
   prompt-history navigation, and the autocomplete popup (the `/` slash-command
-  menu, the `@` file-mention menu with its once-per-token async listing shared
-  with the explorer through the same `listFiles`/`fileListMenu` path, and the
+  menu, the `@` file-mention menu with its once-per-token async listing through
+  the `listFiles`/`fileListMenu` path, and the
   inline `/model <query>` search fed by an injected `modelSource` so the composer
   never imports the agent). `composer.handleKey` encodes the composer-internal
-  precedence (open menu wins over history over the default keys) and surfaces a
-  small `composerIntent`: `submit` (Enter or a builtin menu selection — the root
-  `submitPrompt` remains the SINGLE dispatch point for local-command
-  interception, slash expansion, and build/plan mode routing), `leaderArm` (an
-  empty-composer `Space`, which the root turns into the `Space e` leader), and
-  `handled` (the composer consumed the key internally). It never owns submission
-  routing, prompt-history persistence, the leader, the Esc-cancel confirmation,
+	  precedence (open menu wins over history over the default keys) and surfaces a
+	  small `composerIntent`: `submit` (Enter or a builtin menu selection — the root
+	  `submitPrompt` remains the SINGLE dispatch point for local-command
+	  interception, slash expansion, and build/plan mode routing), and `handled`
+	  (the composer consumed the key internally). It never owns
+  submission routing, prompt-history persistence, the Esc-cancel confirmation,
   or focus: those stay on the root, which seeds/appends the history slice and
   drives focus via `syncComposerFocus`. Thin `Model` seams (`refreshMenu`,
   `closeMenu`, `applySelection`) add only the viewport recompute the popup's
@@ -359,16 +330,16 @@ expected user decision as a red system error.
 
 ### Root Canvas
 
-`Model.View` routes every chat, explorer, and file-viewer layout through one
-root Lip Gloss canvas. Its background is the exact dark color `#141414`; after
-the first `WindowSizeMsg`, the canvas fills the complete reported width and
-height so empty terminal cells cannot fall back to the user's terminal theme.
+`Model.View` routes the chat layout through one root Lip Gloss canvas. Its
+background is the exact dark color `#141414`; after the first `WindowSizeMsg`,
+the canvas fills the complete reported width and height so empty terminal cells
+cannot fall back to the user's terminal theme.
 Before that first size arrives the background paints line by line instead:
 a multi-line Lip Gloss render would pad every line to the longest one, an
 arbitrary rectangle that would also hang trailing spaces after activity
 headers.
 Child styles remain responsible for explicit functional highlights such as
-the tree cursor, diffs, statuses, and selection states.
+diffs, statuses, and selection states.
 Child styles can emit complete SGR resets inside the root render, so the
 canvas immediately restores `#141414` after each reset before any following
 cells. Styled prompts, cursors, panels, and Markdown therefore cannot expose
@@ -399,41 +370,34 @@ the left segment truncates with `…` so the context label always fits (the inse
 math and its narrow-width clamp come from the layout module; the truncation
 decision stays in the render helper).
 
-Because the chrome owns the top `topBarHeight` rows, the body (chat, explorer,
-viewer) sizes against `bodyHeight = height - topBarHeight` rather than the full
-terminal height, and mouse events subtract the same origin from their row before
-the body handlers read it, so a click anywhere in the chrome is inert. Total
-rendered height is unchanged: the chrome comes out of the body, never adds extra
-rows.
+Because the chrome owns the top `topBarHeight` rows, the chat body sizes against
+`bodyHeight = height - topBarHeight` rather than the full terminal height, and
+mouse events subtract the same origin from their row before the body handlers
+read it, so a click anywhere in the chrome is inert. Total rendered height is
+unchanged: the chrome comes out of the body, never adds extra rows.
 
 ### Layout geometry (`layout.go`)
 
 All terminal geometry — the width/height/inset/clamp/rect arithmetic and the
 narrow-terminal thresholds — lives in one place: `computeLayout(size, state)
-Layout`, a pure function of the terminal size and the panel state (explorer
-open, the reserved-line count below the transcript, the textarea row count). It
-returns a `Layout` value with the frame's rectangles: the top-bar height and
-body height, the mouse body-Y origin, the explorer column width (25% clamped to
-`[20, 36]`, `28` before the first size, full-bleed when the column plus its
-one-cell gutter would leave no room for the chat), the full-screen flag, the
-chat/content width, the transcript viewport rect (width, and `bodyHeight` minus
-the reserved rows, bounded `>= 0`), the composer textarea width (chat width
-minus the outer margins, box border, padding, prompt and cursor cell, bounded
-`>= 1`) and height (bounded against the reserved budget), the file-viewer height
-(`bodyHeight - 1` header row), the shared chat-column margin/inner width and the
-full-width top-bar margin/inner width.
+Layout`, a pure function of the terminal size, the reserved-line count below the
+transcript, and the textarea row count. It returns a `Layout` value with the
+frame's rectangles: the top-bar height and body height, the mouse body-Y origin,
+the full content width, the transcript viewport rect (width, and `bodyHeight`
+minus the reserved rows, bounded `>= 0`), the composer textarea width (content
+width minus the outer margins, box border, padding, prompt and cursor cell,
+bounded `>= 1`) and height (bounded against the reserved budget), the shared
+chat-column margin/inner width and the full-width top-bar margin/inner width.
 
 The consumers only READ this value: the `View()` render helpers build strings
 from the rects (staying read-only), `resizeViewport` (which runs from `Update`)
 applies the viewport and textarea dimensions, and the mouse hit-tests read the
-same `mouseBodyYOffset` and `treeRowsStartY` origins — so rendering and
-click-targeting share one geometry and cannot drift. The `Model` geometry
-methods (`bodyHeight`, `treePanelWidth`, `contentWidth`, `chatContentWidth`,
-`fileViewerHeight`, `treeVisibleRowCount`) are thin seams onto fields of this
-result. The reserved-independent ones read `baseLayout()` (a layout computed
-with the reserved count zeroed), because the reserved count is itself derived
-from `bodyHeight` and the chat width and reading the full layout there would
-recurse.
+same `mouseBodyYOffset` origin — so rendering and click-targeting share one
+geometry and cannot drift. The `Model` geometry methods (`bodyHeight`,
+`contentWidth`, `chatContentWidth`) are thin seams onto fields of this result.
+The reserved-independent ones read `baseLayout()` (a layout computed with the
+reserved count zeroed), because the reserved count is itself derived from
+`bodyHeight` and the chat width and reading the full layout there would recurse.
 
 The module deliberately does NOT own rendering-flavored degradation: the
 reserved-line count (how many menu and permission-panel rows a render draws)
@@ -451,21 +415,21 @@ each consuming a width or flag from `Layout`.
  window, with the same smooth reveal of the assistant). Every rendered
  thinking line keeps the two-cell chat inset, including physical lines created
  by wrapping an expanded block. Closed and drained collapses to the line
- `[penso <duracion>] ⇧Tab` with that same inset. `Shift+Tab` expands or
- collapses every settled thinking block
- regardless of whether chat, explorer, or viewer owns panel focus; a left
- click on a settled summary in the visible chat transcript toggles that block
- without stealing explorer focus. Pending permission and plan-approval gates
- retain precedence, and live thinking stays unchanged.
+	 `[penso <duracion>] ⇧Tab` with that same inset. `Shift+Tab` expands or
+	 collapses every settled thinking block
+	 regardless of composer focus; a left
+	 click on a settled summary in the visible chat transcript toggles that block
+	 without moving the composer cursor. Pending permission and plan-approval
+	 gates retain precedence, and live thinking stays unchanged.
  resolves via the gate with the `SessionID` of the EVENT (a surface
  request from a subagent is resolved with the child id).
 - Enter sends via the active mode path (`Agent.SendPrompt` in build,
  `Agent.SendPlanPrompt` in plan); Ctrl+C cuts and exits. During an active run,
  the first Esc shows `Esc again to cancel` for two seconds and a second Esc
- inside that window stops the run without exiting. Any other key or expiration
- disarms the confirmation and is processed normally; without an active run Esc
- does not arm it. Contextual Esc handling for menus, panels, permissions,
- explorer, and file viewer retains precedence.
+	 inside that window stops the run without exiting. Any other key or expiration
+	 disarms the confirmation and is processed normally; without an active run Esc
+	 does not arm it. Contextual Esc handling for menus, panels, permissions,
+	 and plan approval retains precedence.
  Only a `RunDoneMsg` matching the active `sessionID + runID` turns off the work
  flag, so a late close from a canceled run is ignored. `Ctrl+J` inserts a
  newline without
@@ -492,25 +456,10 @@ each consuming a width or flag from `Layout`.
  pending permission, and the composer footer reflects this live. In plan-mode the
  runner announces `present_plan` without `bash`/`write`; the next `SendPrompt`
  returns the session to normal mode.
-- With the explorer open, the split layout has direct mouse focus. Clicking the
-  explorer focuses its navigation; clicking the right side focuses the active
-  file viewer, or the chat transcript/composer when no viewer is open. The split
-  layout is borderless: the explorer is a plain left column (`treePanelWidth`,
-  25% clamped to `[20, 36]`) that pushes the chat (or viewer) to the right,
-  separated by a one-column whitespace gutter — no panel boxes, titles, or focus
-  markers, and the tree's first row sits at the top of the body. Panel focus is
-  tracked internally to route keys but has no visual indicator; the chat remains
-  the composer/transcript input and scrolling surface when it owns focus. Keyboard
-  navigation follows focus: explorer receives `j`/Down, `k`/Up, `h`, `l`, and
-  Enter; viewer receives `j`/Down, `k`/Up, PgUp, and PgDn. Mouse-wheel
-  scrolling instead follows the panel under the pointer without changing
-  keyboard focus: explorer moves its tree, viewer moves the file, and chat
-  moves the transcript. A tree file click opens or replaces the viewer without
-  moving focus away from the explorer. `Esc` from a focused viewer closes it and
-  returns focus to chat. Ctrl+C and pending permission/plan approval gates
-  keep precedence over panel routing; `Shift+Tab` still toggles settled thinking
-  globally, and `Tab` continues to control build/plan mode rather than panel
-  focus.
+- The TUI has one primary surface: chat transcript plus composer. Mouse-wheel
+  scrolling moves the transcript, transcript clicks target visible conversation
+  affordances, `Shift+Tab` toggles settled thinking globally, and `Tab`
+  controls build/plan mode rather than panel focus.
 - A successful `present_plan` adds the offer `[plan] plan presentado
   (y ejecutar / n seguir en plan)` to the end; with the offer pending the keyboard does not
  feed the input. `y` accepts via `Agent.AcceptPlan` (the Engine returns the
@@ -525,11 +474,11 @@ each consuming a width or flag from `Layout`.
  real bubbles/viewport panic found in smoke E2E under pty).
 - The composer box measures the terminal width, starts at three total rows
  including borders, and grows to seven total rows for five visible input
- lines. Longer multiline prompts scroll vertically; long individual lines
- scroll horizontally within the input. Its native textarea cursor blinks while
- chat and the terminal window own keyboard focus, and hides while the window is
- unfocused or explorer, viewer, permission, or plan approval owns input. The
- lower-right border shows the active model and appends `· plan` in plan mode.
+	 lines. Longer multiline prompts scroll vertically; long individual lines
+	 scroll horizontally within the input. Its native textarea cursor blinks while
+	 chat and the terminal window own keyboard focus, and hides while the window is
+	 unfocused or permission or plan approval owns input. The
+	 lower-right border shows the active model and appends `· plan` in plan mode.
 - The first row below the composer shows the temporary Esc cancellation prompt
  left-aligned when armed and the current Git workspace summary right-aligned to
  the same two-cell horizontal margin: unique changed files,
@@ -584,44 +533,11 @@ configured, and previously cached models.
  reads sessions from newest to oldest and stops after collecting 100 prompts;
  failure to persist this auxiliary history does not cancel an already admitted
  prompt. With an
- empty composer, Up recalls older prompts and Down moves toward newer ones;
- moving past the newest prompt clears the composer. History navigation does
- not start while the composer already contains text, and autocomplete menus
- retain priority over history keys.
-- With the composer empty, `Space` builds a one-second leader and `Space e` opens
- or closes the `explorer` panel. The panel lists the workspace as a tree with
- Nerd Font icons; `j`/Down and `k`/Up move the cursor, `l`/Enter expands a
- folder or opens a file in the viewer, `h` collapses or moves up to the parent, and
- Esc/`q` closes without inserting. The mouse wheel over the explorer moves its
- selection by three rows without moving the transcript; a left click anywhere in
- a visible row activates it (toggle a folder or open/replace a file in the viewer). While the explorer is
- open its keys do not reach the composer; permissions and plan approval retain priority.
-- The explorer occupies a bounded left column and transcript, menus and
- composer are recalculated to the remaining width. If `listFiles` fails or the workspace
- is empty, the panel remains usable and displays the non-panic status.
-- In split layout, direct mouse clicks focus explorer, chat, or viewer. Focus is
-  tracked internally without any visual marker; explorer row activation retains
-  explorer focus, chat restores the transcript/composer target, and viewer
-  receives `j`/`k` and PgUp/PgDn. The mouse wheel follows the hovered panel
-  without changing keyboard focus. `Tab` still switches
-  build/plan, permission and plan approval gates win, a full-width tree owns
-  focus, and viewer `Esc` returns focus to chat.
-
-### File Viewer
-
-- `Enter` on a file opens a read-only view in the main area;
- does not add `@ruta` or close the explorer. The view shows path,
- line numbers and highlighting when Chroma recognizes the language. The viewer
- owns keyboard and mouse-wheel scrolling while active; clicks cannot alter the
- hidden transcript, and `Esc` restores its saved scroll position. On a terminal
- too narrow for the explorer column, the viewer takes the full screen until the
- terminal is wide enough again. Syntax highlighting is reset at every rendered
- file row, so multiline tokens (such as comments) cannot leak styles into the
- explorer or another terminal row. Tabs are expanded to four spaces before
- highlighting because terminal tab stops and ANSI width measurement disagree;
- every source row therefore maps to exactly one terminal row while scrolling.
-- Does not allow editing or saving. Binaries, files larger than 1 MiB, empty or
- read errors show an explicit status.
+	 empty composer, Up recalls older prompts and Down moves toward newer ones;
+	 moving past the newest prompt clears the composer. History navigation does
+	 not start while the composer already contains text, and autocomplete menus
+	 retain priority over history keys. A literal `Space` in an empty composer
+	 inserts a space; there is no workspace tree leader or file-viewer mode.
 
 ## Persistence shared with the app
 

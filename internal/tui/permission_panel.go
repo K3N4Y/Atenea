@@ -204,11 +204,6 @@ func (m Model) permissionPanelLayout() (permissionPanelLayout, bool) {
 	}
 	x := margin
 	y := m.viewport.Height + len(m.menuItems)
-	if m.chatPanelVisible() {
-		// El chat es la columna derecha: se corre x tras el arbol y su gutter de
-		// una columna. Sin caja no hay borde ni titulo, asi que y no se desplaza.
-		x += m.treePanelWidth() + 1
-	}
 	return permissionPanelLayout{
 		x: x, y: y, width: panelWidth, height: len(lines),
 		actionY: metadata.actionY, actions: metadata.actions,

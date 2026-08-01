@@ -106,8 +106,7 @@ func runInteractive() error {
 		WithHistory(history).
 		WithStatus("build", active.Model).
 		WithWorkspaceRoot(gitBranch(h.Root), displayDir(h.Root), h.Root).
-		WithCompletions(eng.Commands(), eng.ProjectFiles).
-		WithFileReader(tui.WorkspaceFileReader(h.Root))
+		WithCompletions(eng.Commands(), eng.ProjectFiles)
 	// Starting on the offline provider means there is no key anywhere (neither
 	// environment nor stored credential): say so, and say how to get out of it,
 	// instead of letting the user chat with the fake and find out the hard way.

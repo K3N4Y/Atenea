@@ -148,10 +148,8 @@ func TestModel_IgnoresStaleWorkspaceSummaryRefresh(t *testing.T) {
 	}
 }
 
-func TestModel_ViewAlignsGitSummaryWithComposerWhenExplorerIsOpen(t *testing.T) {
+func TestModel_ViewAlignsGitSummaryWithComposer(t *testing.T) {
 	m := NewModel(nil, "s1", nil).WithStatus("", "model")
-	m.treeOpen = true
-	m.treeLoaded = true
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 16})
 	m = apply(t, m, workspaceRefreshedMsg{summary: gitSummary{Files: 2, Additions: 4, Deletions: 1}})
 
@@ -159,9 +157,6 @@ func TestModel_ViewAlignsGitSummaryWithComposerWhenExplorerIsOpen(t *testing.T) 
 		if !strings.Contains(line, "2 files changed") {
 			continue
 		}
-		// Sin caja el panel de chat ya no tiene borde derecho: la linea del
-		// resumen termina justo tras las estadisticas y el margen del composer
-		// (composerOuterMargin celdas), que es la columna derecha del chat.
 		statEnd := strings.Index(line, "−1") + len("−1")
 		if gap := line[statEnd:]; gap != strings.Repeat(" ", composerOuterMargin) {
 			t.Fatalf("summary right gap = %q, want composer margin of %d cells with no panel border", gap, composerOuterMargin)

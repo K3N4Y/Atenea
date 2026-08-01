@@ -68,38 +68,12 @@ func TestToolRender_RemovesUntrustedTerminalControlsBeforeStyling(t *testing.T) 
 	}
 }
 
-func TestOpenFileViewer_RemovesUntrustedTerminalControlsBeforeHighlighting(t *testing.T) {
-	maliciousText := "before\x1b]52;c;YXR0YWNr\a\x1b[2J\x1b[31mowned\x1b[0mafter"
-	malicious := openFileViewer("example.go", []byte("package main // "+maliciousText+"\n"))
-	clean := openFileViewer("example.go", []byte("package main // "+terminalAttackVisibleText+"\n"))
-
-	if got, want := malicious.render(200, 2), clean.render(200, 2); got != want {
-		t.Fatalf("viewer with terminal controls = %q, want sanitized render %q", got, want)
-	}
-}
-
 func TestAuxiliaryViews_RemoveUntrustedTerminalControlsBeforeStyling(t *testing.T) {
-	t.Run("viewer path", func(t *testing.T) {
-		malicious := openFileViewer(terminalAttack+".go", []byte("package main\n"))
-		clean := openFileViewer(terminalAttackVisibleText+".go", []byte("package main\n"))
-		if got, want := malicious.header(200, 2), clean.header(200, 2); got != want {
-			t.Fatalf("header with terminal controls = %q, want sanitized header %q", got, want)
-		}
-	})
-
 	t.Run("completion menu", func(t *testing.T) {
 		malicious := Model{composer: composer{menuItems: []menuItem{{label: terminalAttack, description: terminalAttack}}}}
 		clean := Model{composer: composer{menuItems: []menuItem{{label: terminalAttackVisibleText, description: terminalAttackVisibleText}}}}
 		if got, want := malicious.menuView(), clean.menuView(); got != want {
 			t.Fatalf("menu with terminal controls = %q, want sanitized menu %q", got, want)
-		}
-	})
-
-	t.Run("file tree", func(t *testing.T) {
-		malicious := Model{explorer: explorer{tree: newFileTree([]string{terminalAttack + ".go"})}}
-		clean := Model{explorer: explorer{tree: newFileTree([]string{terminalAttackVisibleText + ".go"})}}
-		if got, want := malicious.treeView(), clean.treeView(); got != want {
-			t.Fatalf("tree with terminal controls = %q, want sanitized tree %q", got, want)
 		}
 	})
 

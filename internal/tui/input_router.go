@@ -26,10 +26,6 @@ const (
 	targetPermissionGate
 	// targetPlanGate: a plan approval is pending (no permission pending).
 	targetPlanGate
-	// targetViewer: no overlay/gate active and the file viewer holds focus.
-	targetViewer
-	// targetExplorer: no overlay/gate active and the file tree holds focus.
-	targetExplorer
 	// targetComposer: nothing above claims input; the chat composer owns it.
 	targetComposer
 )
@@ -40,8 +36,7 @@ const (
 // to short-circuit modal overlays before pointer-specific handling (mouse).
 //
 // The order is: the four overlay pickers (resume, model, mcp, connect), then
-// the permission gate, then the plan gate, then the focused panel derived from
-// normalizedFocus (viewer, explorer, otherwise the composer).
+// the permission gate, then the plan gate, then the composer.
 func (m Model) activeInputTarget() inputTarget {
 	switch {
 	case m.resumePicker.open:
@@ -59,14 +54,7 @@ func (m Model) activeInputTarget() inputTarget {
 	if m.hasPendingPlan() {
 		return targetPlanGate
 	}
-	switch m.normalizedFocus() {
-	case viewerFocus:
-		return targetViewer
-	case explorerFocus:
-		return targetExplorer
-	default:
-		return targetComposer
-	}
+	return targetComposer
 }
 
 // modalActive reports whether an overlay or gate currently claims input, i.e.

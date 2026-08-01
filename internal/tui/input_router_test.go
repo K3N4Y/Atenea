@@ -80,24 +80,6 @@ func TestActiveInputTarget_ResolvesEachContext(t *testing.T) {
 			setup: openPlanGate,
 			want:  targetPlanGate,
 		},
-		{
-			name: "viewer focus",
-			setup: func(_ *testing.T, m Model) Model {
-				m.viewer = fileViewer{path: "example.go"}
-				m.focus = viewerFocus
-				return m
-			},
-			want: targetViewer,
-		},
-		{
-			name: "explorer focus",
-			setup: func(_ *testing.T, m Model) Model {
-				m.treeOpen = true
-				m.focus = explorerFocus
-				return m
-			},
-			want: targetExplorer,
-		},
 	}
 
 	for _, tc := range tests {
@@ -131,8 +113,6 @@ func TestActiveInputTarget_PrecedenceTieBreaks(t *testing.T) {
 				m.mcpPicker.open = true
 				m.modelPicker.open = true
 				m.resumePicker.open = true
-				m.treeOpen = true
-				m.focus = explorerFocus
 				return m
 			},
 			want: targetResumePicker,
@@ -176,24 +156,6 @@ func TestActiveInputTarget_PrecedenceTieBreaks(t *testing.T) {
 			},
 			want: targetPermissionGate,
 		},
-		{
-			name: "permission gate beats panel focus",
-			setup: func(t *testing.T, m Model) Model {
-				m.treeOpen = true
-				m.focus = explorerFocus
-				return openPermissionGate(t, m)
-			},
-			want: targetPermissionGate,
-		},
-		{
-			name: "plan gate beats panel focus",
-			setup: func(t *testing.T, m Model) Model {
-				m.viewer = fileViewer{path: "example.go"}
-				m.focus = viewerFocus
-				return openPlanGate(t, m)
-			},
-			want: targetPlanGate,
-		},
 	}
 
 	for _, tc := range tests {
@@ -203,24 +165,6 @@ func TestActiveInputTarget_PrecedenceTieBreaks(t *testing.T) {
 				t.Fatalf("activeInputTarget() = %v, want %v", got, tc.want)
 			}
 		})
-	}
-}
-
-// TestActiveInputTarget_ExplorerForcedByNarrowTerminal pins the normalizedFocus
-// edge that the resolver inherits: on a terminal too narrow to show both panels
-// an open tree owns focus even when m.focus still says chat.
-func TestActiveInputTarget_ExplorerForcedByNarrowTerminal(t *testing.T) {
-	m := NewModel(&fakeAgent{}, "s1", nil)
-	m.ready = true
-	m.width = 20
-	m.treeOpen = true
-	m.focus = chatFocus
-
-	if got := m.treePanelWidth(); got < m.width {
-		t.Fatalf("treePanelWidth() = %d, want >= %d so the tree fills the width", got, m.width)
-	}
-	if got := m.activeInputTarget(); got != targetExplorer {
-		t.Fatalf("activeInputTarget() = %v, want targetExplorer (narrow terminal forces the tree)", got)
 	}
 }
 
@@ -234,8 +178,6 @@ func TestInputTarget_ModalActive(t *testing.T) {
 		targetConnectPanel:   true,
 		targetPermissionGate: true,
 		targetPlanGate:       true,
-		targetViewer:         false,
-		targetExplorer:       false,
 		targetComposer:       false,
 	}
 	for target, want := range modal {
@@ -247,7 +189,7 @@ func TestInputTarget_ModalActive(t *testing.T) {
 
 // TestSyncComposerFocus_MatchesResolver ties the composer-focus consumer back
 // to the resolver: the composer holds terminal focus iff the active target is
-// the composer, and blurs for every overlay/gate/panel above it.
+// the composer, and blurs for every overlay/gate above it.
 func TestSyncComposerFocus_MatchesResolver(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -291,15 +233,6 @@ func TestSyncComposerFocus_MatchesResolver(t *testing.T) {
 		{
 			name:        "blurred while plan gate pending",
 			setup:       openPlanGate,
-			wantFocused: false,
-		},
-		{
-			name: "blurred while explorer holds focus",
-			setup: func(_ *testing.T, m Model) Model {
-				m.treeOpen = true
-				m.focus = explorerFocus
-				return m
-			},
 			wantFocused: false,
 		},
 	}

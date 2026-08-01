@@ -39,14 +39,12 @@ type ResumeSessionsDoneMsg struct {
 
 const resumeResultSessionMismatch = "resume result session mismatch"
 
-type leaderTimeoutMsg struct{ generation uint64 }
 type cancelConfirmationExpiredMsg struct{ generation uint64 }
 
 type fileListTarget uint8
 
 const (
 	fileListMenu fileListTarget = iota
-	fileListTree
 )
 
 type filesListedMsg struct {
@@ -54,12 +52,6 @@ type filesListedMsg struct {
 	generation uint64
 	files      []string
 	err        error
-}
-
-type fileOpenedMsg struct {
-	generation uint64
-	path       string
-	viewer     fileViewer
 }
 
 type workspaceRefreshedMsg struct {
@@ -185,8 +177,6 @@ type panelFocus int
 
 const (
 	chatFocus panelFocus = iota
-	explorerFocus
-	viewerFocus
 )
 
 type toolStatus int
@@ -260,8 +250,8 @@ type Model struct {
 	// m.modelSearch, m.files, m.filesLoaded, …) and the sub-model owns its own
 	// editing/history/menu behavior; the root routes input to it when the active
 	// target is targetComposer, interprets its outward intents (submit → the
-	// local-command/mode routing in submitPrompt, an empty-composer Space → the
-	// leader), and seeds/appends the history slice. See composer.go.
+	// local-command/mode routing in submitPrompt), and seeds/appends the history
+	// slice. See composer.go.
 	composer
 
 	working bool
@@ -294,8 +284,8 @@ type Model struct {
 	// commands and listFiles are the composer's autocomplete sources (set via
 	// WithCompletions): the "/" slash-command menu and the "@" file listing.
 	// They are Model configuration injected into the composer's methods per call
-	// (like the explorer's listFiles); the popup state itself lives on the
-	// embedded composer (menuItems, files, …).
+	// while the popup state itself lives on the embedded composer (menuItems,
+	// files, …).
 	commands  []command.Command
 	listFiles func() ([]string, error)
 	cacheStatsState
@@ -307,25 +297,6 @@ type Model struct {
 	mcpGen       uint64
 	connectPanel connectPanel
 	connectGen   uint64
-
-	leaderPending    bool
-	leaderGeneration uint64
-
-	// explorer is the workspace file tree panel (the left column). It is
-	// embedded so its state fields promote onto Model (m.treeOpen, m.tree,
-	// m.treeCursor, …) and the panel owns its own key/mouse/view/load behavior;
-	// the root only routes input to it and handles its outward intents (open a
-	// file in the viewer, close the panel). See explorer.go.
-	explorer
-
-	// fileViewerPanel is the read-only file viewer (the main-area file view). It
-	// is embedded so its state fields promote onto Model (m.viewer, m.fileReader,
-	// m.viewerLoading, m.viewerGen, m.viewerPending, m.viewerReturnY) and the
-	// panel owns its own open/close/load/key/mouse/view behavior; the root only
-	// routes input to it, drives its open from the explorer's openPath intent,
-	// and applies its closeToChat intent (focus back to chat + scroll restore).
-	// See file_viewer_panel.go.
-	fileViewerPanel
 
 	focus           panelFocus
 	terminalFocused bool
@@ -389,10 +360,10 @@ func (m Model) WithCompletions(commands []command.Command, listFiles func() ([]s
 	return m
 }
 
-// modelSource wires the inline "/model" search to the Model's agent, mirroring
-// how listFiles is passed to the explorer: it exposes the model catalog and a
-// refresh trigger without the composer importing the agent interface. A non-
-// modelAgent agent reports ok=false so the search shows "No models available".
+// modelSource wires the inline "/model" search to the Model's agent: it exposes
+// the model catalog and a refresh trigger without the composer importing the
+// agent interface. A non-modelAgent agent reports ok=false so the search shows
+// "No models available".
 func (m Model) modelSource() modelSource {
 	return modelSource{
 		catalog: func() ([]providerconfig.ProviderModels, bool) {
@@ -434,11 +405,6 @@ func (m Model) applySelection() (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.composer, cmd = m.composer.applySelection(m.commands, m.listFiles, m.modelSource())
 	return m.resizeViewport(), cmd
-}
-
-func (m Model) WithFileReader(read FileReader) Model {
-	m.fileReader = read
-	return m
 }
 
 func (m Model) WithHistory(history []string) Model {
@@ -575,10 +541,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		permissionHeight := m.permissionPanelHeight()
 		m = m.foldEvent(ev)
 		permissionLayoutChanged := permissionHeight != m.permissionPanelHeight()
-		var treeCmd, workspaceCmd tea.Cmd
-		if ev.Kind == session.KindToolSuccess && ev.Diff != "" {
-			m, treeCmd = m.reloadTree(m.treeOpen)
-		}
+		var workspaceCmd tea.Cmd
 		if ev.Kind == session.KindToolSuccess && tool.MayChangeFiles(m.tools(), ev.ToolName) {
 			m, workspaceCmd = m.requestWorkspaceRefresh()
 		}
@@ -588,9 +551,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if !m.revealing && m.hasBacklog() {
 			m.revealing = true
-			return m.syncViewportActivity(), tea.Batch(pump, treeCmd, workspaceCmd, revealTick())
+			return m.syncViewportActivity(), tea.Batch(pump, workspaceCmd, revealTick())
 		}
-		return m.syncViewportActivity(), tea.Batch(pump, treeCmd, workspaceCmd)
+		return m.syncViewportActivity(), tea.Batch(pump, workspaceCmd)
 	case workspaceRefreshedMsg:
 		if ev.generation < m.workspaceGen {
 			return m, nil
@@ -671,25 +634,18 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		next, cmd := m.refreshMenu()
 		return next, tea.Batch(cmd, waitForEvent(m.events))
 	case filesListedMsg:
-		switch ev.target {
-		case fileListMenu:
-			var (
-				cmd     tea.Cmd
-				applied bool
-			)
-			m.composer, cmd, applied = m.composer.applyListedFiles(ev, m.commands, m.listFiles, m.modelSource())
-			if !applied {
-				return m, nil
-			}
-			return m.resizeViewport(), cmd
-		case fileListTree:
-			m.explorer = m.explorer.applyListed(ev, m.treeVisibleRowCount())
+		if ev.target != fileListMenu {
 			return m, nil
 		}
-		return m, nil
-	case fileOpenedMsg:
-		m.fileViewerPanel = m.fileViewerPanel.applyOpened(ev, m.fileViewerHeight())
-		return m, nil
+		var (
+			cmd     tea.Cmd
+			applied bool
+		)
+		m.composer, cmd, applied = m.composer.applyListedFiles(ev, m.commands, m.listFiles, m.modelSource())
+		if !applied {
+			return m, nil
+		}
+		return m.resizeViewport(), cmd
 	case revealTickMsg:
 		m = m.advanceReveal()
 		if !m.hasBacklog() {
@@ -739,11 +695,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mcpPicker.refreshFromAgent(m.agent)
 		}
 		return m, nil
-	case leaderTimeoutMsg:
-		if ev.generation == 0 || ev.generation == m.leaderGeneration {
-			m.leaderPending = false
-		}
-		return m, nil
 	case cancelConfirmationExpiredMsg:
 		if ev.generation == m.cancelGeneration {
 			m.cancelPending = false
@@ -781,8 +732,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = ev.Width
 		m.height = ev.Height
 		m = m.resizeViewport()
-		m.explorer = m.explorer.syncViewport(m.treeVisibleRowCount())
-		m.fileViewerPanel = m.fileViewerPanel.resize(m.fileViewerHeight())
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(ev)
@@ -815,22 +764,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if ev.Action == tea.MouseActionPress && (ev.Button == tea.MouseButtonWheelUp || ev.Button == tea.MouseButtonWheelDown) {
-			if m.treeOpen && m.treeMouseOverPanel(ev) {
-				m.explorer, _, _ = m.explorer.handleMouse(ev, treeRowsStartY, m.treeVisibleRowCount())
-				return m, nil
-			}
-			if m.viewer.active() && ev.Y >= 0 && ev.Y < m.fileViewerHeight() {
-				m.fileViewerPanel = m.fileViewerPanel.handleMouse(ev, m.fileViewerHeight())
-				return m, nil
-			}
 			return m.scrollViewport(ev)
-		}
-		m.focus = m.normalizedFocus()
-		if m.treeOpen {
-			handled, cmd := m.handleTreeMouse(ev)
-			if handled {
-				return m, cmd
-			}
 		}
 		if ev.Action == tea.MouseActionPress && ev.Button == tea.MouseButtonLeft {
 			if viewportLine, ok := m.transcriptLineAtMouse(ev); ok {
@@ -838,14 +772,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return next.syncViewport(), nil
 				}
 			}
-			m.focus = m.focusAtMouse(ev)
-		}
-		if m.focus == viewerFocus {
-			m.fileViewerPanel = m.fileViewerPanel.handleMouse(ev, m.fileViewerHeight())
-			return m, nil
-		}
-		if m.viewer.active() && ev.Button == tea.MouseButtonLeft {
-			return m, nil
 		}
 		return m.scrollViewport(ev)
 	}
@@ -856,9 +782,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) newActivityIndicatorHit(msg tea.MouseMsg) bool {
 	if !m.hasNewActivity || !m.ready || msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
-		return false
-	}
-	if m.treeOpen {
 		return false
 	}
 	return msg.X == m.viewport.Width-1 && msg.Y == m.viewport.Height-1
@@ -907,7 +830,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyRunes && len(msg.Runes) > 1 {
 		return m.handleKeyRuneBatch(msg)
 	}
-	m.focus = m.normalizedFocus()
 	if msg.Type == tea.KeyShiftTab {
 		m = m.toggleThinking()
 		return m.syncViewport(), nil
@@ -930,37 +852,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.activeRun = handle.RunID
 		return m.resizeViewport(), m.spinner.Tick
 	}
-	if m.focus == viewerFocus {
-		return m.viewerKey(msg)
-	}
-	if m.focus == explorerFocus {
-		return m.handleTreeKey(msg)
-	}
 	if msg.Type == tea.KeyPgUp || msg.Type == tea.KeyPgDown {
 		return m.scrollViewport(msg)
-	}
-	// The leader consumption (Space then Space+e) is root run-control state and
-	// stays here, BEFORE the composer sees the key: a pending leader is armed
-	// (an empty-composer Space, which the composer surfaced as leaderArm), so its
-	// follow-up must never reach the composer's editing/menu path.
-	if m.leaderPending {
-		m.leaderPending = false
-		if keyRune(msg) == "e" {
-			return m.toggleTreeAsync()
-		}
-		return m, nil
 	}
 	return m.composerKey(msg, confirmCancel)
 }
 
 // composerKey routes a key to the embedded composer while it holds focus and
-// interprets its outward intent, preserving the original precedence: the open
-// menu wins, an empty-composer Space arms the leader, Enter submits through the
-// root's submitPrompt (which owns the local-command interception, slash
-// expansion, mode routing, and history append), and Esc/Tab with the menu
-// closed drive the root's run-control (Esc cancel confirmation, Tab plan
-// toggle). Everything the composer handled internally (menu nav/apply/close,
-// history recall, feeding the textarea) returns already-applied on the composer.
+// interprets its outward intent. The open menu wins, Enter submits through the
+// root's submitPrompt, and Esc/Tab with the menu closed drive the root's
+// run-control.
 func (m Model) composerKey(msg tea.KeyMsg, confirmCancel bool) (tea.Model, tea.Cmd) {
 	var (
 		intent composerIntent
@@ -969,8 +870,6 @@ func (m Model) composerKey(msg tea.KeyMsg, confirmCancel bool) (tea.Model, tea.C
 	menuWasOpen := m.menuOpen()
 	m.composer, intent, cmd = m.composer.handleKey(msg, m.commands, m.listFiles, m.modelSource())
 	switch {
-	case intent.leaderArm:
-		return m.startLeader()
 	case intent.submit:
 		// The composer already completed a builtin selection onto the input (and
 		// closed the menu) before surfacing submit; submitPrompt is the single
@@ -1067,20 +966,5 @@ func (m Model) handleKeyRuneBatch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m = nextModel
 	}
-	if m.leaderPending {
-		return m, leaderTimeout(m.leaderGeneration)
-	}
 	return m, nil
-}
-
-func (m Model) startLeader() (Model, tea.Cmd) {
-	m.leaderPending = true
-	m.leaderGeneration++
-	return m, leaderTimeout(m.leaderGeneration)
-}
-
-func leaderTimeout(generation uint64) tea.Cmd {
-	return tea.Tick(time.Second, func(time.Time) tea.Msg {
-		return leaderTimeoutMsg{generation: generation}
-	})
 }

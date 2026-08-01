@@ -268,7 +268,7 @@ func (c composer) applySelection(commands []command.Command, listFiles func() ([
 	return c.refreshMenu(commands, listFiles, models)
 }
 
-// refreshMenu recomputes the autocomplete popup from the current input text and caret: with current "/" token populates the items with the filtered commands; with a valid "@" token, with the workspace files filtered (listFiles is scheduled ONCE when the token is activated and is cached as long as it is active; while it runs or fails, the menu shows the corresponding status). Without a valid token, it closes it, invalidates pending results and discards the cache. In all cases the first item is selected. It is called after each key that feeds the input. commands is the source of slash-commands, listFiles is the source of @-menu, and models is the inline search "/model" (injected by the root, like explorer's listFiles). Value-in / value-out: The caller (the Model refreshMenu seam) recalculates the height of the viewport, which is a Model layout concern.
+// refreshMenu recomputes the autocomplete popup from the current input text and caret: with current "/" token populates the items with the filtered commands; with a valid "@" token, with the workspace files filtered (listFiles is scheduled ONCE when the token is activated and is cached as long as it is active; while it runs or fails, the menu shows the corresponding status). Without a valid token, it closes it, invalidates pending results and discards the cache. In all cases the first item is selected. It is called after each key that feeds the input. commands is the source of slash-commands, listFiles is the source of @-menu, and models is the inline search "/model". Value-in / value-out: The caller (the Model refreshMenu seam) recalculates the height of the viewport, which is a Model layout concern.
 func (c composer) refreshMenu(commands []command.Command, listFiles func() ([]string, error), models modelSource) (composer, tea.Cmd) {
 	c.menuItems = nil
 	c.menuSelected = 0
@@ -361,7 +361,7 @@ func (c composer) dropFileCache() composer {
 	return c
 }
 
-// applyListedFiles folds an async "@"-menu listing result into the file cache, saved by the generation so a stale result is ignored, then rebuilds the popup from the current input. It mirrors the explorer's applyListed but feeds the mention menu instead of the tree. The caller (the Model refreshMenu seam) recomputes the viewport height.
+// applyListedFiles folds an async "@"-menu listing result into the file cache, saved by the generation so a stale result is ignored, then rebuilds the popup from the current input. The caller (the Model refreshMenu seam) recomputes the viewport height.
 func (c composer) applyListedFiles(msg filesListedMsg, commands []command.Command, listFiles func() ([]string, error), models modelSource) (composer, tea.Cmd, bool) {
 	if msg.generation != c.filesGen {
 		return c, nil, false

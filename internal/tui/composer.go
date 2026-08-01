@@ -3,11 +3,9 @@ package tui
 // The composer module owns the chat crossroads: the editable input field, the
 // in-memory prompt-history navigation, and the autocomplete popup (the "/"
 // slash-command menu, the "@" file-mention menu, and the inline "/model
-// <query>" search). It is the fourth Model panel extracted into a
-// self-contained sub-model behind the input router (see input_router.go),
-// following the explorer/fileViewerPanel idiom: the root Model embeds one
-// composer, routes keyboard input to it when the active target is
-// targetComposer, and asks it for its input body / menu popup in the layout.
+// <query>" search). The root Model embeds one composer, routes keyboard input
+// to it when the active target is targetComposer, and asks it for its input body
+// / menu popup in the layout.
 //
 // The module owns everything about the editable field, the history slice, and
 // the popup EXCEPT the cross-panel concerns it must not reach into, which it
@@ -21,21 +19,16 @@ package tui
 //   - Prompt-history PERSISTENCE stays on Model/engine. The composer owns only
 //     the in-memory history slice + navigation; the root seeds it (WithHistory,
 //     resume) and appends to it on submit (submitPrompt).
-//   - The leader key and the Esc-cancel confirmation are run-control /
-//     cross-panel concerns and stay on Model. An empty-composer Space surfaces
-//     composerIntent{leaderArm: true}; the root arms the Space+e leader.
+//   - Esc-cancel confirmation is run-control state and stays on Model.
 //   - Composer focus is decided by the root via activeInputTarget: the composer
 //     only exposes focus()/blur()/focused(); syncComposerFocus drives them.
 //   - The model catalog behind the inline "/model" search is injected as a
-//     modelSource (mirroring how the explorer takes listFiles), so the composer
-//     never imports the agent interface.
+//     modelSource, so the composer never imports the agent interface.
 //
 // Model embeds composer anonymously, so the state fields below (input, history,
 // histIdx, menuItems, menuSelected, modelSearch, files, filesLoaded,
 // filesLoading, filesError, filesGen) promote onto Model — the same idiom the
-// explorer, the fileViewerPanel, the Transcript module, and the overlay pickers
-// use. Field names are preserved so the Model-level layout helpers and the
-// existing behavior tests keep reading them as the Model's own.
+// Transcript module and the overlay pickers use.
 
 import (
 	"strings"
@@ -188,8 +181,8 @@ type composer struct {
 
 // composerIntent is what a key handler asks the root Model to do on the
 // composer's behalf, keeping the composer from reaching into submission
-// routing, prompt persistence, the leader, or run-control. At most one outward
-// action is set; handled reports whether the composer fully consumed the key
+// routing, prompt persistence, or run-control. At most one outward action is
+// set; handled reports whether the composer fully consumed the key
 // (so the root does not fall through to its run-control keys like Esc-cancel or
 // Tab plan-toggle). The zero value means "not handled: let the root apply its
 // composer-context keys to the returned composer".
@@ -198,9 +191,6 @@ type composerIntent struct {
 	// value: the local-command interception (/undo, /model, …), slash expansion,
 	// mode routing (build/plan), and the history append all live there.
 	submit bool
-	// leaderArm asks the root to arm the Space+e leader (an empty-composer
-	// Space). The root owns leader state; the composer never inserts the Space.
-	leaderArm bool
 	// handled reports the composer already consumed the key internally (menu
 	// navigation, menu apply, menu Esc-close, history recall). When false the
 	// root applies its own composer-context keys (Esc-cancel, Tab, Enter, Up/Down
@@ -209,10 +199,10 @@ type composerIntent struct {
 }
 
 // modelSource injects the inline "/model" search's data into the composer,
-// mirroring how the explorer takes listFiles: catalog returns the current model
-// catalog and whether the agent supports model selection at all; refresh asks
-// the agent to refresh its catalog (fired once when the search opens). The root
-// fills this from its agent so the composer never imports the agent interface.
+// catalog returns the current model catalog and whether the agent supports model
+// selection at all; refresh asks the agent to refresh its catalog (fired once
+// when the search opens). The root fills this from its agent so the composer
+// never imports the agent interface.
 type modelSource struct {
 	catalog func() ([]providerconfig.ProviderModels, bool)
 	refresh func()
@@ -302,9 +292,9 @@ func (c composer) recallHistory(dir int) (composer, bool) {
 // handleKey processes a single key while the composer holds input focus and the
 // active target is targetComposer. It encodes the composer-internal precedence:
 // the open autocomplete menu wins over everything (Up/Down cycle, Tab/Enter
-// apply, Esc close), then an empty-composer Space arms the leader (surfaced
-// outward), then Enter submits (surfaced outward), then Up/Down navigate
-// history, and finally the key feeds the textarea and recomputes the popup.
+// apply, Esc close), then Enter submits (surfaced outward), then Up/Down
+// navigate history, and finally the key feeds the textarea and recomputes the
+// popup.
 //
 // Run-control keys the root owns (Esc-cancel while working, Tab plan-toggle)
 // are NOT handled here: when none of the composer's own cases fire, it returns
@@ -314,9 +304,9 @@ func (c composer) recallHistory(dir int) (composer, bool) {
 // routing, and history append.
 //
 // commands is the slash-command source, listFiles the "@"-mention source, and
-// models the inline "/model" search source (all injected, like the explorer's
-// listFiles). It returns the updated composer, its intent, and any command
-// (the file-listing fetch or the model refresh) the key triggered.
+// models the inline "/model" search source. It returns the updated composer,
+// its intent, and any command (the file-listing fetch or the model refresh) the
+// key triggered.
 func (c composer) handleKey(msg tea.KeyMsg, commands []command.Command, listFiles func() ([]string, error), models modelSource) (composer, composerIntent, tea.Cmd) {
 	// Enter on an exact local command with the menu closed submits it straight
 	// away (the value already IS the command), matching the root's former
@@ -355,9 +345,6 @@ func (c composer) handleKey(msg tea.KeyMsg, commands []command.Command, listFile
 			return c.closeMenu(), composerIntent{handled: true}, nil
 		}
 		// Any other key keeps feeding the input (the default branch below).
-	}
-	if c.input.Value() == "" && (msg.Type == tea.KeySpace || keyRune(msg) == " ") {
-		return c, composerIntent{leaderArm: true}, nil
 	}
 	switch msg.Type {
 	case tea.KeyEsc, tea.KeyTab:

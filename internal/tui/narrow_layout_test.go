@@ -9,19 +9,12 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-func TestModel_WorkingStatusFitsNarrowTerminalWithExplorerOpen(t *testing.T) {
+func TestModel_WorkingStatusFitsNarrowTerminal(t *testing.T) {
 	for _, w := range []int{40, 36, 30, 25, 22} {
 		m := NewModel(&fakeAgent{}, "s1", nil)
 		m = apply(t, m, tea.WindowSizeMsg{Width: w, Height: 24})
-		// Start from the composer, as a user must: opening the explorer moves
-		// keyboard focus to the tree and Enter there does not submit prompts.
 		m = typeRunes(t, m, "hola")
 		m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-		m, _ = m.toggleTreeAsync()
-		// provide loaded tree
-		m.treeLoaded = true
-		m.treeLoading = false
-		m.tree = newFileTree([]string{"main.go"})
 		if !m.showsWorking() {
 			t.Fatalf("width=%d: not working", w)
 		}

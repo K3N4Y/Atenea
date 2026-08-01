@@ -13,9 +13,8 @@ import (
 
 // The tests below exercise the composer sub-model directly (value-in /
 // value-out), asserting on the returned composer state and intent rather than
-// on any View() string — the same discipline the explorer and fileViewerPanel
-// tests follow. The completion sources are injected the way the root injects
-// them, so no Model or agent is involved.
+// on any View() string. The completion sources are injected the way the root
+// injects them, so no Model or agent is involved.
 
 // noCompletions is the injected source set for tests that only care about
 // editing/history: no slash commands, no "@" listing, no model catalog.
@@ -129,7 +128,7 @@ func TestComposer_TabAndEscWithMenuClosedAreLeftToTheRoot(t *testing.T) {
 		key  tea.KeyType
 	}{{"tab", tea.KeyTab}, {"esc", tea.KeyEsc}} {
 		next, intent, _ := c.handleKey(keyMsg(tc.key), commands, listFiles, models)
-		if intent.handled || intent.submit || intent.leaderArm {
+		if intent.handled || intent.submit {
 			t.Fatalf("%s intent = %+v, must be left to the root (not handled)", tc.name, intent)
 		}
 		if got := next.value(); got != "hola" {
@@ -138,25 +137,20 @@ func TestComposer_TabAndEscWithMenuClosedAreLeftToTheRoot(t *testing.T) {
 	}
 }
 
-func TestComposer_EmptyComposerSpaceArmsLeader(t *testing.T) {
+func TestComposer_EmptyComposerSpaceInsertsSpace(t *testing.T) {
 	commands, listFiles, models := noCompletions()
 	c := newTestComposer()
-	next, intent, _ := c.handleKey(keyMsg(tea.KeySpace), commands, listFiles, models)
-	if !intent.leaderArm || intent.handled {
-		t.Fatalf("empty-composer Space intent = %+v, want leaderArm (root arms Space+e)", intent)
-	}
-	if got := next.value(); got != "" {
-		t.Fatalf("empty-composer Space inserted %q, must not feed the textarea", got)
-	}
-	// With text present the Space is an ordinary character, not a leader.
-	// bubbletea reports the space as KeySpace carrying the rune, so the textarea
-	// inserts it; the composer must not intercept it as a leader.
 	spaceKey := tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}
+	next, intent, _ := c.handleKey(spaceKey, commands, listFiles, models)
+	if !intent.handled || intent.submit {
+		t.Fatalf("empty-composer Space intent = %+v, want normal text input", intent)
+	}
+	if got := next.value(); got != " " {
+		t.Fatalf("empty-composer Space inserted %q, want one space", got)
+	}
+
 	c = typeInto(newTestComposer(), "x", commands, listFiles, models)
 	next, intent, _ = c.handleKey(spaceKey, commands, listFiles, models)
-	if intent.leaderArm {
-		t.Fatalf("Space with text present armed the leader; it must type a space")
-	}
 	if got := next.value(); got != "x " {
 		t.Fatalf("Space with text = %q, want the space typed", got)
 	}

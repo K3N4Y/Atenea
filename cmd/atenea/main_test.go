@@ -93,7 +93,7 @@ func TestTUI_PromptHistorySurvivesRestartUnderPTY(t *testing.T) {
 		t.Fatalf("build: %v\n%s", err, output)
 	}
 	database := filepath.Join(t.TempDir(), "atenea.db")
-	workdir := filepath.Join(repoRoot, "cmd/atenea/testdata/file-viewer/project")
+	workdir := repoRoot
 
 	firstCmd, firstTerminal, firstOutput, firstDone := startTUIUnderPTY(t, binary, workdir, database)
 	waitForPTYText(t, firstOutput, " demo ─╯")
@@ -139,7 +139,7 @@ func TestTUI_StartsFreshSessionOnLaunchUnderPTY(t *testing.T) {
 		t.Fatalf("build: %v\n%s", err, output)
 	}
 	database := filepath.Join(t.TempDir(), "atenea.db")
-	workdir := filepath.Join(repoRoot, "cmd/atenea/testdata/file-viewer/project")
+	workdir := repoRoot
 
 	firstCmd, firstTerminal, firstOutput, firstDone := startTUIUnderPTY(t, binary, workdir, database)
 	waitForPTYText(t, firstOutput, " demo ─╯")
@@ -181,7 +181,7 @@ func TestTUI_ResumeCommandOpensPreviousWorkspaceSessionUnderPTY(t *testing.T) {
 		t.Fatalf("build: %v\n%s", err, output)
 	}
 	database := filepath.Join(t.TempDir(), "atenea.db")
-	workdir := filepath.Join(repoRoot, "cmd/atenea/testdata/file-viewer/project")
+	workdir := repoRoot
 
 	firstCmd, firstTerminal, firstOutput, firstDone := startTUIUnderPTY(t, binary, workdir, database)
 	waitForPTYText(t, firstOutput, " demo ─╯")
@@ -340,7 +340,7 @@ func TestTUI_FocusedComposerShowsBlinkingCursorUnderPTY(t *testing.T) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, output)
 	}
-	workdir := filepath.Join(repoRoot, "cmd/atenea/testdata/file-viewer/project")
+	workdir := repoRoot
 	cmd := exec.Command(binary)
 	cmd.Dir = workdir
 	for _, variable := range os.Environ() {
@@ -378,7 +378,7 @@ func TestTUI_EnablesTerminalFocusReportingUnderPTY(t *testing.T) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, output)
 	}
-	workdir := filepath.Join(repoRoot, "cmd/atenea/testdata/file-viewer/project")
+	workdir := repoRoot
 	cmd, terminal, output, _ := startTUIUnderPTY(t, binary, workdir, filepath.Join(t.TempDir(), "atenea.db"))
 	defer stopPTYProcess(cmd, terminal)
 
@@ -403,7 +403,7 @@ func TestTUI_CtrlJCreatesMultilineComposerUnderPTY(t *testing.T) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, output)
 	}
-	workdir := filepath.Join(repoRoot, "cmd/atenea/testdata/file-viewer/project")
+	workdir := repoRoot
 	cmd, terminal, output, _ := startTUIUnderPTY(t, binary, workdir, filepath.Join(t.TempDir(), "atenea.db"))
 	defer stopPTYProcess(cmd, terminal)
 	waitForPTYText(t, output, " demo ─╯")
@@ -436,7 +436,7 @@ func TestTUI_PlanModeAppearsAfterModelUnderPTY(t *testing.T) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, output)
 	}
-	workdir := filepath.Join(repoRoot, "cmd/atenea/testdata/file-viewer/project")
+	workdir := repoRoot
 	cmd, terminal, output, _ := startTUIUnderPTY(t, binary, workdir, filepath.Join(t.TempDir(), "atenea.db"))
 	defer stopPTYProcess(cmd, terminal)
 	waitForPTYText(t, output, " demo ─╯")
@@ -445,178 +445,6 @@ func TestTUI_PlanModeAppearsAfterModelUnderPTY(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForPTYText(t, output, " demo · plan ─╯")
-}
-
-func TestTUI_FileViewerFlowUnderPTY(t *testing.T) {
-	repoRoot, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	binary := filepath.Join(t.TempDir(), "atenea")
-	build := exec.Command("go", "build", "-o", binary, ".")
-	build.Dir = filepath.Join(repoRoot, "cmd/atenea")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v\n%s", err, output)
-	}
-	workdir := filepath.Join(repoRoot, "cmd/atenea/testdata/file-viewer/project")
-	cmd, terminal, output, done := startTUIUnderPTY(t, binary, workdir, filepath.Join(t.TempDir(), "atenea.db"))
-	defer stopPTYProcess(cmd, terminal)
-	waitForPTYText(t, output, " demo ─╯")
-	if _, err := terminal.Write([]byte(" e\r")); err != nil {
-		t.Fatal(err)
-	}
-	waitForPTYText(t, output, "hello.go")
-	if _, err := terminal.Write([]byte("\r")); err != nil {
-		t.Fatal(err)
-	}
-	waitForPTYText(t, output, "hello.go · 1-3/3")
-	waitForPTYText(t, output, "hello from file viewer")
-	if _, err := terminal.Write([]byte("\x1b")); err != nil {
-		t.Fatal(err)
-	}
-	waitForPTYText(t, output, " demo ─╯")
-	if _, err := terminal.Write([]byte("\x03")); err != nil {
-		t.Fatal(err)
-	}
-	waitForPTYExit(t, done)
-}
-
-func TestTUI_FileViewerScrollsToLastLineUnderPTY(t *testing.T) {
-	repoRoot, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	binary := filepath.Join(t.TempDir(), "atenea")
-	build := exec.Command("go", "build", "-o", binary, ".")
-	build.Dir = filepath.Join(repoRoot, "cmd/atenea")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v\n%s", err, output)
-	}
-
-	workdir := t.TempDir()
-	var content strings.Builder
-	for line := 1; line <= 31; line++ {
-		fmt.Fprintf(&content, "line %02d\n", line)
-	}
-	if err := os.WriteFile(filepath.Join(workdir, "long.txt"), []byte(content.String()), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	cmd, terminal, output, _ := startTUIUnderPTY(t, binary, workdir, filepath.Join(t.TempDir(), "atenea.db"))
-	defer stopPTYProcess(cmd, terminal)
-	waitForPTYText(t, output, " demo ─╯")
-	if _, err := terminal.Write([]byte(" e\r")); err != nil {
-		t.Fatal(err)
-	}
-	waitForPTYText(t, output, "long.txt")
-	if _, err := terminal.Write([]byte("\r\x1b[6~")); err != nil {
-		t.Fatal(err)
-	}
-	// El visor en split ya no lleva caja: llena el cuerpo menos su fila de
-	// cabecera (bodyHeight-1 = 20 con 24 filas), asi que la ventana al fondo abre
-	// en la linea 12.
-	waitForPTYText(t, output, "long.txt · 12-31/31")
-	waitForPTYText(t, output, "line 31")
-}
-
-func TestTUI_FileTreeMouseWheelAndClickUnderPTY(t *testing.T) {
-	repoRoot, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	binary := filepath.Join(t.TempDir(), "atenea")
-	build := exec.Command("go", "build", "-o", binary, ".")
-	build.Dir = filepath.Join(repoRoot, "cmd/atenea")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v\n%s", err, output)
-	}
-	cmd := exec.Command(binary)
-	cmd.Dir = filepath.Join(repoRoot, "cmd/atenea/testdata/file-tree-mouse/project")
-	cmd.Env = append(append(os.Environ(), blankProviderKeys()...), "XDG_CONFIG_HOME="+t.TempDir(), "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
-	// Rows: 11 = 8 filas de cuerpo (la geometria del arbol/visor que este test
-	// ejercita) mas las 3 filas del chrome de la top bar; asi el cuerpo conserva
-	// el mismo alto que antes de la barra y los clics de mouse suman 3 a su fila.
-	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 11})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer stopPTYProcess(cmd, terminal)
-	output := &lockedBuffer{}
-	done := copyPTYAnsweringTerminalQueries(terminal, output)
-	waitForPTYText(t, output, " demo ─╯")
-	if _, err := terminal.Write([]byte(" e")); err != nil {
-		t.Fatal(err)
-	}
-	waitForPTYText(t, output, "file-00.go")
-	// El chrome de la top bar ocupa las filas 1-3 (SGR 1-based) de la pantalla,
-	// asi que el cuerpo (arbol y visor) empieza tres filas mas abajo: cada evento
-	// de mouse suma 3 a su fila respecto al layout sin barra.
-	if _, err := terminal.Write([]byte("\x1b[<65;1;7M\x1b[<65;1;7M\x1b[<0;25;7M")); err != nil {
-		t.Fatal(err)
-	}
-	waitForPTYText(t, output, "file-03.go · 1-1/1")
-	waitForPTYText(t, output, "package file03")
-	if _, err := terminal.Write([]byte("\x1b[<0;25;9M")); err != nil {
-		t.Fatal(err)
-	}
-	waitForPTYText(t, output, "file-05.go · 1-1/1")
-	waitForPTYText(t, output, "package file05")
-	// Clic sobre la columna del visor: sin marcadores de foco, la senal es que el
-	// visor conserva file-05 (no cambia de archivo ni se abre el arbol).
-	if _, err := terminal.Write([]byte("\x1b[<0;50;7M")); err != nil {
-		t.Fatal(err)
-	}
-	waitForPTYText(t, output, "file-05.go · 1-1/1")
-	// Clic sobre el arbol (columna izquierda, primera fila) abre file-00: el
-	// cambio de archivo en el visor evidencia que el clic se enruto al explorer.
-	if _, err := terminal.Write([]byte("\x1b[<0;1;4M")); err != nil {
-		t.Fatal(err)
-	}
-	waitForPTYText(t, output, "file-00.go · 1-1/1")
-	waitForPTYText(t, output, "package file00")
-	if _, err := terminal.Write([]byte("\x03")); err != nil {
-		t.Fatal(err)
-	}
-	waitForPTYExit(t, done)
-}
-
-func TestTUI_ExplorerLeaderRapidSequencesUnderPTY(t *testing.T) {
-	repoRoot, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	binary := filepath.Join(t.TempDir(), "atenea")
-	build := exec.Command("go", "build", "-o", binary, ".")
-	build.Dir = filepath.Join(repoRoot, "cmd/atenea")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v\n%s", err, output)
-	}
-	workdir := filepath.Join(repoRoot, "cmd/atenea/testdata/file-viewer/project")
-	cmd, terminal, output, done := startTUIUnderPTY(t, binary, workdir, filepath.Join(t.TempDir(), "atenea.db"))
-	defer stopPTYProcess(cmd, terminal)
-	waitForPTYText(t, output, " demo ─╯")
-
-	before := output.String()
-	if _, err := terminal.Write(bytes.Repeat([]byte(" e"), 2001)); err != nil {
-		t.Fatal(err)
-	}
-	latest := waitForStablePTYOutputAfter(t, output, before)
-	if !strings.Contains(latest, "hello.go") {
-		t.Fatalf("rapid Space+e sequences should leave explorer open after an odd count; latest PTY output:\n%s", latest)
-	}
-
-	before = output.String()
-	if _, err := terminal.Write([]byte(" e")); err != nil {
-		t.Fatal(err)
-	}
-	latest = waitForStablePTYOutputAfter(t, output, before)
-	if strings.Contains(latest, "hello.go") {
-		t.Fatalf("one more Space+e sequence should close the explorer after the rapid burst; latest PTY output:\n%s", latest)
-	}
-	if _, err := terminal.Write([]byte("\x03")); err != nil {
-		t.Fatal(err)
-	}
-	waitForPTYExit(t, done)
 }
 
 // fakeOpenRouter is a local OpenAI-compatible gateway for the /connect E2E
@@ -696,7 +524,7 @@ func TestTUI_ConnectCommandFullFlowUnderPTY(t *testing.T) {
 	cmd := exec.Command(binary)
 	// Inside the repo so prompt checkpoints find a Git workspace, like the
 	// other PTY tests.
-	cmd.Dir = filepath.Join(repoRoot, "cmd/atenea/testdata/file-viewer/project")
+	cmd.Dir = repoRoot
 	cmd.Env = append(append(os.Environ(), blankProviderKeys()...), "XDG_CONFIG_HOME="+configRoot, "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
 	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 24})
 	if err != nil {
@@ -870,7 +698,7 @@ func TestTUI_ChatGPTSubscriptionLoginUnderPTY(t *testing.T) {
 	}
 
 	cmd := exec.Command(binary)
-	cmd.Dir = filepath.Join(repoRoot, "cmd/atenea/testdata/file-viewer/project")
+	cmd.Dir = repoRoot
 	cmd.Env = append(append(os.Environ(), blankProviderKeys()...), "XDG_CONFIG_HOME="+configRoot,
 		"ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
 	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 24})

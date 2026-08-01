@@ -103,8 +103,6 @@ var (
 	statusStyle         = lipgloss.NewStyle().Faint(true)
 	thinkingLabelStyle  = lipgloss.NewStyle().Bold(true) // "◆ Thought"/"◆ Thinking…" label of the thinking block header
 	composerBorderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Border))
-	treeCursorStyle     = lipgloss.NewStyle().Reverse(true)
-	treePanelStyle      = lipgloss.NewStyle()
 
 	composerBoxStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
@@ -366,7 +364,6 @@ func (m Model) resizeViewport() Model {
 	if !m.ready {
 		return m
 	}
-	m.focus = m.normalizedFocus()
 	// One geometry pass owns every dimension applied here: the textarea width and
 	// height and the viewport width and height. resizeViewport only APPLIES them
 	// (it legitimately mutates m.input/m.viewport from Update); the arithmetic —
@@ -450,29 +447,7 @@ func (m Model) View() string {
 		return m.resumePickerView()
 	}
 
-	var content string
-	if m.viewer.active() {
-		contentWidth := m.contentWidth()
-		if !m.ready {
-			contentWidth = -1
-		}
-		if m.ready && m.treeOpen && m.treePanelWidth() >= m.width {
-			contentWidth = m.width
-		}
-		content = m.renderFileViewer(contentWidth, max(m.bodyHeight(), 0))
-		if m.treeOpen && (!m.ready || m.treePanelWidth() < m.width) {
-			content = lipgloss.JoinHorizontal(lipgloss.Top, m.treeView(), " ", m.viewerView(contentWidth))
-		}
-	} else {
-		content = m.chatContent()
-		if m.treeOpen {
-			if m.ready && m.treePanelWidth() >= m.width {
-				content = m.treeView()
-			} else {
-				content = lipgloss.JoinHorizontal(lipgloss.Top, m.treeView(), " ", m.chatView(content))
-			}
-		}
-	}
+	content := m.chatContent()
 	canvas := m.renderCanvas(content)
 	if !m.ready {
 		return canvas
@@ -681,26 +656,10 @@ func (m Model) chatContent() string {
 }
 
 func (m Model) chatView(content string) string {
-	style := treePanelStyle
 	if m.ready {
-		style = style.Width(max(m.contentWidth(), 0)).Height(max(m.bodyHeight(), 0))
+		return lipgloss.NewStyle().Width(max(m.contentWidth(), 0)).Height(max(m.bodyHeight(), 0)).Render(content)
 	}
-	return style.Render(content)
-}
-
-func (m Model) viewerView(width int) string {
-	content := m.fileViewerPanel.view(max(width, 0), max(m.bodyHeight(), 0))
-	style := treePanelStyle
-	if m.ready {
-		style = style.Width(max(width, 0)).Height(max(m.bodyHeight(), 0))
-	}
-	return style.Render(content)
-}
-
-// renderFileViewer draws the full-screen viewer body, deferring to the embedded
-// panel which owns the viewer state and reserves its own header row.
-func (m Model) renderFileViewer(width, height int) string {
-	return m.fileViewerPanel.view(width, height)
+	return content
 }
 
 func (m Model) menuView() string {
@@ -876,36 +835,19 @@ func formatTokenCount(tokens int) string {
 	return strings.TrimSuffix(strconv.FormatFloat(float64(tokens)/1_000, 'f', 1, 64), ".0") + "k"
 }
 
-// chatContentWidth, contentWidth and treePanelWidth are thin seams onto the
-// layout module (computeLayout via baseLayout): the width arithmetic and the
-// explorer clamp [20,36] live once in layout.go, and these methods read the
-// computed rects. baseLayout suffices because none of these widths depend on the
-// reserved-line count.
+// chatContentWidth and contentWidth are thin seams onto the layout module
+// (computeLayout via baseLayout). baseLayout suffices because these widths do
+// not depend on the reserved-line count.
 func (m Model) chatContentWidth() int {
 	return m.baseLayout().chatContentWidth
 }
 
 func (m Model) chatPanelVisible() bool {
-	return m.ready && m.treeOpen && m.treePanelWidth() < m.width
+	return false
 }
 
 func (m Model) contentWidth() int {
 	return m.baseLayout().contentWidth
-}
-
-func (m Model) treePanelWidth() int {
-	return m.baseLayout().treePanelWidth
-}
-
-// treeView renders the explorer panel column. It supplies the Model-level
-// layout quantities (panel width, body height, row capacity, ready) and defers
-// the drawing to the embedded explorer, which owns the tree state.
-func (m Model) treeView() string {
-	return m.explorer.view(m.treePanelWidth(), m.bodyHeight(), m.treeVisibleRowCount(), m.ready)
-}
-
-func (m Model) treeVisibleRowCount() int {
-	return m.baseLayout().treeVisibleRows
 }
 
 func (m Model) transcriptView() string {

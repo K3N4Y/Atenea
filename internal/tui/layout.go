@@ -9,8 +9,7 @@ package tui
 // viewport and textarea; and the mouse hit-tests read the same origins, so
 // rendering and click-targeting share ONE geometry and cannot drift.
 //
-// The clamps (explorer width 25% clamped to [20,36]), the split gutter, the
-// top-bar chrome height and the full-screen thresholds live here, once. What
+// The top-bar chrome height and body/composer bounds live here, once. What
 // this module deliberately does NOT own is rendering-flavored "narrow-terminal
 // degradation": the reserved-line count (which depends on how many menu items
 // and permission-panel rows a render decides to draw) arrives as an INPUT, and
@@ -32,25 +31,6 @@ const topBarMargin = 1
 // because the body starts right below all that chrome.
 const topBarHeight = 2*topBarMargin + 1
 
-// treeRowsStartY is the screen row of the explorer panel's first file row.
-// Without a box or title the panel's first row is body row 0; the mouse router
-// passes this to explorer.rowAtMouse when mapping a click to a row. It rides on
-// Layout as an origin so the render and the hit-test read the same value.
-const treeRowsStartY = 0
-
-// Explorer column clamps: the panel is width/4 (25%) clamped to [treeMinWidth,
-// treeMaxWidth]. treeFallbackWidth is the width used before the first
-// WindowSizeMsg (no size known yet), matching the old inline default.
-const (
-	treeMinWidth      = 20
-	treeMaxWidth      = 36
-	treeFallbackWidth = 28
-	// splitGutter is the one-column gap between the explorer and the chat/viewer
-	// when the tree is open. contentWidth subtracts it so the two columns and the
-	// gutter add up to the terminal width.
-	splitGutter = 1
-)
-
 // layoutSize is the announced terminal size. ready is false before the first
 // WindowSizeMsg: with no size known the body falls back to the full render and
 // the geometry degrades to sentinels (viewport not bounded, tree at its
@@ -71,7 +51,6 @@ type layoutSize struct {
 // keep the input from being clamped below the space the reserved count already
 // budgeted for it.
 type layoutState struct {
-	explorerOpen  bool
 	reservedLines int
 	inputHeight   int
 }
@@ -101,20 +80,8 @@ type Layout struct {
 	// prints the chrome first) and the hit-test.
 	mouseBodyYOffset int
 
-	// explorerOpen echoes the input; explorerFullScreen is true when the explorer
-	// column is as wide as the whole terminal (too narrow to also show the chat/
-	// viewer beside it), so the viewer goes full-screen and the tree owns the
-	// body. treePanelWidth is the explorer column width; treeRowsStartY is the
-	// screen row of its first file row; treeVisibleRows is how many file rows fit.
-	explorerOpen       bool
-	explorerFullScreen bool
-	treePanelWidth     int
-	treeRowsStartY     int
-	treeVisibleRows    int
-
-	// contentWidth is the width of the chat/viewer column: the full width with no
-	// explorer, else the width left of the explorer column and the split gutter.
-	// chatContentWidth is the same clamped to >= 0 (the render helpers' idiom).
+	// contentWidth is the width of the chat column; chatContentWidth is the same
+	// clamped to >= 0 (the render helpers' idiom).
 	contentWidth     int
 	chatContentWidth int
 
@@ -127,10 +94,7 @@ type Layout struct {
 	chatMargin     int
 	chatInnerWidth int
 
-	// topBarMargin/topBarInnerWidth are the same clamp for the top bar, but based
-	// on the FULL terminal width (the bar spans the whole width, above the
-	// explorer split), so the bar aligns with the composer box only when the tree
-	// is closed. topBarLine reads these instead of recomputing the clamp.
+	// topBarMargin/topBarInnerWidth are the same clamp for the top bar.
 	topBarMarginCells int
 	topBarInnerWidth  int
 
@@ -145,10 +109,6 @@ type Layout struct {
 	// count clamped so it never exceeds the space the reserved count budgeted.
 	inputWidth  int
 	inputHeight int
-
-	// fileViewerHeight is the viewer body height in either full-screen or the
-	// split column: the body height minus its one header row.
-	fileViewerHeight int
 }
 
 // computeLayout is the single geometry pass: a pure function of the terminal
@@ -161,12 +121,10 @@ func computeLayout(size layoutSize, state layoutState) Layout {
 	height := max(size.height, 0)
 
 	l := Layout{
-		ready:          size.ready,
-		width:          width,
-		height:         height,
-		topBarHeight:   topBarHeight,
-		explorerOpen:   state.explorerOpen,
-		treeRowsStartY: treeRowsStartY,
+		ready:        size.ready,
+		width:        width,
+		height:       height,
+		topBarHeight: topBarHeight,
 	}
 
 	// The top bar is fixed chrome above the body; the body measures against what
@@ -176,12 +134,7 @@ func computeLayout(size layoutSize, state layoutState) Layout {
 		l.mouseBodyYOffset = topBarHeight
 	}
 
-	l.treePanelWidth = computeTreePanelWidth(size)
-	if size.ready && state.explorerOpen && l.treePanelWidth >= size.width {
-		l.explorerFullScreen = true
-	}
-
-	l.contentWidth = computeContentWidth(size, state, l.treePanelWidth)
+	l.contentWidth = size.width
 	l.chatContentWidth = max(l.contentWidth, 0)
 	// The chat column's boxes inset by composerOuterMargin cells, clamped to half
 	// the column so a tiny terminal never over-insets past its own width.
@@ -191,15 +144,6 @@ func computeLayout(size layoutSize, state layoutState) Layout {
 	// against width, not the chat column.
 	l.topBarMarginCells = min(composerOuterMargin, width/2)
 	l.topBarInnerWidth = width - 2*l.topBarMarginCells
-
-	// The tree fills the body vertically; each file row is one body row.
-	if size.ready {
-		l.treeVisibleRows = max(l.bodyHeight, 0)
-	}
-
-	// The viewer fills the body in both full-screen and the split column, and in
-	// both reserves only its one header row.
-	l.fileViewerHeight = max(l.bodyHeight-1, 0)
 
 	// The transcript viewport spans the chat width and the body height minus the
 	// rows reserved below it. Both clamp to >= 0 so a tiny terminal yields an
@@ -219,31 +163,4 @@ func computeLayout(size layoutSize, state layoutState) Layout {
 	l.inputHeight = min(state.inputHeight, max(l.bodyHeight-(state.reservedLines-state.inputHeight), 1))
 
 	return l
-}
-
-// computeTreePanelWidth is the explorer column width: 25% of the terminal
-// clamped to [treeMinWidth, treeMaxWidth]. Before the first size it is the
-// fallback width; when the clamped column plus its gutter would leave no room
-// for the chat/viewer it takes the whole terminal (the explorerFullScreen case).
-func computeTreePanelWidth(size layoutSize) int {
-	if !size.ready || size.width <= 0 {
-		return treeFallbackWidth
-	}
-	width := size.width / 4
-	width = max(width, treeMinWidth)
-	width = min(width, treeMaxWidth)
-	if width+splitGutter >= size.width {
-		return max(size.width, 0)
-	}
-	return width
-}
-
-// computeContentWidth is the chat/viewer column width: the full width when the
-// explorer is closed (or no size yet), else the width left of the explorer
-// column and the one-column split gutter.
-func computeContentWidth(size layoutSize, state layoutState, treePanelWidth int) int {
-	if !size.ready || !state.explorerOpen {
-		return size.width
-	}
-	return max(size.width-treePanelWidth-splitGutter, 0)
 }
