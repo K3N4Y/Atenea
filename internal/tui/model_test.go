@@ -3152,14 +3152,14 @@ func TestModel_PermissionPanelRendersInlineAboveComposer(t *testing.T) {
 	view := ansi.Strip(m.View())
 	for _, want := range []string{
 		"Permission required", "Bash printf 'one\\ntwo\\nthree\\nfour\\nfive'",
-		"Deny", "Allow", "draft stays here",
+		"Deny", "Allow once", "draft stays here",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("View() = %q, want %q", view, want)
 		}
 	}
 	for _, unwanted := range []string{
-		"Bash command", "Requested by", "Working directory", "Allow once",
+		"Bash command", "Requested by", "Working directory",
 		"←/→ select", "›",
 	} {
 		if strings.Contains(view, unwanted) {
@@ -3238,6 +3238,43 @@ func TestModel_BashPermissionPanelUsesGreenBackgroundForActiveAction(t *testing.
 	actionLine = lineWith(t, m.permissionPanelView(), "this session")
 	if backgroundIndex, sessionIndex := strings.Index(actionLine, activeBackground), strings.Index(actionLine, "Allow ls this session"); backgroundIndex < 0 || sessionIndex < 0 || backgroundIndex > sessionIndex {
 		t.Fatalf("action line = %q, Right must move the green active background to the session grant", actionLine)
+	}
+}
+
+func TestModel_PermissionPanelsShareActionButtonGrammar(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(previousProfile) })
+
+	activeBackground := "48;2;177;184;107m"
+	for _, tc := range []struct {
+		name string
+		msg  EventMsg
+	}{
+		{
+			name: "compact",
+			msg:  EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"ls"}`)},
+		},
+		{
+			name: "detailed",
+			msg:  EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "mcp_deploy", Input: json.RawMessage(`{"target":"prod"}`)},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewModel(&fakeAgent{}, "s1", nil)
+			m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+			m = apply(t, m, tc.msg)
+
+			panel := m.permissionPanelView()
+			plain := ansi.Strip(panel)
+			if !strings.Contains(plain, "Allow once") || strings.Contains(plain, "›") {
+				t.Fatalf("permissionPanelView() = %q, actions must use the shared button labels without cursor markers", plain)
+			}
+			actionLine := lineWith(t, panel, "Deny")
+			if backgroundIndex, denyIndex := strings.Index(actionLine, activeBackground), strings.Index(actionLine, "Deny"); backgroundIndex < 0 || backgroundIndex > denyIndex {
+				t.Fatalf("action line = %q, Deny must render as the active button", actionLine)
+			}
+		})
 	}
 }
 
@@ -6845,7 +6882,7 @@ func TestModel_PermissionPanelWriteShowsPathAndContent(t *testing.T) {
 
 	view := ansi.Strip(m.View())
 	for _, want := range []string{
-		"Permission required", "Write notes/plan.txt", "line one", "line two", "Deny", "Allow",
+		"Permission required", "Write notes/plan.txt", "line one", "line two", "Deny", "Allow once",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("View() = %q, want %q", view, want)
@@ -6853,7 +6890,7 @@ func TestModel_PermissionPanelWriteShowsPathAndContent(t *testing.T) {
 	}
 	panel := ansi.Strip(m.permissionPanelView())
 	for _, unwanted := range []string{
-		"write request", "Requested by", "Working directory", "Allow once", `"content"`,
+		"write request", "Requested by", "Working directory", `"content"`,
 	} {
 		if strings.Contains(panel, unwanted) {
 			t.Fatalf("permissionPanelView() = %q, write permission panel must hide %q", panel, unwanted)
@@ -6874,7 +6911,7 @@ func TestModel_PermissionPanelEditShowsPatch(t *testing.T) {
 
 	view := ansi.Strip(m.View())
 	for _, want := range []string{
-		"Permission required", "Edit [tracked.txt#abc123]", "+new line", "Deny", "Allow",
+		"Permission required", "Edit [tracked.txt#abc123]", "+new line", "Deny", "Allow once",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("View() = %q, want %q", view, want)
@@ -6896,7 +6933,7 @@ func TestModel_PermissionPanelWebFetchShowsURL(t *testing.T) {
 	})
 
 	view := ansi.Strip(m.View())
-	for _, want := range []string{"Permission required", "WebFetch https://example.com/docs", "Deny", "Allow"} {
+	for _, want := range []string{"Permission required", "WebFetch https://example.com/docs", "Deny", "Allow once"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("View() = %q, want %q", view, want)
 		}
