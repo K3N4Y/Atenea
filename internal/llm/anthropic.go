@@ -164,8 +164,7 @@ func (p *AnthropicProvider) runStream(ctx context.Context, out chan Event, param
 		event := stream.Current()
 		switch e := event.AsAny().(type) {
 		case anthropic.MessageStartEvent:
-			u := e.Message.Usage
-			usage = anthropicUsage(int(u.InputTokens), int(u.OutputTokens), 0, int(u.CacheReadInputTokens), int(u.CacheCreationInputTokens))
+			mergeAnthropicUsage(&usage, e.Message.Usage)
 		case anthropic.ContentBlockStartEvent:
 			switch b := e.ContentBlock.AsAny().(type) {
 			case anthropic.TextBlock:
@@ -231,15 +230,7 @@ func (p *AnthropicProvider) runStream(ctx context.Context, out chan Event, param
 				}
 			}
 		case anthropic.MessageDeltaEvent:
-			if usage == nil {
-				usage = &Usage{}
-			}
-			usage.InputTokens = int(e.Usage.InputTokens)
-			usage.OutputTokens = int(e.Usage.OutputTokens)
-			usage.ReasoningTokens = int(e.Usage.OutputTokensDetails.ThinkingTokens)
-			usage.CacheReadTokens = int(e.Usage.CacheReadInputTokens)
-			usage.CacheWriteTokens = int(e.Usage.CacheCreationInputTokens)
-			usage.CacheableInputTokens = usage.InputTokens + usage.CacheReadTokens + usage.CacheWriteTokens
+			mergeAnthropicDeltaUsage(&usage, e.Usage)
 		}
 	}
 	if err := stream.Err(); err != nil {
@@ -255,12 +246,56 @@ func (p *AnthropicProvider) runStream(ctx context.Context, out chan Event, param
 	emit(ctx, out, Event{Kind: StepEnded, Usage: usage})
 }
 
-func anthropicUsage(input, output, reasoning, cacheRead, cacheWrite int) *Usage {
-	return &Usage{
-		InputTokens: input, OutputTokens: output, ReasoningTokens: reasoning,
-		CacheReadTokens: cacheRead, CacheWriteTokens: cacheWrite,
-		CacheableInputTokens: input + cacheRead + cacheWrite,
+type reportedUsageFields struct {
+	input, output, reasoning, cacheRead, cacheWrite                          int
+	inputPresent, outputPresent, reasoningPresent, readPresent, writePresent bool
+}
+
+func mergeAnthropicUsage(dst **Usage, src anthropic.Usage) {
+	mergeReportedUsage(dst, reportedUsageFields{
+		input: int(src.InputTokens), output: int(src.OutputTokens),
+		reasoning: int(src.OutputTokensDetails.ThinkingTokens),
+		cacheRead: int(src.CacheReadInputTokens), cacheWrite: int(src.CacheCreationInputTokens),
+		inputPresent: src.JSON.InputTokens.Valid(), outputPresent: src.JSON.OutputTokens.Valid(),
+		reasoningPresent: src.OutputTokensDetails.JSON.ThinkingTokens.Valid(),
+		readPresent:      src.JSON.CacheReadInputTokens.Valid(), writePresent: src.JSON.CacheCreationInputTokens.Valid(),
+	})
+}
+
+func mergeAnthropicDeltaUsage(dst **Usage, src anthropic.MessageDeltaUsage) {
+	mergeReportedUsage(dst, reportedUsageFields{
+		input: int(src.InputTokens), output: int(src.OutputTokens),
+		reasoning: int(src.OutputTokensDetails.ThinkingTokens),
+		cacheRead: int(src.CacheReadInputTokens), cacheWrite: int(src.CacheCreationInputTokens),
+		inputPresent: src.JSON.InputTokens.Valid(), outputPresent: src.JSON.OutputTokens.Valid(),
+		reasoningPresent: src.OutputTokensDetails.JSON.ThinkingTokens.Valid(),
+		readPresent:      src.JSON.CacheReadInputTokens.Valid(), writePresent: src.JSON.CacheCreationInputTokens.Valid(),
+	})
+}
+
+func mergeReportedUsage(dst **Usage, fields reportedUsageFields) {
+	if !fields.inputPresent && !fields.outputPresent && !fields.reasoningPresent && !fields.readPresent && !fields.writePresent {
+		return
 	}
+	if *dst == nil {
+		*dst = &Usage{}
+	}
+	if fields.inputPresent {
+		(*dst).InputTokens = fields.input
+	}
+	if fields.outputPresent {
+		(*dst).OutputTokens = fields.output
+	}
+	if fields.reasoningPresent {
+		(*dst).ReasoningTokens = fields.reasoning
+	}
+	if fields.readPresent {
+		(*dst).CacheReadTokens = fields.cacheRead
+	}
+	if fields.writePresent {
+		(*dst).CacheWriteTokens = fields.cacheWrite
+	}
+	(*dst).CacheableInputTokens = (*dst).InputTokens + (*dst).CacheReadTokens + (*dst).CacheWriteTokens
 }
 
 func isAnthropicContextOverflow(err error) bool {

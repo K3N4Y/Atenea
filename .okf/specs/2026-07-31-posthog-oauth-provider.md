@@ -1,6 +1,6 @@
 ---
-updated_at: 2026-07-31
-summary: Design specification for driving atenea with a PostHog account — the PKCE loopback login in internal/posthogauth, the posthog wire format over the OAuth-authenticated Anthropic adapter, the account-id relaxation of the oauth credential arm, and the plan-gated model discovery through the registry's new Discover hook.
+updated_at: 2026-08-01
+summary: Design specification for driving atenea with a PostHog account — the PKCE loopback login, OAuth-authenticated Anthropic adapter, plan-gated model discovery, and usage-presence semantics for gateways that omit token counts.
 ---
 
 # Driving atenea with a PostHog account
@@ -69,6 +69,13 @@ PostHog differs in all three places:
   implementation uses. Capabilities are per-instance, because the gateway
   declares 1M windows for the opus/sonnet family where Anthropic's public API
   declares 200K.
+- **Missing token usage stays unknown.** The gateway may omit `usage`, return an
+  empty object, or split fields across stream events. The adapter reads the
+  Anthropic SDK's JSON-presence metadata: omitted and empty usage produce nil,
+  partial events merge without erasing counts already received, and a field
+  explicitly reported as zero still creates reported usage. This telemetry does
+  not drive context compaction; compaction continues to use its local context
+  estimate and the model's declared window.
 - **`account_id` moved from the arm to the flow.** `Credential.Validate` no
   longer requires it for the oauth arm; OpenAI's token exchange refuses to
   issue a credential without one and the codex adapter refuses to send a

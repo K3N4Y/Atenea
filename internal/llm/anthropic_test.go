@@ -103,6 +103,73 @@ func TestAnthropicProvider_StreamMapsNativeMessagesRequestAndEvents(t *testing.T
 	}
 }
 
+func TestAnthropicProvider_StreamPreservesUsagePresence(t *testing.T) {
+	tests := []struct {
+		name   string
+		events []string
+		want   *Usage
+	}{
+		{
+			name: "omitted",
+			events: []string{
+				`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-test","content":[],"stop_reason":null,"stop_sequence":null}}`,
+				`{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null}}`,
+			},
+		},
+		{
+			name: "empty",
+			events: []string{
+				`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-test","content":[],"stop_reason":null,"stop_sequence":null,"usage":{}}}`,
+				`{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{}}`,
+			},
+		},
+		{
+			name: "partial fields merge",
+			events: []string{
+				`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-test","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":12,"cache_read_input_tokens":3}}}`,
+				`{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":9}}`,
+			},
+			want: &Usage{InputTokens: 12, OutputTokens: 9, CacheReadTokens: 3, CacheableInputTokens: 15},
+		},
+		{
+			name: "explicit zero",
+			events: []string{
+				`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-test","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"output_tokens":5}}}`,
+				`{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":0}}`,
+			},
+			want: &Usage{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				for _, event := range tt.events {
+					io.WriteString(w, "event: message\ndata: "+event+"\n\n")
+				}
+				io.WriteString(w, "event: message\ndata: {\"type\":\"message_stop\"}\n\n")
+			}))
+			defer server.Close()
+
+			out, err := NewAnthropicProvider("key", server.URL, "claude-test").Stream(context.Background(), Request{
+				Messages: []Message{TextMessage("user", "hello")},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			events := drain(out)
+			got := events[len(events)-1]
+			if got.Kind != StepEnded {
+				t.Fatalf("last event = %v, want StepEnded", got.Kind)
+			}
+			if !reflect.DeepEqual(got.Usage, tt.want) {
+				t.Fatalf("usage = %#v, want %#v", got.Usage, tt.want)
+			}
+		})
+	}
+}
+
 func TestAnthropicProvider_StreamEnablesFiveMinutePromptCaching(t *testing.T) {
 	requestBodies := make(chan []byte, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
