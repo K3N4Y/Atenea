@@ -251,7 +251,13 @@ func (e entry) renderTool(p tool.Presentation, width int) string {
 			return card
 		}
 	}
-	return e.renderActivity(activityLabel(p, e), displaySubject(p.Subject), !p.HidesOutput)
+	showDetail := !p.HidesOutput
+	if e.tool == "bash" {
+		showDetail = e.expanded
+	} else if e.status == toolFailed {
+		showDetail = true
+	}
+	return e.renderActivity(activityLabel(p, e), displaySubject(p.Subject), showDetail)
 }
 
 // activityLabel is the name to draw for the call in this state: the progressive
@@ -299,8 +305,11 @@ func (e entry) renderActivity(name, summary string, showDetail bool) string {
 		}
 		return out
 	case toolFailed:
-		return toolFailedStyle.Render(activityHeader(activityFailMarker, name, summary)) +
-			"\n" + toolFailedStyle.Render(activityRailPrefix+"error: "+sanitizeTerminalText(e.err))
+		out := toolFailedStyle.Render(activityHeader(activityFailMarker, name, summary))
+		if showDetail {
+			out += "\n" + toolFailedStyle.Render(activityRailPrefix+"error: "+sanitizeTerminalText(e.err))
+		}
+		return out
 	case toolDenied:
 		return toolDeniedStyle.Render(activityHeader("–", name, "Denied by user"))
 	default:

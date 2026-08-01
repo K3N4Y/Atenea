@@ -691,7 +691,7 @@ func announcedTools(t *testing.T, cfg Config, mode session.Mode) []string {
 	cfg.Mode = func(string) session.Mode { return mode }
 
 	built := buildWith(t, cfg)
-	if err := built.Runner.Run(ctx, "s1", true); err != nil {
+	if err := built.Runner.Run(ctx, "s1", true, 0); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	return provider.announced()

@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-26
+updated_at: 2026-08-01
 summary: Architecture of Atenea’s Go agent execution loop.
 ---
 
@@ -166,13 +166,18 @@ type Inbox interface {
 
 ## External loop (`Run`)
 
-Same structure as the OpenCode pseudocode, expressed in Go. `MaxSteps`
-remains 25 to cut unproductive model/tool/continuation loops.
+The step policy is explicit per `Run` invocation. Root activities pass zero and
+are unlimited. Subagents pass the optional positive `steps` value from their
+manifest; an absent value is also unlimited. A finite activity uses turn N as a
+tool-free final summary turn instead of failing with a step-limit error. A steer
+admitted during that final turn starts a new activity with a fresh budget, so it
+is never stranded or silently discarded. Atenea does not expose tools on the
+final request and terminally rejects every returned tool call. This guarantees
+no local execution; it cannot undo a side effect a provider performed externally
+before returning a call marked as provider-executed.
 
 ```go
-const MaxSteps = 25
-
-func (r *Runner) Run(ctx context.Context, sessionID string, force bool) error {
+func (r *Runner) Run(ctx context.Context, sessionID string, force bool, maxSteps int) error {
     hasSteer, err := r.inbox.HasPending(ctx, sessionID, DeliverySteer)
     if err != nil {
         return err
@@ -197,10 +202,14 @@ func (r *Runner) Run(ctx context.Context, sessionID string, force bool) error {
     for openActivity {
         needsContinuation := true
 
-        for step := 0; step < MaxSteps; step++ {
-            needsContinuation, err = r.runTurn(ctx, sessionID, promotion)
+        for step := 1; maxSteps <= 0 || step <= maxSteps; step++ {
+            finalTurn := maxSteps > 0 && step == maxSteps
+            needsContinuation, err = r.runTurn(ctx, sessionID, promotion, finalTurn)
             if err != nil {
                 return err
+            }
+            if finalTurn {
+                needsContinuation = false
             }
             promotion = DeliverySteer // tras el primer turno solo se promueve steer
 
@@ -214,10 +223,6 @@ func (r *Runner) Run(ctx context.Context, sessionID string, force bool) error {
                 break
             }
         }
-        if needsContinuation {
-            return &StepLimitExceededError{Max: MaxSteps}
-        }
-
         if openActivity, err = r.inbox.HasPending(ctx, sessionID, DeliveryQueue); err != nil {
             return err
         }
@@ -460,7 +465,8 @@ ephemeral:
 - tool calls are logged before side effects;
 - continuations are triggered only after posting results;
 - concurrent agent/context changes force rebuild;
-- step limit protects against loops productive;
+- optional finite subagent policies provide a tool-free summary turn, while
+  root and unspecified subagent activities remain unlimited;
 - the Wails UI observes progress by events, without coupling to the runner.
 
 ## Sources

@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-09
+updated_at: 2026-08-01
 summary: Reference architecture for the OpenCode agent loop.
 ---
 
@@ -7,6 +7,12 @@ summary: Reference architecture for the OpenCode agent loop.
 
 Researched on 2026-06-19 on the official OpenCode documentation and the
 upstream source code `anomalyco/opencode` in the `dev` branch.
+
+Current OpenCode (`19231fce4b70aa5f7894a0a0eb20ff29bd417db5`) resolves the
+activity budget as `agent.steps ?? Infinity`. Its built-in `general` and
+`explore` agents omit `steps`, so they are unlimited. When a finite budget is
+reached, the last request is a text-only summary turn rather than a raw
+step-limit failure.
 
 This document goes one level down from `opencode-architecture.md`: it describes
 how the internal loop that processes an agent session runs.
@@ -302,7 +308,7 @@ The runner has explicit paths to:
 - tool fibers interrupted;
 - tool failures;
 - tools that the provider marked as executed but never resolved;
-- step limit exceeded.
+- finite agent budget reaching its tool-free final summary turn.
 
 When a turn fails, the publisher attempts to close unresolved tools with
 `Tool.Failed` to avoid leaving the history in an ambiguous state.
@@ -348,7 +354,8 @@ an ephemeral chat:
 - tool calls are logged before side effects;
 - continuations are triggered only after posting results;
 - concurrent agent/context changes force rebuild;
-- step limit protects against loops productive;
+- per-agent `steps` is optional and defaults to unlimited; a finite value
+  reserves its final turn for a tool-free summary;
 - the server can expose progress by SSE because each relevant fragment
  is published as an event.
 

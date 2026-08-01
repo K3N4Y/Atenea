@@ -87,7 +87,7 @@ func TestTaskTool_PropagatesGateAndDenyDoesNotRunTool(t *testing.T) {
 
 	bash := &countingTool{name: "bash"}
 	children := tool.NewRegistry(tool.NewOutputStore(0), bash)
-	defs := []agent.Def{{Name: "general", Tools: []string{"bash"}, Description: "full", Prompt: "x"}}
+	defs := []agent.Def{{Name: "general", Tools: []string{"bash"}, Steps: 2, Description: "full", Prompt: "x"}}
 
 	tt := NewTaskTool(defs, prov, children, idCounter())
 
@@ -140,7 +140,7 @@ func TestTaskTool_PropagatedGateApprovalRunsTool(t *testing.T) {
 
 	bash := &countingTool{name: "bash"}
 	children := tool.NewRegistry(tool.NewOutputStore(0), bash)
-	defs := []agent.Def{{Name: "general", Tools: []string{"bash"}, Description: "full", Prompt: "x"}}
+	defs := []agent.Def{{Name: "general", Tools: []string{"bash"}, Steps: 2, Description: "full", Prompt: "x"}}
 
 	tt := NewTaskTool(defs, prov, children, idCounter())
 
@@ -226,7 +226,7 @@ func TestTaskTool_StoreDecoratorReceivesChildPermissionRequest(t *testing.T) {
 
 	bash := &countingTool{name: "bash"}
 	children := tool.NewRegistry(tool.NewOutputStore(0), bash)
-	defs := []agent.Def{{Name: "general", Tools: []string{"bash"}, Description: "full", Prompt: "x"}}
+	defs := []agent.Def{{Name: "general", Tools: []string{"bash"}, Steps: 2, Description: "full", Prompt: "x"}}
 
 	tt := NewTaskTool(defs, prov, children, idCounter())
 	gate := &recordingGate{approved: false} // niega: el hijo no corre bash y cierra
@@ -285,7 +285,7 @@ func TestTaskTool_NoGatePropagatedRunsToolUngated(t *testing.T) {
 
 	bash := &countingTool{name: "bash"}
 	children := tool.NewRegistry(tool.NewOutputStore(0), bash)
-	defs := []agent.Def{{Name: "general", Tools: []string{"bash"}, Description: "full", Prompt: "x"}}
+	defs := []agent.Def{{Name: "general", Tools: []string{"bash"}, Steps: 2, Description: "full", Prompt: "x"}}
 
 	tt := NewTaskTool(defs, prov, children, idCounter()) // sin SetPermissionGate
 

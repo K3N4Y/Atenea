@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-09
+updated_at: 2026-08-01
 summary: Research on harness construction patterns for subagents.
 ---
 
@@ -179,7 +179,12 @@ puts omp into a multi-phase contract of parallel subagents, and the `irc`
 Atenea already has all the parts for this (no need to invent a new engine):
 
 - `internal/session/runner`: the loop (`Run`, `runTurn`), `Inbox` (queue/steer),
- `MaxSteps`. **A subagent = another `Run` with its own session.**
+ and an explicit per-activity step policy. **A subagent = another `Run` with its
+ own session.** Root activities and subagents without `steps` are unlimited; a
+ positive manifest `steps` value reserves turn N for a tool-free final summary.
+ Every returned call on that turn is durably failed; local calls are never
+ executed. A provider-executed marker may describe an external side effect that
+ Atenea cannot prevent or undo.
 - `internal/tool`: `Registry.Materialize(perms) -> Definitions + Settle`,
  `ToolOutputStore`. **The `task` tool is another builtin.**
 - `internal/session` Store event-sourced (`AppendEvent/Seq/Messages(sinceSeq)`,

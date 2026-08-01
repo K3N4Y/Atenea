@@ -27,6 +27,8 @@ var (
 	errContinueAfterCompaction = errors.New("continue after overflow compaction")
 )
 
+const finalTurnToolError = "tool calls are unavailable during the final summary turn"
+
 // ProviderError wraps a provider StepFailed for errors.As and durable failure.
 type ProviderError struct {
 	Message string
@@ -42,8 +44,12 @@ func (e *ProviderError) Error() string {
 // runTurn retries a turn for internal control signals and returns every other
 // error or successful result. Each retry rebuilds state from the store.
 func (r *Runner) runTurn(ctx context.Context, sessionID string) (bool, error) {
+	return r.runTurnWithFinal(ctx, sessionID, false)
+}
+
+func (r *Runner) runTurnWithFinal(ctx context.Context, sessionID string, final bool) (bool, error) {
 	for {
-		cont, err := r.runTurnAttempt(ctx, sessionID)
+		cont, err := r.runTurnAttempt(ctx, sessionID, final)
 		switch {
 		case errors.Is(err, errRebuildTurn):
 			continue // preparation changed; rebuild from the store
@@ -58,7 +64,7 @@ func (r *Runner) runTurn(ctx context.Context, sessionID string) (bool, error) {
 // runTurnAttempt performs one turn attempt. It snapshots the epoch, builds the
 // request from projected history and materialized tools, compacts on overflow,
 // and rechecks the epoch before calling Stream exactly once.
-func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string) (bool, error) {
+func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string, final bool) (bool, error) {
 	before, err := r.store.Epoch(ctx, sessionID)
 	if err != nil {
 		return false, err
@@ -108,6 +114,13 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string) (bool, er
 	if sys != nil {
 		req.System = sys(model)
 	}
+	if final {
+		req.Tools = nil
+		if req.System != "" {
+			req.System += "\n\n"
+		}
+		req.System += FinalTurnInstruction
+	}
 	if runnerContext.Checkpoint != nil {
 		req.System = renderCompactedSystem(req.System, runnerContext.Checkpoint.Summary)
 	}
@@ -138,7 +151,7 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string) (bool, er
 	usageRequest := req
 	usageRequest.MaxOutputTokens = 0
 	pub := NewPublisher(r.store, sessionID, r.nextID(), llm.EstimateRequestTokens(usageRequest))
-	return r.consume(ctx, sessionID, in, pub, mat.Settle)
+	return r.consume(ctx, sessionID, in, pub, mat.Settle, final)
 }
 
 func sessionKey(sessionID string) string {
@@ -151,7 +164,7 @@ func sessionKey(sessionID string) string {
 // the assistant message that declared it. Tool failures become Tool.Failed and
 // do not abort the turn; durable-store failures do.
 func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Event,
-	pub *Publisher, settle tool.SettleFunc) (bool, error) {
+	pub *Publisher, settle tool.SettleFunc, rejectLocalTools bool) (bool, error) {
 
 	g, gctx := errgroup.WithContext(ctx)
 	cleanupCtx := context.WithoutCancel(ctx)
@@ -166,8 +179,8 @@ func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Ev
 		if err := pub.Publish(ctx, ev); err != nil {
 			return false, err
 		}
-		if ev.Kind == llm.ToolCall && !ev.ProviderExecuted {
-			needsContinuation = true
+		if ev.Kind == llm.ToolCall && (rejectLocalTools || !ev.ProviderExecuted) {
+			needsContinuation = needsContinuation || !ev.ProviderExecuted
 			calls = append(calls, ev)
 		}
 	}
@@ -175,6 +188,9 @@ func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Ev
 	for _, ev := range calls {
 		ev := ev // capture for the goroutine
 		g.Go(func() error {
+			if rejectLocalTools {
+				return pub.ToolFailed(cleanupCtx, ev.CallID, errors.New(finalTurnToolError))
+			}
 			call := tool.Call{ID: ev.CallID, Name: ev.ToolName, Input: ev.Input}
 			settleCtx := tool.WithSessionID(gctx, sessionID)
 			settleCtx = tool.WithPermissionRequester(settleCtx, func(askCtx context.Context, request permission.Request) (bool, error) {

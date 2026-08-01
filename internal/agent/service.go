@@ -14,7 +14,7 @@ const AcceptPlanPrompt = "El plan fue aprobado. Implementalo ahora paso a paso s
 
 // Runner is the headless execution boundary required by Service.
 type Runner interface {
-	Run(context.Context, string, bool) error
+	Run(context.Context, string, bool, int) error
 }
 
 // Hooks keep adapter-specific behavior outside the shared turn lifecycle.
@@ -223,7 +223,7 @@ func (s *Service) execute(operation *sync.Mutex, runner Runner, ctx context.Cont
 	if previous != nil {
 		<-previous.done
 	}
-	err := runner.Run(ctx, sessionID, force)
+	err := runner.Run(ctx, sessionID, force, 0)
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		err = nil
 	}

@@ -20,7 +20,6 @@ import (
 
 	"github.com/K3N4Y/atenea/internal/agent"
 	"github.com/K3N4Y/atenea/internal/llm"
-	"github.com/K3N4Y/atenea/internal/session/runner"
 	"github.com/K3N4Y/atenea/internal/tool"
 )
 
@@ -155,14 +154,9 @@ func TestTaskTool_InvalidJSON(t *testing.T) {
 	}
 }
 
-// TestTaskTool_PropagatesRunnerError afirma que si el runner hijo falla, el TaskTool
-// propaga ese error sin tragarselo. El provider replayable SIEMPRE pide una tool, asi
-// que el hijo agota MaxSteps y devuelve *runner.StepLimitExceededError; errors.As debe
-// reconocerlo a traves del Execute. Tumba una version que oculte el error del hijo.
-func TestTaskTool_PropagatesRunnerError(t *testing.T) {
+func TestTaskTool_AppliesAgentStepPolicy(t *testing.T) {
 	ctx := context.Background()
 
-	// Guion replayable que SIEMPRE pide una echo: cada turno continua -> step limit.
 	prov := llm.NewFakeProvider(
 		llm.Event{Kind: llm.StepStarted},
 		llm.Event{Kind: llm.ToolCall, CallID: "c1", ToolName: "echo", Input: json.RawMessage(`{"text":"x"}`)},
@@ -170,17 +164,16 @@ func TestTaskTool_PropagatesRunnerError(t *testing.T) {
 	)
 
 	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	defs := []agent.Def{{Name: "looper", Tools: []string{"echo"}, Description: "loopea", Prompt: "loop"}}
+	defs := []agent.Def{{Name: "looper", Tools: []string{"echo"}, Steps: 1, Description: "loopea", Prompt: "loop"}}
 
 	tt := NewTaskTool(defs, prov, children, idCounter())
 
-	_, err := tt.Execute(ctx, json.RawMessage(`{"subagent_type":"looper","prompt":"loop"}`))
-	if err == nil {
-		t.Fatalf("Execute devolvio nil, quiero el error del runner hijo propagado")
+	result, err := tt.Execute(ctx, json.RawMessage(`{"subagent_type":"looper","prompt":"loop"}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
 	}
-	var target *runner.StepLimitExceededError
-	if !errors.As(err, &target) {
-		t.Fatalf("Execute error = %v, quiero un *runner.StepLimitExceededError reconocible con errors.As", err)
+	if result.Output != "" {
+		t.Fatalf("Output = %q, want empty final report", result.Output)
 	}
 }
 

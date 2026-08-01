@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/K3N4Y/atenea/internal/frontmatter"
@@ -18,6 +19,7 @@ type Def struct {
 	Description string
 	Tools       []string
 	Model       string
+	Steps       int
 	Prompt      string
 	Location    string
 }
@@ -28,11 +30,12 @@ type Def struct {
 // a compatible manifest. Location is left unset for Discover to populate.
 func Parse(raw []byte) (Def, error) {
 	var manifest struct {
-		Version     int      `yaml:"version"`
-		Name        string   `yaml:"name"`
-		Description string   `yaml:"description"`
-		Tools       toolList `yaml:"tools"`
-		Model       string   `yaml:"model"`
+		Version     int       `yaml:"version"`
+		Name        string    `yaml:"name"`
+		Description string    `yaml:"description"`
+		Tools       toolList  `yaml:"tools"`
+		Model       string    `yaml:"model"`
+		Steps       yaml.Node `yaml:"steps"`
 	}
 	body, err := frontmatter.Parse(raw, &manifest)
 	if err != nil {
@@ -52,6 +55,16 @@ func Parse(raw []byte) (Def, error) {
 	}
 	if def.Name == "" {
 		return Def{}, fmt.Errorf("agent: the frontmatter declares no 'name'")
+	}
+	if manifest.Steps.Kind != 0 {
+		if manifest.Steps.Kind != yaml.ScalarNode || manifest.Steps.ShortTag() != "!!int" {
+			return Def{}, fmt.Errorf("agent: 'steps' must be a positive integer")
+		}
+		steps, parseErr := strconv.Atoi(manifest.Steps.Value)
+		if parseErr != nil || steps <= 0 {
+			return Def{}, fmt.Errorf("agent: 'steps' must be a positive integer")
+		}
+		def.Steps = steps
 	}
 	return def, nil
 }

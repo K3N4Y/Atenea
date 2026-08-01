@@ -74,7 +74,7 @@ func TestRunner_ProvidesStableOpaqueSessionKey(t *testing.T) {
 		if err := inbox.Admit(ctx, sessionID, session.Prompt{Text: "continue"}, session.DeliveryQueue); err != nil {
 			t.Fatal(err)
 		}
-		if err := runner.Run(ctx, sessionID, false); err != nil {
+		if err := runner.Run(ctx, sessionID, false, 0); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -156,7 +156,7 @@ func TestRunner_RunProcessesQueuedPromptThenIdle(t *testing.T) {
 	r := NewRunner(store, inbox, fake, reg, tool.Permissions{"echo": true}, idCounter())
 
 	// La sesion no esta idle (hay un queue pendiente): Run lo drena en una actividad.
-	if err := r.Run(ctx, "s1", false); err != nil {
+	if err := r.Run(ctx, "s1", false, 0); err != nil {
 		t.Fatalf("Run error inesperado: %v", err)
 	}
 
@@ -219,7 +219,7 @@ func TestRunner_RunContinuesWhileToolCalls(t *testing.T) {
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
 	r := NewRunner(store, inbox, prov, reg, tool.Permissions{"echo": true}, idCounter())
 
-	if err := r.Run(ctx, "s1", false); err != nil {
+	if err := r.Run(ctx, "s1", false, 0); err != nil {
 		t.Fatalf("Run error inesperado: %v", err)
 	}
 
@@ -272,7 +272,7 @@ func TestRunner_RunAssistantTextDoesNotContinueAlone(t *testing.T) {
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
 	r := NewRunner(store, inbox, prov, reg, tool.Permissions{"echo": true}, idCounter())
 
-	if err := r.Run(ctx, "s1", false); err != nil {
+	if err := r.Run(ctx, "s1", false, 0); err != nil {
 		t.Fatalf("Run error inesperado: %v", err)
 	}
 
@@ -323,7 +323,7 @@ func TestRunner_RunSteerAdmittedDuringRunEntersNextContinuation(t *testing.T) {
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
 	r := NewRunner(store, inbox, prov, reg, tool.Permissions{"echo": true}, idCounter())
 
-	if err := r.Run(ctx, "s1", false); err != nil {
+	if err := r.Run(ctx, "s1", false, 0); err != nil {
 		t.Fatalf("Run error inesperado: %v", err)
 	}
 
@@ -374,7 +374,7 @@ func TestRunner_RunSecondQueueOpensNewActivity(t *testing.T) {
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
 	r := NewRunner(store, inbox, fake, reg, tool.Permissions{"echo": true}, idCounter())
 
-	if err := r.Run(ctx, "s1", false); err != nil {
+	if err := r.Run(ctx, "s1", false, 0); err != nil {
 		t.Fatalf("Run error inesperado: %v", err)
 	}
 
@@ -402,11 +402,7 @@ func TestRunner_RunSecondQueueOpensNewActivity(t *testing.T) {
 	}
 }
 
-// TestRunner_RunExceedingStepsReturnsStepLimitExceeded afirma que una actividad que
-// agota MaxSteps con continuacion siempre pendiente devuelve *StepLimitExceededError
-// con Max == 25. El FakeProvider replayable hace SIEMPRE una tool call: cada turno
-// continua, asi que a los 25 pasos el loop sale con el error.
-func TestRunner_RunExceedingStepsReturnsStepLimitExceeded(t *testing.T) {
+func TestRunner_FinitePolicyUsesLastTurnForToolFreeSummary(t *testing.T) {
 	ctx := context.Background()
 	store := session.NewMemoryStore()
 	inbox := session.NewMemoryInbox()
@@ -415,25 +411,134 @@ func TestRunner_RunExceedingStepsReturnsStepLimitExceeded(t *testing.T) {
 		t.Fatalf("Admit (queue) error inesperado: %v", err)
 	}
 
-	// Guion replayable que SIEMPRE pide una tool: cada turno continua -> 25 pasos.
-	fake := llm.NewFakeProvider(
-		llm.Event{Kind: llm.StepStarted},
-		llm.Event{Kind: llm.ToolCall, CallID: "c1", ToolName: "echo", Input: json.RawMessage(`{"text":"x"}`)},
-		llm.Event{Kind: llm.StepEnded},
-	)
+	provider := &scriptedProvider{turns: [][]llm.Event{
+		{{Kind: llm.StepStarted}, {Kind: llm.ToolCall, CallID: "c1", ToolName: "echo", Input: json.RawMessage(`{"text":"x"}`)}, {Kind: llm.StepEnded}},
+		{{Kind: llm.StepStarted}, {Kind: llm.TextDelta, Text: "summary"}, {Kind: llm.StepEnded}},
+	}}
 
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, inbox, fake, reg, tool.Permissions{"echo": true}, idCounter())
+	r := NewRunner(store, inbox, provider, reg, tool.Permissions{"echo": true}, idCounter())
+	r.SetSystemPrompt(func(string) string { return "base" })
 
-	err := r.Run(ctx, "s1", false)
-	if err == nil {
-		t.Fatalf("Run devolvio nil, quiero *StepLimitExceededError")
+	if err := r.Run(ctx, "s1", false, 2); err != nil {
+		t.Fatalf("Run: %v", err)
 	}
-	var target *StepLimitExceededError
-	if !errors.As(err, &target) {
-		t.Fatalf("Run error = %v, quiero un *StepLimitExceededError reconocible con errors.As", err)
+	requests := provider.capturedRequests()
+	if len(requests) != 2 {
+		t.Fatalf("requests = %d, want 2", len(requests))
 	}
-	if target.Max != 25 {
-		t.Errorf("StepLimitExceededError.Max = %d, quiero 25 (MaxSteps)", target.Max)
+	if len(requests[0].Tools) == 0 || len(requests[1].Tools) != 0 {
+		t.Fatalf("tool counts = %d, %d; want tools then no tools", len(requests[0].Tools), len(requests[1].Tools))
+	}
+	if requests[1].System != "base\n\n"+FinalTurnInstruction {
+		t.Fatalf("final system = %q", requests[1].System)
+	}
+}
+
+func TestRunner_FinalTurnRejectsProviderToolCallWithoutExecutingIt(t *testing.T) {
+	ctx := context.Background()
+	store := session.NewMemoryStore()
+	inbox := session.NewMemoryInbox()
+	if err := inbox.Admit(ctx, "s1", session.Prompt{Text: "finish"}, session.DeliveryQueue); err != nil {
+		t.Fatal(err)
+	}
+	var calls int
+	provider := llm.NewFakeProvider(
+		llm.Event{Kind: llm.ToolCall, CallID: "local", ToolName: "counter", Input: json.RawMessage(`{}`)},
+		llm.Event{Kind: llm.ToolCall, CallID: "provider", ToolName: "external", ProviderExecuted: true, Input: json.RawMessage(`{}`)},
+	)
+	reg := tool.NewRegistry(tool.NewOutputStore(0), countingTool{calls: &calls})
+	r := NewRunner(store, inbox, provider, reg, tool.Permissions{"counter": true}, idCounter())
+	if err := r.Run(ctx, "s1", false, 1); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("counter executions = %d, want 0", calls)
+	}
+	if pending, err := store.PendingToolCalls(ctx, "s1"); err != nil || len(pending) != 0 {
+		t.Fatalf("pending tools = %v, %v; want none", pending, err)
+	}
+	events, err := store.Events(ctx, "s1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := map[string]string{}
+	for _, event := range events {
+		if event.Kind == session.KindToolFailed {
+			failed[event.CallID] = event.Error
+		}
+	}
+	for _, callID := range []string{"local", "provider"} {
+		if failed[callID] != finalTurnToolError {
+			t.Errorf("failure for %s = %q, want %q", callID, failed[callID], finalTurnToolError)
+		}
+	}
+}
+
+func TestRunner_SteerAdmittedDuringFinalTurnStartsNewActivity(t *testing.T) {
+	ctx := context.Background()
+	store := session.NewMemoryStore()
+	inbox := session.NewMemoryInbox()
+	if err := inbox.Admit(ctx, "s1", session.Prompt{Text: "first"}, session.DeliveryQueue); err != nil {
+		t.Fatal(err)
+	}
+	inner := &scriptedProvider{turns: [][]llm.Event{
+		{{Kind: llm.TextDelta, Text: "first summary"}},
+		{{Kind: llm.TextDelta, Text: "steered summary"}},
+	}}
+	provider := &steeringProvider{inner: inner, inbox: inbox, sessionID: "s1", steer: session.Prompt{Text: "new direction"}}
+	r := NewRunner(store, inbox, provider, tool.NewRegistry(tool.NewOutputStore(0)), nil, idCounter())
+	if err := r.Run(ctx, "s1", false, 1); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if inner.callCount() != 2 {
+		t.Fatalf("turns = %d, want one final turn per activity", inner.callCount())
+	}
+	msgs, err := store.Messages(ctx, "s1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, msg := range msgs {
+		found = found || msg.Role == session.RoleUser && msg.Text == "new direction"
+	}
+	if !found {
+		t.Fatalf("steer was not promoted: %+v", msgs)
+	}
+}
+
+func TestRunner_CancellationWinsOnFiniteFinalTurn(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	store := session.NewMemoryStore()
+	inbox := session.NewMemoryInbox()
+	if err := inbox.Admit(ctx, "s1", session.Prompt{Text: "finish"}, session.DeliveryQueue); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	r := NewRunner(store, inbox, llm.NewFakeProvider(), tool.NewRegistry(tool.NewOutputStore(0)), nil, idCounter())
+	if err := r.Run(ctx, "s1", false, 1); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run error = %v, want context.Canceled", err)
+	}
+}
+
+func TestRunner_UnlimitedPolicyCanExceedTwentyFiveTurns(t *testing.T) {
+	ctx := context.Background()
+	store := session.NewMemoryStore()
+	inbox := session.NewMemoryInbox()
+	if err := inbox.Admit(ctx, "s1", session.Prompt{Text: "continue"}, session.DeliveryQueue); err != nil {
+		t.Fatal(err)
+	}
+	turns := make([][]llm.Event, 27)
+	for i := range 26 {
+		turns[i] = []llm.Event{{Kind: llm.ToolCall, CallID: "c" + strconv.Itoa(i), ToolName: "echo", Input: json.RawMessage(`{"text":"x"}`)}}
+	}
+	turns[26] = []llm.Event{{Kind: llm.TextDelta, Text: "done"}}
+	provider := &scriptedProvider{turns: turns}
+	r := NewRunner(store, inbox, provider, tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}), tool.Permissions{"echo": true}, idCounter())
+	if err := r.Run(ctx, "s1", false, 0); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := len(provider.capturedRequests()); got != 27 {
+		t.Fatalf("requests = %d, want 27", got)
 	}
 }

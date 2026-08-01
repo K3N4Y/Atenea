@@ -1,6 +1,6 @@
 ---
-updated_at: 2026-07-22
-summary: Frontend experience proposal based on the project visual identity.
+updated_at: 2026-08-01
+summary: Frontend experience proposal, including compact, accessible Bash execution disclosures.
 ---
 
 # Frontend
@@ -32,6 +32,8 @@ This document brings together the interface and experience proposal for Atenea, 
 ## UI/UX Direction
 
 The interface should feel accessible, fluid, and simple, with a clean main chat, persistent sidebar, and clear status language to communicate progress and control to the user.
+
+Completed Bash tool calls are collapsed independently by default. Their semantic disclosure header always identifies the tool, status, and command, accepts both `command` and `cmd` input shapes, and exposes `aria-expanded`. Expanding reveals the output or error. A pending ask-before-run request is not collapsed: its command and approval controls remain immediately visible and actionable. Other tool presentations are unchanged, and expansion is ephemeral UI state.
 
 ## Recommended libraries
 

@@ -495,12 +495,12 @@ func (m Model) toggleThinking() Model {
 	return m
 }
 
-// toggleThinkingAt flips the settled thought block under the given viewport
-// line and reports whether one was toggled (so the caller re-syncs the
-// viewport). It hands the module the wrapped viewport lines, which depend on
-// the render width the Model owns.
-func (m Model) toggleThinkingAt(viewportLine int) (Model, bool) {
-	next, ok := m.Transcript.toggleThinkingAt(m.entryLines(), viewportLine)
+// toggleExpandableAt flips the settled thought or Bash block under the given
+// viewport line and reports whether one was toggled (so the caller re-syncs
+// the viewport). It hands the module the wrapped viewport lines, which depend
+// on the render width the Model owns.
+func (m Model) toggleExpandableAt(viewportLine int) (Model, bool) {
+	next, ok := m.Transcript.toggleExpandableAt(m.entryLines(), viewportLine)
 	m.Transcript = next
 	return m, ok
 }
@@ -768,7 +768,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if ev.Action == tea.MouseActionPress && ev.Button == tea.MouseButtonLeft {
 			if viewportLine, ok := m.transcriptLineAtMouse(ev); ok {
-				if next, ok := m.toggleThinkingAt(viewportLine); ok {
+				if next, ok := m.toggleExpandableAt(viewportLine); ok {
 					return next.syncViewport(), nil
 				}
 			}

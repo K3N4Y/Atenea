@@ -248,7 +248,7 @@ func (t *TaskTool) Execute(ctx context.Context, input json.RawMessage) (tool.Res
 		return tool.Result{}, err
 	}
 	// Propaga la profundidad al hijo: un nieto vera childDepth+1.
-	if err := r.Run(withDepth(ctx, childDepth), childID, false); err != nil {
+	if err := r.Run(withDepth(ctx, childDepth), childID, false, def.Steps); err != nil {
 		return tool.Result{}, err
 	}
 

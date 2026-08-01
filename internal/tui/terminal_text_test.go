@@ -2,6 +2,7 @@ package tui
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -33,19 +34,22 @@ func TestEntryRender_RemovesUntrustedTerminalControlsBeforeStyling(t *testing.T)
 
 func TestToolRender_RemovesUntrustedTerminalControlsBeforeStyling(t *testing.T) {
 	tests := []struct {
-		name      string
-		malicious entry
-		clean     entry
+		name          string
+		malicious     entry
+		clean         entry
+		expectVisible bool
 	}{
 		{
-			name:      "input summary",
-			malicious: entry{kind: entryTool, tool: "bash", input: commandInput(t, terminalAttack)},
-			clean:     entry{kind: entryTool, tool: "bash", input: commandInput(t, terminalAttackVisibleText)},
+			name:          "input summary",
+			malicious:     entry{kind: entryTool, tool: "bash", input: commandInput(t, terminalAttack)},
+			clean:         entry{kind: entryTool, tool: "bash", input: commandInput(t, terminalAttackVisibleText)},
+			expectVisible: true,
 		},
 		{
-			name:      "success output",
-			malicious: entry{kind: entryTool, tool: "bash", status: toolOK, output: terminalAttack},
-			clean:     entry{kind: entryTool, tool: "bash", status: toolOK, output: terminalAttackVisibleText},
+			name:          "success output",
+			malicious:     entry{kind: entryTool, tool: "bash", status: toolOK, output: terminalAttack, expanded: true},
+			clean:         entry{kind: entryTool, tool: "bash", status: toolOK, output: terminalAttackVisibleText, expanded: true},
+			expectVisible: true,
 		},
 		{
 			name:      "success diff",
@@ -53,16 +57,26 @@ func TestToolRender_RemovesUntrustedTerminalControlsBeforeStyling(t *testing.T) 
 			clean:     entry{kind: entryTool, tool: "edit", status: toolOK, diff: "+" + terminalAttackVisibleText},
 		},
 		{
-			name:      "failure",
-			malicious: entry{kind: entryTool, tool: "bash", status: toolFailed, err: terminalAttack},
-			clean:     entry{kind: entryTool, tool: "bash", status: toolFailed, err: terminalAttackVisibleText},
+			name:          "failure",
+			malicious:     entry{kind: entryTool, tool: "bash", status: toolFailed, err: terminalAttack, expanded: true},
+			clean:         entry{kind: entryTool, tool: "bash", status: toolFailed, err: terminalAttackVisibleText, expanded: true},
+			expectVisible: true,
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got, want := renderEntry(test.malicious, 80), renderEntry(test.clean, 80); got != want {
+			got, want := renderEntry(test.malicious, 80), renderEntry(test.clean, 80)
+			if got != want {
 				t.Fatalf("render with terminal controls = %q, want sanitized render %q", got, want)
+			}
+			if test.expectVisible && !strings.Contains(got, terminalAttackVisibleText) {
+				t.Fatalf("sanitized render = %q, want visible text %q", got, terminalAttackVisibleText)
+			}
+			for _, control := range []string{"\x1b]52", "\x1b[2J", "\x00", "\x7f"} {
+				if strings.Contains(got, control) {
+					t.Fatalf("sanitized render = %q, still contains terminal control %q", got, control)
+				}
 			}
 		})
 	}

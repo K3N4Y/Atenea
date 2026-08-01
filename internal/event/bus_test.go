@@ -275,7 +275,7 @@ func TestEmittingStore_TurnStreamsEventsInSeqOrder(t *testing.T) {
 	}
 	r := runner.NewRunner(store, inbox, prov, reg, tool.Permissions{"echo": true}, idGen)
 
-	if err := r.Run(ctx, "s1", false); err != nil {
+	if err := r.Run(ctx, "s1", false, 0); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 

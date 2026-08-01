@@ -475,16 +475,11 @@ func (t Transcript) toggleThinking() Transcript {
 	return t
 }
 
-// toggleThinkingAt flips the expanded state of the settled thought block that
-// occupies the absolute line viewportLine of the viewport content (see
-// entryLines). It acts only on already-settled entryReasoning blocks: the live
-// thought preview does not take part. Returns the Transcript and true when it
-// found and toggled a block (so the caller re-syncs the viewport). With
-// viewportLine out of range or over a line that is not a settled thought block,
-// it returns (t, false) unchanged. lines is the viewport line list from
-// entryLines, passed in because computing it requires the render width the
-// Model owns.
-func (t Transcript) toggleThinkingAt(lines []entryLine, viewportLine int) (Transcript, bool) {
+// toggleExpandableAt flips the expanded state of the settled thought or Bash
+// block that occupies viewportLine (see entryLines). Live thoughts and running
+// Bash calls do not take part. It returns true when it toggles an entry so the
+// caller can re-sync the viewport.
+func (t Transcript) toggleExpandableAt(lines []entryLine, viewportLine int) (Transcript, bool) {
 	if viewportLine < 0 || viewportLine >= len(lines) {
 		return t, false
 	}
@@ -493,7 +488,9 @@ func (t Transcript) toggleThinkingAt(lines []entryLine, viewportLine int) (Trans
 		return t, false
 	}
 	e := &t.entries[idx]
-	if e.kind != entryReasoning || !e.settled() {
+	isSettledThought := e.kind == entryReasoning && e.settled()
+	isSettledBash := e.kind == entryTool && e.tool == "bash" && e.status != toolRunning
+	if !isSettledThought && !isSettledBash {
 		return t, false
 	}
 	e.expanded = !e.expanded

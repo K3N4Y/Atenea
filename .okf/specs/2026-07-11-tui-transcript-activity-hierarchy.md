@@ -1,6 +1,6 @@
 ---
-updated_at: 2026-07-11
-summary: TUI transcript activity hierarchy — activity-rail formatting, compact grouping, diff stats, and pre-size canvas rendering.
+updated_at: 2026-08-01
+summary: TUI transcript activity hierarchy, including collapsed and independently expandable Bash details.
 status: implemented
 ---
 
@@ -44,12 +44,12 @@ trailing spaces remain.
 Status markers (one glyph after the two-space inset, whole line styled as ONE
 segment so plain-text substrings stay assertable):
 
-| Marker | Meaning | Style |
-| --- | --- | --- |
-| `●` | activity running | faint |
-| `✓` | activity succeeded | faint green |
-| `✗` | activity failed / hard step error | red |
-| `?` | pending permission request | bold yellow |
+| Marker | Meaning                           | Style       |
+| ------ | --------------------------------- | ----------- |
+| `●`    | activity running                  | faint       |
+| `✓`    | activity succeeded                | faint green |
+| `✗`    | activity failed / hard step error | red         |
+| `?`    | pending permission request        | bold yellow |
 
 ### Detail rail
 
@@ -57,6 +57,13 @@ Every detail line under a header opens with the rail `│ ` after the same
 two-space inset (`activityRailPrefix`): output preview lines (up to 4), diff
 lines (up to 16, `+`/`-` colored), the failure reason (`│ error: <msg>`), and
 the truncation mark (`│ … +N lines`).
+
+Bash output and errors are collapsed by default, while the header and command
+remain visible. A left click anywhere on an individual settled Bash entry
+toggles its ephemeral `entry.expanded` state through the same `entryLines`
+mapping used by thought blocks. Expanded Bash entries reuse the capped,
+terminal-sanitized detail rendering above. Pending permissions remain separate
+visible entries, and non-Bash tools retain their existing detail behavior.
 
 ### File-change stat
 

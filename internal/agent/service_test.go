@@ -29,10 +29,10 @@ func (r *recordingInbox) last() string {
 	return r.admitted[len(r.admitted)-1]
 }
 
-type runnerFunc func(context.Context, string, bool) error
+type runnerFunc func(context.Context, string, bool, int) error
 
-func (f runnerFunc) Run(ctx context.Context, sessionID string, force bool) error {
-	return f(ctx, sessionID, force)
+func (f runnerFunc) Run(ctx context.Context, sessionID string, force bool, maxSteps int) error {
+	return f(ctx, sessionID, force, maxSteps)
 }
 
 func TestService_SendOwnsSharedTurnLifecycle(t *testing.T) {
@@ -45,7 +45,7 @@ func TestService_SendOwnsSharedTurnLifecycle(t *testing.T) {
 		mu.Unlock()
 	}
 	service := NewService(inbox)
-	service.Configure(runnerFunc(func(context.Context, string, bool) error {
+	service.Configure(runnerFunc(func(context.Context, string, bool, int) error {
 		record("run")
 		return nil
 	}), command.New([]command.Command{{Name: "foo", Template: "expanded $ARGUMENTS"}}))
@@ -96,7 +96,7 @@ func TestService_ReplacementWaitsForPreviousRun(t *testing.T) {
 	var mu sync.Mutex
 	calls := 0
 	service := NewService(inbox)
-	service.Configure(runnerFunc(func(ctx context.Context, _ string, _ bool) error {
+	service.Configure(runnerFunc(func(ctx context.Context, _ string, _ bool, _ int) error {
 		mu.Lock()
 		calls++
 		call := calls
@@ -138,7 +138,7 @@ func TestService_ReplacementWaitsForPreviousRun(t *testing.T) {
 func TestService_AcceptPlanUsesNormalModeAndFixedPrompt(t *testing.T) {
 	inbox := &recordingInbox{MemoryInbox: session.NewMemoryInbox()}
 	service := NewService(inbox)
-	service.Configure(runnerFunc(func(context.Context, string, bool) error { return nil }), command.New(nil))
+	service.Configure(runnerFunc(func(context.Context, string, bool, int) error { return nil }), command.New(nil))
 
 	plan, err := service.SendPlan("s1", "plan", Hooks{})
 	if err != nil {
@@ -165,7 +165,7 @@ func TestService_RetryRunsWithoutAdmittingPromptAgain(t *testing.T) {
 	inbox := &recordingInbox{MemoryInbox: session.NewMemoryInbox()}
 	forced := make(chan bool, 1)
 	service := NewService(inbox)
-	service.Configure(runnerFunc(func(_ context.Context, _ string, force bool) error {
+	service.Configure(runnerFunc(func(_ context.Context, _ string, force bool, _ int) error {
 		forced <- force
 		return nil
 	}), command.New(nil))
@@ -191,7 +191,7 @@ func TestService_RetryRunsWithoutAdmittingPromptAgain(t *testing.T) {
 
 func TestService_ConfigureWaitsForAdmissionAndCancelsOldRuntime(t *testing.T) {
 	service := NewService(session.NewMemoryInbox())
-	service.Configure(runnerFunc(func(ctx context.Context, _ string, _ bool) error {
+	service.Configure(runnerFunc(func(ctx context.Context, _ string, _ bool, _ int) error {
 		<-ctx.Done()
 		return ctx.Err()
 	}), command.New(nil))
@@ -214,7 +214,7 @@ func TestService_ConfigureWaitsForAdmissionAndCancelsOldRuntime(t *testing.T) {
 
 	configured := make(chan struct{})
 	go func() {
-		service.Configure(runnerFunc(func(context.Context, string, bool) error { return nil }), command.New(nil))
+		service.Configure(runnerFunc(func(context.Context, string, bool, int) error { return nil }), command.New(nil))
 		close(configured)
 	}()
 	select {

@@ -8,9 +8,9 @@
 // concurrente con errgroup, devolviendo needsContinuation. El loop externo Run
 // (run.go) aterrizo en M6: drena el Inbox de la sesion (queue/steer), promueve
 // el input pendiente a Message{Role: user}, y corre el doble loop (actividad +
-// pasos, con MaxSteps = 25) que llama runTurn en bucle. Continua solo por tool
-// call local (needsContinuation) o por un steer admitido durante la corrida,
-// nunca por texto del asistente; agotar los pasos devuelve StepLimitExceededError.
+// steps that call runTurn repeatedly. Activities are unlimited by default; a
+// finite policy reserves its final turn for a tool-free summary. Only a local
+// tool call or an admitted steer continues the activity, never assistant text.
 // Las senales de control internas (errRebuildTurn, errContinueAfterCompaction)
 // aterrizaron en M7: runTurn pasa a ser un retry loop sobre runTurnAttempt, que
 // snapshotea el ContextEpoch al preparar el request y lo re-chequea antes de

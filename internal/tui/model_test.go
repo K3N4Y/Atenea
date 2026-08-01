@@ -1695,7 +1695,6 @@ func TestModel_StepEndedMessageRendersAsMarkdown(t *testing.T) {
 		Kind:    session.KindStepEnded,
 		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: "- solo item"},
 	})
-
 	view := m.View()
 	if strings.Contains(view, "- solo item") {
 		t.Fatalf("View() = %q, NO debe contener %q: el guion crudo de lista se rinde como bullet aunque el texto llegue por el Message del StepEnded sin deltas previos", view, "- solo item")
@@ -2152,6 +2151,8 @@ func TestModel_ToolSuccessShowsOutputPreview(t *testing.T) {
 		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash", Text: "uno\ndos\ntres",
 		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "uno\ndos\ntres", ToolCallID: "c1"},
 	})
+	m.entries[len(m.entries)-1].expanded = true
+	m = m.syncViewport()
 
 	view := m.View()
 	if !strings.Contains(view, "✓ Bash     ls -la") {
@@ -2243,6 +2244,23 @@ func TestModel_ToolOutputPreviewTruncatesLongOutput(t *testing.T) {
 	})
 
 	view := m.View()
+	if strings.Contains(view, "│ l1") {
+		t.Fatalf("View() = %q, Bash output must be collapsed by default", view)
+	}
+	lines := m.entryLines()
+	bashRow := -1
+	for i, line := range lines {
+		if strings.Contains(line.line, "cat f") {
+			bashRow = i
+			break
+		}
+	}
+	if bashRow < 0 {
+		t.Fatalf("entryLines() = %v, want Bash command header", lines)
+	}
+	clickY := topBarHeight + bashRow - m.viewport.YOffset
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, Y: clickY})
+	view = m.View()
 	for _, want := range []string{"│ l1", "│ l2", "│ l3", "│ l4"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("View() = %q, debe contener %q: las primeras 4 lineas del output se muestran bajo el header", view, want)
@@ -2404,6 +2422,8 @@ func TestModel_RendersActivityMarkersThroughToolLifecycle(t *testing.T) {
 		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash", Text: "18 matches",
 		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "18 matches", ToolCallID: "c1"},
 	})
+	m.entries[len(m.entries)-1].expanded = true
+	m = m.syncViewport()
 	plain = ansi.Strip(m.View())
 	if want := "  ✓ Bash     ls"; !strings.Contains(plain, want) {
 		t.Fatalf("View() sin ANSI = %q, la tool exitosa debe asentarse como %q: el marcador ✓ reemplaza al ● en la misma columna", plain, want)
@@ -2415,6 +2435,8 @@ func TestModel_RendersActivityMarkersThroughToolLifecycle(t *testing.T) {
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "bash", Input: json.RawMessage(`{"command":"false"}`)})
 	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "c2", ToolName: "bash", Error: "exit 1"})
+	m.entries[len(m.entries)-1].expanded = true
+	m = m.syncViewport()
 	plain = ansi.Strip(m.View())
 	if want := "  ✗ Bash     false"; !strings.Contains(plain, want) {
 		t.Fatalf("View() sin ANSI = %q, la tool fallida debe asentarse como %q: marcador ✗ con la misma columna de nombre", plain, want)
@@ -2686,6 +2708,8 @@ func TestModel_SuccessWithoutDiffShowsNoStat(t *testing.T) {
 		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash", Text: "main.go\nview.go",
 		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "main.go\nview.go", ToolCallID: "c1"},
 	})
+	m.entries[len(m.entries)-1].expanded = true
+	m = m.syncViewport()
 
 	plain := ansi.Strip(m.View())
 	header := lineWith(t, plain, "✓ Bash")

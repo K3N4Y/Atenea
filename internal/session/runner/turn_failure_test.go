@@ -235,7 +235,7 @@ func TestRunner_RunFailsInterruptedToolsBeforeTurn(t *testing.T) {
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
 	r := NewRunner(store, inbox, fake, reg, tool.Permissions{"echo": true}, idCounter())
 
-	if err := r.Run(ctx, "s1", false); err != nil {
+	if err := r.Run(ctx, "s1", false, 0); err != nil {
 		t.Fatalf("Run error inesperado: %v", err)
 	}
 

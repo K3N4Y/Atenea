@@ -3,39 +3,21 @@ package runner
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/K3N4Y/atenea/internal/session"
 )
 
-// MaxSteps corta loops improductivos de modelo/tool/continuacion: 25 pasos por
-// actividad, igual que el loop de referencia (OpenCode).
-const MaxSteps = 25
+// FinalTurnInstruction tells a finitely bounded activity to conclude from the
+// work already completed. It is stable so providers and tests see one policy.
+const FinalTurnInstruction = "This is your final turn. Do not call tools. Summarize the work completed and provide your final answer."
 
 const interruptedToolMessage = "tool interrumpida antes de completar"
 
-// StepLimitExceededError lo devuelve Run cuando una actividad agota MaxSteps sin
-// dejar la sesion estable (el modelo siguio pidiendo continuacion). Tipo (no
-// sentinel) para que la UI (M9) lo distinga de un fallo de proveedor con
-// errors.As y muestre el limite.
-type StepLimitExceededError struct {
-	Max int
-}
-
-func (e *StepLimitExceededError) Error() string {
-	return fmt.Sprintf("step limit exceeded: %d steps", e.Max)
-}
-
-// Run es el loop externo del agente: drena el Inbox de la sesion hasta dejarla
-// idle. Si no hay steer ni queue pendiente (y no es force), retorna sin hacer
-// nada. Mientras haya una actividad abierta corre el loop de pasos (hasta
-// MaxSteps): promueve el input pendiente, ejecuta un turno (runTurn de M5) y
-// decide si continuar. El loop NO continua por texto del asistente; solo por una
-// tool call local (needsContinuation del turno) o por un steer admitido durante
-// la corrida. Al cerrar una actividad revisa si hay otro queue y, si lo hay, abre
-// una nueva. El request se reconstruye del Store en cada turno: Run no guarda
-// estado vivo entre turnos.
-func (r *Runner) Run(ctx context.Context, sessionID string, force bool) error {
+// Run drains the session inbox until it is idle. A non-positive maxSteps is
+// unlimited; a positive value reserves its final turn for a tool-free summary.
+// Text alone never continues an activity: only a local tool call or admitted
+// steer does. Every turn rebuilds its request from the durable store.
+func (r *Runner) Run(ctx context.Context, sessionID string, force bool, maxSteps int) error {
 	hasSteer, err := r.inbox.HasPending(ctx, sessionID, session.DeliverySteer)
 	if err != nil {
 		return err
@@ -66,17 +48,20 @@ func (r *Runner) Run(ctx context.Context, sessionID string, force bool) error {
 	for openActivity {
 		needsContinuation := true
 
-		for step := 0; step < MaxSteps; step++ {
+		for step := 1; maxSteps <= 0 || step <= maxSteps; step++ {
 			if err := r.promote(ctx, sessionID, promotion); err != nil {
 				return err
 			}
-			needsContinuation, err = r.runTurn(ctx, sessionID)
+			finalTurn := maxSteps > 0 && step == maxSteps
+			needsContinuation, err = r.runTurnWithFinal(ctx, sessionID, finalTurn)
 			if err != nil {
 				return err
 			}
 			promotion = session.DeliverySteer // tras el primer turno solo se promueve steer
 
-			if !needsContinuation {
+			if finalTurn {
+				needsContinuation = false
+			} else if !needsContinuation {
 				if needsContinuation, err = r.inbox.HasPending(ctx, sessionID, session.DeliverySteer); err != nil {
 					return err
 				}
@@ -85,10 +70,13 @@ func (r *Runner) Run(ctx context.Context, sessionID string, force bool) error {
 				break
 			}
 		}
-		if needsContinuation {
-			return &StepLimitExceededError{Max: MaxSteps}
+		if openActivity, err = r.inbox.HasPending(ctx, sessionID, session.DeliverySteer); err != nil {
+			return err
 		}
-
+		if openActivity {
+			promotion = session.DeliverySteer
+			continue
+		}
 		if openActivity, err = r.inbox.HasPending(ctx, sessionID, session.DeliveryQueue); err != nil {
 			return err
 		}
