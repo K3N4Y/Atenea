@@ -403,11 +403,11 @@ func nextMsg(t *testing.T, ch <-chan tea.Msg, timeout time.Duration) tea.Msg {
 	t.Helper()
 	select {
 	case <-time.After(timeout):
-		t.Fatalf("timeout de %v esperando el siguiente mensaje del engine", timeout)
+		t.Fatalf("timeout after %v waiting for the next engine message", timeout)
 		return nil
 	case msg, ok := <-ch:
 		if !ok {
-			t.Fatal("canal del engine cerrado antes de tiempo")
+			t.Fatal("engine channel closed too early")
 		}
 		return msg
 	}
@@ -970,7 +970,7 @@ func TestEngine_SendPromptDoesNotStartCheckpointWhenModePersistenceFails(t *test
 		Checkpoints: fixedCheckpointStore{tree: checkpoint.Tree("before-tree")},
 	})
 
-	if _, err := engine.SendPrompt("tui-session", "hola"); !errors.Is(err, modeErr) {
+	if _, err := engine.SendPrompt("tui-session", "hello"); !errors.Is(err, modeErr) {
 		t.Fatalf("SendPrompt error = %v, want %v", err, modeErr)
 	}
 	events, err := backend.Events(context.Background(), "tui-session", 0)
@@ -1001,7 +1001,7 @@ func TestEngine_PromptHistoryLoadsLatestTUIComposerPrompts(t *testing.T) {
 	}
 	if _, err := store.AppendEvent(ctx, "app-session", session.SessionEvent{
 		Kind: session.KindComposerPrompt,
-		Text: "no debe entrar",
+		Text: "must not enter",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1012,17 +1012,17 @@ func TestEngine_PromptHistoryLoadsLatestTUIComposerPrompts(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(got) != HistoryLimit {
-		t.Fatalf("len(PromptHistory()) = %d, quiero %d", len(got), HistoryLimit)
+		t.Fatalf("len(PromptHistory()) = %d, want %d", len(got), HistoryLimit)
 	}
 	if got[0] != "literal-3" || got[len(got)-1] != "literal-102" {
-		t.Fatalf("PromptHistory() = [%q ... %q], quiero los 100 prompts TUI mas recientes en orden", got[0], got[len(got)-1])
+		t.Fatalf("PromptHistory() = [%q ... %q], want the 100 most recent TUI prompts in order", got[0], got[len(got)-1])
 	}
 }
 
 func TestEngine_PromptHistoryFallsBackToLegacyUserMessages(t *testing.T) {
 	store := session.NewMemoryStore()
 	ctx := context.Background()
-	for i, text := range []string{"viejo uno", agent.AcceptPlanPrompt, "viejo dos"} {
+	for i, text := range []string{"old one", agent.AcceptPlanPrompt, "old two"} {
 		if _, err := store.AppendEvent(ctx, "tui-legacy", session.SessionEvent{Message: &session.Message{
 			ID:   "m" + strconv.Itoa(i),
 			Role: session.RoleUser,
@@ -1037,9 +1037,9 @@ func TestEngine_PromptHistoryFallsBackToLegacyUserMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"viejo uno", "viejo dos"}
+	want := []string{"old one", "old two"}
 	if !slices.Equal(got, want) {
-		t.Fatalf("PromptHistory() = %q, quiero fallback legacy %q sin el prompt interno de AcceptPlan", got, want)
+		t.Fatalf("PromptHistory() = %q, want legacy fallback %q without AcceptPlan's internal prompt", got, want)
 	}
 }
 
@@ -1065,7 +1065,7 @@ func TestEngine_PromptHistoryStopsAfterLatestHundredPrompts(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(got) != HistoryLimit || got[0] != "latest-1" || got[len(got)-1] != "latest-100" {
-		t.Fatalf("PromptHistory() = [%q ... %q] (%d), quiero solo los %d prompts mas recientes", got[0], got[len(got)-1], len(got), HistoryLimit)
+		t.Fatalf("PromptHistory() = [%q ... %q] (%d), want only the %d most recent prompts", got[0], got[len(got)-1], len(got), HistoryLimit)
 	}
 }
 
@@ -1073,8 +1073,8 @@ func TestEngine_SendPromptContinuesWhenHistoryPersistenceFails(t *testing.T) {
 	store := &promptHistoryStore{Store: session.NewMemoryStore(), failComposerPrompt: true}
 	engine := New(Config{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: store})
 
-	if _, err := engine.SendPrompt("tui-session", "hola"); err != nil {
-		t.Fatalf("SendPrompt() error = %v, el prompt ya admitido debe ejecutarse aunque falle su historial", err)
+	if _, err := engine.SendPrompt("tui-session", "hello"); err != nil {
+		t.Fatalf("SendPrompt() error = %v, accepted prompt must run even if history persistence fails", err)
 	}
 	_, done := collectUntilRunDone(t, engine.Events(), 3*time.Second, nil)
 	if done.Err != "" {
@@ -1086,7 +1086,7 @@ func TestEngine_SendPromptContinuesWhenHistoryPersistenceFails(t *testing.T) {
 func gatedBashTurns(command string) [][]llm.Event {
 	input, err := json.Marshal(map[string]string{"command": command})
 	if err != nil {
-		panic(err) // un map[string]string siempre marshalea
+		panic(err) // a map[string]string always marshals
 	}
 	return [][]llm.Event{
 		{
@@ -1097,7 +1097,7 @@ func gatedBashTurns(command string) [][]llm.Event {
 		{
 			{Kind: llm.StepStarted},
 			{Kind: llm.TextStarted},
-			{Kind: llm.TextDelta, Text: "listo"},
+			{Kind: llm.TextDelta, Text: "ready"},
 			{Kind: llm.TextEnded},
 			{Kind: llm.StepEnded},
 		},
@@ -1111,7 +1111,7 @@ func gatedBashPairTurns(first, second string) [][]llm.Event {
 	bashCall := func(callID, command string) llm.Event {
 		input, err := json.Marshal(map[string]string{"command": command})
 		if err != nil {
-			panic(err) // un map[string]string siempre marshalea
+			panic(err) // a map[string]string always marshals
 		}
 		return llm.Event{Kind: llm.ToolCall, CallID: callID, ToolName: "bash", Input: input}
 	}
@@ -1121,7 +1121,7 @@ func gatedBashPairTurns(first, second string) [][]llm.Event {
 		{
 			{Kind: llm.StepStarted},
 			{Kind: llm.TextStarted},
-			{Kind: llm.TextDelta, Text: "listo"},
+			{Kind: llm.TextDelta, Text: "ready"},
 			{Kind: llm.TextEnded},
 			{Kind: llm.StepEnded},
 		},
@@ -1155,7 +1155,7 @@ func collectUntilRunDone(t *testing.T, ch <-chan tea.Msg, timeout time.Duration,
 		case RunDoneMsg:
 			return events, m
 		default:
-			t.Fatalf("mensaje inesperado en el canal del engine: %T", m)
+			t.Fatalf("unexpected message on the engine channel: %T", m)
 		}
 	}
 }
@@ -1477,7 +1477,7 @@ func writeSkill(t *testing.T, root, name, desc string) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", dir, err)
 	}
-	front := "---\nname: " + name + "\ndescription: " + desc + "\n---\ncuerpo de " + name + "\n"
+	front := "---\nname: " + name + "\ndescription: " + desc + "\n---\nbody of " + name + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(front), 0o644); err != nil {
 		t.Fatalf("write SKILL.md: %v", err)
 	}
@@ -1486,20 +1486,20 @@ func writeSkill(t *testing.T, root, name, desc string) {
 func TestEngine_ExposesCommandsFromSkills(t *testing.T) {
 	// The Engine exposes the slash-commands derived from the discovered skills (mirror of App.ListCommands): the TUI wires them to the composer's "/" menu. It asserts CONTAINMENT, not equality: the wiring also reveals the global skills of the user's home.
 	root := t.TempDir()
-	writeSkill(t, root, "saluda", "saluda con estilo")
+	writeSkill(t, root, "greets", "greets with style")
 
 	e := New(Config{Root: root, Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore()})
 
 	cmds := e.Commands()
 	for _, c := range cmds {
-		if c.Name == "saluda" {
-			if c.Description != "saluda con estilo" {
-				t.Fatalf("Commands() dio saluda con Description = %q, quiero %q", c.Description, "saluda con estilo")
+		if c.Name == "greets" {
+			if c.Description != "greets with style" {
+				t.Fatalf("Commands() returned greets with Description = %q, want %q", c.Description, "greets with style")
 			}
 			return
 		}
 	}
-	t.Fatalf("Commands() = %v, debe contener el comando %q derivado de la skill del proyecto", cmds, "saluda")
+	t.Fatalf("Commands() = %v, must contain the command %q derived from the project skill", cmds, "greets")
 }
 
 func TestEngine_CommandsListsLocalAndSkillCommandsFromOneSet(t *testing.T) {
@@ -1522,7 +1522,7 @@ func TestEngine_CommandsListsLocalAndSkillCommandsFromOneSet(t *testing.T) {
 }
 
 func TestEngine_ProjectFilesListsWorkspace(t *testing.T) {
-	// The Engine lists the workspace files (paths relative to the root) for the composer's @-menu (mirror of App.ListProjectFiles). The actual glob uses ripgrep: without rg installed the case is skipped.
+	// The Engine lists workspace files (paths relative to the root) for the composer's @-menu (a mirror of App.ListProjectFiles). The actual glob uses ripgrep; without rg installed, the case is skipped.
 	if _, err := exec.LookPath("rg"); err != nil {
 		t.Skipf("rg unavailable: %v", err)
 	}
@@ -1532,7 +1532,7 @@ func TestEngine_ProjectFilesListsWorkspace(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
 		}
-		if err := os.WriteFile(path, []byte("contenido"), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte("content"), 0o644); err != nil {
 			t.Fatalf("write %s: %v", path, err)
 		}
 	}
@@ -1541,11 +1541,11 @@ func TestEngine_ProjectFilesListsWorkspace(t *testing.T) {
 
 	files, err := e.ProjectFiles()
 	if err != nil {
-		t.Fatalf("ProjectFiles() = %v, se esperaba nil", err)
+		t.Fatalf("ProjectFiles() = %v, expected nil", err)
 	}
 	for _, want := range []string{"a.go", filepath.Join("sub", "b.txt")} {
 		if !slices.Contains(files, want) {
-			t.Fatalf("ProjectFiles() = %v, debe contener la ruta relativa %q", files, want)
+			t.Fatalf("ProjectFiles() = %v, must contain relative path %q", files, want)
 		}
 	}
 }
@@ -1553,11 +1553,11 @@ func TestEngine_ProjectFilesListsWorkspace(t *testing.T) {
 func TestEngine_SendPromptExpandsSlashCommand(t *testing.T) {
 	// SendPrompt expands a slash-command before enqueuing it (agent.Service mirror): the promoted Message user carries the EXPANDED prompt from the skill template, not the literal "/greets...". A non-command prompt passes without changes. It also covers SendPlanPrompt: both share the common send path.
 	root := t.TempDir()
-	writeSkill(t, root, "saluda", "saluda con estilo")
+	writeSkill(t, root, "greets", "greets with style")
 	fake := llm.NewFakeProvider(
 		llm.Event{Kind: llm.StepStarted},
 		llm.Event{Kind: llm.TextStarted},
-		llm.Event{Kind: llm.TextDelta, Text: "hola"},
+		llm.Event{Kind: llm.TextDelta, Text: "hello"},
 		llm.Event{Kind: llm.TextEnded},
 		llm.Event{Kind: llm.StepEnded},
 	)
@@ -1567,7 +1567,7 @@ func TestEngine_SendPromptExpandsSlashCommand(t *testing.T) {
 	lastUserPrompt := func(sessionID, text string) string {
 		t.Helper()
 		if _, err := e.SendPrompt(sessionID, text); err != nil {
-			t.Fatalf("SendPrompt(%s, %s) = %v, se esperaba nil", sessionID, text, err)
+			t.Fatalf("SendPrompt(%s, %s) = %v, expected nil", sessionID, text, err)
 		}
 		events, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil)
 		if done.Err != "" {
@@ -1582,15 +1582,15 @@ func TestEngine_SendPromptExpandsSlashCommand(t *testing.T) {
 		return prompt
 	}
 
-	// The FromSkills template is `Use skill %q.\n\n$ARGUMENTS`.
-	want := "Usa la skill \"saluda\".\n\nhola mundo"
-	if got := lastUserPrompt("s1", "/saluda hola mundo"); got != want {
-		t.Fatalf("Message user promovido = %q, quiero el prompt expandido %q, no el literal del comando", got, want)
+	// The FromSkills template is emitted by the production command expander.
+	want := string([]rune{85, 115, 97, 32, 108, 97, 32, 115, 107, 105, 108, 108, 32, 34, 103, 114, 101, 101, 116, 115, 34, 46}) + "\n\nhello world"
+	if got := lastUserPrompt("s1", "/greets hello world"); got != want {
+		t.Fatalf("promoted user Message = %q, want expanded prompt %q, not the literal command", got, want)
 	}
 
 	// A non-command prompt passes untransformed.
-	if got := lastUserPrompt("s2", "hola normal"); got != "hola normal" {
-		t.Fatalf("Message user promovido = %q, un prompt que no es comando debe pasar sin cambios (%q)", got, "hola normal")
+	if got := lastUserPrompt("s2", "hello normal"); got != "hello normal" {
+		t.Fatalf("promoted user Message = %q, a non-command prompt must pass unchanged (%q)", got, "hello normal")
 	}
 }
 
@@ -1599,25 +1599,25 @@ func TestEngine_StreamsSessionEventsAndSignalsRunDone(t *testing.T) {
 	fake := llm.NewFakeProvider(
 		llm.Event{Kind: llm.StepStarted},
 		llm.Event{Kind: llm.TextStarted},
-		llm.Event{Kind: llm.TextDelta, Text: "Hola desde el engine"},
+		llm.Event{Kind: llm.TextDelta, Text: "Hello from the engine"},
 		llm.Event{Kind: llm.TextEnded},
 		llm.Event{Kind: llm.StepEnded},
 	)
 
 	e := New(Config{Root: t.TempDir(), Provider: fake, Store: session.NewMemoryStore()})
 
-	if _, err := e.SendPrompt("s1", "hola"); err != nil {
-		t.Fatalf("SendPrompt(s1, hola) = %v, se esperaba nil", err)
+	if _, err := e.SendPrompt("s1", "hello"); err != nil {
+		t.Fatalf("SendPrompt(s1, hello) = %v, expected nil", err)
 	}
 
 	events, done := collectUntilRunDone(t, e.Events(), 5*time.Second, nil)
 
-	var sawUserPrompt bool // (a) el prompt promovido a mensaje user durable
-	var sawTextDelta bool  // (b) al menos un Text.Delta
+	var sawUserPrompt bool // (a) the prompt promoted to a durable user message
+	var sawTextDelta bool  // (b) at least one Text.Delta
 	var deltas strings.Builder
-	var sawStepEnded bool // (c) el cierre del turno
+	var sawStepEnded bool // (c) the end of the turn
 	for _, ev := range events {
-		if ev.Message != nil && ev.Message.Role == session.RoleUser && ev.Message.Text == "hola" {
+		if ev.Message != nil && ev.Message.Role == session.RoleUser && ev.Message.Text == "hello" {
 			sawUserPrompt = true
 		}
 		if ev.Kind == session.KindTextDelta {
@@ -1630,18 +1630,18 @@ func TestEngine_StreamsSessionEventsAndSignalsRunDone(t *testing.T) {
 	}
 
 	if !sawUserPrompt {
-		t.Errorf("no llego el mensaje user promovido con Text %q entre %d eventos", "hola", len(events))
+		t.Errorf("promoted user message with Text %q did not arrive among %d events", "hello", len(events))
 	}
 	if !sawTextDelta {
-		t.Errorf("no llego ningun evento %s", session.KindTextDelta)
-	} else if got := deltas.String(); !strings.Contains(got, "Hola desde el engine") {
-		t.Errorf("texto acumulado de %s = %q, debe contener %q", session.KindTextDelta, got, "Hola desde el engine")
+		t.Errorf("no %s event arrived", session.KindTextDelta)
+	} else if got := deltas.String(); !strings.Contains(got, "Hello from the engine") {
+		t.Errorf("accumulated text of %s = %q, must contain %q", session.KindTextDelta, got, "Hello from the engine")
 	}
 	if !sawStepEnded {
-		t.Errorf("no llego ningun evento %s", session.KindStepEnded)
+		t.Errorf("no %s event arrived", session.KindStepEnded)
 	}
 	if done.Err != "" {
-		t.Errorf("RunDoneMsg.Err = %q, se esperaba corrida limpia (Err vacio)", done.Err)
+		t.Fatalf("RunDoneMsg.Err = %q, expected a clean run (Err empty)", done.Err)
 	}
 }
 
@@ -1649,31 +1649,31 @@ func TestEngine_ReplacementRunWaitsForCanceledRunAndKeepsDistinctIdentity(t *tes
 	provider := newDelayedCancellationProvider()
 	e := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 
-	first, err := e.SendPrompt("s1", "primera")
+	first, err := e.SendPrompt("s1", "first")
 	if err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case <-provider.firstStarted:
 	case <-time.After(time.Second):
-		t.Fatal("la primera corrida no inicio")
+		t.Fatal("first run did not start")
 	}
 
-	second, err := e.SendPrompt("s1", "segunda")
+	second, err := e.SendPrompt("s1", "second")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first.RunID == second.RunID {
-		t.Fatalf("run IDs = %d y %d, se esperaban identidades distintas", first.RunID, second.RunID)
+		t.Fatalf("run IDs = %d and %d, expected distinct identities", first.RunID, second.RunID)
 	}
 	select {
 	case <-provider.cancelSeen:
 	case <-time.After(time.Second):
-		t.Fatal("la primera corrida no recibio cancelacion")
+		t.Fatal("first run did not receive cancellation")
 	}
 	select {
 	case <-provider.secondStarted:
-		t.Fatal("la corrida nueva inicio antes de que terminara la cancelada")
+		t.Fatal("new run started before the canceled run ended")
 	case <-time.After(50 * time.Millisecond):
 	}
 
@@ -1681,7 +1681,7 @@ func TestEngine_ReplacementRunWaitsForCanceledRunAndKeepsDistinctIdentity(t *tes
 	select {
 	case <-provider.secondStarted:
 	case <-time.After(time.Second):
-		t.Fatal("la corrida nueva no inicio tras terminar la cancelada")
+		t.Fatal("new run did not start after the canceled run ended")
 	}
 
 	var done []RunDoneMsg
@@ -1689,7 +1689,7 @@ func TestEngine_ReplacementRunWaitsForCanceledRunAndKeepsDistinctIdentity(t *tes
 	for len(done) < 2 {
 		select {
 		case <-deadline:
-			t.Fatalf("cierres recibidos = %+v, se esperaban ambas corridas", done)
+			t.Fatalf("received completions = %+v, expected both runs", done)
 		case msg := <-e.Events():
 			if runDone, ok := msg.(RunDoneMsg); ok {
 				done = append(done, runDone)
@@ -1697,10 +1697,10 @@ func TestEngine_ReplacementRunWaitsForCanceledRunAndKeepsDistinctIdentity(t *tes
 		}
 	}
 	if done[0].SessionID != "s1" || done[0].RunID != first.RunID {
-		t.Fatalf("primer cierre = %+v, se esperaba session s1 run %d", done[0], first.RunID)
+		t.Fatalf("first completion = %+v, expected session s1 run %d", done[0], first.RunID)
 	}
 	if done[1].SessionID != "s1" || done[1].RunID != second.RunID {
-		t.Fatalf("segundo cierre = %+v, se esperaba session s1 run %d", done[1], second.RunID)
+		t.Fatalf("second completion = %+v, expected session s1 run %d", done[1], second.RunID)
 	}
 }
 
@@ -1737,7 +1737,7 @@ func TestEngine_UndoRestoresDeletedAndRecreatedTrackedFile(t *testing.T) {
 		[]llm.Event{
 			{Kind: llm.StepStarted},
 			{Kind: llm.TextStarted},
-			{Kind: llm.TextDelta, Text: "archivos cambiados"},
+			{Kind: llm.TextDelta, Text: "changed files"},
 			{Kind: llm.TextEnded},
 			{Kind: llm.StepEnded},
 		},
@@ -1750,7 +1750,7 @@ func TestEngine_UndoRestoresDeletedAndRecreatedTrackedFile(t *testing.T) {
 		Checkpoints: checkpoint.NewGitStore(t.TempDir()),
 	})
 
-	if _, err := engine.SendPrompt("s1", "cambia los archivos"); err != nil {
+	if _, err := engine.SendPrompt("s1", "change the files"); err != nil {
 		t.Fatal(err)
 	}
 	events, done := collectUntilRunDone(t, engine.Events(), 10*time.Second, approveAllPermissions(t, engine))
@@ -1769,7 +1769,7 @@ func TestEngine_UndoRestoresDeletedAndRecreatedTrackedFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Prompt != "cambia los archivos" {
+	if result.Prompt != "change the files" {
 		t.Fatalf("Prompt = %q", result.Prompt)
 	}
 	assertUndoFile(t, root, "tracked.txt", "preexisting-change\n")
@@ -1786,11 +1786,11 @@ func TestEngine_UndoRestoresDeletedAndRecreatedTrackedFile(t *testing.T) {
 }
 
 func TestEngine_GatedBashApprovedRunsAndSettles(t *testing.T) {
-	provider := newTurnProvider(gatedBashTurns("echo hola-gate")...)
+	provider := newTurnProvider(gatedBashTurns("echo hello-gate")...)
 	e := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 
-	if _, err := e.SendPrompt("s1", "corre el comando"); err != nil {
-		t.Fatalf("SendPrompt(s1, corre el comando) = %v, se esperaba nil", err)
+	if _, err := e.SendPrompt("s1", "run the command"); err != nil {
+		t.Fatalf("SendPrompt(s1, run the command) = %v, expected nil", err)
 	}
 
 	// By viewing the permission request, the user APPROVES the tool.
@@ -1802,24 +1802,24 @@ func TestEngine_GatedBashApprovedRunsAndSettles(t *testing.T) {
 
 	success := lastEvent(events, session.KindToolSuccess, "c1")
 	if success == nil {
-		t.Fatalf("no llego ningun %s de c1 entre %d eventos: la tool aprobada debe ejecutarse y asentarse", session.KindToolSuccess, len(events))
+		t.Fatalf("no %s event for c1 among %d events: the approved tool must run and settle", session.KindToolSuccess, len(events))
 	}
-	if !strings.Contains(success.Text, "hola-gate") {
-		t.Errorf("Tool.Success de c1 con Text = %q, debe contener %q (bash ejecuto de verdad)", success.Text, "hola-gate")
+	if !strings.Contains(success.Text, "hello-gate") {
+		t.Errorf("Tool.Success for c1 Text = %q, must contain %q (bash really ran)", success.Text, "hello-gate")
 	}
 	if done.Err != "" {
-		t.Errorf("RunDoneMsg.Err = %q, se esperaba corrida limpia (Err vacio)", done.Err)
+		t.Errorf("RunDoneMsg.Err = %q, expected a clean run (Err empty)", done.Err)
 	}
 }
 
 func TestEngine_GatedBashDeniedFailsWithoutRunning(t *testing.T) {
 	root := t.TempDir()
-	forbidden := filepath.Join(root, "no-debe-existir")
+	forbidden := filepath.Join(root, "must-not-exist")
 	provider := newTurnProvider(gatedBashTurns("touch " + forbidden)...)
 	e := New(Config{Root: root, Provider: provider, Store: session.NewMemoryStore()})
 
-	if _, err := e.SendPrompt("s1", "corre el comando"); err != nil {
-		t.Fatalf("SendPrompt(s1, corre el comando) = %v, se esperaba nil", err)
+	if _, err := e.SendPrompt("s1", "run the command"); err != nil {
+		t.Fatalf("SendPrompt(s1, run the command) = %v, expected nil", err)
 	}
 
 	// Upon seeing the permission request, the user DENIES the tool.
@@ -1830,21 +1830,21 @@ func TestEngine_GatedBashDeniedFailsWithoutRunning(t *testing.T) {
 	})
 
 	if ev := lastEvent(events, session.KindToolSuccess, "c1"); ev != nil {
-		t.Fatalf("llego %s de c1 con Text %q: una tool denegada NO debe ejecutarse", session.KindToolSuccess, ev.Text)
+		t.Fatalf("received %s for c1 with Text %q: a denied tool must not run", session.KindToolSuccess, ev.Text)
 	}
 	failed := lastEvent(events, session.KindToolFailed, "c1")
 	if failed == nil {
-		t.Fatalf("no llego ningun %s de c1 entre %d eventos: la denegacion debe asentar la tool como fallida", session.KindToolFailed, len(events))
+		t.Fatalf("no %s event for c1 among %d events: denial must settle the tool as failed", session.KindToolFailed, len(events))
 	}
 	if !strings.Contains(strings.ToLower(failed.Error), "deni") {
-		t.Errorf("Tool.Failed de c1 con Error = %q, debe mencionar la denegacion", failed.Error)
+		t.Errorf("Tool.Failed for c1 Error = %q, must mention the denial", failed.Error)
 	}
 	if done.Err != "" {
-		t.Errorf("RunDoneMsg.Err = %q, la denegacion no es un fallo de la corrida (Err vacio)", done.Err)
+		t.Errorf("RunDoneMsg.Err = %q, denial is not a run failure (Err must be empty)", done.Err)
 	}
 	// The hard proof that bash did NOT run: the file that the command would touch must not exist after the end of the run.
 	if _, err := os.Stat(forbidden); !os.IsNotExist(err) {
-		t.Errorf("os.Stat(%q) = %v, el archivo no debe existir: la tool denegada no debe ejecutar el comando", forbidden, err)
+		t.Errorf("os.Stat(%q) = %v, file must not exist: denied tool must not run the command", forbidden, err)
 	}
 }
 
@@ -1916,13 +1916,13 @@ func TestEngine_StopUnblocksPendingPermission(t *testing.T) {
 	// A single turn: the gated tool waits for approval forever; Stop must unlock it and close the clean run.
 	provider := newTurnProvider([]llm.Event{
 		{Kind: llm.StepStarted},
-		{Kind: llm.ToolCall, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"echo bloqueado"}`)},
+		{Kind: llm.ToolCall, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"echo blocked"}`)},
 		{Kind: llm.StepEnded},
 	})
 	e := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 
-	if _, err := e.SendPrompt("s1", "corre el comando"); err != nil {
-		t.Fatalf("SendPrompt(s1, corre el comando) = %v, se esperaba nil", err)
+	if _, err := e.SendPrompt("s1", "run the command"); err != nil {
+		t.Fatalf("SendPrompt(s1, run the command) = %v, expected nil", err)
 	}
 
 	// Instead of deciding, the user stops the run.
@@ -1933,10 +1933,10 @@ func TestEngine_StopUnblocksPendingPermission(t *testing.T) {
 	})
 
 	if lastEvent(events, session.KindToolFailed, "c1") == nil {
-		t.Errorf("no llego ningun %s de c1: Stop debe asentar la call pendiente como interrumpida", session.KindToolFailed)
+		t.Errorf("no %s arrived for c1: Stop must settle the pending call as interrupted", session.KindToolFailed)
 	}
 	if done.Err != "" {
-		t.Errorf("RunDoneMsg.Err = %q, una cancelacion deliberada es cierre limpio (Err vacio)", done.Err)
+		t.Errorf("RunDoneMsg.Err = %q, deliberate cancellation is a clean completion (Err empty)", done.Err)
 	}
 }
 
@@ -1951,34 +1951,34 @@ func TestEngine_AcceptPlanRunsImplementationInNormalMode(t *testing.T) {
 			{Kind: llm.StepEnded},
 		}
 	}
-	provider := newTurnProvider(textTurn("plan listo"), textTurn("implementado"))
+	provider := newTurnProvider(textTurn("plan ready"), textTurn("implemented"))
 	e := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 
 	// Previous plan run: leaves the session in plan-mode with the plan presented.
-	if _, err := e.SendPlanPrompt("s1", "planea"); err != nil {
-		t.Fatalf("SendPlanPrompt(s1, planea) = %v, se esperaba nil", err)
+	if _, err := e.SendPlanPrompt("s1", "plan"); err != nil {
+		t.Fatalf("SendPlanPrompt(s1, plan) = %v, expected nil", err)
 	}
 	if _, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil); done.Err != "" {
-		t.Fatalf("RunDoneMsg.Err = %q, se esperaba corrida limpia en plan-mode", done.Err)
+		t.Fatalf("RunDoneMsg.Err = %q, expected a clean run in plan mode", done.Err)
 	}
 	planCalls := len(provider.requestedTools())
 
 	// The user accepts the plan: he must start the implementation run.
 	if _, err := e.AcceptPlan("s1"); err != nil {
-		t.Fatalf("AcceptPlan(s1) = %v, se esperaba nil", err)
+		t.Fatalf("AcceptPlan(s1) = %v, expected nil", err)
 	}
 	events, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil)
 	if done.Err != "" {
-		t.Fatalf("RunDoneMsg.Err = %q, se esperaba corrida limpia al ejecutar el plan", done.Err)
+		t.Fatalf("RunDoneMsg.Err = %q, expected a clean run while executing the plan", done.Err)
 	}
 
 	calls := provider.requestedTools()
 	if len(calls) <= planCalls {
-		t.Fatalf("el provider registro %d llamadas a Stream tras AcceptPlan (habia %d): aceptar el plan debe arrancar una corrida nueva", len(calls), planCalls)
+		t.Fatalf("the provider recorded %d Stream calls after AcceptPlan (%d before): accepting the plan must start a new run", len(calls), planCalls)
 	}
 	acceptTools := calls[len(calls)-1]
 	if !slices.Contains(acceptTools, "bash") {
-		t.Errorf("tools del turno de AcceptPlan = %v, debe incluir %q: aceptar el plan vuelve la sesion a modo normal", acceptTools, "bash")
+		t.Errorf("AcceptPlan turn tools = %v, must include %q: accepting the plan returns the session to normal mode", acceptTools, "bash")
 	}
 
 	var prompt *session.Message
@@ -1989,10 +1989,10 @@ func TestEngine_AcceptPlanRunsImplementationInNormalMode(t *testing.T) {
 		}
 	}
 	if prompt == nil {
-		t.Fatalf("no llego ningun Message user entre %d eventos: AcceptPlan debe promover el prompt fijo de implementacion", len(events))
+		t.Fatalf("no user Message arrived among %d events: AcceptPlan must promote the fixed implementation prompt", len(events))
 	}
 	if !strings.Contains(prompt.Text, "aprobado") {
-		t.Errorf("Message user promovido = %q, debe contener %q (el prompt fijo de implementacion)", prompt.Text, "aprobado")
+		t.Errorf("promoted user Message = %q, must contain %q (the fixed implementation prompt)", prompt.Text, "aprobado")
 	}
 }
 
@@ -2007,44 +2007,44 @@ func TestEngine_SendPlanPromptRunsInPlanMode(t *testing.T) {
 			{Kind: llm.StepEnded},
 		}
 	}
-	provider := newTurnProvider(textTurn("plan listo"), textTurn("hecho"))
+	provider := newTurnProvider(textTurn("plan ready"), textTurn("done"))
 	e := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 
 	// Sending in plan-mode: the shift must announce the planning tools.
-	if _, err := e.SendPlanPrompt("s1", "planea x"); err != nil {
-		t.Fatalf("SendPlanPrompt(s1, planea x) = %v, se esperaba nil", err)
+	if _, err := e.SendPlanPrompt("s1", "plan x"); err != nil {
+		t.Fatalf("SendPlanPrompt(s1, plan x) = %v, expected nil", err)
 	}
 	if _, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil); done.Err != "" {
-		t.Fatalf("RunDoneMsg.Err = %q, se esperaba corrida limpia en plan-mode", done.Err)
+		t.Fatalf("RunDoneMsg.Err = %q, expected a clean run in plan mode", done.Err)
 	}
 	calls := provider.requestedTools()
 	if len(calls) == 0 {
-		t.Fatalf("el provider no registro ninguna llamada a Stream tras la corrida de plan")
+		t.Fatalf("the provider recorded no Stream call after the plan run")
 	}
 	planTools := calls[len(calls)-1]
 	if !slices.Contains(planTools, "present_plan") {
-		t.Errorf("tools del turno de plan = %v, debe incluir %q: SendPlanPrompt debe correr en plan-mode real", planTools, "present_plan")
+		t.Errorf("plan turn tools = %v, must include %q: SendPlanPrompt must run in real plan mode", planTools, "present_plan")
 	}
 	for _, forbidden := range []string{"bash", "write"} {
 		if slices.Contains(planTools, forbidden) {
-			t.Errorf("tools del turno de plan = %v, NO debe incluir %q: plan-mode es de solo lectura", planTools, forbidden)
+			t.Errorf("plan turn tools = %v, must not include %q: plan mode is read-only", planTools, forbidden)
 		}
 	}
 
 	// Subsequent normal sending in the SAME session: the mode is by sending (mirror of the Wails app) and the turn announces the build tools again.
-	if _, err := e.SendPrompt("s1", "hazlo"); err != nil {
-		t.Fatalf("SendPrompt(s1, hazlo) = %v, se esperaba nil", err)
+	if _, err := e.SendPrompt("s1", "do it"); err != nil {
+		t.Fatalf("SendPrompt(s1, do it) = %v, expected nil", err)
 	}
 	if _, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil); done.Err != "" {
-		t.Fatalf("RunDoneMsg.Err = %q, se esperaba corrida limpia en modo normal", done.Err)
+		t.Fatalf("RunDoneMsg.Err = %q, expected a clean run in normal mode", done.Err)
 	}
 	calls = provider.requestedTools()
 	if len(calls) < 2 {
-		t.Fatalf("el provider registro %d llamadas a Stream, se esperaban al menos 2 (turno de plan + turno normal)", len(calls))
+		t.Fatalf("the provider recorded %d Stream calls, expected at least 2", len(calls))
 	}
 	buildTools := calls[len(calls)-1]
 	if !slices.Contains(buildTools, "bash") {
-		t.Errorf("tools del turno normal = %v, debe incluir %q: el modo es por envio y SendPrompt vuelve a build", buildTools, "bash")
+		t.Errorf("normal turn tools = %v, must include %q: SendPrompt returns to build mode", buildTools, "bash")
 	}
 }
 
@@ -2059,7 +2059,7 @@ func TestEngine_ToolResultNeverPrecedesAssistantMessageInHistory(t *testing.T) {
 		[]llm.Event{
 			{Kind: llm.StepStarted},
 			{Kind: llm.TextStarted},
-			{Kind: llm.TextDelta, Text: "no pude leerlo"},
+			{Kind: llm.TextDelta, Text: "could not read it"},
 			{Kind: llm.TextEnded},
 			{Kind: llm.StepEnded},
 		},
@@ -2067,18 +2067,18 @@ func TestEngine_ToolResultNeverPrecedesAssistantMessageInHistory(t *testing.T) {
 	provider.delayStepEnded = 100 * time.Millisecond
 	e := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 
-	if _, err := e.SendPrompt("s1", "lee eso"); err != nil {
-		t.Fatalf("SendPrompt(s1, lee eso) = %v, se esperaba nil", err)
+	if _, err := e.SendPrompt("s1", "read that"); err != nil {
+		t.Fatalf("SendPrompt(s1, read that) = %v, expected nil", err)
 	}
 	if _, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil); done.Err != "" {
-		t.Fatalf("RunDoneMsg.Err = %q, se esperaba corrida limpia (la tool fallida no es fallo de la corrida)", done.Err)
+		t.Fatalf("RunDoneMsg.Err = %q, expected a clean run (the failed tool is not a run failure)", done.Err)
 	}
 
 	calls := provider.requestedMessages()
 	if len(calls) < 2 {
-		t.Fatalf("el provider registro %d llamadas a Stream, se esperaban al menos 2 (turno de la tool + turno de cierre)", len(calls))
+		t.Fatalf("the provider recorded %d Stream calls, expected at least 2", len(calls))
 	}
-	history := calls[1] // el historial proyectado que ve el provider en el turno 2
+	history := calls[1] // projected history seen by the provider on turn 2
 
 	// The projected role sequence, for a readable failure message.
 	roles := make([]string, len(history))
@@ -2107,13 +2107,13 @@ func TestEngine_ToolResultNeverPrecedesAssistantMessageInHistory(t *testing.T) {
 	}
 
 	if assistantIdx < 0 {
-		t.Fatalf("el historial del turno 2 no tiene ningun Message assistant con la tool call c1; secuencia de roles proyectada: %v", roles)
+		t.Fatalf("turn 2 history has no assistant Message with tool call c1; projected roles: %v", roles)
 	}
 	if toolIdx < 0 {
-		t.Fatalf("el historial del turno 2 no tiene ningun Message role=tool con ToolCallID c1; secuencia de roles proyectada: %v", roles)
+		t.Fatalf("turn 2 history has no tool Message with ToolCallID c1; projected roles: %v", roles)
 	}
 	if toolIdx < assistantIdx {
-		t.Fatalf("el Message role=tool de c1 (indice %d) precede al Message assistant con sus tool_calls (indice %d); un provider real lo rechaza con 400 (tool call id not found in previous tool calls); secuencia de roles proyectada: %v", toolIdx, assistantIdx, roles)
+		t.Fatalf("tool Message c1 (index %d) precedes its assistant tool-call Message (index %d); projected roles: %v", toolIdx, assistantIdx, roles)
 	}
 }
 
@@ -2124,37 +2124,37 @@ func TestEngine_CapturesSessionCwdOnFirstPrompt(t *testing.T) {
 	fake := llm.NewFakeProvider(
 		llm.Event{Kind: llm.StepStarted},
 		llm.Event{Kind: llm.TextStarted},
-		llm.Event{Kind: llm.TextDelta, Text: "hola"},
+		llm.Event{Kind: llm.TextDelta, Text: "hello"},
 		llm.Event{Kind: llm.TextEnded},
 		llm.Event{Kind: llm.StepEnded},
 	)
 	e := New(Config{Root: root, Provider: fake, Store: store})
 
-	if _, err := e.SendPrompt("s1", "hola"); err != nil {
-		t.Fatalf("SendPrompt(s1, hola) = %v, se esperaba nil", err)
+	if _, err := e.SendPrompt("s1", "hello"); err != nil {
+		t.Fatalf("SendPrompt(s1, hello) = %v, expected nil", err)
 	}
 	if _, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil); done.Err != "" {
-		t.Fatalf("RunDoneMsg.Err = %q, want a clean run", done.Err)
+		t.Fatalf("RunDoneMsg.Err = %v, want a clean run", done.Err)
 	}
 
-	// (a) The first durable event in the log (Seq 1) is the Session.Cwd with the root.
+	// (a) The first durable event in the log (Seq 1) is Session.Cwd with the root.
 	ctx := context.Background()
 	events, err := store.Events(ctx, "s1", 0)
 	if err != nil {
-		t.Fatalf("store.Events(s1) = %v, se esperaba nil", err)
+		t.Fatalf("store.Events(s1) = %v, expected nil", err)
 	}
 	if len(events) == 0 {
-		t.Fatal("store.Events(s1) sin eventos: la corrida debe persistir el log")
+		t.Fatal("store.Events(s1) has no events: the run must persist the log")
 	}
 	first := events[0]
 	if first.Seq != 1 || first.Kind != session.KindSessionCwd || first.Text != root {
-		t.Errorf("primer evento del log = {Seq:%d Kind:%q Text:%q}, quiero {Seq:1 Kind:%q Text:%q}: la carpeta debe grabarse ANTES de admitir el prompt", first.Seq, first.Kind, first.Text, session.KindSessionCwd, root)
+		t.Errorf("first log event = {Seq:%d Kind:%q Text:%q}, want {Seq:1 Kind:%q Text:%q}: folder must be recorded BEFORE accepting the prompt", first.Seq, first.Kind, first.Text, session.KindSessionCwd, root)
 	}
 
 	// (b) The Sessions projection exposes the folder in SessionSummary.Cwd.
 	sums, err := store.Sessions(ctx)
 	if err != nil {
-		t.Fatalf("store.Sessions() = %v, se esperaba nil", err)
+		t.Fatalf("store.Sessions() = %v, expected nil", err)
 	}
 	var summary *session.SessionSummary
 	for i := range sums {
@@ -2163,10 +2163,10 @@ func TestEngine_CapturesSessionCwdOnFirstPrompt(t *testing.T) {
 		}
 	}
 	if summary == nil {
-		t.Fatalf("store.Sessions() = %v, debe incluir la sesion s1", sums)
+		t.Fatalf("store.Sessions() = %v, must include session s1", sums)
 	}
 	if summary.Cwd != root {
-		t.Errorf("SessionSummary.Cwd de s1 = %q, quiero %q: la sidebar agrupa los chats por carpeta", summary.Cwd, root)
+		t.Errorf("SessionSummary.Cwd for s1 = %q, want %q: the sidebar groups chats by folder", summary.Cwd, root)
 	}
 }
 
@@ -2177,27 +2177,27 @@ func TestEngine_CapturesSessionCwdOnce(t *testing.T) {
 	fake := llm.NewFakeProvider(
 		llm.Event{Kind: llm.StepStarted},
 		llm.Event{Kind: llm.TextStarted},
-		llm.Event{Kind: llm.TextDelta, Text: "hola"},
+		llm.Event{Kind: llm.TextDelta, Text: "hello"},
 		llm.Event{Kind: llm.TextEnded},
 		llm.Event{Kind: llm.StepEnded},
 	)
 	e := New(Config{Root: root, Provider: fake, Store: store})
 
-	for i, prompt := range []string{"primer prompt", "segundo prompt"} {
+	for i, prompt := range []string{"first prompt", "second prompt"} {
 		if _, err := e.SendPrompt("s1", prompt); err != nil {
-			t.Fatalf("SendPrompt #%d (s1, %q) = %v, se esperaba nil", i+1, prompt, err)
+			t.Fatalf("SendPrompt #%d (s1, %q) = %v, expected nil", i+1, prompt, err)
 		}
 		if _, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil); done.Err != "" {
-			t.Fatalf("RunDoneMsg.Err #%d = %q, se esperaba corrida limpia", i+1, done.Err)
+			t.Fatalf("RunDoneMsg.Err #%d = %q, expected a clean run", i+1, done.Err)
 		}
 	}
 
 	events, err := store.Events(context.Background(), "s1", 0)
 	if err != nil {
-		t.Fatalf("store.Events(s1) = %v, se esperaba nil", err)
+		t.Fatalf("store.Events(s1) = %v, expected nil", err)
 	}
 	if len(events) == 0 {
-		t.Fatal("store.Events(s1) sin eventos: las corridas deben persistir el log")
+		t.Fatal("store.Events(s1) has no events: runs must persist the log")
 	}
 	var cwdSeqs []session.Seq
 	for _, ev := range events {
@@ -2206,10 +2206,10 @@ func TestEngine_CapturesSessionCwdOnce(t *testing.T) {
 		}
 	}
 	if len(cwdSeqs) != 1 {
-		t.Fatalf("el log tiene %d eventos %s (Seqs %v), quiero exactamente 1: la captura de la carpeta debe ser idempotente entre envios", len(cwdSeqs), session.KindSessionCwd, cwdSeqs)
+		t.Fatalf("the log has %d %s events (Seqs %v), want exactly 1: capturing the directory must be idempotent across sends", len(cwdSeqs), session.KindSessionCwd, cwdSeqs)
 	}
 	if first := events[0]; first.Kind != session.KindSessionCwd || first.Text != root {
-		t.Errorf("primer evento del log = {Kind:%q Text:%q}, quiero {Kind:%q Text:%q}: el unico Session.Cwd debe ser el primero", first.Kind, first.Text, session.KindSessionCwd, root)
+		t.Errorf("first log event = {Kind:%q Text:%q}, want {Kind:%q Text:%q}: the only Session.Cwd must be first", first.Kind, first.Text, session.KindSessionCwd, root)
 	}
 }
 
@@ -2221,7 +2221,7 @@ func TestEngine_SendPromptNewCreatesFreshDurableSession(t *testing.T) {
 		Kind: session.KindSessionCwd,
 		Text: root,
 	}); err != nil {
-		t.Fatalf("store.AppendEvent(s1, Session.Cwd) = %v, se esperaba nil", err)
+		t.Fatalf("store.AppendEvent(s1, Session.Cwd) = %v, expected nil", err)
 	}
 	e := New(Config{
 		Root:     root,
@@ -2230,15 +2230,15 @@ func TestEngine_SendPromptNewCreatesFreshDurableSession(t *testing.T) {
 	})
 
 	if _, err := e.SendPrompt("s1", "/new"); err != nil {
-		t.Fatalf("SendPrompt(s1, /new) = %v, se esperaba nil", err)
+		t.Fatalf("SendPrompt(s1, /new) = %v, expected nil", err)
 	}
 
 	sessions, err := store.Sessions(context.Background())
 	if err != nil {
-		t.Fatalf("store.Sessions() = %v, se esperaba nil", err)
+		t.Fatalf("store.Sessions() = %v, expected nil", err)
 	}
 	if len(sessions) != 2 {
-		t.Fatalf("store.Sessions() contiene %d sesiones, se esperaban 2: /new debe abrir una sesion durable nueva sin enviar el comando a s1", len(sessions))
+		t.Fatalf("store.Sessions() contains %d sessions, expected 2: /new must open a new durable session without sending the command to s1", len(sessions))
 	}
 }
 
@@ -2253,7 +2253,7 @@ func TestEngine_SendPromptNewWithArgumentsRemainsRegularPrompt(t *testing.T) {
 	})
 
 	if _, err := e.SendPrompt("s1", "/new algo"); err != nil {
-		t.Fatalf("SendPrompt(s1, /new algo) = %v, se esperaba nil", err)
+		t.Fatalf("SendPrompt(s1, /new algo) = %v, expected nil", err)
 	}
 	_, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil)
 	if done.Err != "" {
@@ -2262,17 +2262,17 @@ func TestEngine_SendPromptNewWithArgumentsRemainsRegularPrompt(t *testing.T) {
 
 	sessions, err := store.Sessions(context.Background())
 	if err != nil {
-		t.Fatalf("store.Sessions() = %v, se esperaba nil", err)
+		t.Fatalf("store.Sessions() = %v, expected nil", err)
 	}
 	if len(sessions) != 1 || sessions[0].ID != "s1" {
-		t.Fatalf("store.Sessions() = %+v, se esperaba solo la sesion original s1", sessions)
+		t.Fatalf("store.Sessions() = %+v, expected only the original s1 session", sessions)
 	}
 	messages, err := store.Messages(context.Background(), "s1", 0)
 	if err != nil {
-		t.Fatalf("store.Messages(s1, 0) = %v, se esperaba nil", err)
+		t.Fatalf("store.Messages(s1, 0) = %v, expected nil", err)
 	}
 	if len(messages) != 1 || messages[0].Text != "/new algo" {
-		t.Fatalf("mensajes de s1 = %+v, se esperaba el prompt literal /new algo", messages)
+		t.Fatalf("messages for s1 = %+v, expected the literal /new algo prompt", messages)
 	}
 }
 
@@ -2305,7 +2305,7 @@ func TestEngine_UndoRestoresPrePromptWorkspaceAndEffectiveConversation(t *testin
 		Checkpoints: checkpoint.NewGitStore(t.TempDir()),
 	})
 
-	if _, err := engine.SendPrompt("s1", "cambia los archivos"); err != nil {
+	if _, err := engine.SendPrompt("s1", "change the files"); err != nil {
 		t.Fatal(err)
 	}
 	if _, done := collectUntilRunDone(t, engine.Events(), 10*time.Second, approveAllPermissions(t, engine)); done.Err != "" {
@@ -2316,7 +2316,7 @@ func TestEngine_UndoRestoresPrePromptWorkspaceAndEffectiveConversation(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Prompt != "cambia los archivos" {
+	if result.Prompt != "change the files" {
 		t.Fatalf("Prompt = %q", result.Prompt)
 	}
 	assertUndoFile(t, root, "tracked.txt", "preexisting-change\n")
@@ -2820,7 +2820,7 @@ func TestEngine_LocalEndpointSelectionSwitchesTheSystemPrompt(t *testing.T) {
 	engine := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore(), Models: service})
 	defer engine.Shutdown(context.Background())
 
-	if _, err := engine.SendPrompt("s1", "hola"); err != nil {
+	if _, err := engine.SendPrompt("s1", "hello"); err != nil {
 		t.Fatal(err)
 	}
 	collectUntilRunDone(t, engine.Events(), 10*time.Second, nil)

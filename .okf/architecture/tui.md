@@ -464,8 +464,8 @@ each consuming a width or flag from `Layout`.
   scrolling moves the transcript, transcript clicks target visible conversation
   affordances, `Shift+Tab` toggles settled thinking globally, and `Tab`
   controls build/plan mode rather than panel focus.
-- A successful `present_plan` adds the offer `[plan] plan presentado
-  (y ejecutar / n seguir en plan)` to the end; with the offer pending the keyboard does not
+- A successful `present_plan` adds the offer `[plan] plan presented
+  (y run / n stay in plan)` to the end; with the offer pending the keyboard does not
  feed the input. `y` accepts via `Agent.AcceptPlan` (the Engine returns the
  session to normal mode and promotes the fixed implementation prompt, mirroring
  `App.AcceptPlan`), turns off the plan-mode and marks the run as working;

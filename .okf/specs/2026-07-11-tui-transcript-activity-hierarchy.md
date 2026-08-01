@@ -30,7 +30,7 @@ continuous visual column inset two spaces from the transcript edge:
   ✓ edit     main.go  +14 -3
   │ -old line
   │ +new line
-  ? bash     rm -rf /tmp/x (aprobar/denegar)
+  ? bash     rm -rf /tmp/x (allow/deny)
   ✗ error    step failed
 ```
 
@@ -95,20 +95,23 @@ viewport content line by line to map mouse clicks back to entries.
 - Subagent task: the `task` tool renders as a regular activity row (its name
   column identifies it); nested permission requests from the child session
   surface as their own `?` rows keyed by the event `SessionID`.
-- Permission (`entryPermission`): `? <tool> <summarized input> (aprobar/denegar)`.
+- Permission (`entryPermission`): `? <tool> <summarized input> (allow/deny)`.
 - Plan approval (`entryPlanApproval`): the same `?` grammar with `plan` as the
-  name and `presentado` as the summary, plus the resolving suffix
-  (`? plan     presentado (y ejecutar / n seguir en plan)`). It is a decision
+  name and `presented` as the summary, plus the resolving suffix
+  (`? plan     presented (y run / n stay in plan)`). It is a decision
   gate like a permission, so it keeps its own paragraph and is not part of
   compact grouping.
+ - Step error (`entryError`): `✗ error    <message>`.
+ - Compaction (`entryCompaction`): unchanged (`[context]`/`[error]` status
+  lines); it is a transient state, not an activity row.
 - Step error (`entryError`): `✗ error    <message>`.
 - Compaction (`entryCompaction`): unchanged (`[context]`/`[error]` status
   lines); it is a transient state, not an activity row.
 
-User-facing strings stay Spanish (`(aprobar/denegar)`, `presentado`, the plan
-suffix) to match the rest of the TUI; migrating them to English is a separate,
-gradual effort. The truncation marker was migrated to `lines` here as the
-first step, aligned with the English documentation convention.
+User-facing strings are English (`(allow/deny)`, `presented`, and the plan
+suffix) to keep the TUI consistent. The truncation marker was migrated to
+`lines` here as the first step, aligned with the English documentation
+convention.
 
 ### Deferred
 

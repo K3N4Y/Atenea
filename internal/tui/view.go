@@ -138,7 +138,7 @@ func (e entry) render(width int, p tool.Presentation) string {
 	case entryPermission:
 		return permissionStyle.Render(activityHeader(activityAskMarker, activityLabel(p, e), displaySubject(p.Subject)))
 	case entryPlanApproval:
-		return permissionStyle.Render(activityHeader(activityAskMarker, "Plan", "presentado") + " (y ejecutar / n seguir en plan)")
+		return permissionStyle.Render(activityHeader(activityAskMarker, "Plan", "presented") + " (y run / n stay in plan)")
 	case entryError:
 		if !isProviderError(e.text) {
 			return errorStyle.Render(activityHeader(activityFailMarker, "error", e.text))

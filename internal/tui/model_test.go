@@ -1011,7 +1011,7 @@ func apply(t *testing.T, m Model, msg tea.Msg) Model {
 	updated, _ := m.Update(msg)
 	next, ok := updated.(Model)
 	if !ok {
-		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+		t.Fatalf("Update returned %T, expected tui.Model", updated)
 	}
 	return settleDiskWork(t, next)
 }
@@ -1040,7 +1040,7 @@ func TestModel_DiskWorkRunsOutsideUpdate(t *testing.T) {
 
 		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'@'}})
 		if _, ok := updated.(Model); !ok {
-			t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+			t.Fatalf("Update returned %T, expected tui.Model", updated)
 		}
 		if calls != 0 {
 			t.Fatalf("listFiles calls during Update = %d, want 0", calls)
@@ -1177,7 +1177,7 @@ func drainReveal(t *testing.T, m Model) Model {
 		}
 		m = apply(t, m, revealTickMsg{})
 	}
-	t.Fatalf("el backlog del reveal no se agoto tras 1000 ticks")
+	t.Fatalf("the reveal backlog did not drain after 1000 ticks")
 	return m
 }
 
@@ -1493,7 +1493,7 @@ func lineIndexWith(t *testing.T, view, needle string) int {
 			return i
 		}
 	}
-	t.Fatalf("View() = %q, no contiene ninguna linea con %q", view, needle)
+	t.Fatalf("View() = %q, no line contains %q", view, needle)
 	return -1
 }
 
@@ -1502,7 +1502,7 @@ func assertNoLineWiderThan(t *testing.T, view string, width int) {
 	t.Helper()
 	for _, line := range strings.Split(view, "\n") {
 		if w := lipgloss.Width(line); w > width {
-			t.Fatalf("View() = %q, la linea %q mide %d celdas visibles, ninguna linea debe exceder el ancho de la terminal (%d)", view, line, w, width)
+			t.Fatalf("View() = %q, line %q is %d visible cells wide, no line may exceed terminal width (%d)", view, line, w, width)
 		}
 	}
 }
@@ -1517,13 +1517,13 @@ func assertBoxLinesExactWidth(t *testing.T, view string, width int) {
 			if strings.HasPrefix(trimmed, prefix) {
 				found = true
 				if w := ansi.StringWidth(line); w != width {
-					t.Fatalf("View() = %q, la linea de la caja %q mide %d celdas visibles, cada linea de la caja debe medir exactamente el ancho de la terminal (%d)", view, line, w, width)
+					t.Fatalf("View() = %q, composer box line %q is %d visible cells wide, every box line must exactly match terminal width (%d)", view, line, w, width)
 				}
 			}
 		}
 	}
 	if !found {
-		t.Fatalf("View() = %q, no contiene ninguna linea de la caja del composer (bordes ╭/│/╰)", view)
+		t.Fatalf("View() = %q, contains no composer box line (borders ╭/│/╰)", view)
 	}
 }
 
@@ -1544,7 +1544,7 @@ func TestEntry_UserMessageMatchesReferenceWithoutTimestamp(t *testing.T) {
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	t.Cleanup(func() { lipgloss.SetColorProfile(previousProfile) })
 
-	view := renderEntry(entry{kind: entryUser, text: "quien eres y que eres capaz de hacer?"}, 80)
+	view := renderEntry(entry{kind: entryUser, text: "who are you and what are you capable of?"}, 80)
 	plain := ansi.Strip(view)
 	lines := strings.Split(plain, "\n")
 
@@ -1556,7 +1556,7 @@ func TestEntry_UserMessageMatchesReferenceWithoutTimestamp(t *testing.T) {
 			t.Fatalf("user message line width = %d, want 80:\n%q", got, view)
 		}
 	}
-	if got, want := lines[1], "     ❯ quien eres y que eres capaz de hacer?"; !strings.HasPrefix(got, want) {
+	if got, want := lines[1], "     ❯ who are you and what are you capable of?"; !strings.HasPrefix(got, want) {
 		t.Fatalf("middle line = %q, want prefix %q", got, want)
 	}
 	if !strings.Contains(view, "\x1b[48;2;36;36;36m") {
@@ -1580,7 +1580,7 @@ func TestModel_UserMessageWrapsInsideReferenceBlock(t *testing.T) {
 	m = apply(t, m, EventMsg{Message: &session.Message{
 		ID:   "u1",
 		Role: session.RoleUser,
-		Text: "un mensaje suficientemente largo para envolver dentro del bloque",
+		Text: "a sufficiently long message to wrap inside the block",
 	}})
 
 	view := m.View()
@@ -1601,7 +1601,7 @@ func TestModel_UserMessageWrapKeepsMarkerBesideFirstLine(t *testing.T) {
 		m = apply(t, m, EventMsg{Message: &session.Message{
 			ID:   "u1",
 			Role: session.RoleUser,
-			Text: "quiero que hagas commit de los cambios en ingles con\nconventional commit",
+			Text: "I want you to commit the changes in English using\nconventional commit",
 		}})
 
 		plain := ansi.Strip(m.View())
@@ -1628,10 +1628,10 @@ func TestModel_UserMessageKeepsGrayBackgroundAfterFaintMarker(t *testing.T) {
 
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
-	m = apply(t, m, EventMsg{Message: &session.Message{ID: "u1", Role: session.RoleUser, Text: "hola"}})
+	m = apply(t, m, EventMsg{Message: &session.Message{ID: "u1", Role: session.RoleUser, Text: "hello"}})
 
 	view := m.View()
-	grayText := "\x1b[48;2;36;36;36mhola"
+	grayText := "\x1b[48;2;36;36;36mhello"
 	if !strings.Contains(view, grayText) {
 		t.Fatalf("user text must restore #242424 after the faint marker; want %q in:\n%q", grayText, view)
 	}
@@ -1641,24 +1641,24 @@ func TestModel_FoldsStreamingAssistantText(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
-	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "Hola "})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "Hello "})
 	m = drainReveal(t, m)
-	if got := ansi.Strip(m.View()); !strings.Contains(got, "Hola") {
-		t.Fatalf("View() sin ANSI = %q, debe contener %q tras el primer delta", got, "Hola")
+	if got := ansi.Strip(m.View()); !strings.Contains(got, "Hello") {
+		t.Fatalf("View() without ANSI = %q, must contain %q after the first delta", got, "Hello")
 	}
 
-	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "mundo"})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "world"})
 	m = drainReveal(t, m)
-	if got := ansi.Strip(m.View()); !strings.Contains(got, "Hola mundo") {
-		t.Fatalf("View() sin ANSI = %q, debe contener %q tras acumular deltas", got, "Hola mundo")
+	if got := ansi.Strip(m.View()); !strings.Contains(got, "Hello world") {
+		t.Fatalf("View() without ANSI = %q, must contain %q after accumulating deltas", got, "Hello world")
 	}
 
 	m = apply(t, m, EventMsg{
 		Kind:    session.KindStepEnded,
-		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: "Hola mundo"},
+		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: "Hello world"},
 	})
-	if got, count := m.View(), strings.Count(m.View(), "Hola mundo"); count != 1 {
-		t.Fatalf("View() = %q, %q debe aparecer exactamente una vez (count=%d): cerrar el turno no debe duplicar el bloque en vivo con el Message coalescido", got, "Hola mundo", count)
+	if got, count := m.View(), strings.Count(m.View(), "Hello world"); count != 1 {
+		t.Fatalf("View() = %q, %q must appear exactly once (count=%d): closing the turn must not duplicate the live block with the coalesced Message", got, "Hello world", count)
 	}
 }
 
@@ -1667,7 +1667,7 @@ func TestModel_RendersClosedAssistantAsMarkdown(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	text := "Hola **fuerte** dicho.\n\n- item uno\n- item dos"
+	text := "Hello **strong** statement.\n\n- item one\n- item two"
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
 	m = apply(t, m, EventMsg{
@@ -1677,42 +1677,41 @@ func TestModel_RendersClosedAssistantAsMarkdown(t *testing.T) {
 	m = drainReveal(t, m)
 
 	view := m.View()
-	if !strings.Contains(view, "fuerte") {
-		t.Fatalf("View() = %q, debe contener %q: rendir markdown no debe perder el contenido", view, "fuerte")
+	if !strings.Contains(view, "strong") {
+		t.Fatalf("View() = %q, must contain %q: rendering Markdown must not lose the content", view, "strong")
 	}
 	if strings.Contains(view, "**") {
-		t.Fatalf("View() = %q, NO debe contener %q: con el bloque cerrado el enfasis markdown se rinde, no se muestra crudo", view, "**")
+		t.Fatalf("View() = %q, must NOT contain %q: closed Markdown renders emphasis instead of showing it raw", view, "**")
 	}
-	if strings.Contains(view, "- item uno") {
-		t.Fatalf("View() = %q, NO debe contener %q: con el bloque cerrado el guion crudo de lista se rinde como bullet", view, "- item uno")
+	if strings.Contains(view, "- item one") {
+		t.Fatalf("View() = %q, must NOT contain %q: closed Markdown renders the raw list dash as a bullet", view, "- item one")
 	}
-	if !strings.Contains(view, "item uno") {
-		t.Fatalf("View() = %q, debe contener %q: rendir la lista no debe perder sus items", view, "item uno")
+	if !strings.Contains(view, "item one") {
+		t.Fatalf("View() = %q, must contain %q: rendering the list must not lose its items", view, "item one")
 	}
-	if !strings.Contains(view, "item dos") {
-		t.Fatalf("View() = %q, debe contener %q: rendir la lista no debe perder sus items", view, "item dos")
+	if !strings.Contains(view, "item two") {
+		t.Fatalf("View() = %q, must contain %q: rendering the list must not lose its items", view, "item two")
 	}
 	if !strings.Contains(view, "•") {
-		t.Fatalf("View() = %q, debe contener %q: los items de lista markdown se rinden con bullet", view, "•")
+		t.Fatalf("View() = %q, must contain %q: Markdown list items render with bullets", view, "•")
 	}
 }
-
 func TestModel_LiveAssistantRendersMarkdownBeforeClosed(t *testing.T) {
 	// TRIANGULATE: The renderer must apply Markdown to both the prefix revealed during streaming and the entire content when settling the block.
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	text := "esto es **fuerte** en vivo"
+	text := "this is **strong** live"
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
 	m = drainReveal(t, m)
 
 	view := ansi.Strip(m.View())
 	if strings.Contains(view, "**") {
-		t.Fatalf("View() sin ANSI = %q, NO debe contener marcadores Markdown crudos mientras el bloque esta vivo", view)
+		t.Fatalf("View() without ANSI = %q, must NOT contain raw Markdown markers while the block is live", view)
 	}
-	if !strings.Contains(view, "fuerte") {
-		t.Fatalf("View() sin ANSI = %q, debe contener %q mientras el bloque esta vivo", view, "fuerte")
+	if !strings.Contains(view, "strong") {
+		t.Fatalf("View() without ANSI = %q, must contain %q while the block is live", view, "strong")
 	}
 
 	m = apply(t, m, EventMsg{
@@ -1722,10 +1721,10 @@ func TestModel_LiveAssistantRendersMarkdownBeforeClosed(t *testing.T) {
 
 	view = ansi.Strip(m.View())
 	if strings.Contains(view, "**") {
-		t.Fatalf("View() = %q, NO debe contener %q tras cerrar el bloque: al cerrarse el turno el enfasis markdown se rinde, no se muestra crudo", view, "**")
+		t.Fatalf("View() = %q, must NOT contain %q after closing the block", view, "**")
 	}
-	if !strings.Contains(view, "fuerte") {
-		t.Fatalf("View() = %q, debe contener %q: rendir el markdown no debe perder el contenido", view, "fuerte")
+	if !strings.Contains(view, "strong") {
+		t.Fatalf("View() = %q, must contain %q: rendering Markdown must not lose content", view, "strong")
 	}
 }
 
@@ -1737,7 +1736,7 @@ func TestModel_ClosedMarkdownWrapsToTerminalWidth(t *testing.T) {
 	m = apply(t, m, tea.WindowSizeMsg{Width: 30, Height: 24})
 
 	// Hyphen-free sentinel: glamour v1 breaks lines at hyphens.
-	text := "este parrafo largo con **enfasis** debe envolverse al ancho angosto de la terminal para poder leerse entero hasta el token finmarkdown"
+	text := "this long paragraph with **emphasis** must wrap to the terminal's narrow width so it can be read in full up to the finmarkdown token"
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
 	m = apply(t, m, EventMsg{
@@ -1748,13 +1747,13 @@ func TestModel_ClosedMarkdownWrapsToTerminalWidth(t *testing.T) {
 
 	view := m.View()
 	if !strings.Contains(view, "finmarkdown") {
-		t.Fatalf("View() = %q, el final del texto %q debe estar visible: el markdown cerrado debe envolverse al ancho de la terminal, no truncarse", view, "finmarkdown")
+		t.Fatalf("View() = %q, the end of text %q must be visible: closed markdown must wrap to terminal width, not truncate", view, "finmarkdown")
 	}
 	assertNoLineWiderThan(t, view, 30)
-	for _, token := range []string{"enfasis", "finmarkdown"} {
+	for _, token := range []string{"emphasis", "finmarkdown"} {
 		line := ansi.Strip(lineWith(t, view, token))
 		if !strings.HasPrefix(line, "  ") {
-			t.Fatalf("linea con %q = %q, debe conservar el margen del render markdown: una linea rendida mas ancha que la terminal la re-parte el envolvimiento de emergencia del viewport y deja el resto huerfano en la columna 0", token, line)
+			t.Fatalf("line with %q = %q, must preserve the markdown render margin: a rendered line wider than the terminal is rewrapped by the viewport's emergency wrapping and leaves the remainder orphaned at column 0", token, line)
 		}
 	}
 }
@@ -1767,88 +1766,75 @@ func TestModel_StepEndedMessageRendersAsMarkdown(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{
 		Kind:    session.KindStepEnded,
-		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: "- solo item"},
+		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: "- single item"},
 	})
 	view := m.View()
-	if strings.Contains(view, "- solo item") {
-		t.Fatalf("View() = %q, NO debe contener %q: el guion crudo de lista se rinde como bullet aunque el texto llegue por el Message del StepEnded sin deltas previos", view, "- solo item")
+	if strings.Contains(view, "- single item") {
+		t.Fatalf("View() = %q, must NOT contain %q: the raw list dash renders as a bullet even when text arrives through a StepEnded Message without prior deltas", view, "- single item")
 	}
-	if !strings.Contains(view, "solo item") {
-		t.Fatalf("View() = %q, debe contener %q: rendir la lista no debe perder el item", view, "solo item")
+	if !strings.Contains(view, "single item") {
+		t.Fatalf("View() = %q, must contain %q: rendering the list must not lose the item", view, "single item")
 	}
 	if !strings.Contains(view, "•") {
-		t.Fatalf("View() = %q, debe contener %q: el item de lista markdown se rinde con bullet", view, "•")
+		t.Fatalf("View() = %q, must contain %q: rendering the Markdown list must not lose the item", view, "•")
 	}
 }
 
 func TestEntryAssistant_RenderRendersRevealedMarkdownWhileLive(t *testing.T) {
 	entry := entry{
 		kind:     entryAssistant,
-		text:     "**Hola** mundo",
+		text:     "**Hello** world",
 		live:     true,
-		revealed: len([]rune("**Hola**")),
+		revealed: len([]rune("**Hello**")),
 	}
 
 	rendered := ansi.Strip(renderEntry(entry, 80))
-	if strings.Contains(rendered, "**Hola**") {
-		t.Fatalf("render(80) = %q, no debe contener el marcador markdown crudo mientras el assistant sigue en vivo", rendered)
+	if strings.Contains(rendered, "**Hello**") {
+		t.Fatalf("render(80) = %q, must not contain raw Markdown markers while the assistant is live", rendered)
 	}
-	if !strings.Contains(rendered, "Hola") {
-		t.Fatalf("render(80) = %q, debe contener el texto markdown ya revelado", rendered)
+	if !strings.Contains(rendered, "Hello") {
+		t.Fatalf("render(80) = %q, must contain the revealed Markdown text", rendered)
 	}
-	if strings.Contains(rendered, "mundo") {
-		t.Fatalf("render(80) = %q, no debe revelar el backlog pendiente %q", rendered, "mundo")
+	if strings.Contains(rendered, "world") {
+		t.Fatalf("render(80) = %q, must not reveal pending backlog %q", rendered, "world")
 	}
 }
 
 func TestEntryAssistant_RenderRendersRevealedListWhileLiveAndCompleteListWhenSettled(t *testing.T) {
-	entry := entry{
-		kind:     entryAssistant,
-		text:     "- item visible\n- item pendiente",
-		live:     true,
-		revealed: len([]rune("- item visible\n")),
-	}
-
+	entry := entry{kind: entryAssistant, text: "- visible item\n- pending item", live: true, revealed: len([]rune("- visible item\n"))}
 	live := ansi.Strip(renderEntry(entry, 80))
-	if !strings.Contains(live, "•") || !strings.Contains(live, "item visible") {
-		t.Fatalf("render(80) vivo = %q, debe rendir el item revelado como lista Markdown", live)
+	if !strings.Contains(live, "•") || !strings.Contains(live, "visible item") {
+		t.Fatalf("render(80) live = %q, must render the revealed item as a Markdown list", live)
 	}
-	if strings.Contains(live, "item pendiente") {
-		t.Fatalf("render(80) vivo = %q, no debe filtrar el item pendiente", live)
+	if strings.Contains(live, "pending item") {
+		t.Fatalf("render(80) live = %q, must not reveal the pending item", live)
 	}
-
 	entry.live = false
 	entry.revealed = len([]rune(entry.text))
 	settled := ansi.Strip(renderEntry(entry, 80))
-	for _, want := range []string{"•", "item visible", "item pendiente"} {
+	for _, want := range []string{"•", "visible item", "pending item"} {
 		if !strings.Contains(settled, want) {
-			t.Fatalf("render(80) asentado = %q, debe contener %q", settled, want)
+			t.Fatalf("render(80) settled = %q, must contain %q", settled, want)
 		}
 	}
 }
 
-// Assistant seated text color contract: Closed markdown is rendered with the terminal's default color, NOT the gray "252" that Document.Color sets to the "dark" glamor style (the text looks dull against the rest of the view). The rest of the theme (colored headings, etc.) is preserved; Only the gray of the document is prohibited here. ANSI256 (forceANSI256Profile) is forced so that gray is observable in the output.
+// Assistant settled text color contract: closed Markdown uses the terminal default color, not glamour's gray 252.
 func TestModel_AssistantMarkdownUsesDefaultForeground(t *testing.T) {
 	forceANSI256Profile(t)
-
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
-
-	text := "texto-asentado con **enfasis** del assistant"
+	text := "settled-text with **emphasis** from the assistant"
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
-	m = apply(t, m, EventMsg{
-		Kind:    session.KindStepEnded,
-		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: text},
-	})
+	m = apply(t, m, EventMsg{Kind: session.KindStepEnded, Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: text}})
 	m = drainReveal(t, m)
-
 	view := ansi.Strip(m.View())
-	if plain := ansi.Strip(view); !strings.Contains(plain, "texto-asentado") {
-		t.Fatalf("View() sin ANSI = %q, debe contener %q: quitar el gris del documento no debe perder el contenido del texto", plain, "texto-asentado")
+	if !strings.Contains(view, "settled-text") {
+		t.Fatalf("View() without ANSI = %q, must contain settled text", view)
 	}
 	if strings.Contains(view, "38;5;252") {
-		t.Fatalf("View() = %q, NO debe contener la secuencia SGR %q: el texto asentado del assistant se rinde con el color por defecto de la terminal, no con el gris 252 del estilo dark de glamour", view, "38;5;252")
+		t.Fatalf("View() = %q, must NOT contain SGR sequence %q", view, "38;5;252")
 	}
 }
 
@@ -2032,19 +2018,19 @@ func TestModel_RendersUserMessages(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
 	// The user's message arrives WITHOUT Kind: the runner promotes the prompt as SessionEvent{Message: {Role: user}}.
-	m = apply(t, m, EventMsg{Message: &session.Message{ID: "u1", Role: session.RoleUser, Text: "hola atenea"}})
+	m = apply(t, m, EventMsg{Message: &session.Message{ID: "u1", Role: session.RoleUser, Text: "hello atenea"}})
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
-	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "hola humano"})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "hello human"})
 	m = drainReveal(t, m)
 
 	view := m.View()
-	userLine := lineWith(t, ansi.Strip(view), "hola atenea")
+	userLine := lineWith(t, ansi.Strip(view), "hello atenea")
 	if !strings.HasPrefix(userLine, "     ❯ ") {
-		t.Fatalf("linea del usuario = %q, debe llevar el marcador %q y la sangria visual de referencia", userLine, "     ❯ ")
+		t.Fatalf("user line = %q, must carry marker %q and the reference visual indentation", userLine, "     ❯ ")
 	}
-	assistantLine := lineWith(t, ansi.Strip(view), "hola humano")
+	assistantLine := lineWith(t, ansi.Strip(view), "hello human")
 	if strings.Contains(assistantLine, "❯ ") {
-		t.Fatalf("linea del assistant = %q, NO debe llevar el marcador de usuario %q", assistantLine, "❯ ")
+		t.Fatalf("assistant line = %q, must NOT carry the user marker %q", assistantLine, "❯ ")
 	}
 }
 
@@ -2053,37 +2039,37 @@ func TestModel_RendersToolCallLifecycle(t *testing.T) {
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"ls"}`)})
 	if got := m.View(); !strings.Contains(got, "● Bash     ls") {
-		t.Fatalf("View() = %q, Tool.Called debe mostrar el ToolName con el resumen del Input y el marcador de ejecucion %q", got, "● Bash     ls")
+		t.Fatalf("View() = %q, Tool.Called must show the ToolName with the Input summary and the running marker %q", got, "● Bash     ls")
 	}
 
 	m = apply(t, m, EventMsg{
-		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash", Text: "archivo.txt",
-		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "archivo.txt", ToolCallID: "c1"},
+		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash", Text: "file.txt",
+		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "file.txt", ToolCallID: "c1"},
 	})
 	if got := m.View(); !strings.Contains(got, "✓ Bash     ls") {
-		t.Fatalf("View() = %q, Tool.Success debe asentar la tool como %q", got, "✓ Bash     ls")
+		t.Fatalf("View() = %q, Tool.Success must settle the tool as %q", got, "✓ Bash     ls")
 	}
 	if got := m.View(); strings.Contains(got, "●") {
-		t.Fatalf("View() = %q, la tool asentada no debe seguir mostrandose como en ejecucion", got)
+		t.Fatalf("View() = %q, the settled tool must not still appear as running", got)
 	}
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "edit", Input: json.RawMessage(`{"patch":"[a.go#ab12]\n"}`)})
 	if got := m.View(); !strings.Contains(got, "● Edit     a.go") {
-		t.Fatalf("View() = %q, el segundo tool call debe mostrarse en ejecucion con el archivo del patch %q", got, "● Edit     a.go")
+		t.Fatalf("View() = %q, the second tool call must appear as running with the patch file %q", got, "● Edit     a.go")
 	}
 
-	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "c2", ToolName: "edit", Error: "permiso denegado"})
+	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "c2", ToolName: "edit", Error: "permission denied"})
 	got := m.View()
-	for _, want := range []string{"✗ Edit     a.go", "│ error: permiso denegado"} {
+	for _, want := range []string{"✗ Edit     a.go", "│ error: permission denied"} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("View() = %q, Tool.Failed debe mostrar %q: el header con el resumen del Input y el Error como linea de rail", got, want)
+			t.Fatalf("View() = %q, Tool.Failed must show %q: the header with the Input summary and the Error as a rail line", got, want)
 		}
 	}
 	if !strings.Contains(got, "✓ Bash     ls") {
-		t.Fatalf("View() = %q, el fallo de c2 no debe tocar el estado ok de c1", got)
+		t.Fatalf("View() = %q, c2's failure must not affect c1's successful state", got)
 	}
 	if strings.Contains(got, "●") {
-		t.Fatalf("View() = %q, no debe quedar ninguna tool en ejecucion", got)
+		t.Fatalf("View() = %q, no tool should remain running", got)
 	}
 }
 
@@ -2130,41 +2116,41 @@ func TestModel_RendersSkillToolAsSkillLine(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "skill", Input: json.RawMessage(`{"name":"code-review"}`)})
 	view := m.View()
 	if !strings.Contains(view, "● Skill    code-review") {
-		t.Fatalf("View() = %q, la tool skill en ejecucion debe rendirse como linea dedicada %q (nombre = campo name del Input)", view, "● Skill    code-review")
+		t.Fatalf("View() = %q, the running skill tool must render as a dedicated line %q (name = name field of Input)", view, "● Skill    code-review")
 	}
 	if strings.Contains(view, `{"name"`) {
-		t.Fatalf("View() = %q, NO debe filtrar el Input crudo al header: la linea dedicada lleva el nombre pelado como resumen", view)
+		t.Fatalf("View() = %q, the raw Input must not leak into the header: the dedicated line uses the bare name as its summary", view)
 	}
 
-	body := "<skill_content name=\"code-review\">\ncuerpo del skill para el modelo\n</skill_content>"
+	body := "<skill_content name=\"code-review\">\nskill body for the model\n</skill_content>"
 	m = apply(t, m, EventMsg{
 		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "skill", Text: body,
 		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: body, ToolCallID: "c1"},
 	})
 	view = m.View()
 	if !strings.Contains(view, "✓ Skill    code-review") {
-		t.Fatalf("View() = %q, la tool skill exitosa debe asentarse como %q", view, "✓ Skill    code-review")
+		t.Fatalf("View() = %q, the successful skill tool must settle as %q", view, "✓ Skill    code-review")
 	}
 	if strings.Contains(view, "skill_content") {
-		t.Fatalf("View() = %q, NO debe contener %q: en exito la linea de skill va sin preview del output, el cuerpo del SKILL.md es para el modelo y no para el transcript", view, "skill_content")
+		t.Fatalf("View() = %q, must not contain %q: the successful skill line has no output preview, and the SKILL.md body is for the model, not the transcript", view, "skill_content")
 	}
 }
 
 func TestModel_SkillToolFailureShowsError(t *testing.T) {
-	// TRIANGULATE: a poor implementation of renderSkill only covers the running/ok states and before Tool.Failed it leaves the ● marker forever. The skill failure (e.g. nonexistent name) sits on the same dedicated line with the ✗ marker and the error as a rail line, just like the rest of the tools.
+	// TRIANGULATE: a poor implementation of renderSkill only covers the running/ok states and leaves the ● marker forever before Tool.Failed. A skill failure (for example, a missing name) uses the same dedicated line with the ✗ marker and the error as a rail line, just like the other tools.
 	m := NewModel(&fakeAgent{}, "s1", nil)
 
-	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "skill", Input: json.RawMessage(`{"name":"inexistente"}`)})
-	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "c1", ToolName: "skill", Error: `skill "inexistente" no encontrada`})
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "skill", Input: json.RawMessage(`{"name":"missing"}`)})
+	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "c1", ToolName: "skill", Error: `skill "missing" not found`})
 
 	view := m.View()
-	for _, want := range []string{"✗ Skill    inexistente", `│ error: skill "inexistente" no encontrada`} {
+	for _, want := range []string{"✗ Skill    missing", `│ error: skill "missing" not found`} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("View() = %q, la skill fallida debe asentarse como %q: la linea dedicada tambien cubre el estado de error, no solo running/ok", view, want)
+			t.Fatalf("View() = %q, the failed skill must settle as %q: the dedicated line also covers the error state, not only running/ok", view, want)
 		}
 	}
 	if strings.Contains(view, "●") {
-		t.Fatalf("View() = %q, la skill asentada con error no debe seguir mostrandose como en ejecucion", view)
+		t.Fatalf("View() = %q, the skill settled with an error must not still appear as running", view)
 	}
 }
 
@@ -2172,18 +2158,18 @@ func TestModel_SkillToolWithoutNameRendersBareHeader(t *testing.T) {
 	// TRIANGULATE: a poor implementation assumes that the Input of the skill is valid JSON (panic or garbage in the header when parsing it) when it cannot extract the name. With non-parseable Input the header is "● Skill" stripped: without summary, without dangling spaces in the alignment and without filtering the raw input to the transcript.
 	m := NewModel(&fakeAgent{}, "s1", nil)
 
-	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "skill", Input: json.RawMessage(`no-es-json`)})
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "skill", Input: json.RawMessage(`not-json`)})
 
 	view := m.View()
 	if !strings.Contains(view, "● Skill") {
-		t.Fatalf("View() = %q, con Input no parseable la skill debe rendirse con el header pelado %q", view, "● Skill")
+		t.Fatalf("View() = %q, with unparseable Input the skill must render with the bare header %q", view, "● Skill")
 	}
 	skillLine := lineWith(t, view, "● Skill")
 	if got := strings.TrimRight(skillLine, " "); got != "  ● Skill" {
-		t.Fatalf("linea de la skill = %q, el header pelado no lleva resumen: queda %q sin heredar nada del Input", skillLine, "  ● Skill")
+		t.Fatalf("skill line = %q, the bare header has no summary: it remains %q without inheriting anything from Input", skillLine, "  ● Skill")
 	}
 	if strings.Contains(view, "no-es-json") {
-		t.Fatalf("View() = %q, NO debe filtrar el Input crudo %q al transcript", view, "no-es-json")
+		t.Fatalf("View() = %q, the raw Input %q must not leak into the transcript", view, "not-json")
 	}
 }
 
@@ -2193,10 +2179,10 @@ func TestModel_ReadToolShowsOnlyStatusAndFileName(t *testing.T) {
 
 	view := ansi.Strip(m.View())
 	if want := "  ● Reading  view.go"; !strings.Contains(view, want) {
-		t.Fatalf("View() sin ANSI = %q, read en ejecucion debe mostrar solo %q", view, want)
+		t.Fatalf("View() without ANSI = %q, read while running must show only %q", view, want)
 	}
 	if strings.Contains(view, "internal/tui") || strings.Contains(view, ":20-40") {
-		t.Fatalf("View() sin ANSI = %q, read no debe mostrar la ruta ni el selector", view)
+		t.Fatalf("View() without ANSI = %q, read must not show the path or selector", view)
 	}
 
 	m = apply(t, m, EventMsg{
@@ -2206,11 +2192,11 @@ func TestModel_ReadToolShowsOnlyStatusAndFileName(t *testing.T) {
 
 	view = ansi.Strip(m.View())
 	if want := "  ✓ Read     view.go"; !strings.Contains(view, want) {
-		t.Fatalf("View() sin ANSI = %q, read exitoso debe mostrar solo %q", view, want)
+		t.Fatalf("View() without ANSI = %q, successful read must show only %q", view, want)
 	}
 	for _, hidden := range []string{"Reading", "internal/tui", "20:package tui", "ABCD"} {
 		if strings.Contains(view, hidden) {
-			t.Fatalf("View() sin ANSI = %q, read exitoso no debe mostrar %q", view, hidden)
+			t.Fatalf("View() without ANSI = %q, successful read must not show %q", view, hidden)
 		}
 	}
 }
@@ -2222,23 +2208,23 @@ func TestModel_ToolSuccessShowsOutputPreview(t *testing.T) {
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"ls -la"}`)})
 	m = apply(t, m, EventMsg{
-		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash", Text: "uno\ndos\ntres",
-		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "uno\ndos\ntres", ToolCallID: "c1"},
+		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash", Text: "one\ntwo\nthree",
+		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "one\ntwo\nthree", ToolCallID: "c1"},
 	})
 	m.entries[len(m.entries)-1].expanded = true
 	m = m.syncViewport()
 
 	view := m.View()
 	if !strings.Contains(view, "✓ Bash     ls -la") {
-		t.Fatalf("View() = %q, el header debe llevar el resumen del Input %q: con un solo campo string el resumen es su valor", view, "✓ Bash     ls -la")
+		t.Fatalf("View() = %q, the header must include the Input summary %q: with one string field the summary is its value", view, "✓ Bash     ls -la")
 	}
-	for _, want := range []string{"│ uno", "│ dos", "│ tres"} {
+	for _, want := range []string{"│ one", "│ two", "│ three"} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("View() = %q, debe contener %q: cada linea del output de Tool.Success se muestra bajo el header prefijada con la barra", view, want)
+			t.Fatalf("View() = %q, must contain %q: each Tool.Success output line appears below the header with the rail prefix", view, want)
 		}
 	}
 	if strings.Contains(view, "lines") {
-		t.Fatalf("View() = %q, NO debe contener la marca de truncado %q: 3 lineas de output caben en el tope de 4 y se muestran completas", view, "lines")
+		t.Fatalf("View() = %q, must not contain the truncation marker %q: 3 output lines fit within the limit of 4 and are shown in full", view, "lines")
 	}
 }
 
@@ -2250,28 +2236,28 @@ func TestModel_ToolSuccessShowsEditDiff(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "edit", Input: json.RawMessage(`{"path":"a.go"}`)})
 	m = apply(t, m, EventMsg{
 		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "edit", Text: "ok",
-		Diff:    "--- a/a.go\n+++ b/a.go\n@@ -1 +1 @@\n-viejo\n+nuevo",
+		Diff:    "--- a/a.go\n+++ b/a.go\n@@ -1 +1 @@\n-old\n+new",
 		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "ok", ToolCallID: "c1"},
 	})
 
 	plain := ansi.Strip(m.View())
-	for _, want := range []string{"a.go", "@@ -1 +1 @@", "1 - viejo", "1 + nuevo"} {
+	for _, want := range []string{"a.go", "@@ -1 +1 @@", "1 - old", "1 + new"} {
 		if !strings.Contains(plain, want) {
-			t.Fatalf("View() sin ANSI = %q, debe contener %q: la edit exitosa se rinde como la tarjeta de diff con ruta, hunk y bloques antes/después", plain, want)
+			t.Fatalf("View() without ANSI = %q, must contain %q: successful edit renders as a diff card with path, hunk, and before/after blocks", plain, want)
 		}
 	}
 	// The red block ("before", removed) goes above the green ("after", added).
-	if i, j := strings.Index(plain, "1 - viejo"), strings.Index(plain, "1 + nuevo"); i < 0 || j < 0 || i > j {
-		t.Fatalf("View() sin ANSI = %q, el bloque de quitadas debe ir antes que el de agregadas", plain)
+	if i, j := strings.Index(plain, "1 - old"), strings.Index(plain, "1 + new"); i < 0 || j < 0 || i > j {
+		t.Fatalf("View() without ANSI = %q, removed block must precede the added block", plain)
 	}
 	// The card is inserted like the rest of the content: the row opens with the margin (activityInset) and the rail ▌ in the same column as "✓ Read".
-	if row := lineWith(t, plain, "1 - viejo"); !strings.HasPrefix(row, activityInset+"▌") {
-		t.Fatalf("fila del diff = %q, debe abrir con el margen %q y el rail ▌", row, activityInset)
+	if row := lineWith(t, plain, "1 - old"); !strings.HasPrefix(row, activityInset+"▌") {
+		t.Fatalf("diff row = %q, must begin with the margin %q and rail ▌", row, activityInset)
 	}
 	// Neither the old unified preview rail nor the output preview survive.
-	for _, banned := range []string{"│ -viejo", "│ +nuevo", "│ ok"} {
+	for _, banned := range []string{"│ -old", "│ +new", "│ ok"} {
 		if strings.Contains(plain, banned) {
-			t.Fatalf("View() sin ANSI = %q, NO debe contener %q: la tarjeta reemplaza al preview unificado y al del output", plain, banned)
+			t.Fatalf("View() without ANSI = %q, must not contain %q: the card replaces the unified and output previews", plain, banned)
 		}
 	}
 }
@@ -2295,13 +2281,13 @@ func TestModel_EditDiffShowsContextInBothBlocks(t *testing.T) {
 	// The removed one has the number of the old file and the added one has the number of the new one.
 	for _, want := range []string{"11 - old", "11 + new"} {
 		if !strings.Contains(plain, want) {
-			t.Fatalf("View() sin ANSI = %q, debe contener %q con el numero de linea real", plain, want)
+			t.Fatalf("View() without ANSI = %q, must contain %q with the real line number", plain, want)
 		}
 	}
 	// Each line of context appears in the red block AND in the green block.
 	for _, ctx := range []string{"ctxA", "ctxB"} {
 		if got := strings.Count(plain, ctx); got < 2 {
-			t.Fatalf("View() sin ANSI = %q, la linea de contexto %q debe aparecer en ambos bloques (antes/después), got %d", plain, ctx, got)
+			t.Fatalf("View() without ANSI = %q, context line %q must appear in both blocks (before/after), got %d", plain, ctx, got)
 		}
 	}
 }
@@ -2337,15 +2323,15 @@ func TestModel_ToolOutputPreviewTruncatesLongOutput(t *testing.T) {
 	view = m.View()
 	for _, want := range []string{"│ l1", "│ l2", "│ l3", "│ l4"} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("View() = %q, debe contener %q: las primeras 4 lineas del output se muestran bajo el header", view, want)
+			t.Fatalf("View() = %q, must contain %q: the first 4 output lines appear below the header", view, want)
 		}
 	}
 	if !strings.Contains(view, "+2 lines") {
-		t.Fatalf("View() = %q, debe contener la marca %q: las 2 lineas que exceden el tope se resumen", view, "+2 lines")
+		t.Fatalf("View() = %q, must contain marker %q: the 2 lines beyond the limit are summarized", view, "+2 lines")
 	}
 	for _, banned := range []string{"│ l5", "│ l6"} {
 		if strings.Contains(view, banned) {
-			t.Fatalf("View() = %q, NO debe contener %q: el preview corta en el tope de 4 lineas", view, banned)
+			t.Fatalf("View() = %q, must not contain %q: the preview is cut at the 4-line limit", view, banned)
 		}
 	}
 }
@@ -2357,21 +2343,21 @@ func TestModel_ToolInputSummaryCompactsMultiField(t *testing.T) {
 	m = apply(t, m, tea.WindowSizeMsg{Width: 200, Height: 24})
 
 	// Two fields: The summary is the compact JSON, not the value of a single field.
-	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: remote, Input: json.RawMessage(`{"path":"a.go","texto":"x"}`)})
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: remote, Input: json.RawMessage(`{"path":"a.go","text":"x"}`)})
 	view := m.View()
-	if want := `● ` + remote + ` {"path":"a.go","texto":"x"}`; !strings.Contains(view, want) {
-		t.Fatalf("View() = %q, el header debe contener %q: con varios campos el resumen es el JSON compacto", view, want)
+	if want := `● ` + remote + ` {"path":"a.go","text":"x"}`; !strings.Contains(view, want) {
+		t.Fatalf("View() = %q, the header must contain %q: with several fields the summary is compact JSON", view, want)
 	}
 
 	// A single string field longer than the maximum of 48 cells: the summary is truncated with the ellipsis and the tail of the input does not appear.
-	long := strings.Repeat("x", 60) + "-cola-final"
+	long := strings.Repeat("x", 60) + "-final-tail"
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "bash", Input: json.RawMessage(`{"command":"` + long + `"}`)})
 	view = m.View()
 	if !strings.Contains(view, "…") {
-		t.Fatalf("View() = %q, debe contener la elipsis %q: un input mas largo que el tope se trunca en el header", view, "…")
+		t.Fatalf("View() = %q, must contain the ellipsis %q: an input longer than the limit is truncated in the header", view, "…")
 	}
-	if strings.Contains(view, "cola-final") {
-		t.Fatalf("View() = %q, NO debe contener %q: la cola de un input largo queda fuera del resumen truncado", view, "cola-final")
+	if strings.Contains(view, "final-tail") {
+		t.Fatalf("View() = %q, must not contain %q: the tail of a long input is outside the truncated summary", view, "final-tail")
 	}
 }
 
@@ -2386,14 +2372,14 @@ func TestModel_ShowsPendingPermissionAndClearsOnOutcome(t *testing.T) {
 	permLine := lineWith(t, view, "? Bash")
 	for _, want := range []string{"? Bash", "rm -rf /tmp/x"} {
 		if !strings.Contains(permLine, want) {
-			t.Fatalf("solicitud pendiente = %q, debe contener %q (marcador ?, ToolName y resumen del Input)", permLine, want)
+			t.Fatalf("pending request = %q, must contain %q (marker ?, ToolName, and Input summary)", permLine, want)
 		}
 	}
 	if view := ansi.Strip(view); !strings.Contains(view, "Permission required") || !strings.Contains(view, "Deny") || !strings.Contains(view, "Allow") {
-		t.Fatalf("View() = %q, el panel inline debe contener titulo y acciones", view)
+		t.Fatalf("View() = %q, the inline panel must contain a title and actions", view)
 	}
 	if callID, ok := m.PendingPermission(); !ok || callID != "c1" {
-		t.Fatalf("PendingPermission() = (%q, %v), debe exponer la solicitud pendiente c1", callID, ok)
+		t.Fatalf("PendingPermission() = (%q, %v), must expose pending request c1", callID, ok)
 	}
 
 	// The outcome arrives as Tool.Success of the SAME CallID: the request disappears.
@@ -2402,30 +2388,30 @@ func TestModel_ShowsPendingPermissionAndClearsOnOutcome(t *testing.T) {
 		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "hecho", ToolCallID: "c1"},
 	})
 	if got := m.View(); strings.Contains(got, "Permission required") {
-		t.Fatalf("View() = %q, Tool.Success de c1 debe retirar la solicitud pendiente", got)
+		t.Fatalf("View() = %q, Tool.Success for c1 must remove the pending request", got)
 	}
 	if callID, ok := m.PendingPermission(); ok {
-		t.Fatalf("PendingPermission() = (%q, %v), no debe quedar solicitud tras el desenlace", callID, ok)
+		t.Fatalf("PendingPermission() = (%q, %v), no request should remain after the outcome", callID, ok)
 	}
 
 	// Tool.Failed also resolves the request (e.g. denied by the user).
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "write", Input: json.RawMessage(`{"path":"b.go"}`)})
 	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c2", ToolName: "write", Input: json.RawMessage(`{"path":"b.go"}`)})
 	if callID, ok := m.PendingPermission(); !ok || callID != "c2" {
-		t.Fatalf("PendingPermission() = (%q, %v), debe exponer la solicitud pendiente c2", callID, ok)
+		t.Fatalf("PendingPermission() = (%q, %v), must expose pending request c2", callID, ok)
 	}
-	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "c2", ToolName: "write", Error: "denegada por el usuario"})
-	if got := m.View(); strings.Contains(got, "(aprobar/denegar)") {
-		t.Fatalf("View() = %q, Tool.Failed de c2 debe retirar la solicitud pendiente", got)
+	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "c2", ToolName: "write", Error: "denied by the user"})
+	if got := m.View(); strings.Contains(got, "(allow/deny)") {
+		t.Fatalf("View() = %q, Tool.Failed for c2 must remove the pending request", got)
 	}
 	if callID, ok := m.PendingPermission(); ok {
-		t.Fatalf("PendingPermission() = (%q, %v), no debe quedar solicitud tras Tool.Failed", callID, ok)
+		t.Fatalf("PendingPermission() = (%q, %v), no request should remain after Tool.Failed", callID, ok)
 	}
 }
 
 // A tool that blocks on the ask-before-run gate emits Tool.Called (running "●")
 // immediately followed by Tool.Permission.Requested ("?") for the same call.
-// While the gate is open the transcript must show only the naranja "? <tool>"
+// While the gate is open the transcript must show only the orange "? <tool>"
 // ask, never a duplicate running header for that call. Approving keeps the tool
 // running, so its "●" header returns once the ask is gone.
 func TestModel_RunningToolHiddenWhilePermissionPending(t *testing.T) {
@@ -2473,12 +2459,12 @@ func TestModel_WorkingLineHiddenWhilePermissionPending(t *testing.T) {
 func TestModel_ShowsStepFailedError(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
-	m = apply(t, m, EventMsg{Kind: session.KindStepFailed, Error: "contexto agotado: limite de tokens"})
+	m = apply(t, m, EventMsg{Kind: session.KindStepFailed, Error: "context exhausted: token limit"})
 
 	view := m.View()
-	errLine := lineWith(t, view, "contexto agotado: limite de tokens")
+	errLine := lineWith(t, view, "context exhausted: token limit")
 	if !strings.Contains(errLine, "✗ error") {
-		t.Fatalf("linea del fallo = %q, debe llevar el marcador %q para distinguirse del texto normal", errLine, "✗ error")
+		t.Fatalf("failure line = %q, must carry marker %q to distinguish it from normal text", errLine, "✗ error")
 	}
 }
 
@@ -2489,7 +2475,7 @@ func TestModel_RendersActivityMarkersThroughToolLifecycle(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"ls"}`)})
 	plain := ansi.Strip(m.View())
 	if want := "  ● Bash     ls"; !strings.Contains(plain, want) {
-		t.Fatalf("View() sin ANSI = %q, la tool en ejecucion debe rendirse como %q: dos columnas de margen, marcador ●, nombre alineado a 8 columnas y resumen del Input", plain, want)
+		t.Fatalf("View() without ANSI = %q, the running tool must render as %q: two margin columns, marker ●, name aligned to 8 columns, and Input summary", plain, want)
 	}
 
 	m = apply(t, m, EventMsg{
@@ -2500,11 +2486,11 @@ func TestModel_RendersActivityMarkersThroughToolLifecycle(t *testing.T) {
 	m = m.syncViewport()
 	plain = ansi.Strip(m.View())
 	if want := "  ✓ Bash     ls"; !strings.Contains(plain, want) {
-		t.Fatalf("View() sin ANSI = %q, la tool exitosa debe asentarse como %q: el marcador ✓ reemplaza al ● en la misma columna", plain, want)
+		t.Fatalf("View() without ANSI = %q, the successful tool must settle as %q: marker ✓ replaces ● in the same column", plain, want)
 	}
 	railLine := lineWith(t, plain, "18 matches")
 	if want := "  │ 18 matches"; !strings.HasPrefix(railLine, want) {
-		t.Fatalf("linea del output = %q, debe llevar el rail con el mismo margen como %q", railLine, want)
+		t.Fatalf("output line = %q, must carry the rail with the same margin as %q", railLine, want)
 	}
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "bash", Input: json.RawMessage(`{"command":"false"}`)})
@@ -2513,14 +2499,14 @@ func TestModel_RendersActivityMarkersThroughToolLifecycle(t *testing.T) {
 	m = m.syncViewport()
 	plain = ansi.Strip(m.View())
 	if want := "  ✗ Bash     false"; !strings.Contains(plain, want) {
-		t.Fatalf("View() sin ANSI = %q, la tool fallida debe asentarse como %q: marcador ✗ con la misma columna de nombre", plain, want)
+		t.Fatalf("View() without ANSI = %q, the failed tool must settle as %q: marker ✗ with the same name column", plain, want)
 	}
 	failLine := lineWith(t, plain, "error: exit 1")
 	if want := "  │ error: exit 1"; !strings.HasPrefix(failLine, want) {
-		t.Fatalf("linea del fallo = %q, el error de la tool va debajo del header como linea de rail %q, no pegado al header", failLine, want)
+		t.Fatalf("failure line = %q, the tool error goes below the header as rail line %q, not attached to the header", failLine, want)
 	}
 	if strings.Contains(plain, "[tool]") {
-		t.Fatalf("View() sin ANSI = %q, NO debe contener el formato viejo %q: los marcadores de estado lo reemplazan", plain, "[tool]")
+		t.Fatalf("View() without ANSI = %q, must not contain old format %q: status markers replace it", plain, "[tool]")
 	}
 }
 
@@ -2536,24 +2522,24 @@ func TestModel_GroupsAdjacentActivityEntriesWithoutBlankLine(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "grep", Input: json.RawMessage(`{"pattern":"foo"}`)})
 
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
-	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "listo el analisis"})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "analysis complete"})
 	m = drainReveal(t, m)
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c3", ToolName: "bash", Input: json.RawMessage(`{"command":"pwd"}`)})
 
 	plain := ansi.Strip(m.View())
 	if want := "  ✓ Bash     ls\n  ● Grep     foo"; !strings.Contains(plain, want) {
-		t.Fatalf("View() sin ANSI = %q, debe contener %q: dos entradas de actividad adyacentes se agrupan en lineas fisicamente contiguas, sin linea en blanco entre si", plain, want)
+		t.Fatalf("View() without ANSI = %q, must contain %q: adjacent activity entries group into physically contiguous lines without a blank line", plain, want)
 	}
 
 	lines := strings.Split(plain, "\n")
-	narrIdx := lineIndexWith(t, plain, "listo el analisis")
+	narrIdx := lineIndexWith(t, plain, "analysis complete")
 	if narrIdx == 0 || strings.TrimSpace(lines[narrIdx-1]) != "" {
-		t.Fatalf("linea previa a la narrativa = %q, la narrativa del assistant rompe el grupo de actividad: se separa con linea en blanco", lines[narrIdx-1])
+		t.Fatalf("line before narrative = %q, assistant narrative breaks the activity group with a blank line", lines[narrIdx-1])
 	}
 	toolIdx := lineIndexWith(t, plain, "pwd")
 	if toolIdx == 0 || strings.TrimSpace(lines[toolIdx-1]) != "" {
-		t.Fatalf("linea previa a la tool posterior a la narrativa = %q, la actividad tras la narrativa abre grupo nuevo separado por linea en blanco", lines[toolIdx-1])
+		t.Fatalf("line before tool after narrative = %q, activity after narrative starts a new group separated by a blank line", lines[toolIdx-1])
 	}
 }
 
@@ -2568,7 +2554,7 @@ func TestModel_EditSuccessShowsDiffStatInHeader(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "edit", Input: json.RawMessage(`{"path":"main.go"}`)})
 	m = apply(t, m, EventMsg{
 		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "edit", Text: "ok",
-		Diff:    "--- a/main.go\n+++ b/main.go\n@@ -1,2 +1,3 @@\n-vieja\n+nueva\n+extra",
+		Diff:    "--- a/main.go\n+++ b/main.go\n@@ -1,2 +1,3 @@\n-old\n+new\n+extra",
 		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "ok", ToolCallID: "c1"},
 	})
 
@@ -2576,20 +2562,20 @@ func TestModel_EditSuccessShowsDiffStatInHeader(t *testing.T) {
 	hunk := lineWith(t, plain, "@@ -1,2 +1,3 @@")
 	for _, want := range []string{"@@ -1,2 +1,3 @@", "+2 -1"} {
 		if !strings.Contains(hunk, want) {
-			t.Fatalf("linea del hunk = %q, debe contener %q: el stat +N -M va en la barra del hunk", hunk, want)
+			t.Fatalf("hunk line = %q, must contain %q: the +N -M stat is in the hunk bar", hunk, want)
 		}
 	}
 	if strings.Contains(plain, "✓ Edit") {
-		t.Fatalf("View() sin ANSI = %q, NO debe contener %q: la tarjeta reemplaza la linea de actividad", plain, "✓ Edit")
+		t.Fatalf("View() without ANSI = %q, must not contain %q: the card replaces the activity line", plain, "✓ Edit")
 	}
 	// The changed lines go as numbered rows in the blocks, without the old rail.
-	for _, want := range []string{"1 - vieja", "1 + nueva", "2 + extra"} {
+	for _, want := range []string{"1 - old", "1 + new", "2 + extra"} {
 		if !strings.Contains(plain, want) {
-			t.Fatalf("View() sin ANSI = %q, debe contener la fila %q", plain, want)
+			t.Fatalf("View() without ANSI = %q, must contain row %q", plain, want)
 		}
 	}
-	if strings.Contains(plain, "│ +nueva") {
-		t.Fatalf("View() sin ANSI = %q, NO debe contener el rail viejo %q", plain, "│ +nueva")
+	if strings.Contains(plain, "│ +new") {
+		t.Fatalf("View() without ANSI = %q, must not contain old rail %q", plain, "│ +new")
 	}
 }
 
@@ -2608,11 +2594,11 @@ func TestModel_EditDiffOmitsEmptyRemovedBlock(t *testing.T) {
 	plain := ansi.Strip(m.View())
 	for _, want := range []string{"1 + line1", "2 + line2"} {
 		if !strings.Contains(plain, want) {
-			t.Fatalf("View() sin ANSI = %q, debe contener la fila agregada %q", plain, want)
+			t.Fatalf("View() without ANSI = %q, must contain added row %q", plain, want)
 		}
 	}
 	if strings.Contains(plain, " - ") {
-		t.Fatalf("View() sin ANSI = %q, una insercion pura no debe emitir ninguna fila quitada", plain)
+		t.Fatalf("View() without ANSI = %q, a pure insertion must not emit a removed row", plain)
 	}
 }
 
@@ -2624,33 +2610,33 @@ func TestModel_ToolSuccessShowsWriteCard(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "write", Input: json.RawMessage(`{"path":"nuevo.go","content":"package main"}`)})
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "write", Input: json.RawMessage(`{"path":"new.go","content":"package main"}`)})
 	m = apply(t, m, EventMsg{
 		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "write", Text: "ok",
-		Diff:    "--- a/nuevo.go\n+++ b/nuevo.go\n@@ -0,0 +1,2 @@\n+package main\n+// hola",
+		Diff:    "--- a/new.go\n+++ b/new.go\n@@ -0,0 +1,2 @@\n+package main\n+// hello",
 		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "ok", ToolCallID: "c1"},
 	})
 
 	plain := ansi.Strip(m.View())
 	// The route and each line are numbered but WITHOUT a + marker.
-	for _, want := range []string{"nuevo.go", "1  package main", "2  // hola"} {
+	for _, want := range []string{"new.go", "1  package main", "2  // hello"} {
 		if !strings.Contains(plain, want) {
-			t.Fatalf("View() sin ANSI = %q, debe contener %q: el write exitoso se rinde como tarjeta gris con ruta y lineas numeradas sin marcador", plain, want)
+			t.Fatalf("View() without ANSI = %q, must contain %q: successful write renders as a gray card with path and numbered lines without a marker", plain, want)
 		}
 	}
 	// The card replaces the line of activity.
 	if strings.Contains(plain, "✓ Write") {
-		t.Fatalf("View() sin ANSI = %q, NO debe contener %q: la tarjeta reemplaza la linea de actividad", plain, "✓ Write")
+		t.Fatalf("View() without ANSI = %q, must not contain %q: the card replaces the activity line", plain, "✓ Write")
 	}
 	// No hunk bar, no stat +N -M and no +/- marker on rows.
 	for _, banned := range []string{"@@", "+2 -0", "1 + package main", " - "} {
 		if strings.Contains(plain, banned) {
-			t.Fatalf("View() sin ANSI = %q, NO debe contener %q: el write no muestra hunk, stat ni marcador de diff", plain, banned)
+			t.Fatalf("View() without ANSI = %q, must not contain %q: write shows no hunk, stat, or diff marker", plain, banned)
 		}
 	}
 	// The row opens with the margin and the rail ▌ in the same column as the rest.
 	if row := lineWith(t, plain, "1  package main"); !strings.HasPrefix(row, activityInset+"▌") {
-		t.Fatalf("fila del write = %q, debe abrir con el margen %q y el rail ▌", row, activityInset)
+		t.Fatalf("write row = %q, must begin with margin %q and rail ▌", row, activityInset)
 	}
 }
 
@@ -2665,7 +2651,7 @@ func TestModel_WriteCardTruncatesLongFile(t *testing.T) {
 	var b strings.Builder
 	b.WriteString("--- a/big.go\n+++ b/big.go\n@@ -0,0 +1,60 @@\n")
 	for i := 1; i <= 60; i++ {
-		fmt.Fprintf(&b, "+linea-%02d\n", i)
+		fmt.Fprintf(&b, "+line-%02d\n", i)
 	}
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "write", Input: json.RawMessage(`{"path":"big.go"}`)})
 	m = apply(t, m, EventMsg{
@@ -2676,16 +2662,16 @@ func TestModel_WriteCardTruncatesLongFile(t *testing.T) {
 
 	plain := ansi.Strip(m.View())
 	// path (1) + 39 rows = 40 (the top); Line-39 is the last one that enters and 60-39 = 21 lines are hidden in the summary mark.
-	if !strings.Contains(plain, "linea-39") {
-		t.Fatalf("View() sin ANSI = %q, la ultima linea dentro del tope debe mostrarse", plain)
+	if !strings.Contains(plain, "line-39") {
+		t.Fatalf("View() without ANSI = %q, the last line within the limit must be shown", plain)
 	}
 	if !strings.Contains(plain, "… +21 lines") {
-		t.Fatalf("View() sin ANSI = %q, debe resumir el exceso como %q", plain, "… +21 lines")
+		t.Fatalf("View() without ANSI = %q, must summarize the excess as %q", plain, "… +21 lines")
 	}
 	// The first line beyond the top (and the following ones) do not appear.
-	for _, banned := range []string{"linea-40", "linea-60"} {
+	for _, banned := range []string{"line-40", "line-60"} {
 		if strings.Contains(plain, banned) {
-			t.Fatalf("View() sin ANSI = %q, NO debe contener %q: se corta en el tope", plain, banned)
+			t.Fatalf("View() without ANSI = %q, must not contain %q: it is cut at the limit", plain, banned)
 		}
 	}
 }
@@ -2696,7 +2682,7 @@ func TestModel_WriteWithoutDiffShowsActivityLine(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "write", Input: json.RawMessage(`{"path":"vacio.go","content":""}`)})
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "write", Input: json.RawMessage(`{"path":"empty.go","content":""}`)})
 	m = apply(t, m, EventMsg{
 		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "write", Text: "ok",
 		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "ok", ToolCallID: "c1"},
@@ -2704,22 +2690,22 @@ func TestModel_WriteWithoutDiffShowsActivityLine(t *testing.T) {
 
 	plain := ansi.Strip(m.View())
 	if !strings.Contains(plain, "✓ Write") {
-		t.Fatalf("View() sin ANSI = %q, un write sin diff conserva la linea de actividad", plain)
+		t.Fatalf("View() without ANSI = %q, an empty write without a diff preserves the activity line", plain)
 	}
 }
 
-// TRIANGULATE: destroy a header that truncates the name of the tool to the width of the alignment column (8) or that is too long: with a name longer than the column, the name remains integer and the summary is ONE space in the name.
+// TRIANGULATE: destroy a header that truncates the name of the tool to the width of the alignment column (8) or that is too long: with a name longer than the column, the name remains intact and the summary is ONE space in the name.
 func TestModel_ActivityHeaderKeepsLongToolNameReadable(t *testing.T) {
 	// A name longer than the column only appears in a tool that does not say how to present itself: the tools themselves have a short label (Bash, Edit, SubAgent).
 	const remote = "mcp_planner_present_plan"
 	m := NewModel(&fakeAgent{}, "s1", nil)
 
-	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: remote, Input: json.RawMessage(`{"plan":"migrar el runner"}`)})
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: remote, Input: json.RawMessage(`{"plan":"migrate the runner"}`)})
 
 	plain := ansi.Strip(m.View())
 	line := lineWith(t, plain, remote)
-	if want := "  ● " + remote + " migrar el runner"; line != want {
-		t.Fatalf("header = %q, want exactamente %q: un nombre mas largo que la columna de 8 no se trunca y el resumen queda a UN espacio del nombre", line, want)
+	if want := "  ● " + remote + " migrate the runner"; line != want {
+		t.Fatalf("header = %q, want exactly %q: a name longer than the 8-column width is not truncated and the summary stays ONE space from the name", line, want)
 	}
 }
 
@@ -2727,16 +2713,16 @@ func TestModel_ActivityHeaderKeepsLongToolNameReadable(t *testing.T) {
 func TestModel_ActivityHeaderWithoutSummaryHasNoTrailingSpaces(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil)
 
-	// Without Input and with Input `{}`: in both the summary is empty and the header must trim the spaces from the name alignment.
+	// Without Input and with Input `{}`: in both cases the summary is empty and the header must trim the spaces from the name alignment.
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash"})
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "grep", Input: json.RawMessage(`{}`)})
 
 	plain := ansi.Strip(m.View())
 	if line := lineWith(t, plain, "● Bash"); line != "  ● Bash" {
-		t.Fatalf("header sin Input = %q, want exactamente %q: sin resumen no quedan espacios colgantes de la alineacion", line, "  ● Bash")
+		t.Fatalf("header without Input = %q, want exactly %q: no trailing alignment spaces remain without a summary", line, "  ● Bash")
 	}
 	if line := lineWith(t, plain, "● Grep"); line != "  ● Grep" {
-		t.Fatalf("header con Input {} = %q, want exactamente %q: el objeto vacio no produce resumen ni espacios colgantes", line, "  ● Grep")
+		t.Fatalf("header with Input {} = %q, want exactly %q: the empty object produces no summary or trailing alignment spaces", line, "  ● Grep")
 	}
 }
 
@@ -2749,19 +2735,19 @@ func TestEntry_DiffStatIgnoresFileHeadersAndEmptyDiff(t *testing.T) {
 		removed int
 	}{
 		{
-			name:    "cabeceras, hunk y contenido",
-			diff:    "--- a/x\n+++ b/x\n@@ -1,2 +1,3 @@\n contexto\n-vieja\n+nueva\n+extra",
+			name:    "headers, hunk, and content",
+			diff:    "--- a/x\n+++ b/x\n@@ -1,2 +1,3 @@\n context\n-old\n+new\n+extra",
 			added:   2,
 			removed: 1,
 		},
 		{
-			name:    "solo cabeceras y contexto",
-			diff:    "--- a/x\n+++ b/x\n@@ -1,1 +1,1 @@\n contexto",
+			name:    "headers and context only",
+			diff:    "--- a/x\n+++ b/x\n@@ -1,1 +1,1 @@\n context",
 			added:   0,
 			removed: 0,
 		},
-		{name: "diff vacio", diff: "", added: 0, removed: 0},
-		{name: "lineas + y - peladas cuentan", diff: "+\n-", added: 1, removed: 1},
+		{name: "empty diff", diff: "", added: 0, removed: 0},
+		{name: "bare + and - lines count", diff: "+\n-", added: 1, removed: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2788,16 +2774,16 @@ func TestModel_SuccessWithoutDiffShowsNoStat(t *testing.T) {
 	plain := ansi.Strip(m.View())
 	header := lineWith(t, plain, "✓ Bash")
 	if want := "  ✓ Bash     ls"; header != want {
-		t.Fatalf("header = %q, want exactamente %q: el exito sin diff no agrega nada tras el resumen", header, want)
+		t.Fatalf("header = %q, want exactly %q: success without diff adds nothing after the summary", header, want)
 	}
 	for _, banned := range []string{"+0 -0", " +"} {
 		if strings.Contains(header, banned) {
-			t.Fatalf("header = %q, NO debe contener %q: el stat +N -M solo aplica cuando hay diff", header, banned)
+			t.Fatalf("header = %q, MUST NOT contain %q: the +N -M stat applies only when there is a diff", header, banned)
 		}
 	}
 	for _, needle := range []string{"main.go", "view.go"} {
 		if line := lineWith(t, plain, needle); !strings.HasPrefix(line, "  │ ") {
-			t.Fatalf("linea del output = %q, el output de la tool exitosa va con el rail %q tras el margen", line, "  │ ")
+			t.Fatalf("output line = %q, successful tool output uses the rail %q after the margin", line, "  │ ")
 		}
 	}
 }
@@ -2817,23 +2803,23 @@ func TestModel_PermissionAndErrorJoinActivityGroup(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindStepFailed, Error: "boom"})
 
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
-	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "sigo con el resto"})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "I continue with the rest"})
 	m = drainReveal(t, m)
 
 	plain := ansi.Strip(m.View())
 	// The running "● Write" header is hidden while its permission is still pending: only the orange "? Write" line of the permission represents the gated call, without duplicating it in two contiguous rows.
 	want := "  ✓ Bash     ls\n  ? Write    b.go\n  ✗ error    boom"
 	if !strings.Contains(plain, want) {
-		t.Fatalf("View() sin ANSI = %q, debe contener %q: la tool exitosa, el permiso pendiente y el error de step quedan fisicamente contiguos, sin lineas en blanco entre si", plain, want)
+		t.Fatalf("View() without ANSI = %q, must contain %q: the successful tool, pending permission, and step error remain physically contiguous, without blank lines", plain, want)
 	}
 	if strings.Contains(plain, "● Write") {
-		t.Fatalf("View() sin ANSI = %q, el header en ejecucion no debe duplicar la llamada mientras su permiso sigue pendiente", plain)
+		t.Fatalf("View() without ANSI = %q, the running header must not duplicate the call while its permission remains pending", plain)
 	}
 
 	lines := strings.Split(plain, "\n")
-	narrIdx := lineIndexWith(t, plain, "sigo con el resto")
+	narrIdx := lineIndexWith(t, plain, "I continue with the rest")
 	if narrIdx == 0 || strings.TrimSpace(lines[narrIdx-1]) != "" {
-		t.Fatalf("linea previa a la narrativa = %q, la narrativa del assistant tras el grupo de actividad se separa con linea en blanco", lines[narrIdx-1])
+		t.Fatalf("line before narrative = %q, the assistant narrative after the activity group is separated by a blank line", lines[narrIdx-1])
 	}
 }
 
@@ -2852,17 +2838,17 @@ func TestModel_ToolInputDeltasAreNotTranscript(t *testing.T) {
 
 	// The normal text of the assistant is transcribed: contrasts with the above.
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
-	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "respuesta visible"})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "visible response"})
 	m = drainReveal(t, m)
 
 	view := m.View()
 	for _, leak := range []string{"pienso en secreto", `{"cmd":"ls`} {
 		if strings.Contains(view, leak) {
-			t.Fatalf("View() = %q, no debe filtrar %q como texto de la conversacion", view, leak)
+			t.Fatalf("View() = %q, must not filter %q as conversation text", view, leak)
 		}
 	}
-	if !strings.Contains(view, "respuesta visible") {
-		t.Fatalf("View() = %q, el texto del assistant si debe verse", view)
+	if !strings.Contains(view, "visible response") {
+		t.Fatalf("View() = %q, assistant text must be visible", view)
 	}
 }
 
@@ -2870,23 +2856,23 @@ func TestModel_ToolInputDeltasAreNotTranscript(t *testing.T) {
 func TestModel_ShowsReasoningAsCollapsibleThinkingBlock(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
-	text := "razon-1\nrazon-2\nrazon-3\nrazon-4\nrazon-5\nrazon-6"
+	text := "reason-1\nreason-2\nreason-3\nreason-4\nreason-5\nreason-6"
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: text})
 	m = drainReveal(t, m)
 
 	view := m.View()
 	if !strings.Contains(view, "◆ Thinking…") {
-		t.Fatalf("View() = %q, el reasoning en curso debe mostrar la cabecera %q", view, "◆ Thinking…")
+		t.Fatalf("View() = %q, active reasoning must show the header %q", view, "◆ Thinking…")
 	}
-	for _, want := range []string{"razon-3", "razon-4", "razon-5", "razon-6"} {
+	for _, want := range []string{"reason-3", "reason-4", "reason-5", "reason-6"} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("View() = %q, el preview debe mostrar %q (las ultimas 4 lineas no vacias del texto revelado)", view, want)
+			t.Fatalf("View() = %q, preview must show %q (the last 4 non-empty lines of revealed text)", view, want)
 		}
 	}
-	for _, gone := range []string{"razon-1", "razon-2"} {
+	for _, gone := range []string{"reason-1", "reason-2"} {
 		if strings.Contains(view, gone) {
-			t.Fatalf("View() = %q, %q ya salio de la ventana deslizante: solo se muestran las ultimas 4 lineas no vacias", view, gone)
+			t.Fatalf("View() = %q, %q has left the sliding window: only the last 4 non-empty lines are shown", view, gone)
 		}
 	}
 
@@ -2895,13 +2881,13 @@ func TestModel_ShowsReasoningAsCollapsibleThinkingBlock(t *testing.T) {
 
 	view = m.View()
 	if !strings.Contains(view, "◆ Thought") {
-		t.Fatalf("View() = %q, el reasoning terminado debe colapsar a una linea de resumen con el prefijo %q", view, "◆ Thought")
+		t.Fatalf("View() = %q, completed reasoning must collapse to a summary line with prefix %q", view, "◆ Thought")
 	}
 	if strings.Contains(view, "◆ Thinking…") {
-		t.Fatalf("View() = %q, la cabecera %q debe desaparecer al colapsar el bloque", view, "◆ Thinking…")
+		t.Fatalf("View() = %q, header %q must disappear when the block collapses", view, "◆ Thinking…")
 	}
-	if strings.Contains(view, "razon-6") {
-		t.Fatalf("View() = %q, las lineas del preview deben desaparecer al colapsar el bloque", view)
+	if strings.Contains(view, "reason-6") {
+		t.Fatalf("View() = %q, preview lines must disappear when the block collapses", view)
 	}
 }
 
@@ -2916,24 +2902,24 @@ func TestModel_ThinkingRevealsProgressivelyLikeAssistant(t *testing.T) {
 
 	view := m.View()
 	if strings.Contains(view, "token-final") {
-		t.Fatalf("View() = %q, %q NO debe verse sin ticks de reveal: el delta del pensamiento se revela progresivamente, no de golpe", view, "token-final")
+		t.Fatalf("View() = %q, %q MUST NOT be visible without reveal ticks: thought delta is revealed progressively, not all at once", view, "token-final")
 	}
 	if strings.Contains(view, "inicio-marca") {
-		t.Fatalf("View() = %q, %q NO debe verse sin ticks de reveal: tambien el prefijo espera su tick", view, "inicio-marca")
+		t.Fatalf("View() = %q, %q MUST NOT be visible without reveal ticks: the prefix also waits for its tick", view, "inicio-marca")
 	}
 
 	m = apply(t, m, revealTickMsg{})
 	view = m.View()
 	if !strings.Contains(view, "inicio-marca") {
-		t.Fatalf("View() = %q, tras UN tick debe verse el prefijo %q del pensamiento", view, "inicio-marca")
+		t.Fatalf("View() = %q, after ONE tick the prefix %q must be visible", view, "inicio-marca")
 	}
 	if strings.Contains(view, "token-final") {
-		t.Fatalf("View() = %q, tras UN tick el final %q aun NO debe verse: un tick revela un paso, no todo el backlog", view, "token-final")
+		t.Fatalf("View() = %q, after ONE tick the final %q must NOT yet be visible: one tick reveals one step, not the whole backlog", view, "token-final")
 	}
 
 	m = drainReveal(t, m)
 	if view := m.View(); !strings.Contains(view, "token-final") {
-		t.Fatalf("View() = %q, con el backlog drenado el final %q debe verse en la ventana del preview", view, "token-final")
+		t.Fatalf("View() = %q, after the backlog drains the final %q must be visible in the preview window", view, "token-final")
 	}
 }
 
@@ -2951,10 +2937,10 @@ func TestModel_ThinkingPreviewSkipsBlankLines(t *testing.T) {
 	}
 	view := strings.Join(lines, "\n")
 	if !strings.Contains(view, "  ◆ Thinking…\n  r2\n  r3\n  r4\n  r5") {
-		t.Fatalf("View() = %q, el preview debe contener las ultimas 4 lineas NO vacias con el inset uniforme (%q): ni blancos intercalados ni lineas de contenido perdidas", view, "  ◆ Thinking…\n  r2\n  r3\n  r4\n  r5")
+		t.Fatalf("View() = %q, the preview must contain the last 4 NON-EMPTY lines with uniform inset (%q): no interspersed blanks or lost content lines", view, "  ◆ Thinking…\n  r2\n  r3\n  r4\n  r5")
 	}
 	if strings.Contains(view, "r1") {
-		t.Fatalf("View() = %q, %q ya salio de la ventana de 4 lineas no vacias", view, "r1")
+		t.Fatalf("View() = %q, %q has left the 4-line window", view, "r1")
 	}
 }
 
@@ -2979,21 +2965,21 @@ func TestModel_ThinkingKeepsChatInsetWhileStreamingAndExpanded(t *testing.T) {
 func TestEntry_RenderThinkingInsetsEveryWrappedLine(t *testing.T) {
 	e := entry{
 		kind:     entryReasoning,
-		text:     strings.Repeat("pensamiento-largo ", 8),
-		revealed: len(strings.Repeat("pensamiento-largo ", 8)),
+		text:     strings.Repeat("long-thought ", 8),
+		revealed: len(strings.Repeat("long-thought ", 8)),
 		expanded: true,
 	}
 
 	lines := strings.Split(ansi.Strip(e.renderThinking(24)), "\n")
 	if len(lines) < 3 {
-		t.Fatalf("renderThinking() produjo %d lineas, want cabecera y multiples lineas envueltas: %q", len(lines), lines)
+		t.Fatalf("renderThinking() produced %d lines, want a header and multiple wrapped lines: %q", len(lines), lines)
 	}
 	for _, line := range lines {
 		if !strings.HasPrefix(line, thinkingInset) {
-			t.Fatalf("linea envuelta = %q, want inset %q", line, thinkingInset)
+			t.Fatalf("wrapped line = %q, want inset %q", line, thinkingInset)
 		}
 		if got, want := ansi.StringWidth(line), 24; got > want {
-			t.Fatalf("ancho de linea envuelta = %d, want <= %d: %q", got, want, line)
+			t.Fatalf("wrapped line width = %d, want <= %d: %q", got, want, line)
 		}
 	}
 }
@@ -3003,7 +2989,7 @@ func assertThinkingInset(t *testing.T, view string, needles ...string) {
 	for _, needle := range needles {
 		line := strings.TrimRight(lineWith(t, ansi.Strip(view), needle), " ")
 		if !strings.HasPrefix(line, "  ") {
-			t.Fatalf("linea de pensamiento %q = %q, want inset de dos celdas", needle, line)
+			t.Fatalf("thought line %q = %q, want two-cell inset", needle, line)
 		}
 	}
 }
@@ -3013,22 +2999,22 @@ func TestModel_TextStartedClosesLiveThinking(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
-	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "sopeso opciones"})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "I weigh options"})
 	m = drainReveal(t, m)
 
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
-	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "respuesta"})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "response"})
 	m = drainReveal(t, m)
 
 	view := m.View()
 	if strings.Contains(view, "◆ Thinking…") {
-		t.Fatalf("View() = %q, Text.Started debe cerrar el pensamiento en vivo: la cabecera %q no puede sobrevivir al arranque de la respuesta", view, "◆ Thinking…")
+		t.Fatalf("View() = %q, Text.Started must close active thought: header %q cannot survive response start", view, "◆ Thinking…")
 	}
 	if !strings.Contains(view, "◆ Thought") {
-		t.Fatalf("View() = %q, el pensamiento cerrado defensivamente debe colapsar al resumen %q", view, "◆ Thought")
+		t.Fatalf("View() = %q, defensively closed thought must collapse to summary %q", view, "◆ Thought")
 	}
-	if !strings.Contains(view, "respuesta") {
-		t.Fatalf("View() = %q, la respuesta %q debe verse tras el pensamiento colapsado", view, "respuesta")
+	if !strings.Contains(view, "response") {
+		t.Fatalf("View() = %q, response %q must appear after collapsed thought", view, "response")
 	}
 }
 
@@ -3037,17 +3023,17 @@ func TestModel_StepEndedClosesLiveThinking(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
-	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "pienso y el step muere"})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "I think and the step dies"})
 	m = drainReveal(t, m)
 
 	m = apply(t, m, EventMsg{Kind: session.KindStepEnded})
 
 	view := m.View()
 	if strings.Contains(view, "◆ Thinking…") {
-		t.Fatalf("View() = %q, Step.Ended debe cerrar el pensamiento en vivo: la cabecera %q no puede sobrevivir al fin del step", view, "◆ Thinking…")
+		t.Fatalf("View() = %q, Step.Ended must close active thought: header %q cannot survive step end", view, "◆ Thinking…")
 	}
 	if !strings.Contains(view, "◆ Thought") {
-		t.Fatalf("View() = %q, el pensamiento cerrado por el fin del step debe colapsar al resumen %q", view, "◆ Thought")
+		t.Fatalf("View() = %q, thought closed by step end must collapse to summary %q", view, "◆ Thought")
 	}
 }
 
@@ -3056,22 +3042,22 @@ func TestModel_ReasoningEndedTextCollapsesWithoutAnimation(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
-	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: "relleno-final-sin-stream"})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: "final-filler-without-stream"})
 
 	view := m.View()
 	if !strings.Contains(view, "◆ Thought") {
-		t.Fatalf("View() = %q, sin deltas previos el Ended con texto debe colapsar de inmediato al resumen %q, sin ticks de por medio", view, "◆ Thought")
+		t.Fatalf("View() = %q, Ended text with no prior deltas must immediately collapse to summary %q, without ticks", view, "◆ Thought")
 	}
 	if strings.Contains(view, "◆ Thinking…") {
-		t.Fatalf("View() = %q, la cabecera %q no debe verse tras el Ended: el texto de relleno no se anima", view, "◆ Thinking…")
+		t.Fatalf("View() = %q, header %q must not appear after Ended: filler text is not animated", view, "◆ Thinking…")
 	}
-	if strings.Contains(view, "relleno-final-sin-stream") {
-		t.Fatalf("View() = %q, el texto de relleno del Ended jamas debe verse plano, ni siquiera antes de drenar", view)
+	if strings.Contains(view, "final-filler-without-stream") {
+		t.Fatalf("View() = %q, Ended filler text must never appear flat, even before draining", view)
 	}
 
 	m = drainReveal(t, m)
-	if view := m.View(); strings.Contains(view, "relleno-final-sin-stream") {
-		t.Fatalf("View() = %q, el texto de relleno tampoco debe aparecer tras drenar: no quedo backlog que animar", view)
+	if view := m.View(); strings.Contains(view, "final-filler-without-stream") {
+		t.Fatalf("View() = %q, filler text must not appear after draining either: no backlog remains to animate", view)
 	}
 }
 
@@ -3080,29 +3066,29 @@ func TestModel_TwoThinkingBlocksInSameRunStaySeparate(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
-	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "primero-a\nprimero-b"})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "first-a\nfirst-b"})
 	m = drainReveal(t, m)
-	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: "primero-a\nprimero-b"})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: "first-a\nfirst-b"})
 	m = drainReveal(t, m)
 
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
-	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "segundo-a\nsegundo-b"})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "second-a\nsecond-b"})
 	m = drainReveal(t, m)
 
 	view := m.View()
-	if !strings.Contains(view, "segundo-a") || !strings.Contains(view, "segundo-b") {
-		t.Fatalf("View() = %q, el preview del segundo pensamiento debe mostrar sus lineas", view)
+	if !strings.Contains(view, "second-a") || !strings.Contains(view, "second-b") {
+		t.Fatalf("View() = %q, the second thought preview must show its lines", view)
 	}
-	if strings.Contains(view, "primero-a") || strings.Contains(view, "primero-b") {
-		t.Fatalf("View() = %q, el preview del segundo pensamiento NO debe mezclar lineas del primero (ya colapsado)", view)
+	if strings.Contains(view, "first-a") || strings.Contains(view, "first-b") {
+		t.Fatalf("View() = %q, the second thought preview MUST NOT mix lines from the first (already collapsed)", view)
 	}
 
-	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: "segundo-a\nsegundo-b"})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: "second-a\nsecond-b"})
 	m = drainReveal(t, m)
 
 	view = m.View()
 	if count := strings.Count(view, "◆ Thought"); count < 2 {
-		t.Fatalf("View() = %q, dos pensamientos en la misma corrida deben colapsar a DOS resumenes %q (count=%d)", view, "◆ Thought", count)
+		t.Fatalf("View() = %q, two thoughts in one run must collapse to TWO summaries %q (count=%d)", view, "◆ Thought", count)
 	}
 }
 
@@ -3110,7 +3096,7 @@ func TestModel_ThinkingCollapseWaitsForRevealDrain(t *testing.T) {
 	// TRIANGULATE: An instant crash upon receiving Ended with pending backlog would cut the animation mid-sentence. Parity with the desktop gift: the block continues "writing" until the reveal is drained and only then collapses to the summary.
 	m := NewModel(nil, "s1", nil)
 
-	text := "inicio-fluye " + strings.Repeat("c", 150) + "\n" + strings.Repeat("d", 150) + " final-tardio"
+	text := "flowing-start " + strings.Repeat("c", 150) + "\n" + strings.Repeat("d", 150) + " late-final"
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: text})
 	// A tick so that there is a visible prefix to assert before the Ended.
@@ -3119,22 +3105,22 @@ func TestModel_ThinkingCollapseWaitsForRevealDrain(t *testing.T) {
 
 	view := m.View()
 	if !strings.Contains(view, "◆ Thinking…") {
-		t.Fatalf("View() = %q, con backlog pendiente el Ended NO colapsa todavia: la cabecera %q debe seguir mientras se drena", view, "◆ Thinking…")
+		t.Fatalf("View() = %q, Ended does NOT collapse while backlog remains: header %q must continue during draining", view, "◆ Thinking…")
 	}
-	if !strings.Contains(view, "inicio-fluye") {
-		t.Fatalf("View() = %q, el prefijo ya revelado %q debe seguir visible mientras el pensamiento termina de escribirse", view, "inicio-fluye")
+	if !strings.Contains(view, "flowing-start") {
+		t.Fatalf("View() = %q, revealed prefix %q must remain visible while the thought finishes writing", view, "flowing-start")
 	}
 	if strings.Contains(view, "◆ Thought") {
-		t.Fatalf("View() = %q, el resumen %q no debe aparecer hasta drenar el backlog del reveal", view, "◆ Thought")
+		t.Fatalf("View() = %q, summary %q must not appear until reveal backlog drains", view, "◆ Thought")
 	}
 
 	m = drainReveal(t, m)
 	view = m.View()
 	if !strings.Contains(view, "◆ Thought") {
-		t.Fatalf("View() = %q, con el backlog drenado el pensamiento cerrado debe colapsar al resumen %q", view, "◆ Thought")
+		t.Fatalf("View() = %q, after backlog drains the closed thought must collapse to summary %q", view, "◆ Thought")
 	}
 	if strings.Contains(view, "◆ Thinking…") {
-		t.Fatalf("View() = %q, la cabecera %q debe desaparecer al colapsar", view, "◆ Thinking…")
+		t.Fatalf("View() = %q, header %q must disappear when collapsing", view, "◆ Thinking…")
 	}
 }
 
@@ -3143,29 +3129,29 @@ func TestModel_SecondTurnOpensNewBlock(t *testing.T) {
 
 	// First complete turn: streaming, closing the block and closing the step.
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
-	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "Primera respuesta"})
-	m = apply(t, m, EventMsg{Kind: session.KindTextEnded, Text: "Primera respuesta"})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "First response"})
+	m = apply(t, m, EventMsg{Kind: session.KindTextEnded, Text: "First response"})
 	m = apply(t, m, EventMsg{
 		Kind:    session.KindStepEnded,
-		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: "Primera respuesta"},
+		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: "First response"},
 	})
 
 	// Second turn: the new streaming opens a NEW block.
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
-	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "Segunda respuesta"})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "Second response"})
 	m = drainReveal(t, m)
 
 	view := m.View()
-	if strings.Contains(view, "Primera respuestaSegunda respuesta") {
-		t.Fatalf("View() = %q, el segundo turno NO debe concatenar al bloque anterior", view)
+	if strings.Contains(view, "First responseSecond response") {
+		t.Fatalf("View() = %q, the second turn MUST NOT concatenate with the previous block", view)
 	}
-	first := strings.Index(view, "Primera respuesta")
-	second := strings.Index(view, "Segunda respuesta")
+	first := strings.Index(view, "First response")
+	second := strings.Index(view, "Second response")
 	if first < 0 || second < 0 || first >= second {
-		t.Fatalf("View() sin ANSI = %q, ambos textos deben verse como bloques separados y ordenados", view)
+		t.Fatalf("View() without ANSI = %q, both texts must appear as separate, ordered blocks", view)
 	}
-	if count := strings.Count(view, "Primera respuesta"); count != 1 {
-		t.Fatalf("View() = %q, %q debe aparecer exactamente una vez (count=%d)", view, "Primera respuesta", count)
+	if count := strings.Count(view, "First response"); count != 1 {
+		t.Fatalf("View() = %q, %q must appear exactly once (count=%d)", view, "First response", count)
 	}
 }
 
@@ -3176,10 +3162,10 @@ func TestModel_EnterWithEmptyInputDoesNotSend(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	if len(fake.sent) != 0 {
-		t.Fatalf("SendPrompt fue llamado %d veces, Enter con input vacio no debe enviar nada", len(fake.sent))
+		t.Fatalf("SendPrompt was called %d times, Enter with empty input must send nothing", len(fake.sent))
 	}
 	if m.Working() {
-		t.Fatalf("Working() = true, Enter con input vacio no debe marcar el modelo como trabajando")
+		t.Fatalf("Working() = true, Enter with empty input must not mark the model working")
 	}
 }
 
@@ -3192,23 +3178,23 @@ func TestModel_PermissionKeysResolveViaAgent(t *testing.T) {
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
 	if len(fake.resolved) != 1 {
-		t.Fatalf("ResolvePermission fue llamado %d veces, 'y' debe resolver exactamente una vez", len(fake.resolved))
+		t.Fatalf("ResolvePermission was called %d times, 'y' must resolve exactly once", len(fake.resolved))
 	}
 	if got := fake.resolved[0]; got.sessionID != "s1" || got.callID != "c1" || !got.approved() {
-		t.Fatalf("ResolvePermission(%q, %q, %v), se esperaba ResolvePermission(%q, %q, true)", got.sessionID, got.callID, got.approved(), "s1", "c1")
+		t.Fatalf("ResolvePermission(%q, %q, %v), expected ResolvePermission(%q, %q, true)", got.sessionID, got.callID, got.approved(), "s1", "c1")
 	}
 	if got := m.input.Value(); got != "" {
-		t.Fatalf("input.Value() = %q, la runa 'y' NO debe entrar al input mientras hay permiso pendiente", got)
+		t.Fatalf("input.Value() = %q, rune 'y' MUST NOT enter input while permission is pending", got)
 	}
 	if callID, ok := m.PendingPermission(); ok {
-		t.Fatalf("PendingPermission() = (%q, %v), resolver debe ocultar inmediatamente el panel y evitar dobles decisiones", callID, ok)
+		t.Fatalf("PendingPermission() = (%q, %v), resolving must immediately hide the panel and prevent duplicate decisions", callID, ok)
 	}
 	m = apply(t, m, EventMsg{
 		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "bash", Text: "ok",
 		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "ok", ToolCallID: "c1"},
 	})
 	if callID, ok := m.PendingPermission(); ok {
-		t.Fatalf("PendingPermission() = (%q, %v), Tool.Success debe retirar la solicitud", callID, ok)
+		t.Fatalf("PendingPermission() = (%q, %v), Tool.Success must remove the request", callID, ok)
 	}
 
 	// Scenario 2: 'n' denies pending request c2; Additionally, the runes do not enter the input and Enter does not send a prompt while permission is pending.
@@ -3217,23 +3203,23 @@ func TestModel_PermissionKeysResolveViaAgent(t *testing.T) {
 	m2 = apply(t, m2, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "write", Input: json.RawMessage(`{"path":"a.go"}`)})
 	m2 = apply(t, m2, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c2", ToolName: "write", Input: json.RawMessage(`{"path":"a.go"}`)})
 
-	m2 = apply(t, m2, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
+	m2 = apply(t, m2, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello")})
 	if got := m2.input.Value(); got != "" {
-		t.Fatalf("input.Value() = %q, las runas NO deben entrar al input mientras hay permiso pendiente", got)
+		t.Fatalf("input.Value() = %q, runes MUST NOT enter input while permission is pending", got)
 	}
 	m2 = apply(t, m2, tea.KeyMsg{Type: tea.KeyEnter})
 	if len(fake2.sent) != 0 {
-		t.Fatalf("SendPrompt fue llamado %d veces, Enter NO debe enviar prompt mientras hay permiso pendiente", len(fake2.sent))
+		t.Fatalf("SendPrompt was called %d times, Enter MUST NOT send a prompt while permission is pending", len(fake2.sent))
 	}
 	m2 = apply(t, m2, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
 	if len(fake2.resolved) != 1 {
-		t.Fatalf("ResolvePermission fue llamado %d veces, 'n' debe resolver exactamente una vez", len(fake2.resolved))
+		t.Fatalf("ResolvePermission was called %d times, 'n' must resolve exactly once", len(fake2.resolved))
 	}
 	if got := fake2.resolved[0]; got.sessionID != "s1" || got.callID != "c2" || got.approved() {
-		t.Fatalf("ResolvePermission(%q, %q, %v), se esperaba ResolvePermission(%q, %q, false)", got.sessionID, got.callID, got.approved(), "s1", "c2")
+		t.Fatalf("ResolvePermission(%q, %q, %v), expected ResolvePermission(%q, %q, false)", got.sessionID, got.callID, got.approved(), "s1", "c2")
 	}
 	if got := ansi.Strip(m2.View()); !strings.Contains(got, "Denied by user") || strings.Contains(got, "Permission required") {
-		t.Fatalf("View() = %q, denegar debe cerrar el panel y dejar un estado neutral en el transcript", got)
+		t.Fatalf("View() = %q, deny must close the panel and leave a neutral transcript state", got)
 	}
 }
 
@@ -3665,10 +3651,10 @@ func TestModel_PermissionResolvesWithEventSessionID(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
 
 	if len(fake.resolved) != 1 {
-		t.Fatalf("ResolvePermission fue llamado %d veces, 'y' debe resolver exactamente una vez", len(fake.resolved))
+		t.Fatalf("ResolvePermission was called %d times, 'y' must resolve exactly once", len(fake.resolved))
 	}
 	if got := fake.resolved[0]; got.sessionID != "child-1" || got.callID != "c9" || !got.approved() {
-		t.Fatalf("ResolvePermission(%q, %q, %v), se esperaba ResolvePermission(%q, %q, true): el permiso del subagente se resuelve con el SessionID del evento", got.sessionID, got.callID, got.approved(), "child-1", "c9")
+		t.Fatalf("ResolvePermission(%q, %q, %v), expected ResolvePermission(%q, %q, true): the subagent permission uses the event SessionID", got.sessionID, got.callID, got.approved(), "child-1", "c9")
 	}
 }
 
@@ -3678,18 +3664,18 @@ func TestModel_CtrlCStopsAndQuits(t *testing.T) {
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	if _, ok := updated.(Model); !ok {
-		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+		t.Fatalf("Update returned %T, expected tui.Model", updated)
 	}
 	if len(fake.stopped) != 1 || fake.stopped[0] != "s1" {
-		t.Fatalf("Stop = %v, Ctrl+C debe llamar Stop(%q) exactamente una vez", fake.stopped, "s1")
+		t.Fatalf("Stop = %v, Ctrl+C must call Stop(%q) exactly once", fake.stopped, "s1")
 	}
 	if cmd == nil {
-		t.Fatalf("cmd = nil, Ctrl+C debe devolver un tea.Cmd que produzca tea.QuitMsg")
+		t.Fatalf("cmd = nil, Ctrl+C must return a tea.Cmd producing tea.QuitMsg")
 	}
 	if msg := cmd(); msg == nil {
-		t.Fatalf("cmd() = nil, se esperaba tea.QuitMsg")
+		t.Fatalf("cmd() = nil, expected tea.QuitMsg")
 	} else if _, ok := msg.(tea.QuitMsg); !ok {
-		t.Fatalf("cmd() = %T, se esperaba tea.QuitMsg", msg)
+		t.Fatalf("cmd() = %T, expected tea.QuitMsg", msg)
 	}
 
 	// With permission pending Ctrl+C still works the same.
@@ -3700,15 +3686,15 @@ func TestModel_CtrlCStopsAndQuits(t *testing.T) {
 
 	_, cmd2 := m2.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	if len(fake2.stopped) != 1 || fake2.stopped[0] != "s1" {
-		t.Fatalf("Stop = %v, Ctrl+C con permiso pendiente debe llamar Stop(%q)", fake2.stopped, "s1")
+		t.Fatalf("Stop = %v, Ctrl+C with pending permission must call Stop(%q)", fake2.stopped, "s1")
 	}
 	if cmd2 == nil {
-		t.Fatalf("cmd = nil, Ctrl+C con permiso pendiente debe devolver un tea.Cmd que produzca tea.QuitMsg")
+		t.Fatalf("cmd = nil, Ctrl+C with pending permission must return a tea.Cmd producing tea.QuitMsg")
 	}
 	if msg := cmd2(); msg == nil {
-		t.Fatalf("cmd() = nil, se esperaba tea.QuitMsg con permiso pendiente")
+		t.Fatalf("cmd() = nil, expected tea.QuitMsg with pending permission")
 	} else if _, ok := msg.(tea.QuitMsg); !ok {
-		t.Fatalf("cmd() = %T, se esperaba tea.QuitMsg con permiso pendiente", msg)
+		t.Fatalf("cmd() = %T, expected tea.QuitMsg with pending permission", msg)
 	}
 }
 
@@ -3723,31 +3709,31 @@ func TestModel_EscRequiresConfirmationBeforeStopping(t *testing.T) {
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = updated.(Model)
 	if len(fake.stopped) != 0 {
-		t.Fatalf("Stop = %v, el primer Esc solo debe pedir confirmacion", fake.stopped)
+		t.Fatalf("Stop = %v, the first Esc should only request confirmation", fake.stopped)
 	}
 	if cmd == nil {
-		t.Fatal("cmd = nil, el primer Esc debe programar la expiracion de la confirmacion")
+		t.Fatal("cmd = nil, the first Esc should schedule confirmation expiration")
 	}
 	if plain := ansi.Strip(m.View()); !strings.Contains(plain, "Esc again to cancel") {
-		t.Fatalf("View() = %q, falta la confirmacion bajo el composer", plain)
+		t.Fatalf("View() = %q, confirmation is missing below the composer", plain)
 	}
 	line := ansi.Strip(lineWith(t, m.View(), "Esc again to cancel"))
 	if !strings.HasPrefix(line, "  Esc again to cancel") || !strings.Contains(line, "1 file changed  +2  −1") {
-		t.Fatalf("linea bajo composer = %q, el aviso debe quedar a la izquierda y Git a la derecha", line)
+		t.Fatalf("line below composer = %q, the notice should remain on the left and Git on the right", line)
 	}
 
 	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = updated.(Model)
 	if len(fake.stopped) != 1 || fake.stopped[0] != "s1" {
-		t.Fatalf("Stop = %v, el segundo Esc debe llamar Stop(%q) exactamente una vez", fake.stopped, "s1")
+		t.Fatalf("Stop = %v, the second Esc must call Stop(%q) exactly once", fake.stopped, "s1")
 	}
 	if cmd != nil {
 		if _, quits := cmd().(tea.QuitMsg); quits {
-			t.Fatal("el segundo Esc debe cancelar la corrida sin salir de la TUI")
+			t.Fatal("the second Esc should cancel the run without quitting the TUI")
 		}
 	}
 	if plain := ansi.Strip(m.View()); strings.Contains(plain, "Esc again to cancel") {
-		t.Fatalf("View() = %q, la confirmacion debe desaparecer al cancelar", plain)
+		t.Fatalf("View() = %q, confirmation must disappear after cancellation", plain)
 	}
 }
 
@@ -3761,10 +3747,10 @@ func TestModel_EscConfirmationDisarms(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
 	if m.cancelPending || strings.Contains(ansi.Strip(m.View()), "Esc again to cancel") {
-		t.Fatal("una tecla distinta de Esc debe desarmar la confirmacion")
+		t.Fatal("a key other than Esc must disarm the confirmation")
 	}
 	if got := m.input.Value(); got != "x" {
-		t.Fatalf("input = %q, la tecla que desarma debe procesarse normalmente", got)
+		t.Fatalf("input = %q, the disarming key must be processed normally", got)
 	}
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
@@ -3772,13 +3758,13 @@ func TestModel_EscConfirmationDisarms(t *testing.T) {
 	m = apply(t, m, cancelConfirmationExpiredMsg{generation: generation})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
 	if len(fake.stopped) != 0 || !m.cancelPending {
-		t.Fatalf("Stop = %v pending = %v, tras expirar Esc debe iniciar una confirmacion nueva", fake.stopped, m.cancelPending)
+		t.Fatalf("Stop = %v pending = %v, after Esc expires it should start a new confirmation", fake.stopped, m.cancelPending)
 	}
 
 	idle := NewModel(fake, "s1", nil)
 	idle = apply(t, idle, tea.KeyMsg{Type: tea.KeyEsc})
 	if idle.cancelPending {
-		t.Fatal("Esc sin corrida activa no debe mostrar confirmacion")
+		t.Fatal("Esc without an active run must not show confirmation")
 	}
 }
 
@@ -3786,67 +3772,67 @@ func TestModel_RunDoneStopsWorkingAndShowsError(t *testing.T) {
 	// Clean run: RunDoneMsg{Err: ""} just turns off Working.
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
-	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello")})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if !m.Working() {
-		t.Fatalf("Working() = false, el modelo debe quedar trabajando tras enviar el prompt")
+		t.Fatalf("Working() = false, the model must remain working after sending the prompt")
 	}
 
 	m = apply(t, m, activeRunDone(m, ""))
 	if m.Working() {
-		t.Fatalf("Working() = true, RunDoneMsg debe apagar el estado de trabajo")
+		t.Fatalf("Working() = true, RunDoneMsg must turn off the working state")
 	}
 	if got := m.View(); strings.Contains(got, "✗ error") {
-		t.Fatalf("View() = %q, una corrida limpia no debe mostrar error", got)
+		t.Fatalf("View() = %q, a clean run must not show an error", got)
 	}
 
 	// Failed run: RunDoneMsg{Err: "boom"} also shows the error.
 	m2 := NewModel(fake, "s1", nil)
-	m2 = apply(t, m2, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
+	m2 = apply(t, m2, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello")})
 	m2 = apply(t, m2, tea.KeyMsg{Type: tea.KeyEnter})
 
 	m2 = apply(t, m2, activeRunDone(m2, "boom"))
 	if m2.Working() {
-		t.Fatalf("Working() = true, RunDoneMsg con error tambien debe apagar el estado de trabajo")
+		t.Fatalf("Working() = true, RunDoneMsg with an error must also turn off the working state")
 	}
 	errLine := lineWith(t, m2.View(), "boom")
 	if !strings.Contains(errLine, "✗ error") {
-		t.Fatalf("linea del fallo = %q, debe llevar el marcador %q", errLine, "✗ error")
+		t.Fatalf("failure line = %q, it must carry marker %q", errLine, "✗ error")
 	}
 }
 
 func TestModel_StaleRunDoneDoesNotStopReplacementRun(t *testing.T) {
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
-	m.input.SetValue("primera")
+	m.input.SetValue("first")
 	m, _ = m.submitPrompt()
 	firstRunID := m.activeRun
 
-	m.input.SetValue("segunda")
+	m.input.SetValue("second")
 	m, _ = m.submitPrompt()
 	secondRunID := m.activeRun
 	if firstRunID == secondRunID {
-		t.Fatalf("run IDs = %d y %d, cada corrida debe tener identidad propia", firstRunID, secondRunID)
+		t.Fatalf("run IDs = %d and %d, each run must have its own identity", firstRunID, secondRunID)
 	}
 
 	m = apply(t, m, RunDoneMsg{SessionID: "s1", RunID: firstRunID})
 	if !m.Working() {
-		t.Fatal("el cierre tardio de la corrida anterior apago el indicador de la corrida nueva")
+		t.Fatal("the late completion of the previous run turned off the new run's indicator")
 	}
 	if m.activeRun != secondRunID {
-		t.Fatalf("activeRun = %d, se esperaba conservar la corrida nueva %d", m.activeRun, secondRunID)
+		t.Fatalf("activeRun = %d, expected the new run %d to remain active", m.activeRun, secondRunID)
 	}
 
 	m = apply(t, m, RunDoneMsg{SessionID: "s1", RunID: secondRunID})
 	if m.Working() {
-		t.Fatal("el cierre de la corrida activa debe apagar el indicador")
+		t.Fatal("completion of the active run must turn off the indicator")
 	}
 }
 
 func TestModel_EventPumpDeliversFromChannel(t *testing.T) {
 	ch := make(chan tea.Msg, 2)
 	first := EventMsg{Kind: session.KindTextStarted}
-	second := EventMsg{Kind: session.KindTextDelta, Text: "hola"}
+	second := EventMsg{Kind: session.KindTextDelta, Text: "hello"}
 	ch <- first
 	ch <- second
 
@@ -3855,7 +3841,7 @@ func TestModel_EventPumpDeliversFromChannel(t *testing.T) {
 	// Init sets off the bomb: the cmd does receive and delivers the first msg.
 	cmd := m.Init()
 	if cmd == nil {
-		t.Fatalf("Init() = nil, con canal de eventos debe devolver el cmd de la bomba")
+		t.Fatalf("Init() = nil, with an event channel it must return the event-pump command")
 	}
 	batch, ok := cmd().(tea.BatchMsg)
 	if !ok || len(batch) != 2 {
@@ -3863,38 +3849,38 @@ func TestModel_EventPumpDeliversFromChannel(t *testing.T) {
 	}
 	msg := batch[0]()
 	if got, ok := msg.(EventMsg); !ok || got.Kind != first.Kind {
-		t.Fatalf("cmd() = %#v, se esperaba el primer EventMsg %#v", msg, first)
+		t.Fatalf("cmd() = %#v, expected the first EventMsg %#v", msg, first)
 	}
 
 	// Consuming an event resets the bomb: the new cmd delivers the second msg.
 	updated, cmd2 := m.Update(msg)
 	m, ok = updated.(Model)
 	if !ok {
-		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+		t.Fatalf("Update returned %T, expected tui.Model", updated)
 	}
 	if cmd2 == nil {
-		t.Fatalf("Update(EventMsg) devolvio cmd nil, la bomba debe rearmarse tras cada evento")
+		t.Fatalf("Update(EventMsg) returned a nil command, the event pump must restart after each event")
 	}
 	msg2 := cmd2()
 	if got, ok := msg2.(EventMsg); !ok || got.Kind != second.Kind || got.Text != second.Text {
-		t.Fatalf("cmd() = %#v, se esperaba el segundo EventMsg %#v", msg2, second)
+		t.Fatalf("cmd() = %#v, expected the second EventMsg %#v", msg2, second)
 	}
 
 	// RunDoneMsg also resets the bomb.
 	_, cmd3 := m.Update(activeRunDone(m, ""))
 	if cmd3 == nil {
-		t.Fatalf("Update(RunDoneMsg) devolvio cmd nil, la bomba debe rearmarse tras el fin de corrida")
+		t.Fatalf("Update(RunDoneMsg) returned a nil command, the event pump must restart after run completion")
 	}
 
 	// Closed channel: cmd returns nil instead of hanging or delivering garbage.
 	close(ch)
 	if got := cmd3(); got != nil {
-		t.Fatalf("cmd() = %#v con canal cerrado, se esperaba nil", got)
+		t.Fatalf("cmd() = %#v with a closed channel, expected nil", got)
 	}
 
 	// Channel nil (fold tests): only the cursor command remains.
 	if cmd := NewModel(nil, "s1", nil).Init(); cmd == nil {
-		t.Fatal("Init() = nil con canal nil, se esperaba el comando del cursor")
+		t.Fatal("Init() = nil with a nil channel, expected the cursor command")
 	}
 }
 
@@ -3909,19 +3895,19 @@ func TestModel_ViewportFollowsTailOnNewEvents(t *testing.T) {
 		m = apply(t, m, EventMsg{Message: &session.Message{
 			ID:   fmt.Sprintf("u%02d", i),
 			Role: session.RoleUser,
-			Text: fmt.Sprintf("mensaje-%02d", i),
+			Text: fmt.Sprintf("message-%02d", i),
 		}})
 	}
 
 	view := m.View()
-	if !strings.Contains(view, "mensaje-29") {
-		t.Fatalf("View() = %q, la ultima entrada %q debe estar visible: la vista sigue la cola", view, "mensaje-29")
+	if !strings.Contains(view, "message-29") {
+		t.Fatalf("View() = %q, the last entry %q must be visible: the view follows the tail", view, "message-29")
 	}
-	if strings.Contains(view, "mensaje-00") {
-		t.Fatalf("View() = %q, la primera entrada %q NO debe estar visible: el alto esta acotado por el viewport", view, "mensaje-00")
+	if strings.Contains(view, "message-00") {
+		t.Fatalf("View() = %q, the first entry %q must NOT be visible: height is bounded by the viewport", view, "message-00")
 	}
 	if lines := strings.Count(view, "\n") + 1; lines > 10 {
-		t.Fatalf("View() tiene %d lineas, debe respetar el alto de la terminal (<= 10)", lines)
+		t.Fatalf("View() has %d lines, it must respect terminal height (<= 10)", lines)
 	}
 }
 
@@ -3934,32 +3920,32 @@ func TestModel_PgUpScrollsHistoryBack(t *testing.T) {
 		m = apply(t, m, EventMsg{Message: &session.Message{
 			ID:   fmt.Sprintf("u%02d", i),
 			Role: session.RoleUser,
-			Text: fmt.Sprintf("mensaje-%02d", i),
+			Text: fmt.Sprintf("message-%02d", i),
 		}})
 	}
 
 	// PgUp goes back one page: the queue is no longer visible and previous history appears.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyPgUp})
 	view := m.View()
-	if strings.Contains(view, "mensaje-29") {
-		t.Fatalf("View() = %q, tras PgUp la cola %q NO debe seguir visible", view, "mensaje-29")
+	if strings.Contains(view, "message-29") {
+		t.Fatalf("View() = %q, after PgUp the tail %q must NOT remain visible", view, "message-29")
 	}
-	if !strings.Contains(view, "mensaje-") {
-		t.Fatalf("View() = %q, tras PgUp debe verse algun mensaje anterior del historial", view)
+	if !strings.Contains(view, "message-") {
+		t.Fatalf("View() = %q, an earlier history message should be visible after PgUp", view)
 	}
 	if got := m.input.Value(); got != "" {
-		t.Fatalf("input.Value() = %q, PgUp NO debe escribir en el textinput", got)
+		t.Fatalf("input.Value() = %q, PgUp must NOT write to the text input", got)
 	}
 
 	// Several consecutive PgDns return the view to the queue.
 	for i := 0; i < 5; i++ {
 		m = apply(t, m, tea.KeyMsg{Type: tea.KeyPgDown})
 	}
-	if got := m.View(); !strings.Contains(got, "mensaje-29") {
-		t.Fatalf("View() = %q, tras varios PgDn la cola %q debe volver a verse", got, "mensaje-29")
+	if got := m.View(); !strings.Contains(got, "message-29") {
+		t.Fatalf("View() = %q, after several PgDn the tail %q must become visible again", got, "message-29")
 	}
 	if got := m.input.Value(); got != "" {
-		t.Fatalf("input.Value() = %q, PgDn NO debe escribir en el textinput", got)
+		t.Fatalf("input.Value() = %q, PgDn must NOT write to the text input", got)
 	}
 
 	// With pending permission PgUp is still scrolling: it does not trigger the gate.
@@ -3970,7 +3956,7 @@ func TestModel_PgUpScrollsHistoryBack(t *testing.T) {
 		m2 = apply(t, m2, EventMsg{Message: &session.Message{
 			ID:   fmt.Sprintf("permission-history-%02d", i),
 			Role: session.RoleUser,
-			Text: fmt.Sprintf("mensaje-permiso-%02d", i),
+			Text: fmt.Sprintf("permission-message-%02d", i),
 		}})
 	}
 	m2 = apply(t, m2, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"ls"}`)})
@@ -3978,13 +3964,13 @@ func TestModel_PgUpScrollsHistoryBack(t *testing.T) {
 	beforeOffset := m2.viewport.YOffset
 	m2 = apply(t, m2, tea.KeyMsg{Type: tea.KeyPgUp})
 	if got := m2.viewport.YOffset; got >= beforeOffset {
-		t.Fatalf("viewport.YOffset = %d, want less than %d: PgUp con permiso pendiente debe desplazar el transcript", got, beforeOffset)
+		t.Fatalf("viewport.YOffset = %d, want less than %d: PgUp with pending permission must scroll the transcript", got, beforeOffset)
 	}
 	if len(fake.resolved) != 0 {
-		t.Fatalf("ResolvePermission fue llamado %d veces, PgUp NO debe disparar el gate de permisos", len(fake.resolved))
+		t.Fatalf("ResolvePermission was called %d times; PgUp must NOT trigger the permission gate", len(fake.resolved))
 	}
 	if got := m2.input.Value(); got != "" {
-		t.Fatalf("input.Value() = %q, PgUp con permiso pendiente NO debe escribir en el textinput", got)
+		t.Fatalf("input.Value() = %q, PgUp with pending permission must NOT write to the text input", got)
 	}
 }
 
@@ -4003,7 +3989,7 @@ func TestModel_MouseWheelScrollsHistory(t *testing.T) {
 		m = apply(t, m, EventMsg{Message: &session.Message{
 			ID:   fmt.Sprintf("u%02d", i),
 			Role: session.RoleUser,
-			Text: fmt.Sprintf("mensaje-%02d", i),
+			Text: fmt.Sprintf("message-%02d", i),
 		}})
 	}
 
@@ -4011,22 +3997,22 @@ func TestModel_MouseWheelScrollsHistory(t *testing.T) {
 	m = apply(t, m, wheelUp)
 	m = apply(t, m, wheelUp)
 	view := m.View()
-	if strings.Contains(view, "mensaje-29") {
-		t.Fatalf("View() = %q, tras rueda arriba la cola %q NO debe seguir visible", view, "mensaje-29")
+	if strings.Contains(view, "message-29") {
+		t.Fatalf("View() = %q, after scrolling up the tail %q must NOT remain visible", view, "message-29")
 	}
-	if !strings.Contains(view, "mensaje-") {
-		t.Fatalf("View() = %q, tras rueda arriba debe verse algun mensaje anterior del historial", view)
+	if !strings.Contains(view, "message-") {
+		t.Fatalf("View() = %q, an earlier history message should be visible after scrolling up", view)
 	}
 	if got := m.input.Value(); got != "" {
-		t.Fatalf("input.Value() = %q, la rueda NO debe escribir en el textinput", got)
+		t.Fatalf("input.Value() = %q, the wheel must NOT write to the text input", got)
 	}
 
 	// Several wheels below return the view to the tail.
 	for i := 0; i < 5; i++ {
 		m = apply(t, m, wheelDown)
 	}
-	if got := m.View(); !strings.Contains(got, "mensaje-29") {
-		t.Fatalf("View() = %q, tras varias ruedas abajo la cola %q debe volver a verse", got, "mensaje-29")
+	if got := m.View(); !strings.Contains(got, "message-29") {
+		t.Fatalf("View() = %q, after scrolling down the tail %q must become visible again", got, "message-29")
 	}
 
 	// With permission pending, the wheel continues to scroll: it does not trigger the gate.
@@ -4037,33 +4023,33 @@ func TestModel_MouseWheelScrollsHistory(t *testing.T) {
 	m2 = apply(t, m2, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"ls"}`)})
 	m2 = apply(t, m2, wheelUp)
 	if len(fake.resolved) != 0 {
-		t.Fatalf("ResolvePermission fue llamado %d veces, la rueda NO debe disparar el gate de permisos", len(fake.resolved))
+		t.Fatalf("ResolvePermission was called %d times; the wheel must NOT trigger the permission gate", len(fake.resolved))
 	}
 	if got := m2.input.Value(); got != "" {
-		t.Fatalf("input.Value() = %q, la rueda con permiso pendiente NO debe escribir en el textinput", got)
+		t.Fatalf("input.Value() = %q, the wheel with pending permission must NOT write to the text input", got)
 	}
 }
 
 func TestModel_MouseWheelSurvivesTinyOrUnsizedTerminal(t *testing.T) {
 	// TRIANGULATE: a poor fix could assume an already sized viewport when resending the wheel. Without prior WindowSizeMsg (ready == false) or with pty 0x0, a wheel event should not panic and View() should continue to return a string even if it is demoted.
-	t.Run("sin WindowSizeMsg previo", func(t *testing.T) {
+	t.Run("without prior WindowSizeMsg", func(t *testing.T) {
 		m := NewModel(nil, "s1", nil)
 
 		m = apply(t, m, wheelUp)
 		if got := m.View(); got == "" {
-			t.Fatalf("View() = %q, sin tamano de terminal conocido debe devolver un string aunque sea degradado", got)
+			t.Fatalf("View() = %q, without a known terminal size it must return a string even in degraded mode", got)
 		}
 	})
 
-	t.Run("pty 0x0 con mensaje foldeado", func(t *testing.T) {
+	t.Run("pty 0x0 with folded message", func(t *testing.T) {
 		m := NewModel(nil, "s1", nil)
 
 		m = apply(t, m, tea.WindowSizeMsg{Width: 0, Height: 0})
-		m = apply(t, m, EventMsg{Message: &session.Message{ID: "u1", Role: session.RoleUser, Text: "hola"}})
+		m = apply(t, m, EventMsg{Message: &session.Message{ID: "u1", Role: session.RoleUser, Text: "hello"}})
 
 		m = apply(t, m, wheelUp)
 		if got := m.View(); got == "" {
-			t.Fatalf("View() = %q, con terminal 0x0 la rueda no debe tumbar la TUI y View debe devolver un string aunque sea degradado", got)
+			t.Fatalf("View() = %q, with a 0x0 terminal the wheel must not crash the TUI and View must return a string even in degraded mode", got)
 		}
 	})
 }
@@ -4076,7 +4062,7 @@ func TestModel_NewEventPreservesReadingPositionWhileScrolledUp(t *testing.T) {
 		m = apply(t, m, EventMsg{Message: &session.Message{
 			ID:   fmt.Sprintf("u%02d", i),
 			Role: session.RoleUser,
-			Text: fmt.Sprintf("mensaje-%02d", i),
+			Text: fmt.Sprintf("message-%02d", i),
 		}})
 	}
 
@@ -4084,25 +4070,25 @@ func TestModel_NewEventPreservesReadingPositionWhileScrolledUp(t *testing.T) {
 	m = apply(t, m, wheelUp)
 	m = apply(t, m, wheelUp)
 	offset := m.viewport.YOffset
-	if got := m.View(); strings.Contains(got, "mensaje-29") {
-		t.Fatalf("View() = %q, tras rueda arriba la cola %q NO debe seguir visible", got, "mensaje-29")
+	if got := m.View(); strings.Contains(got, "message-29") {
+		t.Fatalf("View() = %q, after scrolling up the tail %q must NOT remain visible", got, "message-29")
 	}
 
 	// New activity arrives: preserves the reading position and shows a passive arrow instead of dragging the user to the queue.
 	m = apply(t, m, EventMsg{Message: &session.Message{
 		ID:   "u30",
 		Role: session.RoleUser,
-		Text: "mensaje-30",
+		Text: "message-30",
 	}})
 	if got := m.viewport.YOffset; got != offset {
-		t.Fatalf("viewport.YOffset = %d, want %d: la actividad nueva no debe mover la posicion de lectura", got, offset)
+		t.Fatalf("viewport.YOffset = %d, want %d: new activity must not move the reading position", got, offset)
 	}
 	view := ansi.Strip(m.View())
-	if strings.Contains(view, "mensaje-30") {
-		t.Fatalf("View() = %q, la actividad nueva no debe volver a mostrar la cola", view)
+	if strings.Contains(view, "message-30") {
+		t.Fatalf("View() = %q, new activity must not show the tail again", view)
 	}
 	if !strings.Contains(view, "↓") {
-		t.Fatalf("View() = %q, debe mostrar una flecha pasiva cuando hay actividad nueva fuera de vista", view)
+		t.Fatalf("View() = %q, it must show a passive arrow when new activity is outside the view", view)
 	}
 }
 
@@ -4111,7 +4097,7 @@ func TestModel_StreamingRevealPreservesReadingPositionAndMarksActivity(t *testin
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
 	for i := 0; i < 30; i++ {
 		m = apply(t, m, EventMsg{Message: &session.Message{
-			ID: fmt.Sprintf("u%02d", i), Role: session.RoleUser, Text: fmt.Sprintf("mensaje-%02d", i),
+			ID: fmt.Sprintf("u%02d", i), Role: session.RoleUser, Text: fmt.Sprintf("message-%02d", i),
 		}})
 	}
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
@@ -4123,10 +4109,10 @@ func TestModel_StreamingRevealPreservesReadingPositionAndMarksActivity(t *testin
 	m = apply(t, m, revealTickMsg{})
 
 	if got := m.viewport.YOffset; got != offset {
-		t.Fatalf("viewport.YOffset = %d, want %d: el reveal no debe arrastrar la lectura", got, offset)
+		t.Fatalf("viewport.YOffset = %d, want %d: reveal must not drag the reading position", got, offset)
 	}
 	if view := ansi.Strip(m.View()); !strings.Contains(view, "↓") {
-		t.Fatalf("View() = %q, el reveal fuera de vista debe marcar actividad nueva", view)
+		t.Fatalf("View() = %q, reveal outside the view must mark new activity", view)
 	}
 }
 
@@ -4135,22 +4121,22 @@ func TestModel_ReturningToBottomClearsNewActivityIndicatorAndResumesFollowing(t 
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
 	for i := 0; i < 30; i++ {
 		m = apply(t, m, EventMsg{Message: &session.Message{
-			ID: fmt.Sprintf("u%02d", i), Role: session.RoleUser, Text: fmt.Sprintf("mensaje-%02d", i),
+			ID: fmt.Sprintf("u%02d", i), Role: session.RoleUser, Text: fmt.Sprintf("message-%02d", i),
 		}})
 	}
 	m = apply(t, m, wheelUp)
-	m = apply(t, m, EventMsg{Message: &session.Message{ID: "u30", Role: session.RoleUser, Text: "mensaje-30"}})
+	m = apply(t, m, EventMsg{Message: &session.Message{ID: "u30", Role: session.RoleUser, Text: "message-30"}})
 
 	for !m.viewport.AtBottom() {
 		m = apply(t, m, wheelDown)
 	}
 	if view := ansi.Strip(m.View()); strings.Contains(view, "↓") {
-		t.Fatalf("View() = %q, al volver al fondo debe ocultar el indicador", view)
+		t.Fatalf("View() = %q, returning to the bottom must hide the indicator", view)
 	}
 
-	m = apply(t, m, EventMsg{Message: &session.Message{ID: "u31", Role: session.RoleUser, Text: "mensaje-31"}})
-	if view := ansi.Strip(m.View()); !strings.Contains(view, "mensaje-31") {
-		t.Fatalf("View() = %q, al volver al fondo debe reanudar el seguimiento", view)
+	m = apply(t, m, EventMsg{Message: &session.Message{ID: "u31", Role: session.RoleUser, Text: "message-31"}})
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "message-31") {
+		t.Fatalf("View() = %q, returning to the bottom must resume following", view)
 	}
 }
 
@@ -4159,7 +4145,7 @@ func TestModel_NewActivityIndicatorIsPassiveAndAgentOnly(t *testing.T) {
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
 	for i := 0; i < 30; i++ {
 		m = apply(t, m, EventMsg{Message: &session.Message{
-			ID: fmt.Sprintf("u%02d", i), Role: session.RoleUser, Text: fmt.Sprintf("mensaje-%02d", i),
+			ID: fmt.Sprintf("u%02d", i), Role: session.RoleUser, Text: fmt.Sprintf("message-%02d", i),
 		}})
 	}
 	m = apply(t, m, wheelUp)
@@ -4167,10 +4153,10 @@ func TestModel_NewActivityIndicatorIsPassiveAndAgentOnly(t *testing.T) {
 	// A local change of presentation is not new activity of the agent.
 	m = m.syncViewport()
 	if view := ansi.Strip(m.View()); strings.Contains(view, "↓") {
-		t.Fatalf("View() = %q, un cambio local no debe mostrar el indicador", view)
+		t.Fatalf("View() = %q, a local change must not show the indicator", view)
 	}
 
-	m = apply(t, m, EventMsg{Message: &session.Message{ID: "u30", Role: session.RoleUser, Text: "mensaje-30"}})
+	m = apply(t, m, EventMsg{Message: &session.Message{ID: "u30", Role: session.RoleUser, Text: "message-30"}})
 	beforeOffset := m.viewport.YOffset
 	beforeView := m.View()
 	m = apply(t, m, tea.MouseMsg{
@@ -4180,10 +4166,10 @@ func TestModel_NewActivityIndicatorIsPassiveAndAgentOnly(t *testing.T) {
 		Y:      m.viewport.Height - 1,
 	})
 	if got := m.viewport.YOffset; got != beforeOffset {
-		t.Fatalf("viewport.YOffset = %d, want %d: la flecha debe ser pasiva", got, beforeOffset)
+		t.Fatalf("viewport.YOffset = %d, want %d: the arrow must be passive", got, beforeOffset)
 	}
 	if got := m.View(); got != beforeView {
-		t.Fatalf("View() cambio tras clicar la flecha pasiva:\nantes=%q\ndespues=%q", beforeView, got)
+		t.Fatalf("View() changed after clicking the passive arrow:\nbefore=%q\nafter=%q", beforeView, got)
 	}
 }
 
@@ -4197,7 +4183,7 @@ func TestModel_MouseClickIsInert(t *testing.T) {
 		m = apply(t, m, EventMsg{Message: &session.Message{
 			ID:   fmt.Sprintf("u%02d", i),
 			Role: session.RoleUser,
-			Text: fmt.Sprintf("mensaje-%02d", i),
+			Text: fmt.Sprintf("message-%02d", i),
 		}})
 	}
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"ls"}`)})
@@ -4208,13 +4194,13 @@ func TestModel_MouseClickIsInert(t *testing.T) {
 	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionMotion})
 
 	if len(fake.resolved) != 0 {
-		t.Fatalf("ResolvePermission fue llamado %d veces, un click NO debe disparar el gate de permisos", len(fake.resolved))
+		t.Fatalf("ResolvePermission was called %d times; a click must NOT trigger the permission gate", len(fake.resolved))
 	}
 	if got := m.input.Value(); got != "" {
-		t.Fatalf("input.Value() = %q, el click y el movimiento NO deben escribir en el textinput", got)
+		t.Fatalf("input.Value() = %q, the click and movement must NOT write to the text input", got)
 	}
 	if got := m.View(); got != before {
-		t.Fatalf("View() cambio tras el click/movimiento:\nantes = %q\ndespues = %q, los eventos de mouse que no son rueda deben ser inertes", before, got)
+		t.Fatalf("View() changed after the click/movement:\nbefore = %q\nafter = %q; non-wheel mouse events must be inert", before, got)
 	}
 }
 
@@ -4224,26 +4210,26 @@ func TestModel_WorkingIndicatorVisibleWhileRunning(t *testing.T) {
 
 	// Without a run in progress there is no indicator.
 	if got := m.View(); strings.Contains(got, "working") {
-		t.Fatalf("View() = %q, sin corrida en curso NO debe verse el indicador de trabajo", got)
+		t.Fatalf("View() = %q, no run in progress should show the working indicator", got)
 	}
 
 	// The user sends a prompt: the stable indicator appears.
-	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello")})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if got := m.View(); !strings.Contains(got, "Checking context") {
-		t.Fatalf("View() = %q, debe mostrar el indicador %q mientras la corrida sigue", got, "Checking context")
+		t.Fatalf("View() = %q, it must show indicator %q while the run continues", got, "Checking context")
 	}
 
 	// With ready (known terminal size) the indicator is also visible.
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
 	if got := m.View(); !strings.Contains(got, "Checking context") {
-		t.Fatalf("View() = %q, con ready el indicador %q tambien debe verse", got, "Checking context")
+		t.Fatalf("View() = %q, with ready set the indicator %q must also appear", got, "Checking context")
 	}
 
 	// Clean end of run: the indicator disappears.
 	m = apply(t, m, activeRunDone(m, ""))
 	if got := m.View(); strings.Contains(got, "Checking context") {
-		t.Fatalf("View() = %q, RunDoneMsg debe retirar el indicador de trabajo", got)
+		t.Fatalf("View() = %q, RunDoneMsg must remove the working indicator", got)
 	}
 }
 
@@ -4281,23 +4267,23 @@ func TestModel_ViewFitsHeightWithIndicator(t *testing.T) {
 		m = apply(t, m, EventMsg{Message: &session.Message{
 			ID:   fmt.Sprintf("u%02d", i),
 			Role: session.RoleUser,
-			Text: fmt.Sprintf("mensaje-%02d", i),
+			Text: fmt.Sprintf("message-%02d", i),
 		}})
 	}
 
 	// Sending a prompt turns on working: the status line appears.
-	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello")})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	view := m.View()
 	if !strings.Contains(view, "Checking context") {
-		t.Fatalf("View() = %q, con corrida en curso debe verse el indicador %q", view, "Checking context")
+		t.Fatalf("View() = %q, a run in progress must show indicator %q", view, "Checking context")
 	}
 	if lines := strings.Count(view, "\n") + 1; lines > 12 {
-		t.Fatalf("View() tiene %d lineas, la linea de estado NO debe romper el alto acotado (<= 12)", lines)
+		t.Fatalf("View() has %d lines; the status line must NOT exceed the bounded height (<= 12)", lines)
 	}
-	if !strings.Contains(view, "mensaje-29") {
-		t.Fatalf("View() = %q, la vista debe seguir la cola (%q visible) aun con la linea de estado", view, "mensaje-29")
+	if !strings.Contains(view, "message-29") {
+		t.Fatalf("View() = %q, the view must follow the tail (%q visible) even with the status line", view, "message-29")
 	}
 }
 
@@ -4307,7 +4293,7 @@ func TestModel_WorkingIndicatorAlignsWithComposerLeftMargin(t *testing.T) {
 	m := NewModel(fake, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	m = typeRunes(t, m, "hola")
+	m = typeRunes(t, m, "hello")
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	view := m.View()
@@ -4322,7 +4308,7 @@ func TestModel_WorkingIndicatorAlignsWithComposerLeftMargin(t *testing.T) {
 		}
 	}
 	if spinnerCol == -1 {
-		t.Fatalf("View() = %q, no se encontro ninguna linea con el spinner %q", view, m.spinner.View())
+		t.Fatalf("View() = %q, no line with spinner %q was found", view, m.spinner.View())
 	}
 
 	composerCol := -1
@@ -4335,14 +4321,14 @@ func TestModel_WorkingIndicatorAlignsWithComposerLeftMargin(t *testing.T) {
 		}
 	}
 	if composerCol == -1 {
-		t.Fatalf("View() = %q, no se encontro la linea del borde superior (╭) de la caja del composer", view)
+		t.Fatalf("View() = %q, no line with the composer's top border (╭) was found", view)
 	}
 
 	if spinnerCol != composerCol {
-		t.Fatalf("columna del spinner = %d, columna del borde ╭ del composer = %d; ambas deben coincidir (mismo margen izquierdo)", spinnerCol, composerCol)
+		t.Fatalf("spinner column = %d, composer border column = %d; both must match (same left margin)", spinnerCol, composerCol)
 	}
 	if spinnerCol != composerOuterMargin {
-		t.Fatalf("columna del spinner+%q = %d, se esperaba composerOuterMargin (%d)", "working", spinnerCol, composerOuterMargin)
+		t.Fatalf("spinner column+%q = %d, expected composerOuterMargin (%d)", "working", spinnerCol, composerOuterMargin)
 	}
 }
 
@@ -4352,7 +4338,7 @@ func TestModel_WorkingIndicatorAlignsWithComposerLeftMargin_WiderTerminal(t *tes
 	m := NewModel(fake, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 100, Height: 24})
 
-	m = typeRunes(t, m, "hola")
+	m = typeRunes(t, m, "hello")
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	view := m.View()
@@ -4368,7 +4354,7 @@ func TestModel_WorkingIndicatorAlignsWithComposerLeftMargin_WiderTerminal(t *tes
 		}
 	}
 	if spinnerCol == -1 {
-		t.Fatalf("View() = %q, no se encontro ninguna linea con el spinner %q", view, m.spinner.View())
+		t.Fatalf("View() = %q, no line with spinner %q was found", view, m.spinner.View())
 	}
 
 	composerCol := -1
@@ -4381,14 +4367,14 @@ func TestModel_WorkingIndicatorAlignsWithComposerLeftMargin_WiderTerminal(t *tes
 		}
 	}
 	if composerCol == -1 {
-		t.Fatalf("View() = %q, no se encontro la linea del borde superior (╭) de la caja del composer", view)
+		t.Fatalf("View() = %q, no line with the composer's top border (╭) was found", view)
 	}
 
 	if spinnerCol != composerCol {
-		t.Fatalf("columna del spinner = %d, columna del borde ╭ del composer = %d; ambas deben coincidir con ancho 100", spinnerCol, composerCol)
+		t.Fatalf("spinner column = %d, composer border column = %d; both must match at width 100", spinnerCol, composerCol)
 	}
 	if spinnerCol != composerOuterMargin {
-		t.Fatalf("columna del spinner+%q con ancho 100 = %d, se esperaba composerOuterMargin (%d), no un valor dependiente del ancho", "working", spinnerCol, composerOuterMargin)
+		t.Fatalf("spinner column+%q at width 100 = %d, expected composerOuterMargin (%d), not a width-dependent value", "working", spinnerCol, composerOuterMargin)
 	}
 }
 
@@ -4398,7 +4384,7 @@ func TestModel_WorkingIndicatorDoesNotOverflowTinyTerminal(t *testing.T) {
 	m := NewModel(fake, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 10, Height: 24})
 
-	m = typeRunes(t, m, "hola")
+	m = typeRunes(t, m, "hello")
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	view := m.View()
@@ -4410,7 +4396,7 @@ func TestModel_WorkingIndicatorDoesNotOverflowTinyTerminal(t *testing.T) {
 		if strings.Contains(plain, m.spinner.View()) {
 			indent := len(plain) - len(strings.TrimLeft(plain, " "))
 			if indent < 0 {
-				t.Fatalf("View() = %q, la linea de estado tiene sangria negativa/corrupta (%d) en terminal minuscula", view, indent)
+				t.Fatalf("View() = %q, the status line has negative/corrupt indentation (%d) on a narrow terminal", view, indent)
 			}
 		}
 	}
@@ -4426,27 +4412,27 @@ func TestModel_SurvivesTinyTerminal(t *testing.T) {
 		m = apply(t, m, tea.WindowSizeMsg{Width: 0, Height: 0})
 
 		// An event that touches the viewport and render should not knock down the TUI.
-		m = apply(t, m, EventMsg{Message: &session.Message{ID: "u1", Role: session.RoleUser, Text: "hola"}})
+		m = apply(t, m, EventMsg{Message: &session.Message{ID: "u1", Role: session.RoleUser, Text: "hello"}})
 		if got := m.View(); got == "" {
-			t.Fatalf("View() = %q, con terminal 0x0 debe devolver un string aunque sea degradado", got)
+			t.Fatalf("View() = %q, with a 0x0 terminal it must return a string even in degraded mode", got)
 		}
 	})
 
-	t.Run("terminal de 1 linea con corrida en curso", func(t *testing.T) {
+	t.Run("one-line terminal with a run in progress", func(t *testing.T) {
 		fake := &fakeAgent{}
 		m := NewModel(fake, "s1", nil)
 
 		// With 1 line high, turning on working (input + status line) leaves the reserved lines above the height: negative viewport.
 		m = apply(t, m, tea.WindowSizeMsg{Width: 20, Height: 1})
-		m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
+		m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello")})
 		m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 		if len(fake.sent) != 1 {
-			t.Fatalf("SendPrompt fue llamado %d veces, Enter debe enviar el prompt exactamente una vez", len(fake.sent))
+			t.Fatalf("SendPrompt was called %d times; Enter must send the prompt exactly once", len(fake.sent))
 		}
-		m = apply(t, m, EventMsg{Message: &session.Message{ID: "u1", Role: session.RoleUser, Text: "hola"}})
+		m = apply(t, m, EventMsg{Message: &session.Message{ID: "u1", Role: session.RoleUser, Text: "hello"}})
 		if got := m.View(); got == "" {
-			t.Fatalf("View() = %q, con terminal de 1 linea debe devolver un string aunque sea degradado", got)
+			t.Fatalf("View() = %q, with a one-line terminal it must return a string even in degraded mode", got)
 		}
 	})
 }
@@ -4463,7 +4449,7 @@ func TestModel_RecoversAfterResizeFromTiny(t *testing.T) {
 		m = apply(t, m, EventMsg{Message: &session.Message{
 			ID:   fmt.Sprintf("u%02d", i),
 			Role: session.RoleUser,
-			Text: fmt.Sprintf("mensaje-%02d", i),
+			Text: fmt.Sprintf("message-%02d", i),
 		}})
 	}
 
@@ -4471,14 +4457,14 @@ func TestModel_RecoversAfterResizeFromTiny(t *testing.T) {
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
 
 	view := m.View()
-	if !strings.Contains(view, "mensaje-29") {
-		t.Fatalf("View() = %q, tras crecer la terminal debe volver a verse la cola del transcript (mensaje-29)", view)
+	if !strings.Contains(view, "message-29") {
+		t.Fatalf("View() = %q, after the terminal grows the transcript tail must become visible again (message-29)", view)
 	}
-	if strings.Contains(view, "mensaje-00") {
-		t.Fatalf("View() = %q, el alto debe seguir acotado: mensaje-00 no cabe en 10 lineas", view)
+	if strings.Contains(view, "message-00") {
+		t.Fatalf("View() = %q, height must remain bounded: message-00 does not fit in 10 lines", view)
 	}
 	if lines := strings.Count(view, "\n") + 1; lines > 10 {
-		t.Fatalf("View() tiene %d lineas, no debe exceder el alto de la terminal (10)", lines)
+		t.Fatalf("View() has %d lines; it must not exceed terminal height (10)", lines)
 	}
 }
 
@@ -4489,14 +4475,14 @@ func TestModel_WrapsLongAssistantTextToTerminalWidth(t *testing.T) {
 
 	// The sentinel token has no hyphens: glamour v1 breaks lines at hyphens,
 	// which would split it across the wrap and defeat the Contains assert.
-	long := "esta es una respuesta larga del assistant que en una terminal angosta debe hacer wrap a varias lineas para leerse entera finrespuesta"
+	long := "this is a long assistant response that on a narrow terminal must wrap to several lines so it can be read in full finrespuesta"
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: long})
 	m = drainReveal(t, m)
 
 	view := m.View()
 	if !strings.Contains(view, "finrespuesta") {
-		t.Fatalf("View() = %q, el final del texto %q debe estar visible: el texto mas ancho que la terminal debe hacer wrap a varias lineas, no truncarse", view, "finrespuesta")
+		t.Fatalf("View() = %q, the end of text %q must be visible: text wider than the terminal must wrap to several lines, not be truncated", view, "finrespuesta")
 	}
 	assertNoLineWiderThan(t, view, 40)
 }
@@ -4507,7 +4493,7 @@ func TestModel_RewrapsOnResize(t *testing.T) {
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
 
 	// Hyphen-free sentinel: glamour v1 breaks lines at hyphens.
-	long := "esta respuesta larga del assistant debe re-envolverse cuando la terminal cambia de ancho finrespuesta"
+	long := "this long assistant response must be rewrapped when the terminal width changes finrespuesta"
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: long})
 	m = drainReveal(t, m)
@@ -4517,7 +4503,7 @@ func TestModel_RewrapsOnResize(t *testing.T) {
 
 	view := m.View()
 	if !strings.Contains(view, "finrespuesta") {
-		t.Fatalf("View() = %q, el final del texto %q debe seguir visible tras el resize: el transcript debe re-envolverse al ancho nuevo", view, "finrespuesta")
+		t.Fatalf("View() = %q, the end of text %q must remain visible after resize: the transcript must rewrap to the new width", view, "finrespuesta")
 	}
 	assertNoLineWiderThan(t, view, 24)
 }
@@ -4535,7 +4521,7 @@ func TestModel_WrapsUnbreakableLongToken(t *testing.T) {
 
 	view := ansi.Strip(m.View())
 	if !strings.Contains(view, "sufijo-") || !strings.Contains(view, "final") {
-		t.Fatalf("View() sin ANSI = %q, el sufijo final debe seguir visible aunque el renderer Markdown lo envuelva", view)
+		t.Fatalf("View() without ANSI = %q, the final suffix must remain visible even when Markdown rendering wraps it", view)
 	}
 	assertNoLineWiderThan(t, view, 40)
 }
@@ -4546,20 +4532,20 @@ func TestModel_FollowsTailOfWrappedResponse(t *testing.T) {
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
 
 	// ~500 word cells: wrapped at 40 it occupies ~14 lines, more than the height of the viewport (9). Distinctive token at the beginning and another at the end.
-	long := "inicio-de-respuesta " + strings.Repeat("palabra ", 60) + "fin-de-respuesta"
+	long := "response-start " + strings.Repeat("word ", 60) + "response-end"
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: long})
 	m = drainReveal(t, m)
 
 	view := m.View()
-	if !strings.Contains(view, "fin-de-respuesta") {
-		t.Fatalf("View() = %q, la vista debe seguir la cola: el final %q de la respuesta envuelta debe estar visible", view, "fin-de-respuesta")
+	if !strings.Contains(view, "response-end") {
+		t.Fatalf("View() = %q, the view must follow the tail: the end %q of the wrapped response must be visible", view, "response-end")
 	}
-	if strings.Contains(view, "inicio-de-respuesta") {
-		t.Fatalf("View() = %q, el inicio %q NO debe verse: la respuesta envuelta ocupa mas lineas que el viewport y la vista debe seguir la cola", view, "inicio-de-respuesta")
+	if strings.Contains(view, "response-start") {
+		t.Fatalf("View() = %q, the beginning %q must NOT be visible: the wrapped response exceeds the viewport and the view must follow the tail", view, "response-start")
 	}
 	if lines := strings.Count(view, "\n") + 1; lines > 10 {
-		t.Fatalf("View() tiene %d lineas, no debe exceder el alto de la terminal (10)", lines)
+		t.Fatalf("View() has %d lines, must not exceed terminal height (10)", lines)
 	}
 }
 
@@ -4685,22 +4671,22 @@ func TestModel_ComposerCtrlJInsertsNewlineAndEnterSubmitsMultilinePrompt(t *test
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 20})
-	m = typeRunes(t, m, "primera linea")
+	m = typeRunes(t, m, "first line")
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyCtrlJ})
-	m = typeRunes(t, m, "segunda linea")
+	m = typeRunes(t, m, "second line")
 
-	if got, want := m.input.Value(), "primera linea\nsegunda linea"; got != want {
-		t.Fatalf("input.Value() = %q, Ctrl+J debe insertar un salto de linea y conservar el borrador %q", got, want)
+	if got, want := m.input.Value(), "first line\nsecond line"; got != want {
+		t.Fatalf("input.Value() = %q, Ctrl+J must insert a newline and preserve draft %q", got, want)
 	}
 	if got := strings.Count(ansi.Strip(m.composerBox()), "\n"); got != 3 {
-		t.Fatalf("composerBox() tiene %d saltos, con dos lineas debe crecer a cuatro lineas incluyendo bordes", got)
+		t.Fatalf("composerBox() has %d newlines; with two lines it must grow to four lines including borders", got)
 	}
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if len(fake.sent) != 1 {
-		t.Fatalf("SendPrompt fue llamado %d veces, Enter debe enviar el prompt multilinea exactamente una vez", len(fake.sent))
+		t.Fatalf("SendPrompt was called %d times; Enter must send the multiline prompt exactly once", len(fake.sent))
 	}
-	if got, want := fake.sent[0].text, "primera linea\nsegunda linea"; got != want {
+	if got, want := fake.sent[0].text, "first line\nsecond line"; got != want {
 		t.Fatalf("SendPrompt text = %q, want %q", got, want)
 	}
 }
@@ -4708,15 +4694,15 @@ func TestModel_ComposerCtrlJInsertsNewlineAndEnterSubmitsMultilinePrompt(t *test
 func TestModel_ComposerMultilineRendersPromptOnlyOnFirstRow(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 32, Height: 12})
-	m = typeRunes(t, m, "primera linea que se envuelve")
+	m = typeRunes(t, m, "first line that wraps")
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyCtrlJ})
-	m = typeRunes(t, m, "segunda linea")
+	m = typeRunes(t, m, "second line")
 
 	plain := ansi.Strip(m.composerBox())
 	if got := strings.Count(plain, "❯"); got != 1 {
 		t.Fatalf("composer prompt count = %d, want 1 across wrapped and explicit multiline rows:\n%s", got, plain)
 	}
-	if line := lineWith(t, plain, "primera linea"); !strings.Contains(line, "❯ primera linea") {
+	if line := lineWith(t, plain, "first line"); !strings.Contains(line, "❯ first line") {
 		t.Fatalf("first composer row = %q, the prompt must stay beside the first text row", line)
 	}
 }
@@ -4725,17 +4711,17 @@ func TestModel_ComposerGrowthStopsAtFiveLines(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 20})
 	for line := 0; line < composerMaxLines+2; line++ {
-		m = typeRunes(t, m, fmt.Sprintf("linea %d", line))
+		m = typeRunes(t, m, fmt.Sprintf("line %d", line))
 		if line < composerMaxLines+1 {
 			m = apply(t, m, tea.KeyMsg{Type: tea.KeyCtrlJ})
 		}
 	}
 
 	if got := m.input.Height(); got != composerMaxLines {
-		t.Fatalf("input.Height() = %d, el composer debe dejar de crecer en %d lineas", got, composerMaxLines)
+		t.Fatalf("input.Height() = %d, the composer must stop growing at %d lines", got, composerMaxLines)
 	}
 	if got := strings.Count(ansi.Strip(m.composerBox()), "\n"); got != composerMaxLines+1 {
-		t.Fatalf("composerBox() tiene %d saltos, con el limite debe renderizar %d lineas incluyendo bordes", got, composerMaxLines+1)
+		t.Fatalf("composerBox() has %d newlines; at the limit it must render %d lines including borders", got, composerMaxLines+1)
 	}
 }
 
@@ -4815,20 +4801,20 @@ func TestModel_LiveUsageTransitions(t *testing.T) {
 	m.toolInputBytes = 15
 	m = m.foldEvent(EventMsg{Kind: session.KindStepStarted, Usage: &session.Usage{InputTokens: 20}})
 	if !m.liveUsage || m.outputBytes != 0 || m.reasoningBytes != 0 || m.toolInputBytes != 0 {
-		t.Fatalf("StepStarted = live:%v bytes:%d/%d/%d, quiero uso vivo con contadores reiniciados", m.liveUsage, m.outputBytes, m.reasoningBytes, m.toolInputBytes)
+		t.Fatalf("StepStarted = live:%v bytes:%d/%d/%d, want live usage with reset counters", m.liveUsage, m.outputBytes, m.reasoningBytes, m.toolInputBytes)
 	}
 
 	m = m.foldEvent(EventMsg{Kind: session.KindTextDelta, Text: "abcdef"})
 	estimated := *m.usage
 	m = m.foldEvent(EventMsg{Kind: session.KindStepEnded})
 	if m.liveUsage || *m.usage != estimated {
-		t.Fatalf("StepEnded sin Usage = live:%v usage:%+v, quiero conservar estimacion %+v y cerrar uso vivo", m.liveUsage, *m.usage, estimated)
+		t.Fatalf("StepEnded without Usage = live:%v usage:%+v, want to preserve estimate %+v and close live usage", m.liveUsage, *m.usage, estimated)
 	}
 
 	m.liveUsage = true
 	m = m.foldEvent(EventMsg{Kind: session.KindStepFailed, Error: "boom"})
 	if m.liveUsage {
-		t.Fatal("StepFailed debe cerrar el uso vivo")
+		t.Fatal("StepFailed must close live usage")
 	}
 }
 
@@ -4840,7 +4826,7 @@ func TestModel_UpdateLiveUsageRequiresActiveUsage(t *testing.T) {
 		beforeUsage := m.usage
 		m = m.updateLiveUsage()
 		if m.usage != beforeUsage || m.outputBytes != 30 {
-			t.Fatalf("updateLiveUsage() modifico un modelo sin uso activo: %+v", m)
+			t.Fatalf("updateLiveUsage() modified a model without active usage: %+v", m)
 		}
 	}
 }
@@ -4848,7 +4834,7 @@ func TestModel_UpdateLiveUsageRequiresActiveUsage(t *testing.T) {
 func TestEstimatedTokens(t *testing.T) {
 	for _, tc := range []struct{ bytes, want int }{{0, 0}, {1, 1}, {2, 1}, {3, 1}, {30_000, 10_000}} {
 		if got := estimatedTokens(tc.bytes); got != tc.want {
-			t.Errorf("estimatedTokens(%d) = %d, quiero %d", tc.bytes, got, tc.want)
+			t.Errorf("estimatedTokens(%d) = %d, want %d", tc.bytes, got, tc.want)
 		}
 	}
 }
@@ -4906,14 +4892,14 @@ func TestModel_ComposerTokenUsageHandlesUnknownModelAndNarrowWidth(t *testing.T)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 10, Height: 8})
 	assertBoxLinesExactWidth(t, m.View(), 10)
 	if plain := ansi.Strip(m.composerBox()); strings.Contains(plain, "↑") {
-		t.Fatalf("composerBox() = %q, una caja demasiado estrecha debe omitir la etiqueta", plain)
+		t.Fatalf("composerBox() = %q, a box that is too narrow must omit the label", plain)
 	}
 }
 
 func TestModel_ComposerBoxWithoutUsageHasNoTokenLabel(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 	if plain := ansi.Strip(m.composerBox()); strings.Contains(plain, "↑") || strings.Contains(plain, "↓") {
-		t.Fatalf("composerBox() = %q, sin usage no debe mostrar tokens", plain)
+		t.Fatalf("composerBox() = %q, without usage it must not show tokens", plain)
 	}
 }
 
@@ -4926,7 +4912,7 @@ func TestFormatTokenCount(t *testing.T) {
 		{9_999, "10k"}, {10_000, "10k"}, {128_000, "128k"}, {1_000_000, "1m"},
 	} {
 		if got := formatTokenCount(tc.tokens); got != tc.want {
-			t.Errorf("formatTokenCount(%d) = %q, quiero %q", tc.tokens, got, tc.want)
+			t.Errorf("formatTokenCount(%d) = %q, want %q", tc.tokens, got, tc.want)
 		}
 	}
 }
@@ -4939,14 +4925,14 @@ func TestModel_ComposerBoxWrapsInput(t *testing.T) {
 	view := m.View()
 	for _, want := range []string{"╭", "╰"} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("View() = %q, el input debe renderizarse dentro de una caja de borde redondeado: falta %q", view, want)
+			t.Fatalf("View() = %q, the input must render inside a rounded-border box: missing %q", view, want)
 		}
 	}
 	assertBoxLinesExactWidth(t, view, 40)
 
 	// The box has horizontal padding (Claude Code style): the inner line starts with "│ ❯" (border, space, prompt), not with the prompt attached to the edge. It is measured without ANSI because the prompt is stylized.
 	if plain := ansi.Strip(view); !strings.Contains(plain, "│ ❯") {
-		t.Fatalf("View() sin ANSI = %q, la linea interior de la caja debe tener padding horizontal: debe contener %q (borde, espacio, prompt), no el prompt pegado al borde", plain, "│ ❯")
+		t.Fatalf("View() without ANSI = %q, the box's inner line must have horizontal padding: it must contain %q (border, space, prompt), not a prompt attached to the edge", plain, "│ ❯")
 	}
 
 	topAt, inputAt, bottomAt := -1, -1, -1
@@ -4962,7 +4948,7 @@ func TestModel_ComposerBoxWrapsInput(t *testing.T) {
 		}
 	}
 	if topAt == -1 || inputAt == -1 || bottomAt == -1 || topAt >= inputAt || inputAt >= bottomAt {
-		t.Fatalf("View() = %q, la linea del input (%q en %d) debe quedar ENTRE el borde superior (╭ en %d) y el inferior (╰ en %d)", view, inputPrompt, inputAt, topAt, bottomAt)
+		t.Fatalf("View() = %q, the input line (%q at %d) must be BETWEEN the top border (╭ at %d) and bottom border (╰ at %d)", view, inputPrompt, inputAt, topAt, bottomAt)
 	}
 
 	// With set status the foot is BELOW the bottom edge of the box.
@@ -4972,7 +4958,7 @@ func TestModel_ComposerBoxWrapsInput(t *testing.T) {
 	bottomAt2 := strings.Index(view2, "╰")
 	footerAt := strings.Index(view2, "openrouter/free")
 	if bottomAt2 == -1 || footerAt == -1 || footerAt < bottomAt2 {
-		t.Fatalf("View() = %q, el pie de status (openrouter/free en %d) debe aparecer DESPUES del borde inferior de la caja (╰ en %d)", view2, footerAt, bottomAt2)
+		t.Fatalf("View() = %q, the status footer (openrouter/free at %d) must appear AFTER the box's bottom border (╰ at %d)", view2, footerAt, bottomAt2)
 	}
 }
 
@@ -4997,21 +4983,21 @@ func TestModel_ViewFitsHeightWithBoxModelAndIndicator(t *testing.T) {
 		m = apply(t, m, EventMsg{Message: &session.Message{
 			ID:   fmt.Sprintf("u%02d", i),
 			Role: session.RoleUser,
-			Text: fmt.Sprintf("mensaje-%02d", i),
+			Text: fmt.Sprintf("message-%02d", i),
 		}})
 	}
 
 	// Sending a prompt turns on working: the indicator appears on the box.
-	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello")})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	view := m.View()
 	if lines := strings.Count(view, "\n") + 1; lines > 12 {
-		t.Fatalf("View() tiene %d lineas, caja + pie + indicador no deben romper el alto acotado (<= 12)", lines)
+		t.Fatalf("View() has %d lines; box + footer + indicator must not exceed bounded height (<= 12)", lines)
 	}
-	for _, want := range []string{"mensaje-29", "Checking context", "openrouter/free"} {
+	for _, want := range []string{"message-29", "Checking context", "openrouter/free"} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("View() = %q, debe contener %q (cola del transcript, indicador de trabajo y pie de status)", view, want)
+			t.Fatalf("View() = %q, must contain %q (transcript tail, work indicator, and status footer)", view, want)
 		}
 	}
 	assertBoxLinesExactWidth(t, view, 40)
@@ -5025,10 +5011,10 @@ func TestModel_LongTypedPromptGrowsWithoutOverflowingTerminal(t *testing.T) {
 
 	view := m.View()
 	if lines := strings.Count(view, "\n") + 1; lines > 10 {
-		t.Fatalf("View() tiene %d lineas, un prompt largo no debe romper el alto acotado (<= 10)", lines)
+		t.Fatalf("View() has %d lines; a long prompt must not exceed bounded height (<= 10)", lines)
 	}
 	if got := strings.Count(view, "❯"); got != 1 {
-		t.Fatalf("View() = %q, el prompt %q debe aparecer exactamente una vez aunque el texto se envuelva (count=%d)", view, "❯", got)
+		t.Fatalf("View() = %q, prompt %q must appear exactly once even when text wraps (count=%d)", view, "❯", got)
 	}
 	interior := 0
 	for _, line := range strings.Split(view, "\n") {
@@ -5037,7 +5023,7 @@ func TestModel_LongTypedPromptGrowsWithoutOverflowingTerminal(t *testing.T) {
 		}
 	}
 	if interior != 3 {
-		t.Fatalf("View() = %q, la caja debe crecer a las 3 filas visuales que caben en esta terminal (lineas │ = %d)", view, interior)
+		t.Fatalf("View() = %q, the box must grow to the 3 visual rows that fit in this terminal (│ lines = %d)", view, interior)
 	}
 	assertNoLineWiderThan(t, view, 24)
 	assertBoxLinesExactWidth(t, view, 24)
@@ -5052,24 +5038,24 @@ func TestModel_TabTogglesAgentModeToPlan(t *testing.T) {
 
 	view := m.View()
 	if !strings.Contains(view, "openrouter/free · plan") {
-		t.Fatalf("View() = %q, tras Tab el pie del composer debe mostrar %q", view, "openrouter/free · plan")
+		t.Fatalf("View() = %q, after Tab the composer footer must show %q", view, "openrouter/free · plan")
 	}
 	if strings.Contains(view, "build ·") {
-		t.Fatalf("View() = %q, tras Tab el pie NO debe seguir mostrando %q", view, "build ·")
+		t.Fatalf("View() = %q, after Tab the footer must NOT continue showing %q", view, "build ·")
 	}
 
 	// In plan mode, Enter sends the prompt via SendPlanPrompt, not via SendPrompt.
-	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("investiga x")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("research x")})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	if len(fake.planSent) != 1 {
-		t.Fatalf("SendPlanPrompt fue llamado %d veces, Enter en modo plan debe enviar el prompt exactamente una vez por el camino de plan", len(fake.planSent))
+		t.Fatalf("SendPlanPrompt was called %d times; Enter in plan mode must send the prompt exactly once through the plan path", len(fake.planSent))
 	}
-	if got := fake.planSent[0]; got.sessionID != "s1" || got.text != "investiga x" {
-		t.Fatalf("SendPlanPrompt(%q, %q), se esperaba SendPlanPrompt(%q, %q)", got.sessionID, got.text, "s1", "investiga x")
+	if got := fake.planSent[0]; got.sessionID != "s1" || got.text != "research x" {
+		t.Fatalf("SendPlanPrompt(%q, %q), expected SendPlanPrompt(%q, %q)", got.sessionID, got.text, "s1", "research x")
 	}
 	if len(fake.sent) != 0 {
-		t.Fatalf("SendPrompt fue llamado %d veces, en modo plan el prompt NO debe ir por el camino de build", len(fake.sent))
+		t.Fatalf("SendPrompt was called %d times; in plan mode the prompt must NOT use the build path", len(fake.sent))
 	}
 }
 
@@ -5083,23 +5069,23 @@ func TestModel_TabTogglesBackToBuild(t *testing.T) {
 
 	view := m.View()
 	if !strings.Contains(view, " m ─╯") {
-		t.Fatalf("View() = %q, tras Tab Tab el borde del composer debe volver a mostrar solo el modelo %q", view, "m")
+		t.Fatalf("View() = %q, after Tab Tab the composer border must show only model %q again", view, "m")
 	}
 	if strings.Contains(view, "· plan") {
-		t.Fatalf("View() = %q, tras Tab Tab el pie NO debe seguir mostrando %q", view, "· plan")
+		t.Fatalf("View() = %q, after Tab Tab the footer must NOT continue showing %q", view, "· plan")
 	}
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hazlo")})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	if len(fake.sent) != 1 {
-		t.Fatalf("SendPrompt fue llamado %d veces, de vuelta en build Enter debe enviar exactamente una vez por el camino normal", len(fake.sent))
+		t.Fatalf("SendPrompt was called %d times; back in build, Enter must send exactly once through the normal path", len(fake.sent))
 	}
 	if got := fake.sent[0]; got.sessionID != "s1" || got.text != "hazlo" {
-		t.Fatalf("SendPrompt(%q, %q), se esperaba SendPrompt(%q, %q)", got.sessionID, got.text, "s1", "hazlo")
+		t.Fatalf("SendPrompt(%q, %q), expected SendPrompt(%q, %q)", got.sessionID, got.text, "s1", "hazlo")
 	}
 	if len(fake.planSent) != 0 {
-		t.Fatalf("SendPlanPrompt fue llamado %d veces, tras volver a build el prompt NO debe ir por el camino de plan", len(fake.planSent))
+		t.Fatalf("SendPlanPrompt was called %d times; after returning to build, the prompt must not use the plan path", len(fake.planSent))
 	}
 }
 
@@ -5114,10 +5100,10 @@ func TestModel_TabIsInertWhilePermissionPending(t *testing.T) {
 
 	view := m.View()
 	if !strings.Contains(view, " m ─╯") {
-		t.Fatalf("View() = %q, con permiso pendiente Tab NO debe cambiar el borde: debe seguir mostrando el modelo %q", view, "m")
+		t.Fatalf("View() = %q, with pending permission Tab must not change the border: it must keep showing model %q", view, "m")
 	}
 	if strings.Contains(view, "· plan") {
-		t.Fatalf("View() = %q, con permiso pendiente Tab NO debe activar el modo plan", view)
+		t.Fatalf("View() = %q, with pending permission Tab must not activate plan mode", view)
 	}
 }
 
@@ -5131,27 +5117,27 @@ func TestModel_PresentPlanOffersAcceptAndYExecutes(t *testing.T) {
 
 	view := m.View()
 	planLine := lineWith(t, view, "? Plan")
-	if !strings.Contains(planLine, "(y ejecutar / n seguir en plan)") {
-		t.Fatalf("oferta de aprobacion = %q, debe contener %q", planLine, "(y ejecutar / n seguir en plan)")
+	if !strings.Contains(planLine, "(y run / n stay in plan)") {
+		t.Fatalf("approval offer = %q, must contain %q", planLine, "(y run / n stay in plan)")
 	}
 
 	// 'and' accept the plan: ONE call to AcceptPlan with the TUI session.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
 
 	if len(fake.accepted) != 1 {
-		t.Fatalf("AcceptPlan fue llamado %d veces, 'y' debe aceptar el plan exactamente una vez", len(fake.accepted))
+		t.Fatalf("AcceptPlan was called %d times; 'y' must accept the plan exactly once", len(fake.accepted))
 	}
 	if got := fake.accepted[0]; got != "s1" {
-		t.Fatalf("AcceptPlan(%q), se esperaba AcceptPlan(%q)", got, "s1")
+		t.Fatalf("AcceptPlan(%q), expected AcceptPlan(%q)", got, "s1")
 	}
 	if got := m.View(); strings.Contains(got, "? Plan") {
-		t.Fatalf("View() = %q, aceptar el plan debe retirar la oferta de aprobacion", got)
+		t.Fatalf("View() = %q, accepting the plan must withdraw the approval offer", got)
 	}
 	if len(fake.sent) != 0 {
-		t.Fatalf("SendPrompt fue llamado %d veces, aceptar el plan NO debe enviar un prompt por el camino de build", len(fake.sent))
+		t.Fatalf("SendPrompt was called %d times; accepting the plan must not send a prompt through the build path", len(fake.sent))
 	}
 	if len(fake.planSent) != 0 {
-		t.Fatalf("SendPlanPrompt fue llamado %d veces, aceptar el plan NO debe enviar un prompt por el camino de plan", len(fake.planSent))
+		t.Fatalf("SendPlanPrompt was called %d times; accepting the plan must not send a prompt through the plan path", len(fake.planSent))
 	}
 }
 
@@ -5167,26 +5153,26 @@ func TestModel_PlanApprovalNRejectsAndStaysInPlanMode(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
 
 	if got := m.View(); strings.Contains(got, "? Plan") {
-		t.Fatalf("View() = %q, 'n' debe retirar la oferta de aprobacion del plan", got)
+		t.Fatalf("View() = %q, 'n' must withdraw the plan approval offer", got)
 	}
 	if len(fake.accepted) != 0 {
-		t.Fatalf("AcceptPlan fue llamado %d veces, 'n' NO debe aceptar el plan", len(fake.accepted))
+		t.Fatalf("AcceptPlan was called %d times; 'n' must NOT accept the plan", len(fake.accepted))
 	}
 	if got := m.View(); !strings.Contains(got, "m · plan") {
-		t.Fatalf("View() = %q, tras 'n' el pie debe seguir mostrando %q: rechazar la oferta no cambia el modo", got, "m · plan")
+		t.Fatalf("View() = %q, after 'n' the footer must continue showing %q: rejecting the offer does not change mode", got, "m · plan")
 	}
 
 	// The next shipment continues to follow the plan path: the mode did not change.
-	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("ajusta el plan")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("adjust the plan")})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if len(fake.planSent) != 1 {
-		t.Fatalf("SendPlanPrompt fue llamado %d veces, tras 'n' Enter debe seguir enviando por el camino de plan exactamente una vez", len(fake.planSent))
+		t.Fatalf("SendPlanPrompt was called %d times; after 'n' Enter must continue sending through the plan path exactly once", len(fake.planSent))
 	}
-	if got := fake.planSent[0]; got.sessionID != "s1" || got.text != "ajusta el plan" {
-		t.Fatalf("SendPlanPrompt(%q, %q), se esperaba SendPlanPrompt(%q, %q)", got.sessionID, got.text, "s1", "ajusta el plan")
+	if got := fake.planSent[0]; got.sessionID != "s1" || got.text != "adjust the plan" {
+		t.Fatalf("SendPlanPrompt(%q, %q), expected SendPlanPrompt(%q, %q)", got.sessionID, got.text, "s1", "adjust the plan")
 	}
 	if len(fake.sent) != 0 {
-		t.Fatalf("SendPrompt fue llamado %d veces, tras 'n' el prompt NO debe ir por el camino de build", len(fake.sent))
+		t.Fatalf("SendPrompt was called %d times; after 'n' the prompt must NOT use the build path", len(fake.sent))
 	}
 }
 
@@ -5201,27 +5187,27 @@ func TestModel_PlanApprovalCapturesKeyboard(t *testing.T) {
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
 	if got := m.input.Value(); got != "" {
-		t.Fatalf("input.Value() = %q, las runas normales NO deben entrar al input mientras hay plan pendiente", got)
+		t.Fatalf("input.Value() = %q, normal runes must NOT enter input while a plan is pending", got)
 	}
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if len(fake.sent) != 0 || len(fake.planSent) != 0 || len(fake.accepted) != 0 {
-		t.Fatalf("sent=%d planSent=%d accepted=%d, ni Enter ni las runas normales deben enviar o aceptar nada con plan pendiente", len(fake.sent), len(fake.planSent), len(fake.accepted))
+		t.Fatalf("sent=%d planSent=%d accepted=%d; neither Enter nor normal runes must send or accept anything with a pending plan", len(fake.sent), len(fake.planSent), len(fake.accepted))
 	}
 
 	// 'y' accepts: build again and the run is in progress.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
 	if len(fake.accepted) != 1 || fake.accepted[0] != "s1" {
-		t.Fatalf("accepted = %v, 'y' debe llamar AcceptPlan(%q) exactamente una vez", fake.accepted, "s1")
+		t.Fatalf("accepted = %v, 'y' must call AcceptPlan(%q) exactly once", fake.accepted, "s1")
 	}
 	view := m.View()
 	if !strings.Contains(view, " m ─╯") {
-		t.Fatalf("View() = %q, tras aceptar el plan el borde debe volver a mostrar solo el modelo %q", view, "m")
+		t.Fatalf("View() = %q, after accepting the plan the border must show only model %q again", view, "m")
 	}
 	if strings.Contains(view, "· plan") {
-		t.Fatalf("View() = %q, tras aceptar el plan el pie NO debe seguir mostrando %q", view, "· plan")
+		t.Fatalf("View() = %q, after accepting the plan the footer must NOT continue showing %q", view, "· plan")
 	}
 	if !strings.Contains(view, "Checking context") {
-		t.Fatalf("View() = %q, tras aceptar el plan la corrida queda en curso: debe verse el indicador %q", view, "Checking context")
+		t.Fatalf("View() = %q, after accepting the plan the run remains active: it must show indicator %q", view, "Checking context")
 	}
 }
 
@@ -5231,17 +5217,17 @@ func TestModel_PresentPlanFailedDoesNotOfferApproval(t *testing.T) {
 	m := NewModel(fake, "s1", nil).WithStatus("build", "m")
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "p1", ToolName: "present_plan"})
-	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "p1", Error: "plan invalido"})
+	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "p1", Error: "invalid plan"})
 
 	if got := m.View(); strings.Contains(got, "? Plan") {
-		t.Fatalf("View() = %q, un present_plan fallido NO debe ofrecer la aprobacion del plan", got)
+		t.Fatalf("View() = %q, a failed present_plan must NOT offer plan approval", got)
 	}
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
 	if len(fake.accepted) != 0 {
-		t.Fatalf("AcceptPlan fue llamado %d veces, sin oferta pendiente 'y' NO debe aceptar nada", len(fake.accepted))
+		t.Fatalf("AcceptPlan was called %d times; without a pending offer 'y' must NOT accept anything", len(fake.accepted))
 	}
 	if got := m.input.Value(); got != "y" {
-		t.Fatalf("input.Value() = %q, sin oferta pendiente la runa 'y' debe ir al input normal", got)
+		t.Fatalf("input.Value() = %q, without a pending offer the rune 'y' must go to normal input", got)
 	}
 }
 
@@ -5250,29 +5236,29 @@ func TestModel_EnterSendsTypedPromptViaAgent(t *testing.T) {
 	m := NewModel(fake, "s1", nil)
 
 	// The user types "hello" and presses Enter.
-	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello")})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	if len(fake.sent) != 1 {
-		t.Fatalf("SendPrompt fue llamado %d veces, Enter debe enviar el prompt exactamente una vez", len(fake.sent))
+		t.Fatalf("SendPrompt was called %d times; Enter must send the prompt exactly once", len(fake.sent))
 	}
-	if got := fake.sent[0]; got.sessionID != "s1" || got.text != "hola" {
-		t.Fatalf("SendPrompt(%q, %q), se esperaba SendPrompt(%q, %q)", got.sessionID, got.text, "s1", "hola")
+	if got := fake.sent[0]; got.sessionID != "s1" || got.text != "hello" {
+		t.Fatalf("SendPrompt(%q, %q), expected SendPrompt(%q, %q)", got.sessionID, got.text, "s1", "hello")
 	}
 	if !m.Working() {
-		t.Fatalf("Working() = false, el modelo debe quedar trabajando tras enviar el prompt hasta RunDoneMsg")
+		t.Fatalf("Working() = false; the model must remain working after sending the prompt until RunDoneMsg")
 	}
 }
 
 func TestModel_SendFailuresKeepPendingUserAction(t *testing.T) {
 	t.Run("build prompt", func(t *testing.T) {
 		fake := &fakeAgent{sendErr: errors.New("send failed")}
-		m := typeRunes(t, NewModel(fake, "s1", nil), "hola")
+		m := typeRunes(t, NewModel(fake, "s1", nil), "hello")
 
 		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 		m = updated.(Model)
 
-		if cmd != nil || m.Working() || m.input.Value() != "hola" {
+		if cmd != nil || m.Working() || m.input.Value() != "hello" {
 			t.Fatalf("cmd=%v working=%v composer=%q", cmd != nil, m.Working(), m.input.Value())
 		}
 		if got := m.entries[len(m.entries)-1]; got.kind != entryError || got.text != "send failed" {
@@ -5284,12 +5270,12 @@ func TestModel_SendFailuresKeepPendingUserAction(t *testing.T) {
 		fake := &fakeAgent{planErr: errors.New("plan send failed")}
 		m := NewModel(fake, "s1", nil)
 		m.planMode = true
-		m = typeRunes(t, m, "investiga")
+		m = typeRunes(t, m, "research")
 
 		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 		m = updated.(Model)
 
-		if cmd != nil || m.Working() || !m.planMode || m.input.Value() != "investiga" {
+		if cmd != nil || m.Working() || !m.planMode || m.input.Value() != "research" {
 			t.Fatalf("cmd=%v working=%v planMode=%v composer=%q", cmd != nil, m.Working(), m.planMode, m.input.Value())
 		}
 		if got := m.entries[len(m.entries)-1]; got.kind != entryError || got.text != "plan send failed" {
@@ -5319,12 +5305,12 @@ func TestModel_SendFailuresKeepPendingUserAction(t *testing.T) {
 // menuCommands are the commands shared by the menu "/" tests.
 var menuCommands = []command.Command{
 	{Name: "new", Description: "Start a new session", BuiltIn: true},
-	{Name: "commit", Description: "genera un commit"},
+	{Name: "commit", Description: "generate a commit"},
 	{Name: "model", Description: "Select provider and model", BuiltIn: true},
 	{Name: "compact", Description: "Compact conversation context", BuiltIn: true},
 	{Name: "mcp", Description: "Toggle MCP servers on or off", BuiltIn: true},
 	{Name: "connect", Description: "Connect a provider with an API key", BuiltIn: true},
-	{Name: "review", Description: "revisa el diff"},
+	{Name: "review", Description: "review the diff"},
 }
 
 func withMenuBuiltins(commands ...command.Command) []command.Command {
@@ -5340,7 +5326,7 @@ func typeRunes(t *testing.T, m Model, s string) Model {
 	for _, r := range s {
 		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
 		if r == ' ' {
-			msg.Type = tea.KeySpace // bubbletea reporta el espacio como KeySpace
+			msg.Type = tea.KeySpace // bubbletea reports the space as KeySpace
 		}
 		m = apply(t, m, msg)
 	}
@@ -5370,14 +5356,14 @@ func TestModel_CommandMenuFiltersAsYouType(t *testing.T) {
 	m = typeRunes(t, m, "co")
 	view = m.View()
 	commitLine := lineWith(t, view, "/commit")
-	if !strings.Contains(commitLine, "genera un commit") {
-		t.Fatalf("linea de /commit = %q, el item filtrado debe conservar su descripcion", commitLine)
+	if !strings.Contains(commitLine, "generate a commit") {
+		t.Fatalf("/commit line = %q, the filtered item must preserve its description", commitLine)
 	}
 	if strings.Contains(view, "/review") {
-		t.Fatalf("View() = %q, tras teclear %q el menu NO debe seguir mostrando %q", view, "/co", "/review")
+		t.Fatalf("View() = %q, after typing %q the menu must NOT keep showing %q", view, "/co", "/review")
 	}
 	if got := menuSelectedLine(view); !strings.Contains(got, "/commit") {
-		t.Fatalf("linea seleccionada del menu = %q, el unico candidato /commit debe quedar seleccionado", got)
+		t.Fatalf("selected menu line = %q, the only /commit candidate must remain selected", got)
 	}
 }
 
@@ -5500,12 +5486,12 @@ func TestModel_CommandMenuClosesOnSpace(t *testing.T) {
 
 	m = typeRunes(t, m, "/commit")
 	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/commit") {
-		t.Fatalf("linea seleccionada del menu = %q, con %q tecleado el menu debe estar abierto sobre /commit", got, "/commit")
+		t.Fatalf("selected menu line = %q, with %q typed the menu must be open on /commit", got, "/commit")
 	}
 
 	m = typeRunes(t, m, " ")
 	if got := menuSelectedLine(m.View()); got != "" {
-		t.Fatalf("linea seleccionada del menu = %q, el espacio debe cerrar el menu (lo que sigue son los args)", got)
+		t.Fatalf("selected menu line = %q, the space must close the menu (what follows are args)", got)
 	}
 }
 
@@ -5519,13 +5505,13 @@ func TestModel_MenuKeysNavigateSelection(t *testing.T) {
 		m = apply(t, m, EventMsg{Message: &session.Message{
 			ID:   fmt.Sprintf("u%02d", i),
 			Role: session.RoleUser,
-			Text: fmt.Sprintf("mensaje-%02d", i),
+			Text: fmt.Sprintf("message-%02d", i),
 		}})
 	}
 
 	m = typeRunes(t, m, "/")
 	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/new") {
-		t.Fatalf("linea seleccionada del menu = %q, el comando integrado /new debe arrancar seleccionado", got)
+		t.Fatalf("selected menu line = %q, the built-in /new command must start selected", got)
 	}
 
 	// Local commands lead the initial menu, so move past all five to the first skill.
@@ -5533,19 +5519,19 @@ func TestModel_MenuKeysNavigateSelection(t *testing.T) {
 		m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	}
 	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/commit") {
-		t.Fatalf("linea seleccionada del menu = %q, Down debe mover el marcador a la skill /commit", got)
+		t.Fatalf("selected menu line = %q, Down must move the marker to the /commit skill", got)
 	}
 
 	// Entering a skill preserves the fill-with-space flow.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if got := m.input.Value(); got != "/commit " {
-		t.Fatalf("input.Value() = %q, Enter sobre una skill debe completarla con espacio para argumentos", got)
+		t.Fatalf("input.Value() = %q, Enter on a skill must complete it with a space for arguments", got)
 	}
 	if got := menuSelectedLine(m.View()); got != "" {
-		t.Fatalf("linea seleccionada del menu = %q, completar una skill debe cerrar el menu", got)
+		t.Fatalf("selected menu line = %q, completing a skill must close the menu", got)
 	}
 	if got := len(m.agent.(*fakeAgent).sent); got != 0 {
-		t.Fatalf("SendPrompt fue llamado %d veces, Enter sobre una skill solo debe completarla", got)
+		t.Fatalf("SendPrompt was called %d times; Enter on a skill must only complete it", got)
 	}
 
 	// In a fresh menu, Up from /new cycles to the last item.
@@ -5554,22 +5540,22 @@ func TestModel_MenuKeysNavigateSelection(t *testing.T) {
 	mCycle = typeRunes(t, mCycle, "/")
 	mCycle = apply(t, mCycle, tea.KeyMsg{Type: tea.KeyUp})
 	if got := menuSelectedLine(mCycle.View()); !strings.Contains(got, "/review") && !strings.Contains(got, "/cache-stats") {
-		t.Fatalf("linea seleccionada del menu = %q, Up en /new debe ciclar al ultimo item", got)
+		t.Fatalf("selected menu line = %q, Up on /new must cycle to the last item", got)
 	}
 
 	// Down in the last one returns to the integrated command.
 	mCycle = apply(t, mCycle, tea.KeyMsg{Type: tea.KeyDown})
 	if got := menuSelectedLine(mCycle.View()); !strings.Contains(got, "/new") {
-		t.Fatalf("linea seleccionada del menu = %q, Down en el ultimo item debe ciclar al primero (/new)", got)
+		t.Fatalf("selected menu line = %q, Down on the last item must cycle to the first (/new)", got)
 	}
 
 	// The arrows remained in the second popup: they do not write in the input.
 	view := m.View()
-	if !strings.Contains(view, "mensaje-29") {
-		t.Fatalf("View() = %q, con menu abierto Up/Down NO deben scrollear el viewport: la cola (mensaje-29) debe seguir visible", view)
+	if !strings.Contains(view, "message-29") {
+		t.Fatalf("View() = %q, with the menu open Up/Down must NOT scroll the viewport: the tail (message-29) must remain visible", view)
 	}
 	if got := mCycle.input.Value(); got != "/" {
-		t.Fatalf("input.Value() = %q, Up/Down con menu abierto NO deben escribir en el input", got)
+		t.Fatalf("input.Value() = %q, with the menu open Up/Down must NOT write to the input", got)
 	}
 }
 
@@ -5581,23 +5567,23 @@ func TestModel_TabAppliesSelectedCommand(t *testing.T) {
 
 	m = typeRunes(t, m, "/co")
 	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/commit") {
-		t.Fatalf("linea seleccionada del menu = %q, con %q tecleado /commit debe estar seleccionado", got, "/co")
+		t.Fatalf("selected menu line = %q, /commit must be selected after typing %q", got, "/co")
 	}
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyTab})
 
 	if got := m.input.Value(); got != "/commit " {
-		t.Fatalf("input.Value() = %q, Tab debe reemplazar el token por %q (comando + espacio para los args)", got, "/commit ")
+		t.Fatalf("input.Value() = %q, Tab must replace the token with %q (command + space for args)", got, "/commit ")
 	}
 	if got := m.input.Position(); got != len("/commit ") {
-		t.Fatalf("input.Position() = %d, el caret debe quedar tras el espacio (%d)", got, len("/commit "))
+		t.Fatalf("input.Position() = %d, the caret must remain after the space (%d)", m.input.Position(), len("/commit "))
 	}
 	view := m.View()
 	if got := menuSelectedLine(view); got != "" {
-		t.Fatalf("linea seleccionada del menu = %q, aplicar el comando debe cerrar el menu (el recomputo ve el espacio)", got)
+		t.Fatalf("selected menu line = %q; applying the command must close the menu (recomputation sees the space)", got)
 	}
 	if !strings.Contains(view, " m ─╯") || strings.Contains(view, "· plan") {
-		t.Fatalf("View() = %q, Tab con menu abierto NO debe alternar el plan-mode: el borde debe seguir mostrando el modelo %q", view, "m")
+		t.Fatalf("View() = %q; Tab with the menu open must NOT toggle plan mode: the border must continue showing model %q", view, "m")
 	}
 }
 
@@ -5611,22 +5597,22 @@ func TestModel_EnterAppliesSelectionInsteadOfSending(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	if len(fake.sent) != 0 {
-		t.Fatalf("SendPrompt fue llamado %d veces, Enter con menu abierto debe aplicar la seleccion, NO enviar", len(fake.sent))
+		t.Fatalf("SendPrompt was called %d times; Enter with the menu open must apply the selection, NOT send", len(fake.sent))
 	}
 	if got := m.input.Value(); got != "/commit " {
-		t.Fatalf("input.Value() = %q, Enter con menu abierto debe aplicar la seleccion (%q)", got, "/commit ")
+		t.Fatalf("input.Value() = %q; Enter with the menu open must apply the selection (%q)", got, "/commit ")
 	}
 	if got := menuSelectedLine(m.View()); got != "" {
-		t.Fatalf("linea seleccionada del menu = %q, aplicar la seleccion debe cerrar el menu", got)
+		t.Fatalf("selected menu line = %q; applying the selection must close the menu", got)
 	}
 
 	// Closed menu: the second Enter sends the text as is via SendPrompt.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if len(fake.sent) != 1 {
-		t.Fatalf("SendPrompt fue llamado %d veces, con el menu cerrado Enter debe enviar exactamente una vez", len(fake.sent))
+		t.Fatalf("SendPrompt was called %d times; Enter with the menu closed must send exactly once", len(fake.sent))
 	}
 	if got := fake.sent[0]; got.sessionID != "s1" || got.text != "/commit " {
-		t.Fatalf("SendPrompt(%q, %q), se esperaba SendPrompt(%q, %q): el texto se envia tal cual", got.sessionID, got.text, "s1", "/commit ")
+		t.Fatalf("SendPrompt(%q, %q), expected SendPrompt(%q, %q): text is sent as-is", got.sessionID, got.text, "s1", "/commit ")
 	}
 }
 
@@ -5640,32 +5626,32 @@ func TestModel_EscClosesMenuWithoutStopping(t *testing.T) {
 
 	m = typeRunes(t, m, "/c")
 	if got := menuSelectedLine(m.View()); got == "" {
-		t.Fatalf("View() = %q, con %q tecleado el menu debe estar abierto", m.View(), "/c")
+		t.Fatalf("View() = %q; with %q typed the menu must be open", m.View(), "/c")
 	}
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
 	if got := menuSelectedLine(m.View()); got != "" {
-		t.Fatalf("linea seleccionada del menu = %q, Esc debe cerrar el popup", got)
+		t.Fatalf("selected menu line = %q; Esc must close the popup", got)
 	}
 	if len(fake.stopped) != 0 {
-		t.Fatalf("Stop fue llamado %d veces, Esc con menu abierto NO debe detener la corrida", len(fake.stopped))
+		t.Fatalf("Stop was called %d times; Esc with the menu open must NOT stop the run", len(fake.stopped))
 	}
 	if got := m.input.Value(); got != "/c" {
-		t.Fatalf("input.Value() = %q, Esc solo cierra el popup: el texto %q debe quedar intacto", got, "/c")
+		t.Fatalf("input.Value() = %q; Esc only closes the popup: text %q must remain intact", got, "/c")
 	}
 
 	// Another rune recomputes the menu from the still valid token: it is reopened.
 	m = typeRunes(t, m, "o")
 	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/commit") {
-		t.Fatalf("linea seleccionada del menu = %q, teclear otra runa debe reabrir el menu sobre /commit", got)
+		t.Fatalf("selected menu line = %q; typing another rune must reopen the menu over /commit", got)
 	}
 
 	// With the menu closed, the first Esc arms and the second stops the run.
-	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc}) // cierra el popup reabierto
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc}) // closes the reopened popup
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc}) // menu cerrado: arma
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc}) // confirma
 	if len(fake.stopped) != 1 || fake.stopped[0] != "s1" {
-		t.Fatalf("Stop = %v, con menu cerrado dos Esc deben detener la corrida (Stop(%q) una vez)", fake.stopped, "s1")
+		t.Fatalf("Stop = %v; with the menu closed, two Esc presses must stop the run (Stop(%q) once)", fake.stopped, "s1")
 	}
 }
 
@@ -5679,13 +5665,13 @@ func TestModel_AtOpensFileMenu(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, listFiles)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	m = typeRunes(t, m, "hola @")
+	m = typeRunes(t, m, "hello @")
 	view := m.View()
 	for _, want := range []string{"internal/tui/model.go", "app.go", "README.md"} {
 		lineWith(t, view, want)
 	}
 	if got := menuSelectedLine(view); !strings.Contains(got, "internal/tui/model.go") {
-		t.Fatalf("linea seleccionada del menu = %q, el primer archivo del listado debe arrancar seleccionado", got)
+		t.Fatalf("selected menu line = %q; the first listed file must start selected", got)
 	}
 
 	// "mo" filters by basename: only model.go starts with "mo".
@@ -5694,29 +5680,29 @@ func TestModel_AtOpensFileMenu(t *testing.T) {
 	lineWith(t, view, "internal/tui/model.go")
 	for _, drop := range []string{"app.go", "README.md"} {
 		if strings.Contains(view, drop) {
-			t.Fatalf("View() = %q, tras filtrar por %q el menu NO debe seguir mostrando %q", view, "mo", drop)
+			t.Fatalf("View() = %q, after filtering by %q the menu must NOT keep showing %q", view, "mo", drop)
 		}
 	}
 	if calls != 1 {
-		t.Fatalf("listFiles fue llamado %d veces, debe llamarse UNA vez al activarse el token y cachearse mientras siga activo", calls)
+		t.Fatalf("listFiles was called %d times; it must be called ONCE when the token activates and cached while it remains active", calls)
 	}
 
 	// With listFiles nil the menu simply does not open.
 	m2 := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, nil)
 	m2 = apply(t, m2, tea.WindowSizeMsg{Width: 80, Height: 24})
-	m2 = typeRunes(t, m2, "hola @")
+	m2 = typeRunes(t, m2, "hello @")
 	if got := menuSelectedLine(m2.View()); got != "" {
-		t.Fatalf("linea seleccionada del menu = %q, sin listFiles el @-menu no debe abrir", got)
+		t.Fatalf("selected menu line = %q; without listFiles the @ menu must not open", got)
 	}
 
 	// With listFiles failing the menu shows the error without blocking the input.
 	m3 := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
-		return nil, fmt.Errorf("rg no disponible")
+		return nil, fmt.Errorf("rg unavailable")
 	})
 	m3 = apply(t, m3, tea.WindowSizeMsg{Width: 80, Height: 24})
-	m3 = typeRunes(t, m3, "hola @")
-	if got := menuSelectedLine(m3.View()); !strings.Contains(got, "Could not list files: rg no disponible") {
-		t.Fatalf("linea seleccionada del menu = %q, con listFiles fallando el @-menu debe mostrar el error", got)
+	m3 = typeRunes(t, m3, "hello @")
+	if got := menuSelectedLine(m3.View()); !strings.Contains(got, "Could not list files: rg unavailable") {
+		t.Fatalf("selected menu line = %q; with listFiles failing the @ menu must show the error", got)
 	}
 }
 
@@ -5729,7 +5715,7 @@ func TestModel_AtInsideWordDoesNotOpenMenu(t *testing.T) {
 
 	m = typeRunes(t, m, "a@b")
 	if got := menuSelectedLine(m.View()); got != "" {
-		t.Fatalf("linea seleccionada del menu = %q, un @ dentro de palabra (email) NO debe abrir el @-menu", got)
+		t.Fatalf("selected menu line = %q; an @ inside a word (email) must NOT open the @ menu", got)
 	}
 }
 
@@ -5740,30 +5726,30 @@ func TestModel_TabAppliesSelectedMention(t *testing.T) {
 	})
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	m = typeRunes(t, m, "hola @mo")
+	m = typeRunes(t, m, "hello @mo")
 	if got := menuSelectedLine(m.View()); !strings.Contains(got, "internal/tui/model.go") {
-		t.Fatalf("linea seleccionada del menu = %q, con %q tecleado model.go debe estar seleccionado", got, "@mo")
+		t.Fatalf("selected menu line = %q; with %q typed, model.go must be selected", got, "@mo")
 	}
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyTab})
 
-	want := "hola @internal/tui/model.go "
+	want := "hello @internal/tui/model.go "
 	if got := m.input.Value(); got != want {
-		t.Fatalf("input.Value() = %q, Tab debe reemplazar el token por la mencion conservando el texto alrededor (%q)", got, want)
+		t.Fatalf("input.Value() = %q; Tab must replace the token with the mention while preserving surrounding text (%q)", got, want)
 	}
 	if got := m.input.Position(); got != len([]rune(want)) {
-		t.Fatalf("input.Position() = %d, el caret debe quedar tras el espacio (%d)", got, len([]rune(want)))
+		t.Fatalf("input.Position() = %d; the caret must remain after the space (%d)", m.input.Position(), len([]rune(want)))
 	}
 	if got := menuSelectedLine(m.View()); got != "" {
-		t.Fatalf("linea seleccionada del menu = %q, aplicar la mencion debe cerrar el menu", got)
+		t.Fatalf("selected menu line = %q; applying the mention must close the menu", got)
 	}
 }
 
 func TestModel_SlashOpensCommandMenu(t *testing.T) {
 	// With commands configured via WithCompletions, typing "/" as the first character in the composer opens a menu popup above the box: one line per command with "/<name>" and its description. The first item starts selected and is marked with the prefix "❯" (those not selected have two prefix spaces).
 	cmds := withMenuBuiltins(
-		command.Command{Name: "commit", Description: "genera un commit"},
-		command.Command{Name: "review", Description: "revisa el diff"},
+		command.Command{Name: "commit", Description: "generate a commit"},
+		command.Command{Name: "review", Description: "review the diff"},
 	)
 	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(cmds, nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -5772,13 +5758,13 @@ func TestModel_SlashOpensCommandMenu(t *testing.T) {
 
 	view := m.View()
 	commitLine := lineWith(t, view, "/commit")
-	if !strings.Contains(commitLine, "genera un commit") {
-		t.Fatalf("linea de /commit = %q, el menu debe mostrar la descripcion %q junto al comando", commitLine, "genera un commit")
+	if !strings.Contains(commitLine, "generate a commit") {
+		t.Fatalf("/commit line = %q; the menu must show description %q beside the command", commitLine, "generate a commit")
 	}
 	lineWith(t, view, "/review")
 	newLine := lineWith(t, view, "/new")
 	if plain := ansi.Strip(newLine); !strings.HasPrefix(plain, "❯ ") {
-		t.Fatalf("linea de /new sin ANSI = %q, el comando integrado debe arrancar seleccionado con el prefijo %q", plain, "❯ ")
+		t.Fatalf("/new line without ANSI = %q; the built-in command must start selected with prefix %q", plain, "❯ ")
 	}
 }
 
@@ -5799,27 +5785,27 @@ func TestModel_CommandMenuPrioritizesNewAndEnterCreatesSession(t *testing.T) {
 	// /new is a built-in command, not a fuzzy skill: it must appear first and Enter on its selection creates and activates the session without inserting a space.
 	fake := &fakeAgent{newSessionID: "s2"}
 	m := NewModel(fake, "s1", nil).WithCompletions(withMenuBuiltins(
-		command.Command{Name: "renew", Description: "skill con coincidencia fuzzy"},
+		command.Command{Name: "renew", Description: "skill with fuzzy match"},
 	), nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	m = typeRunes(t, m, "/")
 	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/new") {
-		t.Fatalf("linea seleccionada del menu = %q, /new debe ser el comando integrado seleccionado por encima de skills", got)
+		t.Fatalf("selected menu line = %q; /new must be the built-in command selected above skills", got)
 	}
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if got := m.sessionID; got != "s2" {
-		t.Fatalf("sessionID = %q, Enter sobre /new debe activar la sesion nueva %q", got, "s2")
+		t.Fatalf("sessionID = %q; Enter on /new must activate new session %q", got, "s2")
 	}
 	if got := m.input.Value(); got != "" {
-		t.Fatalf("input.Value() = %q, ejecutar /new desde el menu debe limpiar el composer sin dejar un espacio", got)
+		t.Fatalf("input.Value() = %q; executing /new from the menu must clear the composer without leaving a space", got)
 	}
 	if got := menuSelectedLine(m.View()); got != "" {
-		t.Fatalf("linea seleccionada del menu = %q, ejecutar /new debe cerrar el menu de comandos", got)
+		t.Fatalf("selected menu line = %q; executing /new must close the command menu", got)
 	}
 	if got := fake.sent; len(got) != 1 || got[0].text != "/new" {
-		t.Fatalf("SendPrompt llamadas = %#v, Enter sobre /new debe ejecutar el comando reservado exactamente una vez", got)
+		t.Fatalf("SendPrompt calls = %#v; Enter on /new must execute the reserved command exactly once", got)
 	}
 }
 
@@ -5835,14 +5821,14 @@ func TestModel_NewSessionClearsTokenUsage(t *testing.T) {
 		},
 	})
 	if view := ansi.Strip(m.View()); !strings.Contains(view, "↑ 1.2k ↓ 345") {
-		t.Fatalf("View() antes de /new = %q, debe mostrar el uso de la sesion anterior", view)
+		t.Fatalf("View() before /new = %q; it must show usage from the previous session", view)
 	}
 
 	m = typeRunes(t, m, "/new")
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	if view := ansi.Strip(m.View()); strings.Contains(view, "↑") || strings.Contains(view, "↓") {
-		t.Fatalf("View() despues de /new = %q, la sesion nueva no debe heredar tokens de subida ni bajada", view)
+		t.Fatalf("View() after /new = %q; the new session must not inherit input or output tokens", view)
 	}
 }
 
@@ -5859,7 +5845,7 @@ func TestModel_NewSessionClearsLiveTokenEstimates(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	if m.usage != nil || m.liveUsage || m.outputBytes != 0 || m.reasoningBytes != 0 || m.toolInputBytes != 0 {
-		t.Fatalf("estado de uso despues de /new = usage:%+v live:%v bytes:%d/%d/%d, debe arrancar limpio", m.usage, m.liveUsage, m.outputBytes, m.reasoningBytes, m.toolInputBytes)
+		t.Fatalf("usage state after /new = usage:%+v live:%v bytes:%d/%d/%d; it must start clean", m.usage, m.liveUsage, m.outputBytes, m.reasoningBytes, m.toolInputBytes)
 	}
 }
 
@@ -5867,7 +5853,7 @@ func TestModel_ExactNewEnterBeatsFuzzySkillSelection(t *testing.T) {
 	// Even if a fuzzy skill is selected, typing /new exactly and pressing Enter should execute the reservation, not complete the skill.
 	fake := &fakeAgent{newSessionID: "s2"}
 	m := NewModel(fake, "s1", nil).WithCompletions(withMenuBuiltins(
-		command.Command{Name: "renew", Description: "skill con coincidencia fuzzy"},
+		command.Command{Name: "renew", Description: "skill with fuzzy match"},
 	), nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
@@ -5875,13 +5861,13 @@ func TestModel_ExactNewEnterBeatsFuzzySkillSelection(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	if got := m.sessionID; got != "s2" {
-		t.Fatalf("sessionID = %q, Enter con /new escrito debe activar la sesion nueva %q aunque haya una skill fuzzy", got, "s2")
+		t.Fatalf("sessionID = %q, Enter with /new typed must activate the new session %q even with a fuzzy skill", got, "s2")
 	}
 	if got := m.input.Value(); got != "" {
-		t.Fatalf("input.Value() = %q, Enter con /new escrito debe ejecutarlo, no completar una skill", got)
+		t.Fatalf("input.Value() = %q, Enter with /new typed must execute it, not complete a skill", got)
 	}
 	if got := menuSelectedLine(m.View()); got != "" {
-		t.Fatalf("linea seleccionada del menu = %q, Enter con /new escrito debe cerrar el menu de comandos", got)
+		t.Fatalf("selected menu line = %q, Enter with /new typed must close the command menu", got)
 	}
 }
 
@@ -5889,29 +5875,29 @@ func TestModel_NewWithTrailingSpaceKeepsComposerForArguments(t *testing.T) {
 	// The space closes the menu and disables only the reserved command: the text is left intact so that the user can continue typing arguments.
 	fake := &fakeAgent{newSessionID: "s2"}
 	m := NewModel(fake, "s1", nil).WithCompletions([]command.Command{
-		{Name: "renew", Description: "skill con coincidencia fuzzy"},
+		{Name: "renew", Description: "skill with fuzzy match"},
 	}, nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	m = typeRunes(t, m, "/new ")
 
 	if got := menuSelectedLine(m.View()); got != "" {
-		t.Fatalf("linea seleccionada del menu = %q, /new con espacio final debe cerrar el menu", got)
+		t.Fatalf("selected menu line = %q, /new with trailing space must close the menu", got)
 	}
 	if got := m.input.Value(); got != "/new " {
-		t.Fatalf("input.Value() = %q, /new con espacio final debe conservarse para argumentos", got)
+		t.Fatalf("input.Value() = %q, /new with trailing space must be preserved for arguments", got)
 	}
 	if got := m.sessionID; got != "s1" {
-		t.Fatalf("sessionID = %q, escribir /new con espacio final no debe ejecutar el reservado", got)
+		t.Fatalf("sessionID = %q, typing /new with trailing space must not execute the reserved command", got)
 	}
 	if got := len(fake.sent); got != 0 {
-		t.Fatalf("SendPrompt fue llamado %d veces, escribir /new con espacio final no debe ejecutar el reservado", got)
+		t.Fatalf("SendPrompt was called %d times; typing /new with trailing space must not execute the reserved command", got)
 	}
 }
 
 func TestModel_MenuLinesTruncateToTerminalWidth(t *testing.T) {
 	// A menu line wider than the terminal would be wrapped by the terminal with two real lines, but reservedLines only discounts ONE per item: the layout is broken. The menu should truncate each line to the width of the terminal, as the rest of the view already does (the transcript wraps with ansi.Wrap, the textinput scrolls horizontally).
-	longPath := strings.Repeat("sub/", 30) + "archivo-de-nombre-largo.go"
+	longPath := strings.Repeat("sub/", 30) + "file-with-long-name.go"
 	listFiles := func() ([]string, error) {
 		return []string{longPath}, nil
 	}
@@ -5921,7 +5907,7 @@ func TestModel_MenuLinesTruncateToTerminalWidth(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'@'}})
 
 	view := m.View()
-	lineWith(t, view, "sub/") // la linea del menu sigue presente, truncada
+	lineWith(t, view, "sub/") // the menu line remains present, truncated
 	assertNoLineWiderThan(t, view, 40)
 }
 
@@ -5932,47 +5918,47 @@ func TestModel_WorkingIndicatorAnimatesOnTicks(t *testing.T) {
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	// The user types "hello" and presses Enter; The Enter cmd is preserved (the apply helper discards it and here is the heart of the contract).
-	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello")})
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m, ok := updated.(Model)
 	if !ok {
-		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+		t.Fatalf("Update returned %T, expected tui.Model", updated)
 	}
 
 	// a) Starting the run must return the cmd that pumps the animation: without cmd no one produces ticks and the spinner remains frozen.
 	if cmd == nil {
-		t.Fatalf("Update(Enter) devolvio cmd nil, arrancar la corrida debe devolver el cmd que bombea la animacion: sin cmd el spinner queda congelado")
+		t.Fatalf("Update(Enter) returned nil cmd; starting the run must return the animation-pumping cmd: without it the spinner remains frozen")
 	}
 
 	// b) The status line carries concrete microcopy without the old static
 	// marker "...working": now the prefix is the animated glyph.
 	view := m.View()
 	if !strings.Contains(view, "Checking context") {
-		t.Fatalf("View() = %q, con corrida en curso debe verse la linea de estado con %q", view, "Checking context")
+		t.Fatalf("View() = %q, the status line with %q must be visible while the run is in progress", view, "Checking context")
 	}
 	if strings.Contains(view, "... working") {
-		t.Fatalf("View() = %q, NO debe contener el marcador estatico %q: el prefijo fijo se reemplaza por el glifo del spinner", view, "... working")
+		t.Fatalf("View() = %q, MUST NOT contain the static marker %q: the fixed prefix is replaced by the spinner glyph", view, "... working")
 	}
 
 	// c) Running the cmd produces the tick message; applying it to Update should advance the spinner glyph: the status line changes.
 	before := lineWith(t, view, "Checking context")
 	msg := cmd()
 	if msg == nil {
-		t.Fatalf("cmd() = nil, el cmd de la animacion debe producir un mensaje aplicable a Update")
+		t.Fatalf("cmd() = nil, the animation cmd must produce a message applicable to Update")
 	}
 	updated, tickCmd := m.Update(msg)
 	m, ok = updated.(Model)
 	if !ok {
-		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+		t.Fatalf("Update returned %T, expected tui.Model", updated)
 	}
 	after := lineWith(t, m.View(), "Checking context")
 	if after == before {
-		t.Fatalf("linea de estado tras el tick = %q, identica a la previa: el tick debe avanzar el frame del spinner, una linea identica significa animacion congelada", after)
+		t.Fatalf("status line after tick = %q, identical to the previous one: the tick must advance the spinner frame, an identical line means frozen animation", after)
 	}
 
 	// d) The loop continues: the Update of the tick must schedule the next tick.
 	if tickCmd == nil {
-		t.Fatalf("Update(tick) devolvio cmd nil, el loop de animacion debe agendar el proximo tick")
+		t.Fatalf("Update(tick) returned nil cmd; the animation loop must schedule the next tick")
 	}
 }
 
@@ -5983,14 +5969,14 @@ func TestModel_SpinnerTickDiesAfterRunDone(t *testing.T) {
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	// The run starts and there is one tick left in flight (the cmd has already produced its msg).
-	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello")})
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m, ok := updated.(Model)
 	if !ok {
-		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+		t.Fatalf("Update returned %T, expected tui.Model", updated)
 	}
 	if cmd == nil {
-		t.Fatalf("Update(Enter) devolvio cmd nil, arrancar la corrida debe devolver el cmd que bombea la animacion")
+		t.Fatalf("Update(Enter) returned nil cmd; starting the run must return the animation-pumping cmd")
 	}
 	msg := cmd()
 
@@ -5999,14 +5985,14 @@ func TestModel_SpinnerTickDiesAfterRunDone(t *testing.T) {
 	updated, tickCmd := m.Update(msg)
 	m, ok = updated.(Model)
 	if !ok {
-		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+		t.Fatalf("Update returned %T, expected tui.Model", updated)
 	}
 
 	if tickCmd != nil {
-		t.Fatalf("Update(tick) tras RunDoneMsg devolvio cmd no nil, el loop de animacion NO debe re-agendarse cuando la corrida termino: sin este corte la TUI queda despertando para siempre")
+		t.Fatalf("Update(tick) after RunDoneMsg returned a non-nil cmd; the animation loop must NOT reschedule after the run ends")
 	}
 	if got := m.View(); strings.Contains(got, "working") {
-		t.Fatalf("View() = %q, tras RunDoneMsg el tick viejo NO debe revivir la linea de estado %q", got, "working")
+		t.Fatalf("View() = %q, after RunDoneMsg the old tick must NOT revive the status line %q", got, "working")
 	}
 }
 
@@ -6024,10 +6010,10 @@ func TestModel_AcceptPlanStartsSpinner(t *testing.T) {
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
 	m, ok := updated.(Model)
 	if !ok {
-		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+		t.Fatalf("Update returned %T, expected tui.Model", updated)
 	}
 	if cmd == nil {
-		t.Fatalf("Update('y') devolvio cmd nil, aceptar el plan arranca la corrida y debe devolver el cmd que bombea la animacion: sin cmd el spinner queda congelado en el camino del plan")
+		t.Fatalf("Update('y') returned nil cmd; accepting the plan starts the run and must return the animation-pumping cmd")
 	}
 
 	before := lineWith(t, m.View(), "Checking context")
@@ -6043,12 +6029,12 @@ func TestModel_AcceptPlanStartsSpinner(t *testing.T) {
 		}
 	}
 	if msg == nil {
-		t.Fatalf("cmd() = nil, el cmd de la animacion debe producir un mensaje aplicable a Update")
+		t.Fatalf("cmd() = nil, the animation cmd must produce a message applicable to Update")
 	}
 	m = apply(t, m, msg)
 	after := lineWith(t, m.View(), "Checking context")
 	if after == before {
-		t.Fatalf("linea de estado tras el tick = %q, identica a la previa: el tick del camino del plan debe avanzar el frame del spinner", after)
+		t.Fatalf("status line after tick = %q, identical to the previous one: the plan-path tick must advance the spinner frame", after)
 	}
 }
 
@@ -6059,14 +6045,14 @@ func TestModel_SecondRunRestartsSpinner(t *testing.T) {
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	// First run: Enter starts the loop and RunDoneMsg turns it off.
-	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello")})
 	updated, cmd1 := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m, ok := updated.(Model)
 	if !ok {
-		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+		t.Fatalf("Update returned %T, expected tui.Model", updated)
 	}
 	if cmd1 == nil {
-		t.Fatalf("Update(Enter) devolvio cmd nil, arrancar la primera corrida debe devolver el cmd que bombea la animacion")
+		t.Fatalf("Update(Enter) returned nil cmd; starting the first run must return the animation-pumping cmd")
 	}
 	m = apply(t, m, activeRunDone(m, ""))
 
@@ -6075,21 +6061,21 @@ func TestModel_SecondRunRestartsSpinner(t *testing.T) {
 	updated, cmd2 := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m, ok = updated.(Model)
 	if !ok {
-		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+		t.Fatalf("Update returned %T, expected tui.Model", updated)
 	}
 	if cmd2 == nil {
-		t.Fatalf("Update(Enter) de la segunda corrida devolvio cmd nil, cada corrida debe reencender la animacion: un loop de un solo uso deja el spinner muerto en la segunda corrida")
+		t.Fatalf("Update(Enter) for the second run returned nil cmd; every run must restart the animation")
 	}
 
 	before := lineWith(t, m.View(), "Checking context")
 	msg := cmd2()
 	if msg == nil {
-		t.Fatalf("cmd() = nil, el cmd de la animacion de la segunda corrida debe producir un mensaje aplicable a Update")
+		t.Fatalf("cmd() = nil, the second-run animation cmd must produce a message applicable to Update")
 	}
 	m = apply(t, m, msg)
 	after := lineWith(t, m.View(), "Checking context")
 	if after == before {
-		t.Fatalf("linea de estado tras el tick = %q, identica a la previa: el tick de la segunda corrida debe avanzar el frame del spinner", after)
+		t.Fatalf("status line after tick = %q, identical to the previous one: the second-run tick must advance the spinner frame", after)
 	}
 }
 
@@ -6107,27 +6093,27 @@ func TestModel_UpArrowRecallsPromptHistory(t *testing.T) {
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
 	if got := m.input.Value(); got != "segundo" {
-		t.Fatalf("input.Value() = %q, la flecha arriba debe recuperar el ultimo prompt enviado (%q)", got, "segundo")
+		t.Fatalf("input.Value() = %q, the up arrow must recall the last sent prompt (%q)", got, "segundo")
 	}
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
 	if got := m.input.Value(); got != "primero" {
-		t.Fatalf("input.Value() = %q, la segunda flecha arriba debe retroceder al prompt anterior (%q)", got, "primero")
+		t.Fatalf("input.Value() = %q, the second up arrow must go back to the previous prompt (%q)", got, "primero")
 	}
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
 	if got := m.input.Value(); got != "primero" {
-		t.Fatalf("input.Value() = %q, en el tope del historial otra flecha arriba se queda en %q: no cicla ni se vacia", got, "primero")
+		t.Fatalf("input.Value() = %q, at the top of history another up arrow stays at %q: it does not cycle or empty", got, "primero")
 	}
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	if got := m.input.Value(); got != "segundo" {
-		t.Fatalf("input.Value() = %q, la flecha abajo debe deshacer hacia adelante y volver al prompt mas reciente (%q)", got, "segundo")
+		t.Fatalf("input.Value() = %q, the down arrow must undo forward and return to the most recent prompt (%q)", got, "segundo")
 	}
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	if got := m.input.Value(); got != "" {
-		t.Fatalf("input.Value() = %q, pasado el mas reciente la flecha abajo debe dejar el input como estaba antes de empezar a navegar (vacio tras el Enter)", got)
+		t.Fatalf("input.Value() = %q, past the most recent prompt the down arrow must restore the input from before navigation (empty after Enter)", got)
 	}
 }
 
@@ -6143,22 +6129,22 @@ func TestModel_NonEmptyInputBlocksHistoryExploration(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("borrador")})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	if got := m.input.Value(); got != "borrador" {
-		t.Fatalf("input.Value() = %q, con texto escrito la flecha abajo no debe abrir ni reemplazar con el historial", got)
+		t.Fatalf("input.Value() = %q, with typed text the down arrow must not open or replace from history", got)
 	}
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
 	if got := m.input.Value(); got != "borrador" {
-		t.Fatalf("input.Value() = %q, con texto escrito la flecha arriba no debe abrir ni reemplazar con el historial", got)
+		t.Fatalf("input.Value() = %q, with typed text the up arrow must not open or replace from history", got)
 	}
 
 	// Emptying the composer enables navigation.
 	m.input.SetValue("")
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
 	if got := m.input.Value(); got != "primero" {
-		t.Fatalf("input.Value() = %q, con el composer vacio la flecha arriba debe recuperar %q", got, "primero")
+		t.Fatalf("input.Value() = %q, with an empty composer the up arrow must recall %q", got, "primero")
 	}
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	if got := m.input.Value(); got != "" {
-		t.Fatalf("input.Value() = %q, al avanzar despues del prompt mas reciente el composer debe quedar limpio", got)
+		t.Fatalf("input.Value() = %q, advancing past the most recent prompt must leave the composer empty", got)
 	}
 }
 
@@ -6176,7 +6162,7 @@ func TestModel_HistoryKeepsOnlyLatestHundredPrompts(t *testing.T) {
 		m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
 	}
 	if got := m.input.Value(); got != "prompt-003" {
-		t.Fatalf("input.Value() = %q, tras 102 envios el historial debe conservar solo los 100 mas recientes y detenerse en %q", got, "prompt-003")
+		t.Fatalf("input.Value() = %q, after 102 sends history must retain only the 100 most recent prompts and stop at %q", got, "prompt-003")
 	}
 }
 
@@ -6192,15 +6178,15 @@ func TestModel_MenuOpenKeepsUpDownForSelection(t *testing.T) {
 
 	m = typeRunes(t, m, "/")
 	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/new") {
-		t.Fatalf("linea seleccionada del menu = %q, con %q tecleado el menu debe estar abierto sobre /new", got, "/")
+		t.Fatalf("selected menu line = %q, with %q typed the menu must be open on /new", got, "/")
 	}
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
 	if got := m.input.Value(); got != "/" {
-		t.Fatalf("input.Value() = %q, con menu abierto la flecha arriba NO debe tocar el input: la seleccion del menu es quien navega", got)
+		t.Fatalf("input.Value() = %q, with the menu open the up arrow must NOT touch the input: menu selection handles navigation", got)
 	}
 	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/review") && !strings.Contains(got, "/cache-stats") {
-		t.Fatalf("linea seleccionada del menu = %q, con menu abierto la flecha arriba debe mover la seleccion ciclicamente", got)
+		t.Fatalf("selected menu line = %q, with the menu open the up arrow must move the selection cyclically", got)
 	}
 }
 
@@ -6215,13 +6201,13 @@ func TestModel_HistoryRecordsPlanPrompts(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("plan-uno")})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if len(fake.planSent) != 1 {
-		t.Fatalf("SendPlanPrompt fue llamado %d veces, Enter en plan-mode debe enviar el prompt exactamente una vez por el camino de plan", len(fake.planSent))
+		t.Fatalf("SendPlanPrompt was called %d times; Enter in plan mode must send the prompt exactly once through the plan path", len(fake.planSent))
 	}
 	m = apply(t, m, activeRunDone(m, ""))
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
 	if got := m.input.Value(); got != "plan-uno" {
-		t.Fatalf("input.Value() = %q, la flecha arriba debe recuperar el prompt de plan enviado (%q): los prompts de plan tambien se apilan en el historial", got, "plan-uno")
+		t.Fatalf("input.Value() = %q, the up arrow must recall the sent plan prompt (%q): plan prompts are also stored in history", got, "plan-uno")
 	}
 }
 
@@ -6231,19 +6217,19 @@ func TestModel_EmptySubmitDoesNotPolluteHistory(t *testing.T) {
 	m := NewModel(fake, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("unico")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("only-one")})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	// Enter with empty input: does not send and should not touch the history.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
-	if got := m.input.Value(); got != "unico" {
-		t.Fatalf("input.Value() = %q, la primera flecha arriba debe recuperar el unico prompt enviado (%q), sin un submit vacio colado en el historial", got, "unico")
+	if got := m.input.Value(); got != "only-one" {
+		t.Fatalf("input.Value() = %q, the first up arrow must recall the only sent prompt (%q), without an empty submit in history", got, "only-one")
 	}
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
-	if got := m.input.Value(); got != "unico" {
-		t.Fatalf("input.Value() = %q, en el tope del historial la flecha arriba se queda en %q: el submit vacio no debe haberse apilado", got, "unico")
+	if got := m.input.Value(); got != "only-one" {
+		t.Fatalf("input.Value() = %q, at the top of history the up arrow stays at %q: the empty submit must not have been stored", got, "only-one")
 	}
 }
 
@@ -6251,23 +6237,23 @@ func TestModel_EmptySubmitDoesNotPolluteHistory(t *testing.T) {
 func TestModel_SmoothRevealsAssistantTextOnTicks(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
-	text := strings.Repeat("palabra ", 40) + "final-del-texto"
+	text := strings.Repeat("word ", 40) + "final-del-texto"
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
 
 	// (a) The delta does NOT appear complete at once: the tail of the text is not yet revealed right after accumulating the delta.
 	if got := m.View(); strings.Contains(got, "final-del-texto") {
-		t.Fatalf("View() = %q, NO debe contener %q inmediatamente tras el delta: el texto se revela progresivamente con los ticks de reveal, no aparece completo de golpe", got, "final-del-texto")
+		t.Fatalf("View() = %q, MUST NOT contain %q immediately after the delta: text is revealed progressively by reveal ticks", got, "final-del-texto")
 	}
 
 	// (b) A reveal tick advances the visible text: a prefix is ​​already visible, but the tail is not yet (progressive reveal, not all at once).
 	m = apply(t, m, revealTickMsg{})
 	view := m.View()
-	if !strings.Contains(view, "palabra") {
-		t.Fatalf("View() = %q, debe contener %q tras un tick de reveal: cada tick revela un tramo del texto acumulado", view, "palabra")
+	if !strings.Contains(view, "word") {
+		t.Fatalf("View() = %q, must contain %q after a reveal tick: each tick reveals a portion of accumulated text", view, "word")
 	}
 	if strings.Contains(view, "final-del-texto") {
-		t.Fatalf("View() = %q, NO debe contener %q tras UN solo tick: un tick revela ~max(base, ceil(backlog/8)) runas, no el texto entero", view, "final-del-texto")
+		t.Fatalf("View() = %q, MUST NOT contain %q after a single tick: one tick reveals a portion, not the entire text", view, "final-del-texto")
 	}
 
 	// (c) With enough ticks the full text becomes visible.
@@ -6278,7 +6264,7 @@ func TestModel_SmoothRevealsAssistantTextOnTicks(t *testing.T) {
 		}
 	}
 	if got := m.View(); !strings.Contains(got, "final-del-texto") {
-		t.Fatalf("View() = %q, debe contener %q tras suficientes ticks de reveal: el loop de reveal termina mostrando el texto completo", got, "final-del-texto")
+		t.Fatalf("View() = %q, must contain %q after enough reveal ticks: the loop eventually shows the full text", got, "final-del-texto")
 	}
 }
 
@@ -6287,14 +6273,14 @@ func TestModel_RevealCatchUpDrainsHugeDeltaInBoundedTicks(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
 	// ~4011 runes in a single delta (fast model dumping text at once).
-	text := strings.Repeat("palabra ", 500) + "fin-catchup"
+	text := strings.Repeat("word ", 500) + "fin-catchup"
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
 
 	// The first tick doesn't reveal everything: the catch-up speeds up the pace, it doesn't turn it into an instant reveal (that would kill the animation).
 	m = apply(t, m, revealTickMsg{})
 	if got := m.View(); strings.Contains(got, "fin-catchup") {
-		t.Fatalf("View() = %q, NO debe contener %q tras UN solo tick de un delta de ~4000 runas: el catch-up acota la latencia sin volverse un reveal instantaneo", got, "fin-catchup")
+		t.Fatalf("View() = %q, MUST NOT contain %q after a single tick of a ~4000-rune delta: catch-up limits latency without becoming instant", got, "fin-catchup")
 	}
 
 	// At most 64 ticks in total (~2 seconds at 33ms) leave the full text visible: the proportional step geometrically drains the backlog.
@@ -6302,7 +6288,7 @@ func TestModel_RevealCatchUpDrainsHugeDeltaInBoundedTicks(t *testing.T) {
 		m = apply(t, m, revealTickMsg{})
 	}
 	if got := m.View(); !strings.Contains(got, "fin-catchup") {
-		t.Fatalf("View() = %q, debe contener %q tras 64 ticks: el catch-up proporcional al backlog debe drenar un delta enorme en una cantidad acotada de ticks (un paso constante puro tardaria ~570)", got, "fin-catchup")
+		t.Fatalf("View() = %q, must contain %q after 64 ticks: proportional catch-up must drain a huge delta in bounded ticks", got, "fin-catchup")
 	}
 }
 
@@ -6319,7 +6305,7 @@ func TestModel_RevealMarkdownSwapWaitsForDrain(t *testing.T) {
 	// One tick before closing: The revealed prefix is ​​now rendered as Markdown.
 	m = apply(t, m, revealTickMsg{})
 	if got := ansi.Strip(m.View()); strings.Contains(got, "**") || !strings.Contains(got, "fuerte") {
-		t.Fatalf("View() sin ANSI = %q, debe rendir el Markdown revelado durante streaming", got)
+		t.Fatalf("View() without ANSI = %q, must render the revealed Markdown during streaming", got)
 	}
 
 	// The shift is closed with a pending backlog.
@@ -6330,23 +6316,23 @@ func TestModel_RevealMarkdownSwapWaitsForDrain(t *testing.T) {
 
 	view := ansi.Strip(m.View())
 	if strings.Contains(view, "fin-drenado") {
-		t.Fatalf("View() = %q, NO debe contener %q inmediatamente tras StepEnded: cerrar el turno no debe revelar de golpe la cola pendiente, el reveal sigue su ritmo de ticks", view, "fin-drenado")
+		t.Fatalf("View() = %q, MUST NOT contain %q immediately after StepEnded: closing the turn must not reveal the pending queue at once", view, "fin-drenado")
 	}
 	if strings.Contains(view, "**") || !strings.Contains(view, "fuerte") {
-		t.Fatalf("View() sin ANSI = %q, debe conservar el Markdown del prefijo revelado tras StepEnded", view)
+		t.Fatalf("View() without ANSI = %q, must preserve Markdown for the revealed prefix after StepEnded", view)
 	}
 
 	// Once the backlog is drained, the closed block is rendered as markdown.
 	m = drainReveal(t, m)
 	view = ansi.Strip(m.View())
 	if strings.Contains(view, "**") {
-		t.Fatalf("View() = %q, NO debe contener %q tras drenar: con el bloque cerrado y drenado el enfasis markdown se rinde, no se muestra crudo", view, "**")
+		t.Fatalf("View() = %q, MUST NOT contain %q after draining: closed and drained Markdown must render emphasis", view, "**")
 	}
 	if !strings.Contains(view, "fuerte") {
-		t.Fatalf("View() = %q, debe contener %q: rendir el markdown no debe perder el contenido", view, "fuerte")
+		t.Fatalf("View() = %q, must contain %q: rendering Markdown must not lose content", view, "fuerte")
 	}
 	if !strings.Contains(view, "fin-drenado") {
-		t.Fatalf("View() = %q, debe contener %q: drenar el backlog debe terminar mostrando el texto completo rendido", view, "fin-drenado")
+		t.Fatalf("View() = %q, must contain %q: draining the backlog must show the complete rendered text", view, "fin-drenado")
 	}
 }
 
@@ -6363,27 +6349,27 @@ func TestModel_RevealCutsByRunesNotBytes(t *testing.T) {
 	for m.hasBacklog() {
 		ticks++
 		if ticks > 1000 {
-			t.Fatalf("el backlog del reveal no se agoto tras 1000 ticks")
+			t.Fatalf("reveal backlog was not drained after 1000 ticks")
 		}
 		m = apply(t, m, revealTickMsg{})
 		view := m.View()
 		if !utf8.ValidString(view) {
-			t.Fatalf("View() = %q tras el tick %d, no es UTF-8 valido: el corte del reveal debe ser por runas, un corte por bytes parte los caracteres multibyte", view, ticks)
+			t.Fatalf("View() = %q after tick %d is not valid UTF-8: reveal cuts must use runes, not split multibyte characters", view, ticks)
 		}
 		if strings.ContainsRune(view, '�') {
-			t.Fatalf("View() = %q tras el tick %d, contiene el caracter de reemplazo U+FFFD: un caracter multibyte quedo partido por un corte por bytes", view, ticks)
+			t.Fatalf("View() = %q after tick %d contains replacement character U+FFFD: a multibyte character was split by a byte cut", view, ticks)
 		}
 	}
 	// The drain must have gone through intermediate cuts: an instant reveal would pass the assertions above without exercising anything.
 	if ticks < 2 {
-		t.Fatalf("el backlog (%d runas) se dreno en %d tick(s), debe drenar en varios ticks para ejercitar los cortes intermedios", utf8.RuneCountInString(text), ticks)
+		t.Fatalf("backlog (%d runes) drained in %d tick(s), it must drain over multiple ticks to exercise intermediate cuts", utf8.RuneCountInString(text), ticks)
 	}
 	plain := ansi.Strip(m.View())
 	if got, want := strings.Count(plain, "日本語テキスト"), 8; got != want {
-		t.Fatalf("View() sin ANSI = %q, contiene %d ocurrencias de texto japonés, se esperaban %d tras drenar", plain, got, want)
+		t.Fatalf("View() without ANSI = %q, contains %d occurrences of Japanese text, expected %d after draining", plain, got, want)
 	}
 	if got, want := strings.Count(plain, "🚀🚀🚀"), 8; got != want {
-		t.Fatalf("View() sin ANSI = %q, contiene %d grupos de emoji, se esperaban %d tras drenar", plain, got, want)
+		t.Fatalf("View() without ANSI = %q, contains %d emoji groups; expected %d after draining", plain, got, want)
 	}
 }
 
@@ -6392,45 +6378,45 @@ func TestModel_RevealTickLoopLifecycle(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
 	// 200 runes per delta: no single tick drains the entire backlog.
-	delta := strings.Repeat("palabra ", 25)
+	delta := strings.Repeat("word ", 25)
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 
 	// a) The first delta with backlog starts the loop: the cmd produces the tick.
 	updated, cmd := m.Update(EventMsg{Kind: session.KindTextDelta, Text: delta})
 	m, ok := updated.(Model)
 	if !ok {
-		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+		t.Fatalf("Update returned %T, expected tui.Model", updated)
 	}
 	if cmd == nil {
-		t.Fatalf("Update(delta) devolvio cmd nil, el primer delta con backlog debe devolver el cmd que arranca el loop de reveal: sin cmd nadie produce ticks y el texto queda congelado")
+		t.Fatalf("Update(delta) returned nil cmd; the first delta with backlog must start the reveal loop")
 	}
 	msg := cmd()
 	if _, ok := msg.(revealTickMsg); !ok {
-		t.Fatalf("cmd() = %T, el cmd del arranque del loop debe producir un revealTickMsg", msg)
+		t.Fatalf("cmd() = %T, the loop-start command must produce a revealTickMsg", msg)
 	}
 
 	// b) A second delta with the loop already running DOES NOT double the chain of ticks: two chains would double the rhythm of the reveal.
 	updated, cmd = m.Update(EventMsg{Kind: session.KindTextDelta, Text: delta})
 	m, ok = updated.(Model)
 	if !ok {
-		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+		t.Fatalf("Update returned %T, expected tui.Model", updated)
 	}
 	if cmd != nil {
-		t.Fatalf("Update(delta) con el loop de reveal corriendo devolvio cmd no nil, un segundo delta NO debe arrancar otra cadena de ticks: cadenas duplicadas aceleran el reveal con cada delta")
+		t.Fatalf("Update(delta) with the reveal loop running returned a non-nil cmd; a second delta must not start another tick chain")
 	}
 
 	// c) A tick with backlog remaining is reset: the cmd produces the next tick.
 	updated, cmd = m.Update(revealTickMsg{})
 	m, ok = updated.(Model)
 	if !ok {
-		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+		t.Fatalf("Update returned %T, expected tui.Model", updated)
 	}
 	if cmd == nil {
-		t.Fatalf("Update(tick) con backlog restante devolvio cmd nil, el loop debe reagendar el proximo tick mientras quede texto sin revelar")
+		t.Fatalf("Update(tick) with remaining backlog returned nil cmd; the loop must schedule the next tick while text remains unrevealed")
 	}
 	msg = cmd()
 	if _, ok := msg.(revealTickMsg); !ok {
-		t.Fatalf("cmd() = %T, el cmd del rearme del loop debe producir el proximo revealTickMsg", msg)
+		t.Fatalf("cmd() = %T, the loop-rearm command must produce the next revealTickMsg", msg)
 	}
 
 	// d) With the backlog drained the next tick is not rescheduled: the loop dies.
@@ -6438,23 +6424,23 @@ func TestModel_RevealTickLoopLifecycle(t *testing.T) {
 	updated, cmd = m.Update(revealTickMsg{})
 	m, ok = updated.(Model)
 	if !ok {
-		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+		t.Fatalf("Update returned %T, expected tui.Model", updated)
 	}
 	if cmd != nil {
-		t.Fatalf("Update(tick) sin backlog devolvio cmd no nil, el loop de reveal debe morir al drenarse: sin este corte la TUI queda despertando cada 33ms para siempre")
+		t.Fatalf("Update(tick) without backlog returned a non-nil cmd; the reveal loop must end when drained")
 	}
 
 	// e) A new delta after the drain restarts the loop.
 	updated, cmd = m.Update(EventMsg{Kind: session.KindTextDelta, Text: delta})
 	if _, ok = updated.(Model); !ok {
-		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+		t.Fatalf("Update returned %T, expected tui.Model", updated)
 	}
 	if cmd == nil {
-		t.Fatalf("Update(delta) tras drenar devolvio cmd nil, un delta nuevo debe reencender el loop de reveal: un loop de un solo uso deja el texto congelado en el segundo turno de streaming")
+		t.Fatalf("Update(delta) after draining returned nil cmd; a new delta must restart the reveal loop")
 	}
 	msg = cmd()
 	if _, ok := msg.(revealTickMsg); !ok {
-		t.Fatalf("cmd() = %T, el cmd del reencendido del loop debe producir un revealTickMsg", msg)
+		t.Fatalf("cmd() = %T, the loop-restart command must produce a revealTickMsg", msg)
 	}
 }
 
@@ -6464,42 +6450,42 @@ func TestModel_RevealSurvivesRunDone(t *testing.T) {
 	m := NewModel(fake, "s1", nil)
 
 	// Actual run in progress: working on via Enter with text.
-	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello")})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
-	text := strings.Repeat("palabra ", 40) + "fin-tras-run-done"
+	text := strings.Repeat("word ", 40) + "after-run-done"
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
 
 	// The run ends with a pending backlog: working is turned off but the text queue remains unrevealed.
 	m = apply(t, m, activeRunDone(m, ""))
 	if m.Working() {
-		t.Fatalf("Working() = true, RunDoneMsg debe apagar el estado de trabajo")
+		t.Fatalf("Working() = true, RunDoneMsg must turn off working state")
 	}
-	if got := m.View(); strings.Contains(got, "fin-tras-run-done") {
-		t.Fatalf("View() = %q, RunDoneMsg NO debe revelar la cola de golpe: el reveal sigue su ritmo de ticks tambien al terminar la corrida", got)
+	if got := m.View(); strings.Contains(got, "after-run-done") {
+		t.Fatalf("View() = %q, RunDoneMsg MUST NOT reveal the queue at once; reveal pacing continues after the run", got)
 	}
 
 	// The tick after the end of the run continues advancing and rescheduling.
 	updated, cmd := m.Update(revealTickMsg{})
 	m, ok := updated.(Model)
 	if !ok {
-		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+		t.Fatalf("Update returned %T, expected tui.Model", updated)
 	}
 	if cmd == nil {
-		t.Fatalf("Update(tick) tras RunDoneMsg devolvio cmd nil con backlog pendiente, el loop de reveal no debe morir con working: debe seguir drenando el texto restante")
+		t.Fatalf("Update(tick) after RunDoneMsg returned nil cmd with pending backlog; the reveal loop must continue draining remaining text")
 	}
 
 	m = drainReveal(t, m)
-	if got := m.View(); !strings.Contains(got, "fin-tras-run-done") {
-		t.Fatalf("View() = %q, debe contener %q tras drenar: los ticks posteriores a RunDoneMsg deben terminar mostrando el texto completo", got, "fin-tras-run-done")
+	if got := m.View(); !strings.Contains(got, "after-run-done") {
+		t.Fatalf("View() = %q, must contain %q after draining: post-RunDoneMsg ticks must show the complete text", got, "after-run-done")
 	}
 }
 
 // Thinking toggle contract (Shift+Tab key, see handleKey and toggleThinking): a settled thought (closed and with reveal drained) collapses to the summary line "◆ Thought for <dur>"; Shift+Tab expands it to the full text and a second Shift+Tab collapses it again. The hint " ⇧Tab" accompanies the collapsed summary to reveal the key.
 func TestModel_ShiftTabExpandsAndCollapsesSettledThinking(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
-	text := "razon-1\nrazon-2\nrazon-3"
+	text := "reason-1\nreason-2\nreason-3"
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: text})
 	m = drainReveal(t, m)
@@ -6509,21 +6495,21 @@ func TestModel_ShiftTabExpandsAndCollapsesSettledThinking(t *testing.T) {
 	// Seated: Collapsed by default.
 	view := m.View()
 	if !strings.Contains(view, "◆ Thought") {
-		t.Fatalf("View() = %q, el pensamiento asentado debe colapsar a %q", view, "◆ Thought")
+		t.Fatalf("View() = %q, the settled thought must collapse to %q", view, "◆ Thought")
 	}
 	if !strings.Contains(view, " ⇧Tab") {
-		t.Fatalf("View() = %q, el resumen colapsado debe llevar el hint %q para descubrir el toggle", view, " ⇧Tab")
+		t.Fatalf("View() = %q, the collapsed summary must include hint %q to discover the toggle", view, " ⇧Tab")
 	}
-	if strings.Contains(view, "razon-2") {
-		t.Fatalf("View() = %q, el pensamiento colapsado NO debe mostrar el texto completo", view)
+	if strings.Contains(view, "reason-2") {
+		t.Fatalf("View() = %q, the collapsed thought must NOT show the full text", view)
 	}
 
 	// Shift+Tab expande.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
 	view = m.View()
-	for _, want := range []string{"◆ Thought", "razon-1", "razon-2", "razon-3"} {
+	for _, want := range []string{"◆ Thought", "reason-1", "reason-2", "reason-3"} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("View() = %q, tras Shift+Tab el pensamiento expandido debe mostrar %q", view, want)
+			t.Fatalf("View() = %q, after Shift+Tab the expanded thought must show %q", view, want)
 		}
 	}
 
@@ -6531,10 +6517,10 @@ func TestModel_ShiftTabExpandsAndCollapsesSettledThinking(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
 	view = m.View()
 	if !strings.Contains(view, "◆ Thought") {
-		t.Fatalf("View() = %q, el segundo Shift+Tab debe volver al resumen colapsado %q", view, "◆ Thought")
+		t.Fatalf("View() = %q, the second Shift+Tab must return to collapsed summary %q", view, "◆ Thought")
 	}
-	if strings.Contains(view, "razon-2") {
-		t.Fatalf("View() = %q, el segundo Shift+Tab debe colapsar el texto otra vez", view)
+	if strings.Contains(view, "reason-2") {
+		t.Fatalf("View() = %q, the second Shift+Tab must collapse the text again", view)
 	}
 }
 
@@ -6542,26 +6528,26 @@ func TestModel_SettledThinkingSummaryAlignsWithAssistantContent(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
-	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "respuesta-asistente"})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "assistant-response"})
 	m = apply(t, m, EventMsg{
 		Kind:    session.KindStepEnded,
-		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: "respuesta-asistente"},
+		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: "assistant-response"},
 	})
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
-	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "pensamiento-asentado"})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "settled-thought"})
 	m = drainReveal(t, m)
-	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: "pensamiento-asentado"})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: "settled-thought"})
 	m = drainReveal(t, m)
 
-	assistantLine := ansi.Strip(lineWith(t, m.View(), "respuesta-asistente"))
+	assistantLine := ansi.Strip(lineWith(t, m.View(), "assistant-response"))
 	thinkingLine := ansi.Strip(lineWith(t, m.View(), "◆ Thought"))
 	assistantIndent := assistantLine[:len(assistantLine)-len(strings.TrimLeft(assistantLine, " "))]
 
 	if got, want := assistantIndent, "  "; got != want {
-		t.Fatalf("prefijo del contenido assistant = %q, want %q", got, want)
+		t.Fatalf("assistant content prefix = %q, want %q", got, want)
 	}
 	if !strings.HasPrefix(thinkingLine, assistantIndent) {
-		t.Fatalf("linea del resumen de pensamiento = %q, debe alinearse con el contenido assistant %q", thinkingLine, assistantLine)
+		t.Fatalf("thinking summary line = %q, must align with assistant content %q", thinkingLine, assistantLine)
 	}
 }
 
@@ -6569,24 +6555,24 @@ func TestModel_LiveThinkingHeaderAlignsWithAssistantContent(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
-	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "respuesta-asistente"})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "assistant-response"})
 	m = apply(t, m, EventMsg{
 		Kind:    session.KindStepEnded,
-		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: "respuesta-asistente"},
+		Message: &session.Message{ID: "a1", Role: session.RoleAssistant, Text: "assistant-response"},
 	})
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
-	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "pensamiento-vivo"})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "live-thought"})
 	m = drainReveal(t, m)
 
-	assistantLine := ansi.Strip(lineWith(t, m.View(), "respuesta-asistente"))
+	assistantLine := ansi.Strip(lineWith(t, m.View(), "assistant-response"))
 	thinkingLine := ansi.Strip(lineWith(t, m.View(), "◆ Thinking…"))
 	assistantIndent := assistantLine[:len(assistantLine)-len(strings.TrimLeft(assistantLine, " "))]
 
 	if got, want := assistantIndent, "  "; got != want {
-		t.Fatalf("prefijo del contenido assistant = %q, want %q", got, want)
+		t.Fatalf("assistant content prefix = %q, want %q", got, want)
 	}
 	if !strings.HasPrefix(thinkingLine, assistantIndent) {
-		t.Fatalf("linea del encabezado de pensamiento vivo = %q, debe alinearse con el contenido assistant %q", thinkingLine, assistantLine)
+		t.Fatalf("live thinking header line = %q, must align with assistant content %q", thinkingLine, assistantLine)
 	}
 }
 
@@ -6600,19 +6586,19 @@ func TestModel_ShiftTabIsInertWhileThinkingLive(t *testing.T) {
 	// The live preview shows the header and last lines, not the summary or the full expanded text.
 	view := m.View()
 	if !strings.Contains(view, "◆ Thinking…") {
-		t.Fatalf("View() = %q, en vivo debe mostrar %q", view, "◆ Thinking…")
+		t.Fatalf("View() = %q, live thinking must show %q", view, "◆ Thinking…")
 	}
 	if strings.Contains(view, "◆ Thought") {
-		t.Fatalf("View() = %q, en vivo NO debe mostrar el resumen colapsado %q", view, "◆ Thought")
+		t.Fatalf("View() = %q, live thinking must NOT show collapsed summary %q", view, "◆ Thought")
 	}
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
 	view = m.View()
 	if strings.Contains(view, "◆ Thought") {
-		t.Fatalf("View() = %q, Shift+Tab durante el stream vivo no debe colapsar todavia", view)
+		t.Fatalf("View() = %q, Shift+Tab during live streaming must not collapse yet", view)
 	}
 	if strings.Contains(view, "vivo-1") {
-		t.Fatalf("View() = %q, Shift+Tab durante el stream vivo no debe expandir el texto entero", view)
+		t.Fatalf("View() = %q, Shift+Tab during live streaming must not expand the entire text", view)
 	}
 }
 
@@ -6630,27 +6616,27 @@ func TestModel_ShiftTabTogglesAllSettledThinkingBlocks(t *testing.T) {
 	// Both collapsed by default: two summaries, no text.
 	view := m.View()
 	if n := strings.Count(view, "◆ Thought"); n != 2 {
-		t.Fatalf("View() = %q, dos pensamientos asentados deben colapsar a dos resumenes %q (n=%d)", view, "◆ Thought", n)
+		t.Fatalf("View() = %q, two settled thoughts must collapse to two summaries %q (n=%d)", view, "◆ Thought", n)
 	}
 	if strings.Contains(view, "primero-a") || strings.Contains(view, "segundo-a") {
-		t.Fatalf("View() = %q, ambos colapsados no deben mostrar texto", view)
+		t.Fatalf("View() = %q, neither collapsed thought must show text", view)
 	}
 
 	// A Shift+Tab expands both.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
 	view = m.View()
 	if !strings.Contains(view, "primero-a") || !strings.Contains(view, "segundo-a") {
-		t.Fatalf("View() = %q, un solo Shift+Tab debe expandir AMBOS pensamientos", view)
+		t.Fatalf("View() = %q, one Shift+Tab must expand BOTH thoughts", view)
 	}
 	if n := strings.Count(view, "◆ Thought"); n != 2 {
-		t.Fatalf("View() = %q, tras expandir siguen habiendo dos resumenes de cabecera (n=%d)", view, n)
+		t.Fatalf("View() = %q, after expanding there are still two header summaries (n=%d)", view, n)
 	}
 
 	// A second Shift+Tab collapses both.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
 	view = m.View()
 	if strings.Contains(view, "primero-a") || strings.Contains(view, "segundo-a") {
-		t.Fatalf("View() = %q, el segundo Shift+Tab debe colapsar AMBOS", view)
+		t.Fatalf("View() = %q, the second Shift+Tab must collapse BOTH", view)
 	}
 }
 
@@ -6658,7 +6644,7 @@ func TestModel_ShiftTabTogglesAllSettledThinkingBlocks(t *testing.T) {
 func TestModel_ClickExpandsSettledThinking(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 20})
-	text := "razon-1\nrazon-2\nrazon-3"
+	text := "reason-1\nreason-2\nreason-3"
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: text})
 	m = drainReveal(t, m)
@@ -6675,19 +6661,19 @@ func TestModel_ClickExpandsSettledThinking(t *testing.T) {
 		}
 	}
 	if summaryRow < 0 {
-		t.Fatalf("entryLines() no contiene el resumen %q: %v", "◆ Thought", lines)
+		t.Fatalf("entryLines() does not contain summary %q: %v", "◆ Thought", lines)
 	}
 	// The row on the screen is the one with the content minus the visible scrolling, plus the row of the top bar that moves the body one row down.
 	clickY := topBarHeight + summaryRow - m.viewport.YOffset
 	if clickY < topBarHeight {
-		t.Fatalf("summaryRow=%d YOffset=%d, el resumen no esta visible para clicar", summaryRow, m.viewport.YOffset)
+		t.Fatalf("summaryRow=%d YOffset=%d, the summary is not visible to click", summaryRow, m.viewport.YOffset)
 	}
 
 	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, Y: clickY})
 	view := m.View()
-	for _, want := range []string{"◆ Thought", "razon-1", "razon-2", "razon-3"} {
+	for _, want := range []string{"◆ Thought", "reason-1", "reason-2", "reason-3"} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("View() = %q, el clic sobre el resumen debe expandir el pensamiento mostrando %q", view, want)
+			t.Fatalf("View() = %q, clicking the summary must expand the thought and show %q", view, want)
 		}
 	}
 }
@@ -6709,7 +6695,7 @@ func TestModel_ClickTargetingStaysAlignedWithCompactGroups(t *testing.T) {
 		Message: &session.Message{ID: "c2", Role: session.RoleTool, ToolCallID: "c2"},
 	})
 
-	text := "razon-1\nrazon-2"
+	text := "reason-1\nreason-2"
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: text})
 	m = drainReveal(t, m)
@@ -6719,18 +6705,18 @@ func TestModel_ClickTargetingStaysAlignedWithCompactGroups(t *testing.T) {
 
 	// The row is searched on the real screen: the short transcript is shown from the top (without scrolling) and the viewport opens the view, so the row Y of the screen is the absolute line of the content.
 	if m.viewport.YOffset != 0 {
-		t.Fatalf("viewport.YOffset = %d, want 0: el transcript corto se muestra desde arriba", m.viewport.YOffset)
+		t.Fatalf("viewport.YOffset = %d, want 0: the short transcript is shown from the top", m.viewport.YOffset)
 	}
 	summaryY := lineIndexWith(t, ansi.Strip(m.View()), "◆ Thought")
 
 	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 2, Y: summaryY})
 	if !m.entries[target].expanded {
-		t.Fatal("el clic sobre la fila visible del resumen debe expandir el pensamiento pese al grupo compacto de tools encima")
+		t.Fatal("clicking the visible summary row must expand the thought despite the compact tool group above")
 	}
 	view := ansi.Strip(m.View())
-	for _, want := range []string{"razon-1", "razon-2"} {
+	for _, want := range []string{"reason-1", "reason-2"} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("View() sin ANSI = %q, el pensamiento expandido debe mostrar %q", view, want)
+			t.Fatalf("View() without ANSI = %q, the expanded thought must show %q", view, want)
 		}
 	}
 }
@@ -6739,7 +6725,7 @@ func TestModel_ClickTargetingStaysAlignedWithCompactGroups(t *testing.T) {
 func TestModel_ClickCollapsesExpandedThinking(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 20})
-	text := "razon-1\nrazon-2"
+	text := "reason-1\nreason-2"
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: text})
 	m = drainReveal(t, m)
@@ -6748,8 +6734,8 @@ func TestModel_ClickCollapsesExpandedThinking(t *testing.T) {
 
 	// Expand first with Shift+Tab.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
-	if got := m.View(); !strings.Contains(got, "razon-1") {
-		t.Fatalf("View() = %q, precondicion: Shift+Tab debe expandir", got)
+	if got := m.View(); !strings.Contains(got, "reason-1") {
+		t.Fatalf("View() = %q, precondition: Shift+Tab must expand", got)
 	}
 
 	// Click on the first line of the expanded text (the "◆ Thought" header).
@@ -6764,11 +6750,11 @@ func TestModel_ClickCollapsesExpandedThinking(t *testing.T) {
 	clickY := topBarHeight + headerRow - m.viewport.YOffset
 	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, Y: clickY})
 	view := m.View()
-	if strings.Contains(view, "razon-1") {
-		t.Fatalf("View() = %q, el clic sobre el bloque expandido debe colapsarlo", view)
+	if strings.Contains(view, "reason-1") {
+		t.Fatalf("View() = %q, clicking the expanded block must collapse it", view)
 	}
 	if !strings.Contains(view, "◆ Thought") {
-		t.Fatalf("View() = %q, tras colapsar debe volver el resumen %q", view, "◆ Thought")
+		t.Fatalf("View() = %q, after collapsing the summary %q must return", view, "◆ Thought")
 	}
 }
 
@@ -6776,30 +6762,30 @@ func TestModel_ClickCollapsesExpandedThinking(t *testing.T) {
 func TestModel_ClickOutsideThinkingIsInert(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 20})
-	m = apply(t, m, EventMsg{Message: &session.Message{ID: "u1", Role: session.RoleUser, Text: "hola"}})
+	m = apply(t, m, EventMsg{Message: &session.Message{ID: "u1", Role: session.RoleUser, Text: "hello"}})
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
-	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "penso-a\npenso-b"})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "thought-a\nthought-b"})
 	m = drainReveal(t, m)
-	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: "penso-a\npenso-b"})
+	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: "thought-a\nthought-b"})
 	m = drainReveal(t, m)
 
 	before := m.View()
 	// Click on the user message line (first entry, row 0).
 	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, Y: 0})
 	if got := m.View(); got != before {
-		t.Fatalf("View() cambio tras clic fuera del pensamiento:\nantes = %q\ndespues = %q, el clic solo alterna bloques de pensamiento asentados", before, got)
+		t.Fatalf("View() changed after clicking outside the thought:\nbefore = %q\nafter = %q; clicks only toggle settled thought blocks", before, got)
 	}
-	if strings.Contains(m.View(), "penso-a") {
-		t.Fatalf("View() = %q, el clic fuera del pensamiento no debe expandirlo", m.View())
+	if strings.Contains(m.View(), "thought-a") {
+		t.Fatalf("View() = %q, clicking outside the thought must not expand it", m.View())
 	}
 }
 
 func TestModel_KeyRunesBatch_NormalTextInsertsIntoComposer(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil)
 
-	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola mundo")})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello world")})
 
-	if got, want := m.input.Value(), "hola mundo"; got != want {
+	if got, want := m.input.Value(), "hello world"; got != want {
 		t.Fatalf("input.Value() = %q, want %q: normal text batch must preserve every rune in order", got, want)
 	}
 }
@@ -6887,7 +6873,7 @@ func TestModel_SubmittingNewActivatesFreshSessionForFuturePrompts(t *testing.T) 
 		Kind: session.KindSessionCwd,
 		Text: root,
 	}); err != nil {
-		t.Fatalf("store.AppendEvent(s1, Session.Cwd) = %v, se esperaba nil", err)
+		t.Fatalf("store.AppendEvent(s1, Session.Cwd) = %v, expected nil", err)
 	}
 	eng := engine.New(engine.Config{
 		Root:     root,
@@ -6901,10 +6887,10 @@ func TestModel_SubmittingNewActivatesFreshSessionForFuturePrompts(t *testing.T) 
 
 	sessions, err := store.Sessions(context.Background())
 	if err != nil {
-		t.Fatalf("store.Sessions() = %v, se esperaba nil", err)
+		t.Fatalf("store.Sessions() = %v, expected nil", err)
 	}
 	if len(sessions) != 2 {
-		t.Fatalf("store.Sessions() contiene %d sesiones, se esperaban 2", len(sessions))
+		t.Fatalf("store.Sessions() contains %d sessions, expected 2", len(sessions))
 	}
 	newSessionID := ""
 	for _, s := range sessions {
@@ -6914,20 +6900,20 @@ func TestModel_SubmittingNewActivatesFreshSessionForFuturePrompts(t *testing.T) 
 		}
 	}
 	if newSessionID == "" {
-		t.Fatal("no se encontro la sesion creada por /new")
+		t.Fatal("the session created by /new was not found")
 	}
-	m = typeRunes(t, m, "continua aqui")
+	m = typeRunes(t, m, "continue here")
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	_, done := collectUntilRunDone(t, eng.Events(), 10*time.Second, nil)
 	if done.Err != "" {
-		t.Fatalf("RunDoneMsg.Err = %q, se esperaba corrida limpia", done.Err)
+		t.Fatalf("RunDoneMsg.Err = %q, expected a clean run", done.Err)
 	}
 	messages, err := store.Messages(context.Background(), newSessionID, 0)
 	if err != nil {
-		t.Fatalf("store.Messages(%s, 0) = %v, se esperaba nil", newSessionID, err)
+		t.Fatalf("store.Messages(%s, 0) = %v, expected nil", newSessionID, err)
 	}
-	if len(messages) != 1 || messages[0].Text != "continua aqui" {
-		t.Fatalf("mensajes de %s = %+v, se esperaba que el siguiente prompt se enviara a la sesion nueva", newSessionID, messages)
+	if len(messages) != 1 || messages[0].Text != "continue here" {
+		t.Fatalf("messages for %s = %+v, expected the next prompt to be sent to the new session", newSessionID, messages)
 	}
 }
 
@@ -6936,11 +6922,11 @@ func nextMsg(t *testing.T, ch <-chan tea.Msg, timeout time.Duration) tea.Msg {
 	t.Helper()
 	select {
 	case <-time.After(timeout):
-		t.Fatalf("timeout de %v esperando el siguiente mensaje del engine", timeout)
+		t.Fatalf("timeout of %v waiting for the engine's next message", timeout)
 		return nil
 	case msg, ok := <-ch:
 		if !ok {
-			t.Fatal("canal del engine cerrado antes de tiempo")
+			t.Fatal("engine channel closed unexpectedly")
 		}
 		return msg
 	}
@@ -6961,7 +6947,7 @@ func collectUntilRunDone(t *testing.T, ch <-chan tea.Msg, timeout time.Duration,
 		case RunDoneMsg:
 			return events, m
 		default:
-			t.Fatalf("mensaje inesperado en el canal del engine: %T", m)
+			t.Fatalf("unexpected message on engine channel: %T", m)
 		}
 	}
 }

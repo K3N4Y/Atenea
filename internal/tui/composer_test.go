@@ -69,15 +69,15 @@ func newTestComposer() composer {
 func TestComposer_CtrlJInsertsNewlineAndGrowsWithoutSubmitting(t *testing.T) {
 	commands, listFiles, models := noCompletions()
 	c := newTestComposer()
-	c = typeInto(c, "primera linea", commands, listFiles, models)
+	c = typeInto(c, "first line", commands, listFiles, models)
 
 	c, intent, _ := c.handleKey(keyMsg(tea.KeyCtrlJ), commands, listFiles, models)
 	if intent.submit {
 		t.Fatalf("Ctrl+J surfaced submit=%v, must only insert a newline", intent.submit)
 	}
-	c = typeInto(c, "segunda linea", commands, listFiles, models)
+	c = typeInto(c, "second line", commands, listFiles, models)
 
-	if got, want := c.value(), "primera linea\nsegunda linea"; got != want {
+	if got, want := c.value(), "first line\nsecond line"; got != want {
 		t.Fatalf("value() = %q, Ctrl+J must insert a literal newline and keep the draft %q", got, want)
 	}
 	if got := c.input.Height(); got != 2 {
@@ -89,7 +89,7 @@ func TestComposer_GrowthStopsAtFiveRowsPreservingNewlines(t *testing.T) {
 	commands, listFiles, models := noCompletions()
 	c := newTestComposer()
 	for line := 0; line < composerMaxLines+2; line++ {
-		c = typeInto(c, "linea", commands, listFiles, models)
+		c = typeInto(c, "line", commands, listFiles, models)
 		if line < composerMaxLines+1 {
 			c, _, _ = c.handleKey(keyMsg(tea.KeyCtrlJ), commands, listFiles, models)
 		}
@@ -113,7 +113,7 @@ func TestComposer_GrowthStopsAtFiveRowsPreservingNewlines(t *testing.T) {
 
 func TestComposer_EnterSurfacesSubmitIntent(t *testing.T) {
 	commands, listFiles, models := noCompletions()
-	c := typeInto(newTestComposer(), "hola", commands, listFiles, models)
+	c := typeInto(newTestComposer(), "hello", commands, listFiles, models)
 	_, intent, _ := c.handleKey(keyMsg(tea.KeyEnter), commands, listFiles, models)
 	if !intent.submit || !intent.handled {
 		t.Fatalf("Enter intent = %+v, want submit+handled so the root routes the prompt", intent)
@@ -122,7 +122,7 @@ func TestComposer_EnterSurfacesSubmitIntent(t *testing.T) {
 
 func TestComposer_TabAndEscWithMenuClosedAreLeftToTheRoot(t *testing.T) {
 	commands, listFiles, models := noCompletions()
-	c := typeInto(newTestComposer(), "hola", commands, listFiles, models)
+	c := typeInto(newTestComposer(), "hello", commands, listFiles, models)
 	for _, tc := range []struct {
 		name string
 		key  tea.KeyType
@@ -131,7 +131,7 @@ func TestComposer_TabAndEscWithMenuClosedAreLeftToTheRoot(t *testing.T) {
 		if intent.handled || intent.submit {
 			t.Fatalf("%s intent = %+v, must be left to the root (not handled)", tc.name, intent)
 		}
-		if got := next.value(); got != "hola" {
+		if got := next.value(); got != "hello" {
 			t.Fatalf("%s changed the draft to %q, run-control keys must not feed the textarea", tc.name, got)
 		}
 	}

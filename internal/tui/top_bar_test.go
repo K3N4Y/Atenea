@@ -38,12 +38,12 @@ func TestModel_TopBarRefreshesBranchAfterSuccessfulTool(t *testing.T) {
 
 	view := ansi.Strip(m.View())
 	if !strings.Contains(view, "feature/live-branch") {
-		t.Fatalf("la barra superior debe refrescar la rama tras Tool.Success; View() = %q", view)
+		t.Fatalf("the top bar must refresh the branch after Tool.Success; View() = %q", view)
 	}
 	if strings.Contains(view, branchGlyph+" main") {
-		t.Fatalf("la barra superior conserva la rama inicial despues del checkout; View() = %q", view)
-	}
+		t.Fatalf("the top bar retains the initial branch after checkout; View() = %q", view)
 
+	}
 	git("checkout", "-b", "fix/second-refresh")
 	updated, cmd = m.update(EventMsg{Kind: session.KindToolSuccess, CallID: "c2", ToolName: "bash"})
 	m = updated.(Model)
@@ -51,7 +51,7 @@ func TestModel_TopBarRefreshesBranchAfterSuccessfulTool(t *testing.T) {
 		m = apply(t, m, cmd())
 	}
 	if view := ansi.Strip(m.View()); !strings.Contains(view, "fix/second-refresh") {
-		t.Fatalf("la rama debe refrescarse despues de cada bash exitoso; View() = %q", view)
+		t.Fatalf("the branch must refresh after every successful bash; View() = %q", view)
 	}
 }
 
@@ -78,13 +78,13 @@ func TestModel_TopBarRefreshesBranchFromHomeAbbreviatedWorkspace(t *testing.T) {
 	}
 
 	if view := ansi.Strip(m.View()); !strings.Contains(view, "feature/home-path") {
-		t.Fatalf("la rama debe refrescarse cuando el workspace usa ~; View() = %q", view)
+		t.Fatalf("the branch must refresh when the workspace uses ~; View() = %q", view)
 	}
 }
 
-// TestModel_TopBarShowsBranchDirectoryAndContextUsage verifica que, una vez
-// listo el modelo, la primera linea de View() es la barra superior con la rama
-// git, el directorio de trabajo y el uso de contexto (usado / ventana).
+// TestModel_TopBarShowsBranchDirectoryAndContextUsage verifies that, once the
+// model is ready, the first line of View() is the top bar with the git branch,
+// working directory, and context usage (used / window).
 func TestModel_TopBarShowsBranchDirectoryAndContextUsage(t *testing.T) {
 	m := NewModel(declaringAgent("anthropic/claude-opus-4.8", 200_000), "s1", nil).
 		WithWorkspace("main", "~/dev/atenea").
@@ -96,22 +96,22 @@ func TestModel_TopBarShowsBranchDirectoryAndContextUsage(t *testing.T) {
 	first := lineWith(t, ansi.Strip(m.View()), "main")
 
 	if !strings.Contains(first, "main") {
-		t.Fatalf("la barra superior debe mostrar la rama %q; primera linea = %q", "main", first)
+		t.Fatalf("the top bar must show branch %q; first line = %q", "main", first)
 	}
 	if !strings.Contains(first, "~/dev/atenea") {
-		t.Fatalf("la barra superior debe mostrar el directorio %q; primera linea = %q", "~/dev/atenea", first)
+		t.Fatalf("the top bar must show directory %q; first line = %q", "~/dev/atenea", first)
 	}
 	if !strings.Contains(first, "16k / 200k") {
-		t.Fatalf("la barra superior debe mostrar el uso de contexto %q; primera linea = %q", "16k / 200k", first)
+		t.Fatalf("the top bar must show context usage %q; first line = %q", "16k / 200k", first)
 	}
 }
 
-// TestModel_TopBarBranchLeadsWithGlyph verifica que el nombre de la rama va
-// precedido por el glifo de rama (branchGlyph): un glifo vacio dejaria la rama
-// pelada, asi que este caso ancla que el icono se emite antes del nombre.
+// TestModel_TopBarBranchLeadsWithGlyph verifies that the branch name is
+// preceded by the branch glyph (branchGlyph): an empty glyph would leave the
+// branch bare, so this case anchors that the icon is emitted before the name.
 func TestModel_TopBarBranchLeadsWithGlyph(t *testing.T) {
 	if branchGlyph == "" {
-		t.Fatal("branchGlyph no debe ser vacio: la rama de la barra superior necesita su icono")
+		t.Fatal("branchGlyph must not be empty: the top bar branch needs its icon")
 	}
 	m := NewModel(nil, "s1", nil).WithWorkspace("main", "~/dev/atenea")
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 20})
@@ -119,14 +119,13 @@ func TestModel_TopBarBranchLeadsWithGlyph(t *testing.T) {
 	first := lineWith(t, ansi.Strip(m.View()), "main")
 	want := branchGlyph + " main"
 	if !strings.Contains(first, want) {
-		t.Fatalf("la barra superior debe mostrar el glifo de rama antes del nombre (%q); primera linea = %q", want, first)
+		t.Fatalf("the top bar must show the branch glyph before the name (%q); first line = %q", want, first)
 	}
 }
 
-// TestModel_TopBarKeepsTotalHeight verifica que la barra superior se dibuja
-// dentro del chrome y que no aumenta la altura total: View() sigue midiendo
-// exactamente Height lineas (el chrome de la barra sale del cuerpo, no anade
-// filas extra).
+// TestModel_TopBarKeepsTotalHeight verifies that the top bar is drawn inside
+// the chrome and does not increase total height: View() still measures exactly
+// Height lines (the bar chrome comes from the body; it adds no extra rows).
 func TestModel_TopBarKeepsTotalHeight(t *testing.T) {
 	m := NewModel(nil, "s1", nil).WithWorkspace("main", "~/dev/atenea")
 
@@ -134,17 +133,17 @@ func TestModel_TopBarKeepsTotalHeight(t *testing.T) {
 
 	first := lineWith(t, ansi.Strip(m.View()), "main")
 	if !strings.Contains(first, "main") {
-		t.Fatalf("la barra superior debe mostrar la rama %q; linea de la barra = %q", "main", first)
+		t.Fatalf("the top bar must show branch %q; bar line = %q", "main", first)
 	}
 
 	if got := strings.Count(m.View(), "\n") + 1; got != 12 {
-		t.Fatalf("View() debe medir 12 lineas (la barra no aumenta la altura); midio %d", got)
+		t.Fatalf("View() must measure 12 lines (the bar does not increase height); got %d", got)
 	}
 }
 
-// TestModel_TopBarContextUsesTheWindowTheAdapterDeclares verifica que la barra
-// lee la ventana del adaptador que sirve el modelo activo — no de una tabla
-// propia de la TUI — y la muestra como "usado / ventana" ("9k / 256k").
+// TestModel_TopBarContextUsesTheWindowTheAdapterDeclares verifies that the bar
+// reads the active model adapter's window—not a TUI-owned table—and displays it
+// as "used / window" ("9k / 256k").
 func TestModel_TopBarContextUsesTheWindowTheAdapterDeclares(t *testing.T) {
 	const model = "cohere/north-mini-code:free"
 	agent := &fakeAgent{
@@ -162,7 +161,7 @@ func TestModel_TopBarContextUsesTheWindowTheAdapterDeclares(t *testing.T) {
 	first := lineWith(t, ansi.Strip(m.View()), "256k")
 
 	if !strings.Contains(first, "9k / 256k") {
-		t.Fatalf("con ventana declarada la barra debe mostrar %q; primera linea = %q", "9k / 256k", first)
+		t.Fatalf("with a declared window the bar must show %q; first line = %q", "9k / 256k", first)
 	}
 }
 
@@ -177,18 +176,18 @@ func TestModel_TopBarContextFormatsMillionTokenWindowAsM(t *testing.T) {
 
 	first := lineWith(t, ansi.Strip(m.View()), "1m")
 	if !strings.Contains(first, "16k / 1m") {
-		t.Fatalf("con ventana de un millon la barra debe mostrar %q; primera linea = %q", "16k / 1m", first)
+		t.Fatalf("with a million-token window the bar must show %q; first line = %q", "16k / 1m", first)
 	}
 	if strings.Contains(first, "1000k") {
-		t.Fatalf("la barra no debe mostrar un millon como %q; primera linea = %q", "1000k", first)
+		t.Fatalf("the bar must not show one million as %q; first line = %q", "1000k", first)
 	}
 }
 
-// TestModel_TopBarContextShowsUsedOnlyWhenWindowUnknown verifica que, cuando el
-// modelo no tiene ventana de contexto conocida, la etiqueta de la derecha
-// muestra solo los tokens usados (p.ej. "16k") sin la forma "usado / ventana".
-// Cae contra una implementacion que asuma siempre ventana conocida o que
-// concatene ciegamente " / ".
+// TestModel_TopBarContextShowsUsedOnlyWhenWindowUnknown verifies that, when the
+// model has no known context window, the right-hand label
+// shows only used tokens (e.g. "16k") rather than "used / window".
+// It catches an implementation that always assumes a known window or
+// blindly concatenates " / ".
 func TestModel_TopBarContextShowsUsedOnlyWhenWindowUnknown(t *testing.T) {
 	const unknownModel = "demo"
 	agent := &fakeAgent{declared: true, capabilities: llm.Capabilities{ContextWindows: map[string]int{"other": 200_000}}}
@@ -203,16 +202,16 @@ func TestModel_TopBarContextShowsUsedOnlyWhenWindowUnknown(t *testing.T) {
 	first := lineWith(t, ansi.Strip(m.View()), "16k")
 
 	if !strings.Contains(first, "16k") {
-		t.Fatalf("con ventana desconocida la barra debe mostrar los tokens usados %q; primera linea = %q", "16k", first)
+		t.Fatalf("with unknown window the bar must show used tokens %q; first line = %q", "16k", first)
 	}
 	if strings.Contains(first, "16k /") {
-		t.Fatalf("con ventana desconocida la barra NO debe mostrar la forma %q (no hay ventana); primera linea = %q", "16k /", first)
+		t.Fatalf("with unknown window the bar must NOT show the form %q (there is no window); first line = %q", "16k /", first)
 	}
 }
 
-// TestModel_TopBarContextTreatsSilenceAsUnknown: un agente que no declara nada
-// (el adaptador no implementa llm.Describing) no es un adaptador sin ventanas.
-// La barra debe mostrar solo lo usado, nunca inventar una ventana.
+// TestModel_TopBarContextTreatsSilenceAsUnknown: an agent that declares nothing
+// (the adapter does not implement llm.Describing) is not an adapter without windows.
+// The bar must show only usage, never invent a window.
 func TestModel_TopBarContextTreatsSilenceAsUnknown(t *testing.T) {
 	const model = "cohere/north-mini-code:free"
 	agent := &fakeAgent{capabilities: llm.Capabilities{ContextWindows: map[string]int{model: 256_000}}}
@@ -226,15 +225,15 @@ func TestModel_TopBarContextTreatsSilenceAsUnknown(t *testing.T) {
 
 	first := lineWith(t, ansi.Strip(m.View()), "9k")
 	if strings.Contains(first, "9k /") {
-		t.Fatalf("sin declaracion no hay ventana que mostrar; primera linea = %q", first)
+		t.Fatalf("without a declaration there is no window to show; first line = %q", first)
 	}
 }
 
-// TestModel_TopBarWithoutUsageHasNoContextLabel verifica que, sin evento de
-// usage (m.usage == nil), topBarContext() devuelve "" y la barra no pinta
-// ninguna etiqueta de contexto a la derecha: ni la forma "usado / ventana" ni un
-// conteo de tokens suelto. Cae contra una implementacion que muestre un valor
-// por defecto (p.ej. "0" o "0 / 200k") cuando aun no hay uso.
+// TestModel_TopBarWithoutUsageHasNoContextLabel verifies that, without a usage
+// event (m.usage == nil), topBarContext() returns "" and the bar draws no
+// context label on the right: neither "used / window" nor a loose token count.
+// It catches an implementation that displays a default value
+// (e.g. "0" or "0 / 200k") before usage exists.
 func TestModel_TopBarWithoutUsageHasNoContextLabel(t *testing.T) {
 	m := NewModel(nil, "s1", nil).WithWorkspace("main", "~/x")
 
@@ -243,24 +242,24 @@ func TestModel_TopBarWithoutUsageHasNoContextLabel(t *testing.T) {
 	first := strings.TrimRight(lineWith(t, ansi.Strip(m.View()), "main"), " ")
 
 	if !strings.Contains(first, "main") {
-		t.Fatalf("la barra debe mostrar la rama %q sin usage; primera linea = %q", "main", first)
+		t.Fatalf("the bar must show branch %q without usage; first line = %q", "main", first)
 	}
 	if !strings.Contains(first, "~/x") {
-		t.Fatalf("la barra debe mostrar el directorio %q sin usage; primera linea = %q", "~/x", first)
+		t.Fatalf("the bar must show directory %q without usage; first line = %q", "~/x", first)
 	}
 	if strings.Contains(first, " / ") {
-		t.Fatalf("sin usage la barra NO debe mostrar la forma %q; primera linea = %q", " / ", first)
+		t.Fatalf("without usage the bar must NOT show the form %q; first line = %q", " / ", first)
 	}
 	if strings.Contains(first, "k ") {
-		t.Fatalf("sin usage la barra NO debe mostrar un conteo de tokens %q; primera linea = %q", "k ", first)
+		t.Fatalf("without usage the bar must NOT show a token count %q; first line = %q", "k ", first)
 	}
 }
 
-// TestModel_TopBarWithoutBranchOrDirStillFillsWidth verifica que, sin rama ni
-// directorio (WithWorkspace("", "")), la barra sigue siendo un lienzo del ancho
-// completo y no rompe la invariante del canvas: View() mide exactamente Height
-// lineas y todas (incluida la barra) miden Width celdas. Cae contra una barra
-// que colapse a ancho 0 cuando la izquierda esta vacia.
+// TestModel_TopBarWithoutBranchOrDirStillFillsWidth verifies that, without a branch or
+// directory (WithWorkspace("", "")), the bar remains a full-width canvas
+// and preserves the canvas invariant: View() measures exactly Height
+// lines and all (including the bar) measure Width cells. It catches a bar
+// that collapses to width 0 when the left side is empty.
 func TestModel_TopBarWithoutBranchOrDirStillFillsWidth(t *testing.T) {
 	m := NewModel(nil, "s1", nil).WithWorkspace("", "")
 
@@ -268,20 +267,20 @@ func TestModel_TopBarWithoutBranchOrDirStillFillsWidth(t *testing.T) {
 
 	lines := strings.Split(m.View(), "\n")
 	if len(lines) != 12 {
-		t.Fatalf("View() debe medir 12 lineas sin rama ni directorio; midio %d", len(lines))
+		t.Fatalf("View() must measure 12 lines without branch or directory; got %d", len(lines))
 	}
 	for i, line := range lines {
 		if w := lipgloss.Width(line); w != 40 {
-			t.Fatalf("la linea %d debe medir exactamente 40 celdas (invariante del lienzo); midio %d (%q)", i, w, ansi.Strip(line))
+			t.Fatalf("line %d must measure exactly 40 cells (canvas invariant); got %d (%q)", i, w, ansi.Strip(line))
 		}
 	}
 }
 
-// TestModel_TopBarTruncatesLeftToFitContextOnNarrowWidth verifica que, cuando el
-// ancho no basta, la etiqueta de contexto de la derecha ("16k / 200k") siempre
-// sobrevive intacta y es la izquierda (rama + directorio largo) la que se recorta
-// con una elipsis, sin que la barra desborde el ancho. Cae contra una
-// implementacion que recorte por la derecha o deje la barra mas ancha que la
+// TestModel_TopBarTruncatesLeftToFitContextOnNarrowWidth verifies that, when the
+// width is insufficient, the right context label ("16k / 200k") always
+// survives intact and the left side (long branch + directory) is what gets
+// ellipsized, without the bar exceeding the width. It catches an
+// implementation that truncates on the right or leaves the bar wider than the
 // terminal.
 func TestModel_TopBarTruncatesLeftToFitContextOnNarrowWidth(t *testing.T) {
 	m := NewModel(declaringAgent("anthropic/claude-opus-4.8", 200_000), "s1", nil).
@@ -294,69 +293,70 @@ func TestModel_TopBarTruncatesLeftToFitContextOnNarrowWidth(t *testing.T) {
 	idx := lineIndexWith(t, ansi.Strip(m.View()), "/ 200k")
 	rendered := strings.Split(m.View(), "\n")[idx]
 	if w := lipgloss.Width(rendered); w != 30 {
-		t.Fatalf("la barra no debe desbordar el ancho: midio %d celdas, se esperaban 30 (%q)", w, ansi.Strip(rendered))
+		t.Fatalf("the bar must not exceed the width: got %d cells, expected 30 (%q)", w, ansi.Strip(rendered))
 	}
 
 	first := ansi.Strip(rendered)
 	if !strings.Contains(first, "16k / 200k") {
-		t.Fatalf("la etiqueta de contexto %q debe sobrevivir entera al recorte; primera linea = %q", "16k / 200k", first)
+		t.Fatalf("context label %q must survive truncation intact; first line = %q", "16k / 200k", first)
 	}
 	if !strings.Contains(first, "…") {
-		t.Fatalf("la izquierda larga debe recortarse con elipsis %q; primera linea = %q", "…", first)
+		t.Fatalf("the long left side must be truncated with ellipsis %q; first line = %q", "…", first)
 	}
 }
 
-// TestModel_TopBarRowClickIsInertBodyRowClickHits verifica el offset de la barra
-// en el manejo del raton: un clic sobre la fila 0 (la barra) es inerte, mientras
-// que un clic sobre la fila del cuerpo donde vive el resumen del pensamiento lo
-// expande. Con la barra ocupando la fila 0, un off-by-one (sin restar
-// topBarHeight) haria que el clic sobre la barra togglee por error el primer
-// contenido del cuerpo. Se usan dos sub-modelos independientes para que la parte
-// A no contamine la B.
+// TestModel_TopBarRowClickIsInertBodyRowClickHits verifies the bar offset
+// in mouse handling: a click on row 0 (the bar) is inert, while
+// a click on the body row containing the reasoning summary
+// expands it. With the bar occupying row 0, an off-by-one (without subtracting
+// topBarHeight) would mistakenly toggle the first body content. Two independent
+// expands it. With the bar occupying row 0, an off-by-one (without subtracting
+// topBarHeight) would mistakenly toggle the first body content. Two independent
+// submodels are used so part A does not contaminate B.
 func TestModel_TopBarRowClickIsInertBodyRowClickHits(t *testing.T) {
 	build := func(t *testing.T) Model {
 		t.Helper()
 		m := NewModel(nil, "s1", nil)
 		m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 20})
-		text := "razon-1\nrazon-2\nrazon-3"
+		text := "reason-1\nreason-2\nreason-3"
 		m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
 		m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: text})
 		m = drainReveal(t, m)
 		m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: text})
 		m = drainReveal(t, m)
-		// Transcript corto mostrado desde arriba: la fila Y en pantalla coincide
-		// con la linea absoluta del contenido.
+		// Short transcript shown from the top: the screen Y row matches
+		// the absolute content line.
 		if m.viewport.YOffset != 0 {
-			t.Fatalf("viewport.YOffset = %d, want 0: el transcript corto se muestra desde arriba", m.viewport.YOffset)
+			t.Fatalf("viewport.YOffset = %d, want 0: the short transcript is shown from the top", m.viewport.YOffset)
 		}
 		return m
 	}
 
-	// Parte A (inerte): un clic sobre la fila 0 (la barra) no debe expandir el
-	// pensamiento. El resumen sigue colapsado ("◆ Thought") y NO aparece el cuerpo.
+	// Part A (inert): a click on row 0 (the bar) must not expand the
+	// reasoning. The summary remains collapsed ("◆ Thought") and the body does NOT appear.
 	mA := build(t)
 	if !strings.Contains(ansi.Strip(mA.View()), "◆ Thought") {
-		t.Fatalf("precondicion: el pensamiento asentado debe colapsar a %q", "◆ Thought")
+		t.Fatalf("precondition: settled reasoning must collapse to %q", "◆ Thought")
 	}
 	mA = apply(t, mA, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 2, Y: 0})
 	viewA := ansi.Strip(mA.View())
 	if !strings.Contains(viewA, "◆ Thought") {
-		t.Fatalf("un clic sobre la fila de la barra (Y=0) debe ser inerte: el resumen %q debe seguir; View = %q", "◆ Thought", viewA)
+		t.Fatalf("a click on the bar row (Y=0) must be inert: summary %q must remain; View = %q", "◆ Thought", viewA)
 	}
-	for _, body := range []string{"razon-2", "razon-3"} {
+	for _, body := range []string{"reason-2", "reason-3"} {
 		if strings.Contains(viewA, body) {
-			t.Fatalf("un clic sobre la fila de la barra (Y=0) NO debe expandir el pensamiento; View = %q contiene %q", viewA, body)
+			t.Fatalf("a click on the bar row (Y=0) must NOT expand reasoning; View = %q contains %q", viewA, body)
 		}
 	}
 
-	// Parte B (impacta): el clic sobre la fila visible del resumen si expande.
+	// Part B (impact): a click on the visible summary row expands it.
 	mB := build(t)
 	summaryY := lineIndexWith(t, ansi.Strip(mB.View()), "◆ Thought")
 	mB = apply(t, mB, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 2, Y: summaryY})
 	viewB := ansi.Strip(mB.View())
-	for _, want := range []string{"razon-1", "razon-2", "razon-3"} {
+	for _, want := range []string{"reason-1", "reason-2", "reason-3"} {
 		if !strings.Contains(viewB, want) {
-			t.Fatalf("el clic sobre la fila %d del resumen debe expandir el pensamiento mostrando %q; View = %q", summaryY, want, viewB)
+			t.Fatalf("a click on summary row %d must expand reasoning showing %q; View = %q", summaryY, want, viewB)
 		}
 	}
 }

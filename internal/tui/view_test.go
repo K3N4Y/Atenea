@@ -36,11 +36,11 @@ func TestParseUnifiedDiff_HunkStartsAndAddedTripledPlus(t *testing.T) {
 // prefixes, padding, margins, glyphs — is what remains assertable.
 
 func TestRenderMarkdown_HeadingsHaveNoLiteralHashPrefix(t *testing.T) {
-	out := ansi.Strip(renderMarkdown("# Uno\n\n## Dos\n\n### Tres\n\n#### Cuatro", 80))
+	out := ansi.Strip(renderMarkdown("# One\n\n## Two\n\n### Three\n\n#### Four", 80))
 	if strings.Contains(out, "#") {
 		t.Fatalf("renderMarkdown() = %q, headings must not keep literal # prefixes: hierarchy comes from weight, not noise", out)
 	}
-	for _, title := range []string{"Uno", "Dos", "Tres", "Cuatro"} {
+	for _, title := range []string{"One", "Two", "Three", "Four"} {
 		if !strings.Contains(out, title) {
 			t.Fatalf("renderMarkdown() = %q, heading text %q must survive the render", out, title)
 		}
@@ -58,11 +58,11 @@ func TestRenderMarkdown_InlineCodeDoesNotFragmentProse(t *testing.T) {
 }
 
 func TestRenderMarkdown_HeadingsSeparateSections(t *testing.T) {
-	out := ansi.Strip(renderMarkdown("intro\n\n## Seccion\n\ncuerpo", 80))
+	out := ansi.Strip(renderMarkdown("intro\n\n## Section\n\nbody", 80))
 	lines := strings.Split(out, "\n")
 	sectionLine := -1
 	for i, line := range lines {
-		if strings.Contains(line, "Seccion") {
+		if strings.Contains(line, "Section") {
 			sectionLine = i
 			break
 		}
@@ -76,7 +76,7 @@ func TestRenderMarkdown_HeadingsSeparateSections(t *testing.T) {
 }
 
 func TestRenderMarkdown_HorizontalRuleRendersAsSolidLine(t *testing.T) {
-	out := ansi.Strip(renderMarkdown("antes\n\n---\n\ndespues", 80))
+	out := ansi.Strip(renderMarkdown("before\n\n---\n\nafter", 80))
 	if !strings.Contains(out, strings.Repeat("─", markdownRuleWidth)) {
 		t.Fatalf("renderMarkdown() = %q, --- must render as a solid %d-cell ─ rule", out, markdownRuleWidth)
 	}
@@ -86,7 +86,7 @@ func TestRenderMarkdown_HorizontalRuleRendersAsSolidLine(t *testing.T) {
 }
 
 func TestRenderMarkdown_CodeBlockAlignsWithBodyMargin(t *testing.T) {
-	out := ansi.Strip(renderMarkdown("texto\n\n```go\npackage main\n```", 80))
+	out := ansi.Strip(renderMarkdown("text\n\n```go\npackage main\n```", 80))
 	line := lineWith(t, out, "package main")
 	if !strings.HasPrefix(line, "  package main") {
 		t.Fatalf("code block line = %q, code must sit at the document margin (column 2), not the stock extra indent", line)
@@ -94,7 +94,7 @@ func TestRenderMarkdown_CodeBlockAlignsWithBodyMargin(t *testing.T) {
 }
 
 func TestRenderMarkdown_CodeBlockMarkersNeverLeak(t *testing.T) {
-	out := renderMarkdown("texto\n\n```go\npackage main\n```\n\nmas texto\n\n```\nplain\n```", 80)
+	out := renderMarkdown("text\n\n```go\npackage main\n```\n\nmore text\n\n```\nplain\n```", 80)
 	if strings.Contains(out, "\x00") {
 		t.Fatalf("renderMarkdown() = %q, the internal code block markers must never reach the rendered output", out)
 	}
@@ -138,10 +138,10 @@ func assertWrappedInRhythm(t *testing.T, out string, width int) {
 
 func TestRenderMarkdown_LongURLWrapsInRhythm(t *testing.T) {
 	const width = 40
-	md := "Ver [enlace](https://example.com/una/ruta/larguisima/que/excede/de/sobra/el/ancho/del/viewport) aqui"
+	md := "See [link](https://example.com/a/very/long/path/that/exceeds/the/viewport/width) here"
 	out := ansi.Strip(renderMarkdown(md, width))
 	assertWrappedInRhythm(t, out, width)
-	for _, seg := range []string{"https://example.", "larguisima", "viewport"} {
+	for _, seg := range []string{"https://example.", "very/long", "viewport"} {
 		if !strings.Contains(out, seg) {
 			t.Fatalf("renderMarkdown() = %q, the URL segment %q must survive the wrap", out, seg)
 		}
@@ -150,7 +150,7 @@ func TestRenderMarkdown_LongURLWrapsInRhythm(t *testing.T) {
 
 func TestRenderMarkdown_LongCodeTokenWrapsInRhythm(t *testing.T) {
 	const width = 40
-	md := "```\nshort\nhttps://example.com/una/ruta/larguisima/que/excede/de/sobra/el/ancho\nfin\n```"
+	md := "```\nshort\nhttps://example.com/a/very/long/path/that/exceeds/the/width\nend\n```"
 	out := ansi.Strip(renderMarkdown(md, width))
 	assertWrappedInRhythm(t, out, width)
 	// The overflow does not drag the whole block wider than the viewport: every
@@ -166,7 +166,7 @@ func TestRenderMarkdown_DocumentMarginStaysConsistent(t *testing.T) {
 	if markdownDocMargin != 2 {
 		t.Fatalf("markdownDocMargin = %d, the theme must keep the 2-cell document margin renderMarkdown discounts from the wrap width", markdownDocMargin)
 	}
-	out := ansi.Strip(renderMarkdown("# Titulo\n\nparrafo\n\n- item", 80))
+	out := ansi.Strip(renderMarkdown("# Title\n\nparagraph\n\n- item", 80))
 	for _, line := range strings.Split(out, "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue

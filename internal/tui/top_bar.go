@@ -9,25 +9,26 @@ import (
 	"github.com/K3N4Y/atenea/internal/tui/theme"
 )
 
-// branchGlyph es el glifo powerline de rama que precede el nombre de la rama
-// git en la barra superior (nerd-font PUA, como los iconos del arbol en tree.go).
+// branchGlyph is the powerline branch glyph that precedes the git branch name
+// in the top bar (nerd-font PUA, like the tree icons in tree.go).
 const branchGlyph = ""
 
-// branchStyle pinta la rama git en verde; el directorio y la etiqueta de
-// contexto reutilizan statusStyle (tenue, definido en view.go).
+// branchStyle renders the git branch in green; the directory and context label
+// reuse statusStyle (dim, defined in view.go).
 var branchStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Success))
 
-// bodyHeight es el espacio vertical del cuerpo (chat/arbol/visor): el alto de
-// la terminal menos el chrome de la barra superior. Lo computa el modulo layout
-// (computeLayout); este metodo es un seam delgado que lo lee. Usa baseLayout
-// (no layout) porque reservedLines depende de bodyHeight: el panel de permiso
-// dimensiona contra el, y layout() pide reservedLines — leerlo aca recurse.
+// bodyHeight is the body's vertical space (chat/tree/viewer): the terminal
+// height minus the top-bar chrome. The layout module computes it
+// (computeLayout); this method is a thin seam that reads it. It uses baseLayout
+// (not layout) because reservedLines depends on bodyHeight: the permission
+// panel sizes against it, and layout() requests reservedLines — reading it here
+// would recurse.
 func (m Model) bodyHeight() int { return m.baseLayout().bodyHeight }
 
-// topBar rinde el chrome de la barra superior: topBarMargin filas en blanco, la
-// fila de la barra y otras topBarMargin filas en blanco, todas con el fondo del
-// lienzo. Asi la barra queda separada del borde de la terminal y del cuerpo con
-// el mismo margen que el composer usa en sus lados.
+// topBar renders the top-bar chrome: topBarMargin blank rows, the bar row, and
+// another topBarMargin blank rows, all with the canvas background. This keeps
+// the bar separated from the terminal edge and body by the same margin the
+// composer uses on its sides.
 func (m Model) topBar() string {
 	width := m.baseLayout().width
 	blank := restoreCanvasBackground(canvasStyle.Width(width).Render(""))
@@ -42,11 +43,10 @@ func (m Model) topBar() string {
 	return strings.Join(rows, "\n")
 }
 
-// topBarLine arma la fila de contenido de la barra a todo el ancho: a la
-// izquierda la rama git (con su glifo) y el directorio de trabajo, a la derecha
-// el uso de contexto (usado / ventana). Lleva el fondo del lienzo compartido
-// (#141414) y lo restaura tras los resets de estilo interiores, como el resto
-// de la vista.
+// topBarLine builds the full-width bar content row: the git branch (with its
+// glyph) and working directory on the left, and context usage (used / window)
+// on the right. It applies the shared canvas background (#141414) and restores
+// it after inner style resets, like the rest of the view.
 func (m Model) topBarLine() string {
 	left := ""
 	if m.branch != "" {
@@ -60,19 +60,18 @@ func (m Model) topBarLine() string {
 		}
 	}
 	right := m.topBarContext()
-	// Mismo margen horizontal externo que el composer y los mensajes de usuario
-	// (composerOuterMargin): el contenido no toca los bordes de la terminal y la
-	// rama queda alineada con la caja del composer. El clamp a width/2 (para que
-	// en terminales minusculas la barra siga midiendo exactamente el ancho) vive
-	// en el modulo layout; aca solo se leen el margen y el ancho interior.
+	// The same external horizontal margin as the composer and user messages
+	// (composerOuterMargin): content does not touch the terminal edges and the
+	// branch aligns with the composer's box. The width/2 clamp (so the bar keeps
+	// its exact width on tiny terminals) lives in the layout module; this only
+	// reads the margin and inner width.
 	l := m.baseLayout()
 	width := l.width
 	margin := l.topBarMarginCells
 	inner := l.topBarInnerWidth
 	if lipgloss.Width(left)+lipgloss.Width(right)+1 > inner {
-		// La etiqueta de contexto de la derecha siempre debe caber: se recorta
-		// la izquierda (rama + directorio) dejando al menos un espacio de
-		// separacion.
+		// The right context label must always fit: truncate the left side
+		// (branch + directory), leaving at least one space.
 		left = ansi.Truncate(left, max(inner-lipgloss.Width(right)-1, 0), "…")
 	}
 	gap := max(inner-lipgloss.Width(left)-lipgloss.Width(right), 0)
@@ -81,10 +80,9 @@ func (m Model) topBarLine() string {
 	return restoreCanvasBackground(canvasStyle.Width(width).Render(line))
 }
 
-// topBarContext arma la etiqueta de uso de contexto de la derecha de la barra:
-// los tokens de entrada usados y, si el modelo tiene ventana conocida, la
-// ventana total (usado / ventana). Sin usage devuelve "" y la barra no muestra
-// nada a la derecha.
+// topBarContext builds the context-usage label on the right side of the bar:
+// used input tokens and, when the model has a known window, the total window
+// (used / window). Without usage it returns "" and the bar shows nothing.
 func (m Model) topBarContext() string {
 	if m.usage == nil {
 		return ""
@@ -96,8 +94,8 @@ func (m Model) topBarContext() string {
 	return statusStyle.Render(used)
 }
 
-// contextWindowLabel devuelve la ventana de contexto del modelo activo como
-// etiqueta ("256k"), o "" si el adaptador que lo sirve no la declara.
+// contextWindowLabel returns the active model's context window as a label
+// ("256k"), or "" when its adapter does not declare one.
 func (m Model) contextWindowLabel() string {
 	if window, ok := m.contextWindow(m.model); ok {
 		return formatTokenCount(window)

@@ -138,10 +138,10 @@ func (m Model) modelPickerLayout() modelPickerLayout {
 	}
 }
 
-// rowAt traduce coordenadas de pantalla a una fila visible del panel. La
-// pantalla del picker es: fila 0 en blanco, 1 borde superior, 2 cabecera,
-// 3 separador y de ahi las filas de items; en X, el contenido empieza tras
-// el margen y el borde izquierdo, con la columna divisoria entre listas.
+// rowAt translates screen coordinates into a visible panel row. The picker
+// screen is: row 0 blank, 1 top border, 2 header, 3 separator, then item rows;
+// on X, content starts after the margin and left border, with the divider
+// between lists.
 func (l modelPickerLayout) rowAt(x, y int) (overModels bool, row int, ok bool) {
 	row = y - 4
 	if row < 0 || row >= l.itemRows {
@@ -265,11 +265,10 @@ func (m Model) modelPickerView() string {
 	return m.renderOverlayPanel(layout.overlayLayout, "Models", lines)
 }
 
-// handleModelPickerMouse traduce el raton a las mismas acciones del teclado:
-// la rueda mueve la seleccion de la columna con foco, un clic en la columna
-// de providers la selecciona y un clic sobre un modelo lo confirma (el mismo
-// camino que enter). El picker se pinta a pantalla completa sin top bar, asi
-// que las coordenadas llegan sin trasladar.
+// handleModelPickerMouse maps mouse input to the same actions as the keyboard:
+// the wheel moves the focused column's selection, clicking the provider column
+// selects it, and clicking a model confirms it (the same path as enter). The
+// picker fills the screen without a top bar, so coordinates arrive unshifted.
 func (m Model) handleModelPickerMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 	if msg.Action != tea.MouseActionPress {
 		return m, nil
@@ -314,8 +313,8 @@ func (m Model) handleModelPickerMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// confirmModelSelection aplica el modelo seleccionado (enter o clic) y cierra
-// el picker; los fallos quedan visibles en el propio panel via err.
+// confirmModelSelection applies the selected model (enter or click) and closes
+// the picker; failures remain visible in the panel through err.
 func (m Model) confirmModelSelection() (Model, tea.Cmd) {
 	provider, providerOK := m.modelPicker.selectedProvider()
 	model, modelOK := m.modelPicker.selectedModel()

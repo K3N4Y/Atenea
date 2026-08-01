@@ -77,7 +77,7 @@ func applyCmd(t *testing.T, m Model, msg tea.Msg) (Model, tea.Cmd) {
 	updated, cmd := m.Update(msg)
 	next, ok := updated.(Model)
 	if !ok {
-		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
+		t.Fatalf("Update returned %T, expected tui.Model", updated)
 	}
 	return next, cmd
 }

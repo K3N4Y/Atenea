@@ -170,7 +170,7 @@ const (
 	entryAssistant entryKind = iota
 	entryReasoning
 	entryUser
-	entryTool // tool call y su desenlace
+	entryTool // tool call and its outcome
 	entryPermission
 	entryPlanApproval
 	entryError
