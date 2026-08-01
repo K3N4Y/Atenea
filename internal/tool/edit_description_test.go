@@ -27,6 +27,15 @@ func TestEditDescription_ExampleParses(t *testing.T) {
 	}
 }
 
+func TestEditDescription_HeaderPromiseAccountsForSnapshotRejection(t *testing.T) {
+	description := (&EditTool{}).Description()
+	for _, want := range []string{"sin header", "colision", "sesion nueva"} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("edit description must explain unretained committed snapshots; missing %q", want)
+		}
+	}
+}
+
 // indentedExample devuelve el primer bloque de lineas indentadas con 4 espacios de
 // la descripcion, sin esa indentacion. En edit.txt ese bloque es el patch de
 // ejemplo (el resto del texto no esta indentado), asi que reconstruye el patch tal

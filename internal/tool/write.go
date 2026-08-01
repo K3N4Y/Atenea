@@ -156,17 +156,22 @@ func (wt *WriteTool) Execute(ctx context.Context, input json.RawMessage) (Result
 	// Graba el snapshot del archivo recien escrito y marca TODAS sus lineas como
 	// vistas: el modelo las autoreo, asi un edit posterior ancla sin re-leer.
 	snaps := wt.snapshots(ctx)
-	tag := snaps.Record(abs, norm)
+	tag, recorded := snaps.Record(abs, norm)
 	lines := hashline.SplitLines(norm)
 	seen := make([]int, 0, len(lines))
 	for i := 1; i <= len(lines); i++ {
 		seen = append(seen, i)
 	}
-	snaps.RecordSeenLines(abs, tag, seen)
+	if recorded {
+		snaps.RecordSeenLines(abs, tag, seen)
+	}
 
 	// Diff SOLO para la UI: archivo nuevo = todo adicion (old vacio), con la ruta
 	// relativa que el modelo encadena.
 	diff := hashline.UnifiedDiff(in.Path, "", norm, 3)
+	if !recorded {
+		return Result{Output: "[File " + in.Path + " was created, but its snapshot could not be retained safely; no hashline header was issued. To make it editable, change or reduce the content or start a new session, then use read.]", Diff: diff}, nil
+	}
 	return Result{Output: hashline.FormatHeader(in.Path, tag), Diff: diff}, nil
 }
 

@@ -1,7 +1,7 @@
 Aplica un patch hashline a un archivo EXISTENTE del workspace. Para CREAR un archivo nuevo usa write; edit no crea archivos.
 
 Estructura del patch:
-- Primera linea: el header [path#HASH] que te dio el ultimo read, write o grep de ese archivo. NUNCA inventes el HASH: ancla la frescura. Si el archivo cambio desde que lo leiste, el edit falla; re-lee y copia el header nuevo.
+- Primera linea: el header [path#HASH] que te dio el ultimo read, write o edit. NUNCA inventes el HASH. Si hubo cambios externos, los edits con anclas solo se recuperan cuando cada region original sigue intacta, aparece una sola vez y todas se movieron igual; si no, falla y debes re-leer.
 - Debajo, uno o mas hunks. Cada hunk es una linea de operacion y, si la operacion agrega contenido, las lineas de payload que siguen (cada una con el prefijo "+").
 - Los numeros de linea son los del header que estas anclando (1-indexed, inclusive).
 
@@ -12,6 +12,7 @@ Operaciones (escribe la linea de operacion EXACTAMENTE con esta forma):
 - INS.POST n:  inserta el payload DESPUES de la linea n.
 - INS.HEAD:    inserta el payload al principio del archivo.
 - INS.TAIL:    inserta el payload al final del archivo.
+- Con un HASH anterior reconocido, INS.HEAD/INS.TAIL siguen aplicandose al inicio/final vivo con aviso; un HASH desconocido siempre se rechaza.
 
 Reglas que el patch DEBE cumplir (si no, falla con "operacion malformada"):
 - Un rango se escribe con ".=" entre los dos numeros: "12.=14". No "12=14" ni "12-14".
@@ -19,7 +20,7 @@ Reglas que el patch DEBE cumplir (si no, falla con "operacion malformada"):
 - SWAP, INS.PRE, INS.POST, INS.HEAD e INS.TAIL terminan SIEMPRE en ":". Solo DEL no lo lleva.
 - Cada linea de contenido nuevo empieza con "+"; una linea nueva en blanco es un "+" solo.
 
-Tras aplicar los cambios devuelve el nuevo header [path#HASH] para encadenar otro edit sin re-leer.
+Tras aplicar los cambios devuelve el nuevo header [path#HASH] para encadenar otro edit sin re-leer, salvo que el snapshot nuevo no pueda retenerse de forma segura por limite o colision de hash. En ese caso confirma el cambio sin header: cambia o reduce el contenido, o inicia una sesion nueva, y despues usa read antes del siguiente edit.
 
 Ejemplo (reemplaza las lineas 12 a 14 y agrega una linea al final):
     [internal/foo.go#a1b2]

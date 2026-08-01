@@ -50,7 +50,7 @@ func NewAnthropicProvider(apiKey, baseURL, model string) *AnthropicProvider {
 // gateway request. authorize sets the bearer per request.
 func NewAnthropicOAuthProvider(tokens OAuthTokenSource, baseURL, model string) *AnthropicProvider {
 	opts := []option.RequestOption{
-		option.WithRequestTimeout(defaultRequestTimeout),
+		option.WithHTTPClient(streamingHTTPClient(defaultRequestTimeout)),
 		option.WithHeaderDel("X-Api-Key"),
 	}
 	if baseURL != "" {
@@ -67,7 +67,7 @@ func NewAnthropicOAuthProvider(tokens OAuthTokenSource, baseURL, model string) *
 }
 
 func newAnthropicProviderWithTimeout(apiKey, baseURL, model string, timeout time.Duration) *AnthropicProvider {
-	opts := []option.RequestOption{option.WithAPIKey(apiKey), option.WithRequestTimeout(timeout)}
+	opts := []option.RequestOption{option.WithAPIKey(apiKey), option.WithHTTPClient(streamingHTTPClient(timeout))}
 	if baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}

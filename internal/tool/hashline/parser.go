@@ -6,10 +6,9 @@ import (
 	"strings"
 )
 
-// ParsePatch lee el header "[path#HASH]" de la primera linea no vacia y los hunks
-// que siguen. Entiende SWAP "start.=end:" (Replace), DEL "n" / "start.=end"
-// (Delete) e INS.PRE/POST "n:" + INS.HEAD/TAIL ":" (Insert), con lineas de payload
-// prefijadas por "+". Sin header valido devuelve *MissingTagError.
+// ParsePatch parses Atenea's single-file hashline grammar. It deliberately
+// rejects every unconsumed line: accepting typos as comments would turn a
+// malformed, apparently guarded patch into a different write.
 func ParsePatch(text string) (Patch, error) {
 	lines := strings.Split(text, "\n")
 
@@ -27,14 +26,12 @@ func ParsePatch(text string) (Patch, error) {
 	if !strings.HasPrefix(header, "[") || !strings.HasSuffix(header, "]") {
 		return Patch{}, &MissingTagError{Detail: "la primera linea no es [ruta#HASH], es " + strconv.Quote(header)}
 	}
-	header = strings.TrimPrefix(header, "[")
-	header = strings.TrimSuffix(header, "]")
+	header = strings.TrimSuffix(strings.TrimPrefix(header, "["), "]")
 	idx := strings.LastIndex(header, "#")
-	if idx < 0 {
-		return Patch{}, &MissingTagError{Detail: "el header no trae '#' separando ruta y HASH"}
+	if idx <= 0 || idx == len(header)-1 || strings.ContainsAny(header[:idx], "[]\r\n") || !validHash(header[idx+1:]) {
+		return Patch{}, &MissingTagError{Detail: "el header debe ser exactamente [ruta#HASH] con ruta no vacia y HASH hexadecimal de 4 digitos"}
 	}
-	path := header[:idx]
-	hash := header[idx+1:]
+	path, hash := header[:idx], strings.ToUpper(header[idx+1:])
 	i++
 
 	var edits []Edit
@@ -52,6 +49,9 @@ func ParsePatch(text string) (Patch, error) {
 			}
 			i++
 			payload := readPayload(lines, &i)
+			if len(payload) == 0 {
+				return Patch{}, malformedOperation(line)
+			}
 			edits = append(edits, Edit{
 				Kind:  Replace,
 				Range: Range{Start: start, End: end},
@@ -79,6 +79,9 @@ func ParsePatch(text string) (Patch, error) {
 			}
 			i++
 			payload := readPayload(lines, &i)
+			if len(payload) == 0 {
+				return Patch{}, malformedOperation(line)
+			}
 			edits = append(edits, Edit{
 				Kind:   Insert,
 				Cursor: BeforeAnchor,
@@ -96,34 +99,100 @@ func ParsePatch(text string) (Patch, error) {
 			}
 			i++
 			payload := readPayload(lines, &i)
+			if len(payload) == 0 {
+				return Patch{}, malformedOperation(line)
+			}
 			edits = append(edits, Edit{
 				Kind:   Insert,
 				Cursor: AfterAnchor,
 				Anchor: anchor,
 				Text:   strings.Join(payload, "\n"),
 			})
-		case strings.HasPrefix(line, "INS.HEAD:"):
+		case line == "INS.HEAD:":
 			i++
 			payload := readPayload(lines, &i)
+			if len(payload) == 0 {
+				return Patch{}, malformedOperation(line)
+			}
 			edits = append(edits, Edit{
 				Kind:   Insert,
 				Cursor: BOF,
 				Text:   strings.Join(payload, "\n"),
 			})
-		case strings.HasPrefix(line, "INS.TAIL:"):
+		case line == "INS.TAIL:":
 			i++
 			payload := readPayload(lines, &i)
+			if len(payload) == 0 {
+				return Patch{}, malformedOperation(line)
+			}
 			edits = append(edits, Edit{
 				Kind:   Insert,
 				Cursor: EOF,
 				Text:   strings.Join(payload, "\n"),
 			})
 		default:
-			i++
+			if strings.TrimSpace(line) == "" && i == len(lines)-1 {
+				i++
+				continue
+			}
+			return Patch{}, fmt.Errorf("patch: linea desconocida o huerfana: %s", strconv.Quote(line))
 		}
+	}
+	if len(edits) == 0 {
+		return Patch{}, fmt.Errorf("patch: la seccion no contiene operaciones")
+	}
+	if err := validateEditConflicts(edits); err != nil {
+		return Patch{}, err
 	}
 
 	return Patch{Sections: []Section{{Path: path, Hash: hash, Edits: edits}}}, nil
+}
+
+func validHash(s string) bool {
+	if len(s) != 4 {
+		return false
+	}
+	for _, r := range s {
+		if !strings.ContainsRune("0123456789abcdefABCDEF", r) {
+			return false
+		}
+	}
+	return true
+}
+
+func validateEditConflicts(edits []Edit) error {
+	occupied := map[int]bool{}
+	inserted := map[int]bool{}
+	boundaries := map[Cursor]bool{}
+	for _, e := range edits {
+		if e.Kind == Replace || e.Kind == Delete {
+			for n := e.Range.Start; n <= e.Range.End; n++ {
+				if occupied[n] {
+					return fmt.Errorf("patch: operaciones solapadas en linea %d", n)
+				}
+				occupied[n] = true
+			}
+			continue
+		}
+		if e.Cursor == BOF || e.Cursor == EOF {
+			if boundaries[e.Cursor] {
+				return fmt.Errorf("patch: inserciones de borde repetidas")
+			}
+			boundaries[e.Cursor] = true
+			continue
+		}
+		// Any pair of PRE/POST operations at one anchor is order-sensitive.
+		if inserted[e.Anchor] {
+			return fmt.Errorf("patch: inserciones en conflicto en linea %d", e.Anchor)
+		}
+		inserted[e.Anchor] = true
+	}
+	for anchor := range inserted {
+		if occupied[anchor] {
+			return fmt.Errorf("patch: insercion anclada dentro de rango reemplazado o borrado en linea %d", anchor)
+		}
+	}
+	return nil
 }
 
 // parseRange interpreta el cuerpo de un rango: "n" -> [n,n]; "start.=end" ->

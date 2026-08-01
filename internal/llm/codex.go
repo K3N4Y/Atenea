@@ -151,9 +151,8 @@ func NewCodexProvider(tokens OAuthTokenSource, baseURL, model string, opts ...Co
 	return newCodexProviderWithTimeout(tokens, baseURL, model, defaultRequestTimeout, opts...)
 }
 
-// newCodexProviderWithTimeout is the real constructor, with the per-request
-// timeout injectable so a test can prove a hung stream is cut without waiting out
-// the long default.
+// newCodexProviderWithTimeout is the real constructor, with the response-header
+// timeout injectable so tests can prove a silent endpoint is cut quickly.
 func newCodexProviderWithTimeout(tokens OAuthTokenSource, baseURL, model string, timeout time.Duration, opts ...CodexOption) *CodexProvider {
 	return &CodexProvider{responsesProvider: newOAuthResponsesProvider(tokens, baseURL, model, timeout, codexResponsesProfile, opts...)}
 }
@@ -185,7 +184,7 @@ func newOAuthResponsesProvider(tokens OAuthTokenSource, baseURL, model string, t
 		// subscription request.
 		option.WithAPIKey(""),
 		option.WithBaseURL(strings.TrimRight(baseURL, "/") + "/"),
-		option.WithRequestTimeout(timeout),
+		option.WithHTTPClient(streamingHTTPClient(timeout)),
 		option.WithHeader("accept", "text/event-stream"),
 	}
 	if profile.chatGPTHeaders {

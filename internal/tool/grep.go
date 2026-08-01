@@ -126,7 +126,11 @@ func (gt *GrepTool) Execute(ctx context.Context, input json.RawMessage) (Result,
 		}
 
 		text := normalizeToolText(string(b))
-		tag := snaps.Record(absMatch, text)
+		tag, recorded := snaps.Record(absMatch, text)
+		if !recorded {
+			parts = append(parts, grepOutputPart{text: "[Cannot retain an editable snapshot for " + group.path + "; no hashline header was issued. Change or reduce the content or start a new session, then use read before editing.]"})
+			continue
+		}
 		lines := hashline.SplitLines(text)
 		emitted := existingLines(group.lines, len(lines))
 		if len(emitted) == 0 {

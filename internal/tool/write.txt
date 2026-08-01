@@ -3,6 +3,6 @@ Crea un archivo NUEVO en el workspace con el contenido exacto que le pasas.
 Uso:
 - path es la ruta del archivo relativa al workspace; content es el contenido completo. Los directorios padre que falten se crean solos.
 - Solo crea archivos nuevos. Si el archivo YA existe, write falla: para modificar uno existente usa read + edit (edit ancla contra el contenido que leiste). No uses write para sobrescribir.
-- Tras escribir devuelve el header [path#HASH] del contenido nuevo: puedes encadenar un edit a ese header sin re-leer el archivo (write -> edit).
+- Tras escribir devuelve el header [path#HASH] del contenido nuevo para encadenar un edit sin re-leer. Si el snapshot no puede retenerse de forma segura por limite o colision de hash, confirma la escritura sin header. Cambia o reduce el contenido o inicia una sesion nueva, y despues usa read antes de editar.
 - Prefiere modificar archivos existentes antes que crear nuevos; crea un archivo solo cuando hace falta de verdad.
 - Los archivos se escriben con saltos de linea LF.

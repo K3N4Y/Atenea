@@ -1,21 +1,17 @@
 ---
-updated_at: 2026-07-09
+updated_at: 2026-07-10
 summary: Specification for tool read spec.
 ---
 
 # Spec — Tool `read` (hashline, phase 1 of track read/edit)
 
-Executable spec of **tool `read`** style `can1357/oh-my-pi`. It is not a numbered
-milestone of the loop (`../plans/agent-loop-roadmap.md` closes in M10): it is the
-**first phase** of the track read/edit described in `../architecture/read-edit-tools.md`,
-which starts now that the loop is already green and wired (M1..M10) and the only real
-builtin is `echo`.
-
-Defines the final state, the scope, the TDD plan and the acceptance criteria
- to leave the `read`: reads a file, numbers it and prepends the hashline header
-`[path#HASH]`, recording the snapshot that enables the `edit` (phase 2). We work
-with the cycle of `AGENTS.md`
-(`Safety net -> Understand -> RED -> GREEN -> TRIANGULATE -> REFACTOR -> Evidence`).
+Executable specification for Atenea's `read`, inspired by and pinned to
+`can1357/oh-my-pi` commit `09a7c865636457c50ed75fc3b1a7cc21ef72c105`.
+Read emits `[path#HASH]` plus numbered lines and records full normalized text and
+shown-line provenance in the session snapshot store. Snapshot retention uses
+the bounded, collision-safe policy documented in
+`../architecture/read-edit-tools.md`; large reads may be output-truncated but
+are not rejected solely because snapshot text is large (older state is evicted).
 
 ## 1. Context
 
@@ -200,23 +196,21 @@ type Snapshot struct {
 }
 
 // SnapshotStore guarda, por path, versiones completas de archivos leidos. Habilita
-// dos cosas del edit (fase 2): validar frescura por hash y rechazar ediciones a
-// lineas no leidas. En v1 el read solo usa Record/Head/RecordSeenLines; ByHash,
-// Invalidate y el historial quedan para el recovery del edit.
+// validacion de frescura, recovery y el rechazo de ediciones a lineas no vistas.
 type SnapshotStore interface {
-	Head(path string) *Snapshot           // version mas reciente
-	ByHash(path, hash string) *Snapshot   // version cuyo tag == hash (recovery, fase 2)
-	Record(path, fullText string) string  // graba; devuelve el tag (reusa si el texto ya estaba)
+	Head(path string) *Snapshot
+	ByHash(path, hash string) *Snapshot
+	Record(path, fullText string) (hash string, recorded bool)
 	RecordSeenLines(path, hash string, lines []int)
 	Invalidate(path string)
 }
 
-// MemSnapshotStore es la impl en memoria por sesion. Read-fusion: Record de texto
-// identico al Head reusa el tag y no duplica version. Seguro para uso concurrente
-// (mutex): el runner asienta tools en paralelo, igual que el OutputStore de M4.
-// El historial por path es corto y acotado; afinarlo (LRU, bytes) se hace cuando
-// el recovery del edit lo necesite.
-type MemSnapshotStore struct { /* mu, byPath map[string][]*Snapshot */ }
+// MemSnapshotStore is session-scoped and concurrency-safe. It fuses only exact
+// text, keeps at most 30 paths and 4 versions per path within a 64 MiB total
+// budget, and never reports recorded=true unless the new version remains retained
+// and its short hash identifies it unambiguously. Individually oversized versions
+// and distinct texts colliding with retained tags are rejected without mutation.
+type MemSnapshotStore struct { /* mutex, history, recency, byte accounting */ }
 
 func NewMemSnapshotStore() *MemSnapshotStore
 ```

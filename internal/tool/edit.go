@@ -4,8 +4,8 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/K3N4Y/atenea/agentcore/permission"
@@ -75,11 +75,8 @@ func (et *EditTool) AutoAcceptSafe(call Call) bool {
 	if _, ok := et.FS.(hashline.OSFilesystem); !ok {
 		return false
 	}
-	if rejectRealPathOutside(et.Root, abs, rel, "edit") != nil {
-		return false
-	}
-	info, err := os.Stat(abs)
-	return err == nil && info.Mode().IsRegular() && hasSingleLink(info)
+	return rejectRealPathOutside(et.Root, abs, rel, "edit") == nil &&
+		rejectMutableAlias(et.Root, abs, rel, "edit") == nil
 }
 
 // Execute parsea el patch, resuelve la ruta relativa dentro de Root (compuerta
@@ -111,21 +108,40 @@ func (et *EditTool) Execute(ctx context.Context, input json.RawMessage) (Result,
 		if err := rejectRealPathOutside(et.Root, abs, relPath, "edit"); err != nil {
 			return Result{}, err
 		}
+		if err := rejectMutableAlias(et.Root, abs, relPath, "edit"); err != nil {
+			return Result{}, err
+		}
 	}
 
 	// El Patcher lee/escribe/snapshotea por ruta absoluta.
 	s.Path = abs
 
 	res, err := et.patcher(ctx).Apply(patch)
-	if err != nil {
+	var committed *hashline.CommittedError
+	if err != nil && !errors.As(err, &committed) {
 		return Result{}, err
 	}
+	if committed != nil {
+		res = committed.Result
+	}
 
-	// res.Header trae la ruta ABS; el modelo encadena por la ruta RELATIVA.
-	header := strings.Replace(res.Header, abs, relPath, 1)
-	// Diff SOLO para la UI: se arma con la ruta RELATIVA (nunca filtra la abs) a
-	// partir del texto viejo/nuevo que devuelve el Patcher.
 	diff := hashline.UnifiedDiff(relPath, res.OldText, res.NewText, 3)
+	header := ""
+	if res.Header != "" {
+		// res.Header trae la ruta ABS; el modelo encadena por la ruta RELATIVA.
+		header = strings.Replace(res.Header, abs, relPath, 1)
+	} else {
+		header = "[Edit committed, but " + relPath + " could not be retained as an unambiguous editable snapshot; no hashline header was issued. Change or reduce the content or start a new session, then use read before editing again.]"
+	}
+	if committed != nil {
+		// Tool middleware discards Result whenever error is non-nil, so expose the
+		// committed result as an actionable successful settlement and forbid retry.
+		continuation := "Continue with the header above or re-read."
+		if res.Header == "" {
+			continuation = "No editable header is available; change or reduce the content or start a new session, then use read."
+		}
+		header += "\n[COMMITTED: replacement is visible, but directory durability is uncertain; do not retry this patch. " + continuation + " " + committed.Error() + "]"
+	}
 	return Result{Output: header, Diff: diff}, nil
 }
 

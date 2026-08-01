@@ -15,9 +15,16 @@ import (
 	"github.com/openai/openai-go/v2/packages/param"
 )
 
-// defaultRequestTimeout acota cada intento de request del cliente OpenAI. Sin el,
-// un SSE colgado deja la goroutine del Stream viva para siempre con el body abierto.
+// defaultRequestTimeout bounds the wait for response headers. Streaming bodies
+// may legitimately remain open much longer while a reasoning model works; the
+// caller's context, not a wall-clock HTTP timeout, cancels an active turn.
 const defaultRequestTimeout = 60 * time.Second
+
+func streamingHTTPClient(responseHeaderTimeout time.Duration) *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = responseHeaderTimeout
+	return &http.Client{Transport: transport}
+}
 
 // OpenAIProvider habla con un endpoint OpenAI-compatible (OpenAI/OpenRouter) via
 // streaming SSE. Traduce el turno del proveedor a llm.Event: abre con StepStarted,
@@ -91,8 +98,8 @@ type toolAccum struct {
 
 // NewOpenAIProvider construye el provider apuntando al base URL dado, lo que
 // permite inyectar un httptest.Server en los tests y OpenRouter en produccion. El
-// cliente lleva un timeout por request (defaultRequestTimeout) para que un SSE
-// colgado no deje la goroutine del Stream viva para siempre con el body abierto.
+// client bounds the wait for response headers, while an active SSE body lives
+// until the provider finishes or the caller cancels its context.
 func NewOpenAIProvider(apiKey, baseURL, model string, opts ...Option) *OpenAIProvider {
 	return newOpenAIProviderWithTimeout(apiKey, baseURL, model, defaultRequestTimeout, opts...)
 }
@@ -105,7 +112,7 @@ func newOpenAIProviderWithTimeout(apiKey, baseURL, model string, timeout time.Du
 	client := openai.NewClient(
 		option.WithAPIKey(apiKey),
 		option.WithBaseURL(baseURL),
-		option.WithRequestTimeout(timeout),
+		option.WithHTTPClient(streamingHTTPClient(timeout)),
 	)
 	p := &OpenAIProvider{client: client, model: model, label: providerLabel(baseURL)}
 	for _, opt := range opts {

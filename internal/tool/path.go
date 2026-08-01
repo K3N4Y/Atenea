@@ -41,6 +41,37 @@ func rejectRealPathOutside(root, abs, rel, toolName string) error {
 	return nil
 }
 
+// rejectMutableAlias rejects every symlink component below root and requires
+// the final object to be a single-link regular file. This closes ordinary alias
+// writes before read/validate; path-based Go APIs still cannot make the later
+// lstat/read/rename sequence immune to a hostile concurrent directory swap.
+func rejectMutableAlias(root, abs, rel, toolName string) error {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+	relFromRoot, err := filepath.Rel(rootAbs, abs)
+	if err != nil || relFromRoot == "." || strings.HasPrefix(relFromRoot, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("%s: ruta mutable invalida: %s", toolName, rel)
+	}
+	current := rootAbs
+	parts := strings.Split(relFromRoot, string(filepath.Separator))
+	for i, part := range parts {
+		current = filepath.Join(current, part)
+		info, statErr := os.Lstat(current)
+		if statErr != nil {
+			return statErr
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%s: se rechaza alias symlink: %s", toolName, rel)
+		}
+		if i == len(parts)-1 && (!info.Mode().IsRegular() || !hasSingleLink(info)) {
+			return fmt.Errorf("%s: se rechazan hardlinks y archivos no regulares: %s", toolName, rel)
+		}
+	}
+	return nil
+}
+
 func rejectRealParentOutside(root, abs, rel, toolName string) error {
 	rootReal, err := filepath.EvalSymlinks(root)
 	if err != nil {

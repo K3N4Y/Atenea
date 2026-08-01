@@ -79,6 +79,13 @@ PostHog differs in all three places:
   partial events merge without erasing counts already received, and a field
   explicitly reported as zero still creates reported usage. This telemetry does
   not drive context compaction; compaction continues to use its local context
+- **Streaming timeouts protect response startup, not total turn duration.** The
+  OpenAI Responses and Anthropic clients wait at most 60 seconds for response
+  headers, but once the gateway opens an SSE response the stream may remain
+  active while a reasoning model works. The runner context remains the bound
+  for cancellation. A whole-request timeout previously cut valid long PostHog
+  turns with `context deadline exceeded`, which surfaced especially often in
+  multi-turn subagents.
   estimate and the model's declared window.
 - **`account_id` moved from the arm to the flow.** `Credential.Validate` no
   longer requires it for the oauth arm; OpenAI's token exchange refuses to

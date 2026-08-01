@@ -81,8 +81,14 @@ type MismatchError struct {
 }
 
 func (e *MismatchError) Error() string {
+	var msg string
 	if e.Recognized {
-		return fmt.Sprintf("edit: el archivo %s cambio entre el read y el edit (hash %s -> %s); copia el header [path#newhash] del edit previo o re-lee", e.Path, e.Expected, e.Live)
+		msg = fmt.Sprintf("edit: el archivo %s cambio entre el read y el edit (hash %s -> %s); copia el header [path#newhash] del edit previo o re-lee", e.Path, e.Expected, e.Live)
+	} else {
+		msg = fmt.Sprintf("edit: hash #%s no es de esta sesion para %s; re-lee el archivo y nunca inventes el tag", e.Expected, e.Path)
 	}
-	return fmt.Sprintf("edit: hash #%s no es de esta sesion para %s; re-lee el archivo y nunca inventes el tag", e.Expected, e.Path)
+	if e.Context != "" {
+		msg += "; contexto: " + e.Context
+	}
+	return msg
 }

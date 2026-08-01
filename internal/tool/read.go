@@ -121,7 +121,10 @@ func (rt *ReadTool) Execute(ctx context.Context, input json.RawMessage) (Result,
 
 	// El snapshot guarda SIEMPRE el archivo completo, aun en un read por rango.
 	snaps := rt.snapshots(ctx)
-	tag := snaps.Record(abs, norm)
+	tag, recorded := snaps.Record(abs, norm)
+	if !recorded {
+		return Result{Output: "[File " + displayPath + " could not be retained as an unambiguous editable snapshot; no hashline header was issued. Change or reduce the content or start a new session, then use read again before editing.]"}, nil
+	}
 
 	lines := hashline.SplitLines(norm)
 	total := len(lines)

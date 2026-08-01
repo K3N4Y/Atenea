@@ -1,13 +1,13 @@
 ---
-updated_at: 2026-07-09
+updated_at: 2026-07-10
 summary: Design for hashline-based read and edit tools in Go.
 ---
 
 # Tools `read` and `edit` oh-my-pi style (design for Go)
 
-Investigated on 2026-06-19 on `can1357/oh-my-pi` (packages `coding-agent` and
-`hashline`). Documents how the `read` and `edit` tools from
-oh-my-pi really work and how to replicate them in Go for Atenea.
+This implementation is pinned to upstream `can1357/oh-my-pi` commit
+`09a7c865636457c50ed75fc3b1a7cc21ef72c105` (packages `coding-agent` and
+`hashline`), adapted to Atenea's deliberately smaller public grammar.
 
 It is the most difficult part of the agent, which is why it is written in detail: the
 correctness of `edit` decides whether the agent corrupts files or not.
@@ -127,24 +127,21 @@ header `[ruta#HASH]` followed by hashline operations, it is treated as **patch**
 no, it is a **complete write** of the file. For Atenea it is convenient to separate it into an explicit
 tool `edit`, but the engine is the same.
 
-### Operations (from `format.ts`)
+### Operations
 
-The patch is text. Hunk Headers:
+Atenea exposes exactly one non-empty `[path#HASH]` section per call and retains
+its existing `SWAP`/`DEL`/`INS.*` grammar. Parsing is strict: extra headers,
+orphan/unknown lines, malformed operations, empty required payloads, invalid
+anchors/ranges, and conflicting ranges are rejected before filesystem access.
 
 | Operation | Syntax | Effect |
 | --- | --- | --- |
-| Range Replacement | `SWAP start.=end:` + lines `+...` | replace `[start,end]` with the payload |
-| Deleted | `DEL n` or `DEL start.=end` | delete that line(s) |
-| Insert before | `INS.PRE n:` + `+...` | insert payload before the line `n` |
-| Insert after | `INS.POST n:` + `+...` | insert payload after the line `n` |
-| Insert at start | `INS.HEAD:` + `+...` | inserted at the beginning of the file |
-| Insert at the end | `INS.TAIL:` + `+...` | inserted at the end of the file |
-| Block (tree-sitter) | `SWAP.BLK n:`, `DEL.BLK n`, `INS.BLK.POST n:` | operates on the syntax block starting at `n` |
+| Range replacement | `SWAP start.=end:` + `+...` payload | replace `[start,end]` |
+| Delete | `DEL n` or `DEL start.=end` | delete line(s) |
+| Insert before/after | `INS.PRE n:` / `INS.POST n:` + payload | anchored insert |
+| Insert at boundaries | `INS.HEAD:` / `INS.TAIL:` + payload | boundary insert |
 
-- Payload lines are prefixed with `+`.
-- `.=` separates ranges (`5.=10`).
-- Multiple files: several sections, each with its header `[ruta#HASH]`.
-
+Payload lines are prefixed with `+`; `.=` is the only range separator.
 ### How to apply and verify (from `patcher.ts`)
 
 The `Patcher` is **all-or-nothing**: it first `prepare` (preflight) all the
@@ -163,8 +160,11 @@ section:
 - **Drift with concrete anchors**: try `recovery.tryRecover()` (3-way-merge
      del edit contra el snapshot que el tag nombra, sobre el contenido vivo). Si
      funciona, aplica el merge; si no, **`MismatchError`** (re-leer).
-5. `commit`: restore line endings + BOM, write, and **record new snapshot**;
- return the `[ruta#nuevoHASH]` header to chain edits without re-reading.
+5. `commit`: restore line endings, BOM, and the complete file mode, then perform
+   same-directory atomic replacement. Per canonical path, edit serializes the
+   full read/validate/replace interval. A post-rename directory-sync failure is
+   reported as committed-but-durability-uncertain with the actual new header;
+   callers must not retry the old patch blindly. Finally record the new snapshot.
 
 ### Error messages (from `mismatch.ts`)
 
@@ -192,21 +192,21 @@ type Snapshot struct {
 }
 
 type SnapshotStore interface {
-    Head(path string) *Snapshot               // version mas reciente
-    ByHash(path, hash string) *Snapshot       // version cuyo tag == hash
-    Record(path, fullText string, seen []int) string // graba y devuelve el tag
+    Head(path string) *Snapshot
+    ByHash(path, hash string) *Snapshot
+    Record(path, fullText string) (hash string, recorded bool)
     RecordSeenLines(path, hash string, lines []int)
     Invalidate(path string)
 }
 ```
 
-- Default implementation: Bounded LRU (oh-my-pi: 30 paths, 4 versions/path, 64 MiB).
-- `Record` of identical content **reuses the tag** and refreshes recency (read fusion).
-- The recovery uses `ByHash` to find the exact text that the stale tag names
- and do the 3-way-merge.
-
-For Atenea, one version **in memory per session** is enough for v1; the contract is
-the same as loop durable `Store` (`agent-loop.md`).
+- The implementation uses upstream-equivalent defaults: 30 paths, 4 versions
+  per path, and 64 MiB total, with deterministic path LRU eviction.
+- Exact text (not the 16-bit hash) controls read fusion. Ambiguous hash
+  collisions fail closed both for lookup and seen-line provenance.
+- A file too large to retain is readable only via an explicit non-editable
+  notice: `read` never emits a hashline header that the bounded store discarded.
+- Stores remain isolated per Atenea session.
 
 ## Design in Go for Atenea
 
@@ -261,32 +261,26 @@ type Patcher struct {
 func (p *Patcher) Apply(patch Patch) (PatchResult, error)
 ```
 
-## Edge cases that CANNOT be skipped
+## Completed safety behavior and non-goals
 
-These are what make the design worth copying, not inventing:
-
-- **Tag missing** in the edit -> clear error ("header `[path#HASH]` is missing").
-- **Invented tag / from another session** -> rejection with message other than "change the
- file".
-- **Recoverable drift** (a previous edit of the same session changed the file) ->
- 3-way-merge against the snapshot of the previous tag, no re-read.
-- **Non-recoverable drift** -> `MismatchError` with lines context.
-- **Edit to unread lines** (`seenLines`) -> rejection: edit mangla memory
- files.
-- **HEAD/TAIL with stale tag** -> warning, non-fatal (stable position).
-- **Normalization** CRLF/BOM/trailing-ws -> keep hashing and restore on
- write.
-- **Multi-file** -> preflight all sections before touching disk;
- report which ones were written if a failure in the middle.
-- **No-op** (the edit does not change anything) -> explicit error, do not write.
-
-## Safe trims for v1 (lazy)
-
-To avoid dying trying, v1 can leave out the tree-sitter dependent and
-keep the heart intact:
-
-- **Skip** block operations (`SWAP.BLK`, `DEL.BLK`, `INS.BLK.POST`) and the
- folding/summarization of `read`. They are optimizations; They are not the security mechanism. Without this, it's not oh-my-pi style.## Deployment order (TDD, see AGENTS.md)
+- Anchored stale edits recover only when every original anchored region is
+  unchanged, occurs exactly once in live text, and all regions share one line
+  offset. Ambiguity, changed anchors, or non-uniform movement returns
+  `MismatchError`; no fuzzy guesses are made. Stale HEAD/TAIL behavior remains.
+- UTF-8 BOM, final newline, dominant/original EOL style, permissions, and
+  supported special mode bits are restored. OS-backed edits preserve mode and
+  commit through a same-directory temporary file, file sync, rename, and
+  directory sync. Fake filesystems keep the compatibility `WriteFile` operation.
+  Failed preflight performs no write.
+- OS edits reject symlink components, final symlinks, hardlinks, and non-regular
+  files before reading. Go's path-based APIs leave a documented residual race
+  against a hostile process replacing directory components between checks.
+- Snapshot history is bounded by eviction; oversized files receive no editable
+  header rather than an immediately unusable one.
+- Anchored inserts overlapping replaced/deleted ranges, duplicate HEAD/TAIL,
+  and PRE/POST combinations sharing an anchor are rejected as ambiguous.
+- Multi-file patches, alternate/dual grammars, block/tree-sitter operations,
+  grammar migration, notebooks/LSP, folding, and rich selectors are non-goals.
 
 1. `ComputeFileHash` + normalization. NETWORK: same text (CRLF/LF, trailing ws) ->
  same tag; real change -> different tag.

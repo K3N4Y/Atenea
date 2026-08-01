@@ -3,6 +3,7 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,7 +42,7 @@ func TestEditTool_AppliesPatchReturnsNewHeader(t *testing.T) {
 	original := "a\nb\nc\nd\n"
 
 	snaps := hashline.NewMemSnapshotStore()
-	h := snaps.Record(abs, original)
+	h, _ := snaps.Record(abs, original)
 	snaps.RecordSeenLines(abs, h, []int{2, 3})
 
 	fs := &fakeEditFS{
@@ -105,7 +106,7 @@ func TestEditTool_ReturnsDiff(t *testing.T) {
 	original := "a\nb\nc\nd\n"
 
 	snaps := hashline.NewMemSnapshotStore()
-	h := snaps.Record(abs, original)
+	h, _ := snaps.Record(abs, original)
 	snaps.RecordSeenLines(abs, h, []int{2, 3})
 
 	fs := &fakeEditFS{
@@ -212,6 +213,66 @@ func TestEditTool_RejectsSymlinkOutsideRoot(t *testing.T) {
 	}
 	if string(got) != original {
 		t.Fatalf("target fuera del workspace cambio: %q", string(got))
+	}
+}
+
+func TestEditTool_RejectsSymlinkAndHardlinkAliasesInsideRoot(t *testing.T) {
+	root := t.TempDir()
+	original := "a\nb\n"
+	target := filepath.Join(root, "target.go")
+	if err := os.WriteFile(target, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	aliases := []string{"link.go", "hard.go"}
+	if err := os.Symlink(target, filepath.Join(root, aliases[0])); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if err := os.Link(target, filepath.Join(root, aliases[1])); err != nil {
+		t.Skipf("hardlink unavailable: %v", err)
+	}
+	for _, alias := range aliases {
+		t.Run(alias, func(t *testing.T) {
+			snaps := hashline.NewMemSnapshotStore()
+			h, _ := snaps.Record(filepath.Join(root, alias), original)
+			snaps.RecordSeenLines(filepath.Join(root, alias), h, []int{2})
+			in, _ := json.Marshal(map[string]string{"patch": "[" + alias + "#" + h + "]\nSWAP 2:\n+X"})
+			if _, err := NewEditTool(root, hashline.OSFilesystem{}, snaps).Execute(context.Background(), in); err == nil {
+				t.Fatal("alias edit unexpectedly succeeded")
+			}
+		})
+	}
+	got, _ := os.ReadFile(target)
+	if string(got) != original {
+		t.Fatalf("target changed through alias: %q", got)
+	}
+}
+
+func TestEditTool_CommittedUncertainReturnsActionableHeaderWithoutError(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "foo.go")
+	original := "a\nb\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	snaps := hashline.NewMemSnapshotStore()
+	h, _ := snaps.Record(path, original)
+	snaps.RecordSeenLines(path, h, []int{2})
+	fs := hashline.OSFilesystem{ReplaceHook: func(name string, data []byte, perm os.FileMode) error {
+		if err := os.WriteFile(name, data, perm); err != nil {
+			return err
+		}
+		return &hashline.CommitUncertainError{Err: fmt.Errorf("injected")}
+	}}
+	in, _ := json.Marshal(map[string]string{"patch": "[foo.go#" + h + "]\nSWAP 2:\n+B"})
+	res, err := NewEditTool(root, fs, snaps).Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("ordinary retry-inviting error: %v", err)
+	}
+	if !strings.HasPrefix(res.Output, "[foo.go#") || !strings.Contains(res.Output, "do not retry") {
+		t.Fatalf("output=%q", res.Output)
+	}
+	if head := snaps.Head(path); head == nil || head.Text != "a\nB\n" {
+		t.Fatalf("snapshot=%+v", head)
 	}
 }
 

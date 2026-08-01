@@ -1,37 +1,28 @@
 ---
-updated_at: 2026-07-09
+updated_at: 2026-07-10
 summary: Specification for tool edit spec.
 ---
 
 # Spec — Tool `edit` (hashline, phase 2 of track read/edit)
 
-Executable spec of **tool `edit`** style `can1357/oh-my-pi`. It is **phase 2**
-of the read/edit track (`../architecture/read-edit-tools.md`); phase 1 (`read`) already left
-the `internal/tool/hashline` motor with `ComputeFileHash`, `FormatHeader`,
-`SplitLines`, `NumberLines`, and the `SnapshotStore` (`Record`/`Head`/`ByHash`/
-`RecordSeenLines`/`Invalidate`, with `Seen` per snapshot). The `edit` **consumes** that
-snapshot: addresses by line number and only applies if the file continues
-hashing to the `HASH` that the `read` showed.
-
-It is the most difficult part of the agent: its correctness decides whether it corrupts files or
-not. We work with the cycle `AGENTS.md`
-(`Safety net -> Understand -> RED -> GREEN -> TRIANGULATE -> REFACTOR -> Evidence`).
+Executable specification for Atenea's `edit`, inspired by and pinned to
+`can1357/oh-my-pi` commit `09a7c865636457c50ed75fc3b1a7cc21ef72c105`.
+The adaptation intentionally exposes only Atenea's single-file
+`SWAP`/`DEL`/`INS.*` grammar. It consumes the session-isolated snapshots created
+by read/write/grep and applies strict provenance and freshness checks.
 
 ## 1. Context
 
-`../architecture/read-edit-tools.md` documents the **hashline** mechanism: the `read`
-numbers each line and prepends `[path#HASH]` (hash of the entire file); The `edit`
- addresses by **line number** but is only valid if the file **continues
-hashing to the same HASH**. The anchor is the line number; the hash is the
-**freshness gate**. If the file changed, the HASH diverges and the edit **fails
-for sure** (in v1: `MismatchError`; the 3-way-merge recovery comes in a later
-pass). Never apply a diff stale blindly.
+`../architecture/read-edit-tools.md` is authoritative for the completed core:
+strict one-section parsing, bounded collision-safe snapshots, exact and
+unambiguous uniform-offset drift recovery, complete supported mode preservation,
+per-path read-through-commit serialization, alias rejection, and atomic OS
+replacement with a committed-but-durability-uncertain result for post-rename
+failures. Stale boundary inserts retain their documented behavior. Malformed
+patches and failed preflight never write; oversized reads emit no unusable header.
 
-Phase 1 (`read`, see `atenea-tool-read-spec.md`) already implemented steps 1, 2 and 5 of the doc order (hashing + normalization; formatting + numbering;
-`SnapshotStore` with `Seen`). This phase implements steps **3, 4 and 6**: parser
-patch (text -> `[]Edit`), apply (`applyEdits`), and patcher (verification of
-hash + check of `seenLines` + all-or-nothing + commit). The recovery (step 7) and
-block ops (tree-sitter) are **outside of v1**.
+Multi-file patches, dual grammar, block/tree-sitter operations, notebooks/LSP,
+folding, and rich selectors are explicitly outside this specification.
 
 ## 2. Objective
 
@@ -47,10 +38,10 @@ In `internal/tool/hashline` (pure engine, without FS or agent):
 - `apply.go`: `ApplyEdits(lines []string, edits []Edit) (ApplyResult, error)` —
  applies the edits to the lines of the file respecting the original 1-indexed
  numbering even if several edits change the count.
-- `patcher.go`: `Patcher.Apply(patch) (PatchResult, error)` — preflight of
- section(s), hash check against live content, check of
- `seenLines`, all-or-nothing, commit (write, rewrite snapshot, return new
- header `[path#HASH]`).In `internal/tool`:
+- `patcher.go`: `Patcher.Apply(patch) (PatchResult, error)` — strict preflight,
+  freshness/provenance checks, exact unique uniform-offset recovery, and commit
+  preserving BOM, EOL, final newline, and supported mode bits. Successful
+  retainable commits return a new `[path#HASH]` header.
 
 - `edit.go`: `EditTool` (implements the `Tool` interface of M4). Parse the patch,
  resolve the path within `Root`, run `Patcher`, return the new header.
@@ -62,9 +53,9 @@ In `app.go`:
  `read` (so that the snapshot recorded by `read` is read by `edit`), register it
  and allow `"edit": true`.
 
-This phase **does not** build the 3-way-merge recovery, nor the
-(tree-sitter) block ops, nor multi-file in a single patch (v1: one section), nor the
-CRLF/BOM restore on write (v1 writes LF; see Clippings).
+The completed core includes exact, fail-closed uniform-offset drift recovery and
+storage convention preservation. Block/tree-sitter operations and multi-file
+patches remain outside the public grammar.
 
 ## 3. Scope
 
@@ -84,19 +75,15 @@ CRLF/BOM restore on write (v1 writes LF; see Clippings).
  with `read`.
 - Update `internal/tool/hashline/doc.go` and `internal/tool/doc.go`.
 
-### Out (do not do in v1)
+### Out (explicit non-goals)
 
-- **Recovery 3-way-merge** (`recovery.go`): when drifting with specific anchors, v1
- returns `MismatchError` (re-read). The merge against the stale tag snapshot is
- a later pass. It is the reason to have `SnapshotStore.ByHash` already ready.
 - **Block ops** (`SWAP.BLK`, `DEL.BLK`, `INS.BLK.POST`, tree-sitter): out.
-- **Multi-file in a patch** (multiple sections `[path#HASH]`): v1 accepts **one**
- section. The all-or-nothing preflight is still respected (one section is atomic).
-- **Restoration of line endings / BOM**: v1 normalizes to LF (like `read`) and
- writes LF. Restoring original CRLF/BOM is a later refinement (most
- code is LF; limit is documented).
+- **Multi-file patches** (multiple `[path#HASH]` sections): one section remains
+  the public contract.
+- **Fuzzy recovery**: completed recovery is exact, unique, and uniform-offset;
+  changed, ambiguous, or non-uniform anchors fail closed.
 - **Permissions per path pattern** for `edit`: follows the name set of M4
- (`"edit": true`). The rich model (ask/allow per route) arrives when needed.
+  (`"edit": true`). The rich ask/allow-per-route model remains out.
 
 ## 4. Types and contract
 
@@ -182,8 +169,8 @@ type Patch struct{ Sections []Section }
 // MissingTagError: el patch (o una seccion) no trae el header [path#HASH].
 type MissingTagError struct{ Detail string }
 
-// MismatchError: el archivo cambio entre el read y el edit (live != esperado) y v1
-// no recupera. Lleva contexto accionable (lineas ancladas) para re-leer.
+// MismatchError: el archivo cambio entre read y edit y la recuperacion exacta no
+// es segura (ancla cambiada, ambigua o desplazamiento no uniforme). Lleva contexto.
 type MismatchError struct {
 	Path     string
 	Expected string // hash del header
@@ -227,10 +214,9 @@ type Filesystem interface {
 	WriteFile(name string, data []byte, perm os.FileMode) error
 }
 
-// Patcher aplica un Patch all-or-nothing: prepara (preflight) la seccion en
-// memoria y, solo si pasa, commitea (escribe). Comparte el SnapshotStore con el
-// read (para Seen y, en el futuro, ByHash/recovery).
-type Patcher struct {
+// Patcher preflighta y aplica una seccion de forma all-or-nothing. Comparte el
+// SnapshotStore con read para provenance y recuperacion exacta contra la version
+// que nombra el hash stale.
 	FS        Filesystem
 	Snapshots SnapshotStore
 }
@@ -245,17 +231,13 @@ type PatchResult struct {
 	Warnings         []string
 }
 
-// Apply preflighta y commitea la seccion:
-//  1. exigir el header (path + hash esperado).
-//  2. leer el archivo (abs), quitar BOM, normalizar a LF -> live text.
-//  3. liveHash = ComputeFileHash(live).
-//  4. si liveHash == esperado (no drift): chequear seenLines (rechazar anclas a
-//     lineas que el read no mostro); aplicar edits.
-//     si liveHash != esperado: si TODOS los edits son INS.HEAD/INS.TAIL (posicion
-//     estable) -> aplicar con warning; si no -> MismatchError (Recognized segun
-//     Snapshots.ByHash(path, esperado) != nil).
-//  5. commit: escribir el texto nuevo (LF), Snapshots.Record(abs, nuevo) +
-//     RecordSeenLines de las lineas tocadas, devolver [path#newHASH].
+// Apply exige el header, lee y normaliza para comparar hashes, valida seenLines
+// y aplica directamente cuando no hay drift. Con drift, INS.HEAD/TAIL reconocidos
+// conservan su posicion estable y avisan; edits anclados solo se recuperan cuando
+// cada region original esta intacta, aparece exactamente una vez y todas comparten
+// un desplazamiento uniforme. El commit restaura BOM, EOL dominante, newline final
+// y modo soportado, reemplaza atomicamente y registra el nuevo snapshot. Si el
+// snapshot nuevo no puede retenerse por capacidad o colision, no devuelve un header inutilizable.
 func (p *Patcher) Apply(patch Patch) (PatchResult, error)
 ```
 
@@ -307,19 +289,15 @@ Schema (what the model sees):
 3. **Resolve the path.** The path of the header, inside `Root` (sandbox: reject
  `..` outside of `Root` **without** touching the FS), same as `read`.
 4. **Patcher.Apply** (all-or-nothing):
- - read + normalize (BOM/LF), `liveHash`.
- - **no drift** (`liveHash == esperado`): check `seenLines` against snapshot
-     (`Snapshots.ByHash(abs, esperado)` o `Head`); una ancla a una linea fuera de
-     `Seen` -> error "no edites lineas que no leiste". Aplicar `ApplyEdits`.
-- **drift**, only `INS.HEAD/TAIL`: stable position -> apply with warning.
- - **drift** with specific anchors: `MismatchError` (v1, without recovery). The message
-     distingue "hash no reconocido (re-lee, nunca inventes el tag)" de "el archivo
-     cambio entre read y edit (copia el [path#newhash] del edit previo o re-lee)".
-- **no-op** (edits do not change anything) -> explicit error, do not write.
-5. **Commit.** Write the new text (LF). `Snapshots.Record(abs, nuevo)` +
- `RecordSeenLines` of the touched lines (to chain edits). Return
- `Result{Output: "[ruta#nuevoHASH]"}` (+ summary/warnings) so that model
- chains without re-reading.
+ - read + normalize for hashing and validation.
+ - **no drift**: validate `seenLines`, then apply.
+ - **recognized stale HEAD/TAIL**: apply at the live boundary with a warning.
+ - **anchored drift**: recover only for intact, unique anchors sharing one uniform
+   line offset; changed, ambiguous, or non-uniform anchors return `MismatchError`.
+ - **no-op**: explicit error, no write.
+5. **Commit.** Restore BOM, dominant/original EOL, final newline and supported
+ mode bits; atomically replace; record the normalized result and touched lines.
+ Return a header only when the new snapshot was retained.
 
 ## 6. TDD Plan
 
@@ -389,18 +367,16 @@ RED/GREEN; at the TRIANGULATE end of the EDGE and REFACTOR + wiring cases.
  with payloads `+...`; no header -> `MissingTagError`; multi-section -> error v1.
 2. `ApplyEdits` applies replace/delete/insert respecting the original numbering with
  several splices; no-op -> error.
-3. `Patcher.Apply` checks `liveHash` against expected: no-drift applies (after
- check `seenLines`); drift with anchor -> `MismatchError`; HEAD/TAIL stale ->
- warning; anchor to unseen line -> rejection; **all-or-nothing** (preflight fails
- -> does not write). Commit rewrites snapshot and returns `[path#nuevoHASH]`.
-4. `EditTool` (implements `Tool`): applies a patch, sandbox fail-closed, returns the
- new header; actionable errors (`MissingTagError`/`MismatchError`/path outside
- of root/invalid input).
-5. `edit` registered on `app.go` with the `SnapshotStore`/`Root` shared with
- `read` and `"edit": true`; appears in `Definitions`.
-6. `go test ./...` (and `-race`) green; `go vet ./...` clean; `gofmt -l .` empty.
-7. No 3-way-merge recovery, block ops, multi-file, nor
- CRLF/BOM restore was built.
+3. `Patcher.Apply` validates freshness and `seenLines`; safely recovers unique
+uniform anchored drift, rejects changed/ambiguous/non-uniform drift, and preserves
+recognized stale HEAD/TAIL behavior. Failed preflight does not write. Commit
+preserves storage conventions and supported modes and never returns an
+unresolvable header.
+4. `EditTool` is sandboxed and returns actionable parser, mismatch, alias, and
+commit-uncertainty outcomes.
+5. `edit` is registered with the same session-isolated store and root as `read`.
+6. Full, race, vet, formatting, description, and production build gates pass.
+7. Block operations and multi-file patches remain non-goals.
 
 ## 8. Commands
 
@@ -429,28 +405,25 @@ go test -race ./internal/tool ./internal/tool/hashline
 
 ## 10. Risks and decisions
 
-- **The hash is the gate, the line number is the anchor.** The `edit` never
- applies to a file whose `liveHash` is not expected, except `INS.HEAD/TAIL`
- (stable position). Thus a file that changes between `read` and `edit` fails
- for sure instead of mangrove. It is the heart of "oh-my-pi style".
-- **Recovery deferred to a later pass.** v1 fails with `MismatchError` before
- drift with anchors. The 3-way-merge (using `Snapshots.ByHash(path, esperado)` to
- retrieve the text that the stale tag names) is the next pass. `ByHash` is now
- ready (I leave it on `read`); It is documented so as not to redo the interface.
+- **The hash gates freshness; recovery is exact.** No-drift edits use their line
+  anchors directly. Anchored stale edits recover only if every original region is
+  unchanged, uniquely present in live text, and all regions share one line offset;
+  otherwise `MismatchError` fails closed. Recognized stale HEAD/TAIL inserts keep
+  their stable-boundary behavior.
 - **`seenLines` avoids editing from memory.** The `edit` rejects anchors to lines that the
  `read` did not show (`Snapshot.Seen`). Without this, the model edits lines it didn't see and
  mangles the file. It is the second safety net after the hash.
 - **All-or-nothing.** The patcher preflights in memory and only writes if everything passes.
  The test is tested with a fake FS that counts writes: 0 writes if the
  preflight fails.
-- **`SnapshotStore`/`Root` shared read+edit.** In `app.go`, `read` and
- `edit` receive the **same** instance of `MemSnapshotStore` and the same root: the
- snapshot that `read` records is the one that `edit` reads. If they were built separately, the `edit` would never see the `Seen` of the `read` and everything would be mismatch. Restoring the original line-ending/BOM is a later refinement;
- v1 documents it as a limit (most of the code is LF). Risk: a
- CRLF file is rewritten as LF.
-- **One section in v1.** The patcher is all-or-nothing per section; v1 accepts a
- patch from a file. Multi-file (several sections with joint preflight)
- arrives when a real case requests it.
+- **Shared bounded snapshots.** `read` and `edit` share the same session-isolated
+  store. An individually unretainable snapshot is rejected before any history,
+  LRU, or byte accounting mutation, so prior editable snapshots survive and no
+  unusable header is emitted.
+- **Storage preservation.** Commit restores BOM, dominant/original EOL, final
+  newline, and supported mode bits and uses atomic replacement; CRLF is not
+  rewritten to LF.
+- **One section.** Multi-file joint preflight remains outside the public contract.
 - **Patch as text, not structured JSON.** The hashline format of
  oh-my-pi (header + hunks `SWAP/DEL/INS.*`) is maintained instead of a structured `{path, hash, ops}`
 , so as not to invent a format different from that of the design and reuse
@@ -460,16 +433,13 @@ go test -race ./internal/tool ./internal/tool/hashline
  result) so that one splice does not run the indices of another. It is the classic bug of
  one editor per line; It has its combination test.
 
-## 11. Safe cuts for v1 (lazy)
+## 11. Remaining non-goals
 
-From `../architecture/read-edit-tools.md` ("Safe Cuts for v1"):
-
-- **Keeps yes or yes**: ops `SWAP/DEL/INS.*`, hash verification,
- `seenLines` check, all-or-nothing, actionable mismatch messages. Without this it is not
- "oh-my-pi style" and does not crash for sure.
-- **Omitted in v1**: 3-way-merge recovery (boot with `MismatchError`),
- block ops (tree-sitter), multi-file in one patch, CRLF/BOM restore. They are
- optimizations or extra surface area, not the security mechanism.
+- Block/tree-sitter operations and multi-file patches are omitted surface area.
+- Recovery is deliberately not fuzzy: changed, duplicate/ambiguous, or
+  non-uniformly moved anchors fail closed.
+- BOM, EOL, final-newline, mode preservation, and exact uniform-offset recovery
+  are completed core behavior, not deferred work.
 
 ## 12. Sources
 

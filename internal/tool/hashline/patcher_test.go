@@ -43,7 +43,7 @@ func TestPatcher_NoDriftAppliesAndRecordsNewHash(t *testing.T) {
 	original := "a\nb\nc\nd\n"
 
 	snaps := NewMemSnapshotStore()
-	hash := snaps.Record(path, original)
+	hash, _ := snaps.Record(path, original)
 	snaps.RecordSeenLines(path, hash, []int{2, 3})
 
 	fs := &fakePatchFS{
@@ -98,7 +98,7 @@ func TestPatcher_ApplyExposesOldAndNewText(t *testing.T) {
 	original := "a\nb\nc\nd\n"
 
 	snaps := NewMemSnapshotStore()
-	hash := snaps.Record(path, original)
+	hash, _ := snaps.Record(path, original)
 	snaps.RecordSeenLines(path, hash, []int{2, 3})
 
 	fs := &fakePatchFS{
@@ -134,7 +134,7 @@ func TestPatcher_DriftWithAnchorReturnsMismatch(t *testing.T) {
 	live := "a\nZZZ\nc\nd\n"
 
 	snaps := NewMemSnapshotStore()
-	staleHash := snaps.Record(path, original)
+	staleHash, _ := snaps.Record(path, original)
 	snaps.RecordSeenLines(path, staleHash, []int{2})
 
 	fs := &fakePatchFS{
@@ -209,7 +209,7 @@ func TestPatcher_HeadTailOnStaleTagAppliesWithWarning(t *testing.T) {
 	live := "a\nb\n"
 
 	snaps := NewMemSnapshotStore()
-	staleHash := snaps.Record(path, original)
+	staleHash, _ := snaps.Record(path, original)
 
 	fs := &fakePatchFS{
 		files:  map[string][]byte{path: []byte(live)},
@@ -276,7 +276,7 @@ func TestPatcher_EditUnseenLineRejected(t *testing.T) {
 	original := "a\nb\nc\nd\n"
 
 	snaps := NewMemSnapshotStore()
-	h := snaps.Record(path, original)
+	h, _ := snaps.Record(path, original)
 	snaps.RecordSeenLines(path, h, []int{1, 2})
 
 	fs := &fakePatchFS{
@@ -311,7 +311,7 @@ func TestPatcher_ApplyConcurrentWithRecordSeenLinesNoRace(t *testing.T) {
 	original := "a\nb\nc\nd\n"
 
 	snaps := NewMemSnapshotStore()
-	hash := snaps.Record(path, original)
+	hash, _ := snaps.Record(path, original)
 	snaps.RecordSeenLines(path, hash, []int{1, 2, 3, 4})
 
 	fs := &fakePatchFS{
@@ -364,7 +364,7 @@ func TestPatcher_RecordsChangedLineSeenForChainedEdit(t *testing.T) {
 	original := "a\nb\nc\n"
 
 	snaps := NewMemSnapshotStore()
-	h := snaps.Record(path, original)
+	h, _ := snaps.Record(path, original)
 	snaps.RecordSeenLines(path, h, []int{2})
 
 	fs := &fakePatchFS{

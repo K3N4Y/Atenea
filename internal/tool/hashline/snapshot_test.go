@@ -2,6 +2,7 @@ package hashline
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -11,7 +12,10 @@ import (
 // con el texto y el hash correctos.
 func TestMemSnapshotStore_RecordThenHead(t *testing.T) {
 	s := NewMemSnapshotStore()
-	tag := s.Record("/abs/foo.go", "a\nb\n")
+	tag, ok := s.Record("/abs/foo.go", "a\nb\n")
+	if !ok {
+		t.Fatal("Record unexpectedly rejected")
+	}
 
 	if want := ComputeFileHash("a\nb\n"); tag != want {
 		t.Fatalf("Record: se esperaba tag %q, se obtuvo %q", want, tag)
@@ -33,7 +37,7 @@ func TestMemSnapshotStore_RecordThenHead(t *testing.T) {
 // vistas en el Head: el edit rechazara anclas a lineas fuera de este set.
 func TestMemSnapshotStore_RecordSeenLines(t *testing.T) {
 	s := NewMemSnapshotStore()
-	tag := s.Record("/abs/foo.go", "a\nb\n")
+	tag, _ := s.Record("/abs/foo.go", "a\nb\n")
 	s.RecordSeenLines("/abs/foo.go", tag, []int{1, 2})
 
 	snap := s.Head("/abs/foo.go")
@@ -54,8 +58,8 @@ func TestMemSnapshotStore_RecordSeenLines(t *testing.T) {
 // el mismo header [path#HASH] y los edits encadenan sin invalidarse.
 func TestMemSnapshotStore_RecordIdenticalReusesTag(t *testing.T) {
 	s := NewMemSnapshotStore()
-	first := s.Record("/abs/foo.go", "a\nb\n")
-	second := s.Record("/abs/foo.go", "a\nb\n")
+	first, _ := s.Record("/abs/foo.go", "a\nb\n")
+	second, _ := s.Record("/abs/foo.go", "a\nb\n")
 
 	if first != second {
 		t.Fatalf("Record: se esperaba el mismo tag al grabar texto identico, se obtuvo %q vs %q", first, second)
@@ -72,8 +76,8 @@ func TestMemSnapshotStore_RecordIdenticalReusesTag(t *testing.T) {
 // poder recuperar una version anterior por su hash.
 func TestMemSnapshotStore_ByHashFindsRecordedVersion(t *testing.T) {
 	s := NewMemSnapshotStore()
-	oldHash := s.Record("/abs/foo.go", "a\nb\n")
-	newHash := s.Record("/abs/foo.go", "a\nB\n")
+	oldHash, _ := s.Record("/abs/foo.go", "a\nb\n")
+	newHash, _ := s.Record("/abs/foo.go", "a\nB\n")
 
 	if oldHash == newHash {
 		t.Fatalf("setup: se esperaban hashes distintos para textos distintos, ambos %q", oldHash)
@@ -100,13 +104,64 @@ func TestMemSnapshotStore_ByHashFindsRecordedVersion(t *testing.T) {
 	}
 }
 
+func TestMemSnapshotStore_RecordRetainsNewestWhenSamePathHistoryExceedsByteLimit(t *testing.T) {
+	s := NewMemSnapshotStore()
+	const versionSize = defaultMaxBytes/4 + 1
+	path := "/abs/large.go"
+
+	var newestHash string
+	for i := 0; i < defaultMaxVersions; i++ {
+		text := strings.Repeat(string(rune('a'+i)), versionSize)
+		hash, recorded := s.Record(path, text)
+		if !recorded {
+			t.Fatalf("Record version %d unexpectedly rejected", i)
+		}
+		newestHash = hash
+	}
+
+	if newest := s.ByHash(path, newestHash); newest == nil {
+		t.Fatal("Record reported success after evicting the newly recorded snapshot")
+	}
+	if head := s.Head(path); head == nil || head.Hash != newestHash {
+		t.Fatalf("Head = %+v, want newest hash %q", head, newestHash)
+	}
+	if s.bytes > defaultMaxBytes {
+		t.Fatalf("retained %d bytes, limit is %d", s.bytes, defaultMaxBytes)
+	}
+}
+
+func TestMemSnapshotStore_RecordRejectsAmbiguousHashWithoutMutatingHistory(t *testing.T) {
+	s := NewMemSnapshotStore()
+	const path = "/abs/collision.go"
+	firstText, secondText := "collision-88", "collision-640"
+	if firstHash, secondHash := ComputeFileHash(firstText), ComputeFileHash(secondText); firstHash != secondHash {
+		t.Fatalf("collision fixture drifted: %q != %q", firstHash, secondHash)
+	}
+
+	hash, recorded := s.Record(path, firstText)
+	if !recorded {
+		t.Fatal("first colliding snapshot unexpectedly rejected")
+	}
+	if secondHash, secondRecorded := s.Record(path, secondText); secondRecorded || secondHash != "" {
+		t.Fatalf("ambiguous snapshot returned hash=%q recorded=%v", secondHash, secondRecorded)
+	}
+
+	snapshot := s.ByHash(path, hash)
+	if snapshot == nil || snapshot.Text != firstText {
+		t.Fatalf("rejected collision mutated prior snapshot: %+v", snapshot)
+	}
+	if head := s.Head(path); head == nil || head.Text != firstText {
+		t.Fatalf("rejected collision changed head: %+v", head)
+	}
+}
+
 // TestMemSnapshotStore_ByHashReturnsDefensiveSeenCopy afirma que ByHash devuelve
 // una copia de Seen, no el map vivo: una escritura posterior via RecordSeenLines no
 // debe aparecer en el snapshot devuelto antes. Asi el Patcher puede iterar Seen
 // fuera del mutex sin compartir el map con RecordSeenLines (evita el data race).
 func TestMemSnapshotStore_ByHashReturnsDefensiveSeenCopy(t *testing.T) {
 	s := NewMemSnapshotStore()
-	hash := s.Record("/abs/foo.go", "a\nb\nc\n")
+	hash, _ := s.Record("/abs/foo.go", "a\nb\nc\n")
 	s.RecordSeenLines("/abs/foo.go", hash, []int{1})
 
 	snap := s.ByHash("/abs/foo.go", hash)
@@ -135,7 +190,7 @@ func TestMemSnapshotStore_ByHashReturnsDefensiveSeenCopy(t *testing.T) {
 // store, y viceversa.
 func TestMemSnapshotStore_HeadReturnsDefensiveSeenCopy(t *testing.T) {
 	s := NewMemSnapshotStore()
-	hash := s.Record("/abs/foo.go", "a\nb\n")
+	hash, _ := s.Record("/abs/foo.go", "a\nb\n")
 	s.RecordSeenLines("/abs/foo.go", hash, []int{1})
 
 	snap := s.Head("/abs/foo.go")

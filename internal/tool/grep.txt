@@ -4,8 +4,8 @@ Uso:
 - pattern es una regex (sintaxis ripgrep: "func\s+\w+", "TODO|FIXME", etc.).
 - path acota la busqueda a un archivo o directorio relativo al workspace (default: ".").
 - include filtra por glob de nombre de archivo (eg. "*.go", "*.{ts,tsx}").
-- Por cada archivo con coincidencias devuelve un header [path#HASH] y debajo las lineas que matchean en formato NUM:TEXTO.
-- Ese header y esos numeros de linea sirven para anclar un edit posterior sobre las lineas mostradas sin re-leer el archivo (grep -> edit).
+- Por cada archivo con coincidencias devuelve un header [path#HASH] y debajo las lineas que matchean en formato NUM:TEXTO. Si el snapshot no puede retenerse de forma segura por limite o colision de hash, muestra ese resultado sin header.
+- Un header y sus numeros de linea sirven para anclar un edit posterior sin re-leer (grep -> edit). Para habilitar la edicion de un resultado sin header, cambia o reduce el contenido o inicia una sesion nueva, y despues usa read.
 - Devuelve hasta las primeras coincidencias (por defecto 100); si hay mas lo indica al final. Para acotar usa un path mas especifico o un include.
 - Usalo para encontrar DONDE esta algo en el codigo. Para encontrar archivos por NOMBRE usa glob; para leer un archivo entero usa read.
 - Puedes lanzar varias busquedas (glob/grep) en paralelo en una sola respuesta cuando son utiles a la vez.

@@ -353,6 +353,49 @@ func TestReadTool_BinaryFileReturnsNotice(t *testing.T) {
 	}
 }
 
+func TestReadTool_OversizedSnapshotPreservesPriorEditableSnapshot(t *testing.T) {
+	const oldPath = "/work/old.txt"
+	const oldText = "old editable\n"
+	content := strings.Repeat("x", (64<<20)+1)
+	snaps := hashline.NewMemSnapshotStore()
+	rt := &ReadTool{
+		Root: "/work",
+		FS: fakeFS{
+			oldPath:          []byte(oldText),
+			"/work/huge.txt": []byte(content),
+		},
+		Snapshots: snaps, MaxLines: 2000, MaxBytes: 1024,
+	}
+	oldRead, err := rt.Execute(context.Background(), json.RawMessage(`{"path":"old.txt"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldHeader := strings.Split(oldRead.Output, "\n")[0]
+	if !strings.HasPrefix(oldHeader, "[old.txt#") {
+		t.Fatalf("missing old header: %q", oldRead.Output)
+	}
+
+	hugeRead, err := rt.Execute(context.Background(), json.RawMessage(`{"path":"huge.txt"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.HasPrefix(hugeRead.Output, "[huge.txt#") || !strings.Contains(hugeRead.Output, "no hashline header") {
+		t.Fatalf("unusable editable header/result: %q", hugeRead.Output)
+	}
+	if snaps.Head("/work/huge.txt") != nil {
+		t.Fatal("oversized snapshot retained")
+	}
+
+	editFS := &fakeEditFS{files: map[string][]byte{oldPath: []byte(oldText)}, writes: map[string][]byte{}}
+	input, _ := json.Marshal(map[string]string{"patch": oldHeader + "\nSWAP 1:\n+still editable"})
+	if _, err := NewEditTool("/work", editFS, snaps).Execute(context.Background(), input); err != nil {
+		t.Fatalf("old header no longer editable: %v", err)
+	}
+	if got := string(editFS.writes[oldPath]); got != "still editable\n" {
+		t.Fatalf("old snapshot edit wrote %q", got)
+	}
+}
+
 // spyFS cuenta las llamadas a ReadFile para afirmar que la compuerta de sandbox
 // rechaza rutas fuera de root SIN tocar el FS.
 type spyFS struct{ reads int }

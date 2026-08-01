@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // codexTurn is one Responses turn with everything the mapping has to cover:
@@ -154,6 +155,58 @@ func drainCodex(t *testing.T, provider Provider, req Request) []Event {
 		events = append(events, event)
 	}
 	return events
+}
+
+// TestPosthogResponsesProvider_AllowsAnActiveStreamPastTheHeaderTimeout covers
+// long reasoning turns: once the gateway has opened an SSE response, the
+// transport guard must not impose a deadline on the whole turn. The caller's
+// context remains the authority for cancelling an active stream.
+func TestPosthogResponsesProvider_AllowsAnActiveStreamPastTheHeaderTimeout(t *testing.T) {
+	const headerTimeout = 40 * time.Millisecond
+	streamOpened := make(chan struct{})
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		close(streamOpened)
+		<-release
+		io.WriteString(w, codexTurn)
+	}))
+	defer server.Close()
+
+	provider := newOAuthResponsesProvider(
+		&staticTokens{token: OAuthToken{AccessToken: "posthog-token"}},
+		server.URL,
+		"gpt-5.6-sol",
+		headerTimeout,
+		posthogResponsesProfile,
+		WithCodexReasoning(CodexEffortMedium, CodexSummaryAuto),
+	)
+	out, err := provider.Stream(context.Background(), Request{})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	done := make(chan []Event, 1)
+	go func() {
+		events := make([]Event, 0)
+		for event := range out {
+			events = append(events, event)
+		}
+		done <- events
+	}()
+	<-streamOpened
+	time.Sleep(2 * headerTimeout)
+	close(release)
+	events := <-done
+	for _, event := range events {
+		if event.Kind == StepFailed {
+			t.Fatalf("active PostHog stream failed after %s: %s", headerTimeout, event.Text)
+		}
+	}
+	if len(events) == 0 || events[len(events)-1].Kind != StepEnded {
+		t.Fatalf("events = %#v, want a completed turn", events)
+	}
 }
 
 func TestOAuthResponsesProvider_SendsOnlyTheStandardOAuthPolicy(t *testing.T) {

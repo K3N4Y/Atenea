@@ -132,3 +132,17 @@ func TestParsePatch_MalformedOperationsError(t *testing.T) {
 		})
 	}
 }
+
+func TestParsePatchRejectsOrderSensitiveConflictCombinations(t *testing.T) {
+	for _, body := range []string{
+		"DEL 2.=4\nINS.PRE 3:\n+x",
+		"SWAP 2.=4:\n+x\nINS.POST 2:\n+y",
+		"INS.HEAD:\n+x\nINS.HEAD:\n+y",
+		"INS.TAIL:\n+x\nINS.TAIL:\n+y",
+		"INS.PRE 2:\n+x\nINS.POST 2:\n+y",
+	} {
+		if _, err := ParsePatch("[foo#ABCD]\n" + body); err == nil {
+			t.Errorf("conflict accepted: %q", body)
+		}
+	}
+}

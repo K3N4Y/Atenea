@@ -93,7 +93,7 @@ func TestBuiltins_Contract(t *testing.T) {
 			root := workspaceWithFile(t, "foo.go", content)
 			snaps := hashline.NewMemSnapshotStore()
 			abs := filepath.Join(root, "foo.go")
-			hash := snaps.Record(abs, content)
+			hash, _ := snaps.Record(abs, content)
 			snaps.RecordSeenLines(abs, hash, []int{1, 2, 3, 4})
 			return tooltest.Subject{
 				Tool:  NewEditTool(root, hashline.OSFilesystem{}, snaps),
