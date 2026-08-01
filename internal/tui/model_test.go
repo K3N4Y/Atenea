@@ -4765,7 +4765,7 @@ func TestFormatTokenCount(t *testing.T) {
 		want   string
 	}{
 		{0, "0"}, {999, "999"}, {1_000, "1k"}, {1_500, "1.5k"},
-		{9_999, "10k"}, {10_000, "10k"}, {128_000, "128k"},
+		{9_999, "10k"}, {10_000, "10k"}, {128_000, "128k"}, {1_000_000, "1m"},
 	} {
 		if got := formatTokenCount(tc.tokens); got != tc.want {
 			t.Errorf("formatTokenCount(%d) = %q, quiero %q", tc.tokens, got, tc.want)

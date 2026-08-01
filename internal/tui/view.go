@@ -829,6 +829,12 @@ func formatTokenCount(tokens int) string {
 	if tokens < 1_000 {
 		return strconv.Itoa(tokens)
 	}
+	if tokens >= 1_000_000 {
+		if tokens%1_000_000 == 0 || tokens >= 10_000_000 {
+			return strconv.Itoa(tokens/1_000_000) + "m"
+		}
+		return strings.TrimSuffix(strconv.FormatFloat(float64(tokens)/1_000_000, 'f', 1, 64), ".0") + "m"
+	}
 	if tokens%1_000 == 0 || tokens >= 10_000 {
 		return strconv.Itoa(tokens/1_000) + "k"
 	}

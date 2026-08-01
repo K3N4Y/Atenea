@@ -166,6 +166,24 @@ func TestModel_TopBarContextUsesTheWindowTheAdapterDeclares(t *testing.T) {
 	}
 }
 
+func TestModel_TopBarContextFormatsMillionTokenWindowAsM(t *testing.T) {
+	const model = "openai/gpt-4.1"
+	m := NewModel(declaringAgent(model, 1_000_000), "s1", nil).
+		WithWorkspace("main", "~/x").
+		WithStatus("build", model)
+
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 20})
+	m = apply(t, m, EventMsg{Kind: session.KindStepEnded, Usage: &session.Usage{InputTokens: 16_000}})
+
+	first := lineWith(t, ansi.Strip(m.View()), "1m")
+	if !strings.Contains(first, "16k / 1m") {
+		t.Fatalf("con ventana de un millon la barra debe mostrar %q; primera linea = %q", "16k / 1m", first)
+	}
+	if strings.Contains(first, "1000k") {
+		t.Fatalf("la barra no debe mostrar un millon como %q; primera linea = %q", "1000k", first)
+	}
+}
+
 // TestModel_TopBarContextShowsUsedOnlyWhenWindowUnknown verifica que, cuando el
 // modelo no tiene ventana de contexto conocida, la etiqueta de la derecha
 // muestra solo los tokens usados (p.ej. "16k") sin la forma "usado / ventana".
