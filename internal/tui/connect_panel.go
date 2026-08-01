@@ -18,6 +18,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/K3N4Y/atenea/internal/providerconfig"
 )
@@ -61,6 +63,21 @@ type deviceLoginStartedMsg struct {
 	providerID string
 	login      providerconfig.DeviceLogin
 	err        string
+}
+
+// browserOpenFailedMsg reports that the sign-in page could not be opened.
+// Silence here would read as a click that did nothing.
+type browserOpenFailedMsg struct{ err error }
+
+// openLoginPage opens the sign-in page in the user's browser, off the update
+// loop the way every side effect runs.
+func openLoginPage(url string) tea.Cmd {
+	return func() tea.Msg {
+		if err := openBrowser(url); err != nil {
+			return browserOpenFailedMsg{err: err}
+		}
+		return nil
+	}
 }
 
 type connectPanel struct {
@@ -360,8 +377,23 @@ func (m Model) applyConnectSuccess(done connectDoneMsg) Model {
 // handleConnectPanelMouse mirrors the keyboard on the list stage: the wheel
 // moves the selection and a left click on a provider row opens its key entry.
 // The key entry stage is keyboard-only.
+//
+// The awaiting stage answers ctrl+click by opening the sign-in page. The click
+// reaches this handler and not the terminal's own link opener because mouse
+// tracking is on — the terminal reports the press instead of acting on it — so
+// the affordance the user expects from a link has to be provided here. Ctrl is
+// required so a stray click while waiting cannot launch a browser.
 func (m Model) handleConnectPanelMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
-	if m.connectPanel.busy || m.connectPanel.entering || m.connectPanel.awaiting || msg.Action != tea.MouseActionPress {
+	if msg.Action != tea.MouseActionPress {
+		return m, nil
+	}
+	if m.connectPanel.awaiting {
+		if msg.Button == tea.MouseButtonLeft && msg.Ctrl {
+			return m, openLoginPage(m.connectPanel.login.VerificationURI)
+		}
+		return m, nil
+	}
+	if m.connectPanel.busy || m.connectPanel.entering {
 		return m, nil
 	}
 	switch msg.Button {
@@ -417,12 +449,12 @@ func (m Model) connectPanelView() string {
 		// (empty code) only has the page — the approval comes back on its own.
 		if login.UserCode != "" {
 			rows = append(rows,
-				overlayCell(" 1. Open "+accentStyle.Render(sanitizeTerminalText(login.VerificationURI)), innerWidth),
+				linkCell(" 1. Open ", login.VerificationURI, innerWidth),
 				overlayCell(" 2. Enter the code "+accentStyle.Render(sanitizeTerminalText(login.UserCode)), innerWidth),
 			)
 		} else {
 			rows = append(rows,
-				overlayCell(" Open "+accentStyle.Render(sanitizeTerminalText(login.VerificationURI)), innerWidth),
+				linkCell(" Open ", login.VerificationURI, innerWidth),
 				overlayCell(" in your browser and approve the sign-in.", innerWidth),
 			)
 		}
@@ -430,7 +462,7 @@ func (m Model) connectPanelView() string {
 			strings.Repeat(" ", max(innerWidth, 0)),
 			statusStyle.Render(overlayCell(" waiting for approval…"+deviceCodeDeadline(login.ExpiresAt), innerWidth)),
 		)
-		hint = " waiting for approval · esc cancel"
+		hint = " ctrl+click opens the link · esc cancel"
 	} else if m.connectPanel.entering {
 		provider, _ := m.connectPanel.selectedProvider()
 		rows = append(rows, overlayCell(" Connect "+sanitizeTerminalText(provider.Name)+" with an API key", innerWidth), strings.Repeat(" ", max(innerWidth, 0)))
@@ -483,6 +515,18 @@ func (m Model) connectPanelView() string {
 //
 // Nothing is rendered when the server named no expiry: a deadline invented here
 // would be a worse lie than silence.
+// linkCell renders one row carrying a link. The display text is truncated to
+// fit BEFORE the OSC 8 wrapping, so the terminal always sees a balanced
+// open/close pair — truncating afterwards could cut the closer off and leak
+// the hyperlink into everything painted next. The target stays the full URL
+// even when the display is not: an authorize URL rarely fits a terminal row,
+// and a clipped target would open a broken page.
+func linkCell(prefix, url string, width int) string {
+	url = sanitizeTerminalText(url)
+	display := ansi.Truncate(url, max(width-lipgloss.Width(prefix), 0), "…")
+	return overlayCell(prefix+ansi.SetHyperlink(url)+accentStyle.Render(display)+ansi.ResetHyperlink(), width)
+}
+
 func deviceCodeDeadline(expiresAt time.Time) string {
 	if expiresAt.IsZero() {
 		return ""

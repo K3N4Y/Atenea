@@ -695,6 +695,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.syncViewportActivity(), revealTick()
 	case deviceLoginStartedMsg:
 		return m.startedDeviceLogin(ev)
+	case browserOpenFailedMsg:
+		// The login is still perfectly waitable — only the shortcut failed — so
+		// the panel stays put and names why the click did nothing. The URL on
+		// screen remains the manual path.
+		if m.connectPanel.open && m.connectPanel.awaiting {
+			m.connectPanel.err = "could not open the browser: " + ev.err.Error()
+		}
+		return m, nil
 	case connectDoneMsg:
 		if ev.generation != m.connectGen {
 			// A stale success still stored the credential and must land.

@@ -112,5 +112,9 @@ PostHog differs in all three places:
 - GPT models through the gateway's openai-responses surface.
 - A region picker at login (the reference implementation has one; here region
   is config).
-- Auto-opening the browser from the TUI — the URL is shown and most terminals
-  hyperlink it; the desktop's `OpenLoginPage` already opens it natively.
+- Auto-opening the browser from the TUI *when the login starts*. What the TUI
+  does have (added the same day): the URL renders as an OSC 8 hyperlink whose
+  target is the full URL even when the display is clipped to the panel width,
+  and ctrl+click on the awaiting stage opens the page from the app — necessary
+  because mouse tracking makes the terminal report the click instead of acting
+  on it. The desktop's `OpenLoginPage` already opens it natively.

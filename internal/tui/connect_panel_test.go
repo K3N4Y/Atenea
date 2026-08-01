@@ -386,6 +386,98 @@ func TestModel_ConnectShowsTheBrowserLoginWithoutACodeStep(t *testing.T) {
 	}
 }
 
+// awaitingLoginModel drives a browser login up to the awaiting stage, where
+// the panel shows the link and waits.
+func awaitingLoginModel(t *testing.T, agent *fakeConnectAgent) Model {
+	t.Helper()
+	m, cmd := applyCmd(t, openConnectPanel(t, agent, "/connect"), tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("selecting a login provider must launch the async start-login command")
+	}
+	m, _ = applyCmd(t, m, cmd())
+	if !m.connectPanel.awaiting {
+		t.Fatal("the panel must be in the awaiting stage")
+	}
+	return m
+}
+
+// TestModel_ConnectCtrlClickOpensTheSignInPage: mouse tracking means the
+// terminal reports the click to the app instead of opening the link itself,
+// so the affordance a link promises has to be honored here.
+func TestModel_ConnectCtrlClickOpensTheSignInPage(t *testing.T) {
+	var opened []string
+	restore := openBrowser
+	openBrowser = func(url string) error {
+		opened = append(opened, url)
+		return nil
+	}
+	t.Cleanup(func() { openBrowser = restore })
+
+	m := awaitingLoginModel(t, newBrowserLoginTestAgent())
+
+	// A plain click must not launch anything: it is how a user focuses the
+	// terminal or selects text.
+	_, cmd := m.handleConnectPanelMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	if cmd != nil {
+		t.Fatal("a plain click while awaiting must not open the browser")
+	}
+
+	_, cmd = m.handleConnectPanelMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, Ctrl: true})
+	if cmd == nil {
+		t.Fatal("ctrl+click while awaiting must produce the open-browser command")
+	}
+	if msg := cmd(); msg != nil {
+		t.Fatalf("opening the browser succeeded but reported %#v", msg)
+	}
+	if len(opened) != 1 || opened[0] != "https://us.posthog.com/oauth/authorize?client_id=x" {
+		t.Fatalf("opened = %v, want the full sign-in URL exactly once", opened)
+	}
+}
+
+// TestModel_ConnectBrowserFailureIsNamedOnThePanel: the login is still
+// perfectly waitable when only the shortcut failed, so the panel stays put and
+// says why the click did nothing.
+func TestModel_ConnectBrowserFailureIsNamedOnThePanel(t *testing.T) {
+	restore := openBrowser
+	openBrowser = func(string) error { return errors.New("xdg-open: not found") }
+	t.Cleanup(func() { openBrowser = restore })
+
+	m := awaitingLoginModel(t, newBrowserLoginTestAgent())
+	_, cmd := m.handleConnectPanelMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, Ctrl: true})
+	if cmd == nil {
+		t.Fatal("ctrl+click must produce the open-browser command")
+	}
+	m = apply(t, m, cmd())
+	if !m.connectPanel.awaiting || !m.connectPanel.open {
+		t.Fatal("a failed browser launch must not abandon the login")
+	}
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "could not open the browser") {
+		t.Fatalf("panel view does not say why the click did nothing:\n%s", view)
+	}
+}
+
+// TestLinkCell_TargetsTheFullURLBehindATruncatedDisplay: an authorize URL
+// rarely fits a terminal row. The display may be clipped; the OSC 8 target the
+// terminal acts on must never be, and the hyperlink must close on the same row
+// or it leaks into everything painted next.
+func TestLinkCell_TargetsTheFullURLBehindATruncatedDisplay(t *testing.T) {
+	url := "https://us.posthog.com/oauth/authorize?client_id=abcdef&code_challenge=0123456789012345678901234567890123456789012&state=xyz"
+	cell := linkCell(" Open ", url, 40)
+	if width := ansi.StringWidth(cell); width != 40 {
+		t.Fatalf("cell width = %d, want exactly the given 40", width)
+	}
+	if !strings.Contains(cell, "\x1b]8;;"+url+"\x07") {
+		t.Fatal("the OSC 8 target must carry the full URL, not the clipped display")
+	}
+	if !strings.HasSuffix(strings.TrimRight(cell, " "), "\x1b]8;;\x07") {
+		t.Fatal("the hyperlink must be closed before the row ends")
+	}
+	if display := ansi.Strip(cell); !strings.Contains(display, "…") {
+		t.Fatalf("a URL wider than the row must show its truncation: %q", display)
+	}
+}
+
 // TestModel_ConnectStatesTheCodeDeadlineAsAClockTimeNothingHasToRedraw: this
 // panel is painted once and then waits for a human. Nothing ticks while it does —
 // the spinner only runs during a turn and the awaiting stage swallows every key —
