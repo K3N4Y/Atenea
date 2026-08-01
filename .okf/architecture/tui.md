@@ -315,7 +315,11 @@ input and `↓ more` marks hidden rows.
 shortcuts. Clicking either action resolves it directly. While the panel owns
 input, the composer stays visible and preserves its draft but is blurred and
 read-only; `PgUp`/`PgDn` and the mouse wheel outside the panel continue to
-scroll the transcript. The run's `working` status line is suppressed while a
+scroll the transcript. The run status line shows a spinner plus concrete
+microcopy derived from the latest visible activity: `Checking context` while
+preparing or reading context, `Reviewing changes` while file-changing tools run
+or settle, `Preparing response` while assistant text streams, and
+`Still working` for continuation/retry states. The line is suppressed while a
 permission is pending (`showsWorking`): the agent is blocked on the user, not
 working, and the panel takes that row. On short terminals the composer drops its Git-summary
 margin and the panel progressively omits help, command rows, and secondary

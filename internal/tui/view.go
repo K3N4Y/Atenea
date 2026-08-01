@@ -650,9 +650,63 @@ func (m Model) chatContent() string {
 			// column as the box's "╭" corner.
 			margin = m.baseLayout().chatMargin
 		}
-		status = strings.Repeat(" ", margin) + m.spinner.View() + statusStyle.Render(" working") + "\n"
+		status = strings.Repeat(" ", margin) + m.spinner.View() + statusStyle.Render(" "+m.workingStatusLabel()) + "\n"
 	}
 	return m.transcriptView() + m.menuView() + status + m.permissionPanelView() + m.composerView()
+}
+
+func (m Model) workingStatusLabel() string {
+	for i := len(m.entries) - 1; i >= 0; i-- {
+		e := m.entries[i]
+		switch e.kind {
+		case entryAssistant:
+			if !e.settled() {
+				return "Preparing response"
+			}
+		case entryReasoning:
+			if !e.settled() {
+				return "Checking context"
+			}
+		case entryTool:
+			p := m.presentationOf(e)
+			if e.status == toolRunning {
+				return workingToolStatusLabel(e, p)
+			}
+			if e.status == toolOK && toolReviewsChanges(e, p) {
+				return "Reviewing changes"
+			}
+		case entryRetry:
+			return "Still working"
+		case entryCompaction:
+			if e.live {
+				return "Checking context"
+			}
+		case entryUser:
+			return "Checking context"
+		}
+	}
+	return "Checking context"
+}
+
+func workingToolStatusLabel(e entry, p tool.Presentation) string {
+	if toolReviewsChanges(e, p) {
+		return "Reviewing changes"
+	}
+	switch e.tool {
+	case "read", "grep", "glob", "web_fetch", "skill":
+		return "Checking context"
+	case "present_plan":
+		return "Preparing response"
+	default:
+		return "Still working"
+	}
+}
+
+func toolReviewsChanges(e entry, p tool.Presentation) bool {
+	if p.Kind == tool.FileChange || p.Kind == tool.FileCreation {
+		return true
+	}
+	return e.tool == "edit" || e.tool == "write"
 }
 
 func (m Model) chatView(content string) string {

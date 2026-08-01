@@ -2361,20 +2361,19 @@ func TestModel_RunningToolHiddenWhilePermissionPending(t *testing.T) {
 	}
 }
 
-// A pending permission blocks on the user, so the agent is not working: the
-// "working" status line must disappear while the ask is open and return once it
-// is resolved (the run keeps going). "Working directory" in the panel is capital
-// W, so the lowercase " working" check does not collide with it.
+// A pending permission blocks on the user, so the agent status line must
+// disappear while the ask is open and return once it is resolved (the run keeps
+// going).
 func TestModel_WorkingLineHiddenWhilePermissionPending(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil).WithWorkspace("main", "~/dev/atenea")
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m.working = true
 	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"ls"}`)})
-	if got := m.View(); strings.Contains(got, " working") {
+	if got := m.View(); strings.Contains(got, "Checking context") {
 		t.Fatalf("View() = %q, the working line must be hidden while a permission is pending", got)
 	}
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	if got := m.View(); !strings.Contains(got, " working") {
+	if got := m.View(); !strings.Contains(got, "Checking context") {
 		t.Fatalf("View() = %q, resolving restores the working line while the run continues", got)
 	}
 }
@@ -4096,20 +4095,44 @@ func TestModel_WorkingIndicatorVisibleWhileRunning(t *testing.T) {
 	// The user sends a prompt: the stable indicator appears.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hola")})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if got := m.View(); !strings.Contains(got, "working") {
-		t.Fatalf("View() = %q, debe mostrar el indicador %q mientras la corrida sigue", got, "working")
+	if got := m.View(); !strings.Contains(got, "Checking context") {
+		t.Fatalf("View() = %q, debe mostrar el indicador %q mientras la corrida sigue", got, "Checking context")
 	}
 
 	// With ready (known terminal size) the indicator is also visible.
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
-	if got := m.View(); !strings.Contains(got, "working") {
-		t.Fatalf("View() = %q, con ready el indicador %q tambien debe verse", got, "working")
+	if got := m.View(); !strings.Contains(got, "Checking context") {
+		t.Fatalf("View() = %q, con ready el indicador %q tambien debe verse", got, "Checking context")
 	}
 
 	// Clean end of run: the indicator disappears.
 	m = apply(t, m, activeRunDone(m, ""))
-	if got := m.View(); strings.Contains(got, "working") {
+	if got := m.View(); strings.Contains(got, "Checking context") {
 		t.Fatalf("View() = %q, RunDoneMsg debe retirar el indicador de trabajo", got)
+	}
+}
+
+func TestModel_WorkingIndicatorUsesConcreteMicrocopy(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.working = true
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "read-1", ToolName: "read", Input: json.RawMessage(`{"path":"internal/tui/view.go"}`)})
+	if got := m.View(); !strings.Contains(got, "Checking context") || strings.Contains(got, " working") {
+		t.Fatalf("View() = %q, reading context must render concrete UX microcopy and not generic working", got)
+	}
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolSuccess, CallID: "read-1", ToolName: "read"})
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "edit-1", ToolName: "edit", Input: json.RawMessage(`{"patch":"[internal/tui/view.go#ABCD]\n- old\n+ new"}`)})
+	if got := m.View(); !strings.Contains(got, "Reviewing changes") || strings.Contains(got, " working") {
+		t.Fatalf("View() = %q, changing files must render concrete UX microcopy and not generic working", got)
+	}
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolSuccess, CallID: "edit-1", ToolName: "edit"})
+	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
+	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: "Done"})
+	if got := m.View(); !strings.Contains(got, "Preparing response") || strings.Contains(got, " working") {
+		t.Fatalf("View() = %q, response streaming must render concrete UX microcopy and not generic working", got)
 	}
 }
 
@@ -4132,8 +4155,8 @@ func TestModel_ViewFitsHeightWithIndicator(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	view := m.View()
-	if !strings.Contains(view, "working") {
-		t.Fatalf("View() = %q, con corrida en curso debe verse el indicador %q", view, "working")
+	if !strings.Contains(view, "Checking context") {
+		t.Fatalf("View() = %q, con corrida en curso debe verse el indicador %q", view, "Checking context")
 	}
 	if lines := strings.Count(view, "\n") + 1; lines > 12 {
 		t.Fatalf("View() tiene %d lineas, la linea de estado NO debe romper el alto acotado (<= 12)", lines)
@@ -4851,7 +4874,7 @@ func TestModel_ViewFitsHeightWithBoxModelAndIndicator(t *testing.T) {
 	if lines := strings.Count(view, "\n") + 1; lines > 12 {
 		t.Fatalf("View() tiene %d lineas, caja + pie + indicador no deben romper el alto acotado (<= 12)", lines)
 	}
-	for _, want := range []string{"mensaje-29", "working", "openrouter/free"} {
+	for _, want := range []string{"mensaje-29", "Checking context", "openrouter/free"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("View() = %q, debe contener %q (cola del transcript, indicador de trabajo y pie de status)", view, want)
 		}
@@ -5062,8 +5085,8 @@ func TestModel_PlanApprovalCapturesKeyboard(t *testing.T) {
 	if strings.Contains(view, "· plan") {
 		t.Fatalf("View() = %q, tras aceptar el plan el pie NO debe seguir mostrando %q", view, "· plan")
 	}
-	if !strings.Contains(view, "working") {
-		t.Fatalf("View() = %q, tras aceptar el plan la corrida queda en curso: debe verse el indicador %q", view, "working")
+	if !strings.Contains(view, "Checking context") {
+		t.Fatalf("View() = %q, tras aceptar el plan la corrida queda en curso: debe verse el indicador %q", view, "Checking context")
 	}
 }
 
@@ -5786,17 +5809,18 @@ func TestModel_WorkingIndicatorAnimatesOnTicks(t *testing.T) {
 		t.Fatalf("Update(Enter) devolvio cmd nil, arrancar la corrida debe devolver el cmd que bombea la animacion: sin cmd el spinner queda congelado")
 	}
 
-	// b) The status line retains "working" but without the old static marker "...working": now the prefix is ​​the animated glyph.
+	// b) The status line carries concrete microcopy without the old static
+	// marker "...working": now the prefix is the animated glyph.
 	view := m.View()
-	if !strings.Contains(view, "working") {
-		t.Fatalf("View() = %q, con corrida en curso debe verse la linea de estado con %q", view, "working")
+	if !strings.Contains(view, "Checking context") {
+		t.Fatalf("View() = %q, con corrida en curso debe verse la linea de estado con %q", view, "Checking context")
 	}
 	if strings.Contains(view, "... working") {
 		t.Fatalf("View() = %q, NO debe contener el marcador estatico %q: el prefijo fijo se reemplaza por el glifo del spinner", view, "... working")
 	}
 
 	// c) Running the cmd produces the tick message; applying it to Update should advance the spinner glyph: the status line changes.
-	before := lineWith(t, view, "working")
+	before := lineWith(t, view, "Checking context")
 	msg := cmd()
 	if msg == nil {
 		t.Fatalf("cmd() = nil, el cmd de la animacion debe producir un mensaje aplicable a Update")
@@ -5806,7 +5830,7 @@ func TestModel_WorkingIndicatorAnimatesOnTicks(t *testing.T) {
 	if !ok {
 		t.Fatalf("Update devolvio %T, se esperaba tui.Model", updated)
 	}
-	after := lineWith(t, m.View(), "working")
+	after := lineWith(t, m.View(), "Checking context")
 	if after == before {
 		t.Fatalf("linea de estado tras el tick = %q, identica a la previa: el tick debe avanzar el frame del spinner, una linea identica significa animacion congelada", after)
 	}
@@ -5871,7 +5895,7 @@ func TestModel_AcceptPlanStartsSpinner(t *testing.T) {
 		t.Fatalf("Update('y') devolvio cmd nil, aceptar el plan arranca la corrida y debe devolver el cmd que bombea la animacion: sin cmd el spinner queda congelado en el camino del plan")
 	}
 
-	before := lineWith(t, m.View(), "working")
+	before := lineWith(t, m.View(), "Checking context")
 	msg := cmd()
 	if batch, ok := msg.(tea.BatchMsg); ok {
 		for _, batched := range batch {
@@ -5887,7 +5911,7 @@ func TestModel_AcceptPlanStartsSpinner(t *testing.T) {
 		t.Fatalf("cmd() = nil, el cmd de la animacion debe producir un mensaje aplicable a Update")
 	}
 	m = apply(t, m, msg)
-	after := lineWith(t, m.View(), "working")
+	after := lineWith(t, m.View(), "Checking context")
 	if after == before {
 		t.Fatalf("linea de estado tras el tick = %q, identica a la previa: el tick del camino del plan debe avanzar el frame del spinner", after)
 	}
@@ -5922,13 +5946,13 @@ func TestModel_SecondRunRestartsSpinner(t *testing.T) {
 		t.Fatalf("Update(Enter) de la segunda corrida devolvio cmd nil, cada corrida debe reencender la animacion: un loop de un solo uso deja el spinner muerto en la segunda corrida")
 	}
 
-	before := lineWith(t, m.View(), "working")
+	before := lineWith(t, m.View(), "Checking context")
 	msg := cmd2()
 	if msg == nil {
 		t.Fatalf("cmd() = nil, el cmd de la animacion de la segunda corrida debe producir un mensaje aplicable a Update")
 	}
 	m = apply(t, m, msg)
-	after := lineWith(t, m.View(), "working")
+	after := lineWith(t, m.View(), "Checking context")
 	if after == before {
 		t.Fatalf("linea de estado tras el tick = %q, identica a la previa: el tick de la segunda corrida debe avanzar el frame del spinner", after)
 	}
