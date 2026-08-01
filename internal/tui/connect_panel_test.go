@@ -114,6 +114,24 @@ func newLoginTestAgent() *fakeConnectAgent {
 	}
 }
 
+// newBrowserLoginTestAgent offers a provider whose login is a browser redirect:
+// there is no code to type, only a page to open, and the approval comes back on
+// its own — the PostHog shape.
+func newBrowserLoginTestAgent() *fakeConnectAgent {
+	return &fakeConnectAgent{
+		fakeAgent: &fakeAgent{},
+		connectable: []providerconfig.ConnectableProvider{
+			{ID: "posthog", Name: "PostHog", Kind: providerconfig.ConnectDeviceCode},
+		},
+		login: providerconfig.DeviceLogin{
+			ProviderName:    "PostHog",
+			UserCode:        "",
+			VerificationURI: "https://us.posthog.com/oauth/authorize?client_id=x",
+			ExpiresAt:       time.Now().Add(3 * time.Minute),
+		},
+	}
+}
+
 func openConnectPanel(t *testing.T, agent Agent, command string) Model {
 	t.Helper()
 	m := NewModel(agent, "s1", nil)
@@ -337,6 +355,34 @@ func TestModel_ConnectShowsTheDeviceCodeAndWaitsForApproval(t *testing.T) {
 	}
 	if transcript := ansi.Strip(m.View()); !strings.Contains(transcript, "Connected to OpenAI (ChatGPT subscription) · gpt-5.5") {
 		t.Fatalf("transcript must confirm the connection:\n%s", transcript)
+	}
+}
+
+// TestModel_ConnectShowsTheBrowserLoginWithoutACodeStep: a browser-redirect
+// login has nothing to type, so painting a numbered "enter the code" step with
+// an empty code would send the user hunting for a code that does not exist.
+// The panel shows the page to open and waits.
+func TestModel_ConnectShowsTheBrowserLoginWithoutACodeStep(t *testing.T) {
+	agent := newBrowserLoginTestAgent()
+	m, cmd := applyCmd(t, openConnectPanel(t, agent, "/connect"), tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("selecting a login provider must launch the async start-login command")
+	}
+	m, cmd = applyCmd(t, m, cmd())
+	if cmd == nil {
+		t.Fatal("landing the login must launch the wait for the user's approval")
+	}
+	if !m.connectPanel.awaiting {
+		t.Fatal("the panel must be in the awaiting stage")
+	}
+	view := ansi.Strip(m.View())
+	for _, want := range []string{"https://us.posthog.com/oauth/authorize?client_id=x", "in your browser", "waiting for approval", "esc cancel"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("panel view is missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "Enter the code") {
+		t.Fatalf("panel view offers a code step with no code to enter:\n%s", view)
 	}
 }
 

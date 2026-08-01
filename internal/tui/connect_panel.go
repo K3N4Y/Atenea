@@ -412,8 +412,21 @@ func (m Model) connectPanelView() string {
 		rows = append(rows,
 			overlayCell(" Sign in to "+sanitizeTerminalText(login.ProviderName), innerWidth),
 			strings.Repeat(" ", max(innerWidth, 0)),
-			overlayCell(" 1. Open "+accentStyle.Render(sanitizeTerminalText(login.VerificationURI)), innerWidth),
-			overlayCell(" 2. Enter the code "+accentStyle.Render(sanitizeTerminalText(login.UserCode)), innerWidth),
+		)
+		// A device-code login has something to type; a browser-redirect login
+		// (empty code) only has the page — the approval comes back on its own.
+		if login.UserCode != "" {
+			rows = append(rows,
+				overlayCell(" 1. Open "+accentStyle.Render(sanitizeTerminalText(login.VerificationURI)), innerWidth),
+				overlayCell(" 2. Enter the code "+accentStyle.Render(sanitizeTerminalText(login.UserCode)), innerWidth),
+			)
+		} else {
+			rows = append(rows,
+				overlayCell(" Open "+accentStyle.Render(sanitizeTerminalText(login.VerificationURI)), innerWidth),
+				overlayCell(" in your browser and approve the sign-in.", innerWidth),
+			)
+		}
+		rows = append(rows,
 			strings.Repeat(" ", max(innerWidth, 0)),
 			statusStyle.Render(overlayCell(" waiting for approval…"+deviceCodeDeadline(login.ExpiresAt), innerWidth)),
 		)
