@@ -77,22 +77,21 @@ func recursiveRMProtectedPath(input []byte, root, home string) bool {
 	}
 	for _, segment := range shellSegments(in.Command) {
 		words := shellWords(segment)
-		for len(words) > 0 && (words[0] == "sudo" || words[0] == "command" || words[0] == "env") {
-			words = words[1:]
-		}
-		if len(words) < 2 || filepath.Base(words[0]) != "rm" {
+		words = unwrapShellCommand(words)
+		if len(words) < 2 || filepath.Base(words[0].value()) != "rm" {
 			continue
 		}
 		recursive := false
-		var operands []string
+		var operands []shellWord
 		options := true
 		for _, word := range words[1:] {
-			if options && word == "--" {
+			value := word.value()
+			if options && value == "--" {
 				options = false
 				continue
 			}
-			if options && strings.HasPrefix(word, "-") {
-				if strings.Contains(strings.TrimLeft(word, "-"), "r") || strings.Contains(strings.TrimLeft(word, "-"), "R") || word == "--recursive" {
+			if options && strings.HasPrefix(value, "-") {
+				if strings.Contains(strings.TrimLeft(value, "-"), "r") || strings.Contains(strings.TrimLeft(value, "-"), "R") || value == "--recursive" {
 					recursive = true
 				}
 				continue
@@ -111,11 +110,14 @@ func recursiveRMProtectedPath(input []byte, root, home string) bool {
 	return false
 }
 
-func protectedRMOperand(value, root, home string) bool {
-	value = strings.ReplaceAll(value, "${HOME}", home)
-	value = strings.ReplaceAll(value, "$HOME", home)
-	if value == "~" || strings.HasPrefix(value, "~/") {
-		value = filepath.Join(home, strings.TrimPrefix(value, "~/"))
+func protectedRMOperand(word shellWord, root, home string) bool {
+	value := word.expandHome(home)
+	if word.tildeExpandable() && (value == "~" || strings.HasPrefix(value, "~/")) {
+		if value == "~" {
+			value = home
+		} else {
+			value = filepath.Join(home, strings.TrimPrefix(value, "~/"))
+		}
 	}
 	if !filepath.IsAbs(value) {
 		value = filepath.Join(root, value)
@@ -129,6 +131,71 @@ func protectedRMOperand(value, root, home string) bool {
 		home = resolved
 	}
 	return clean == string(os.PathSeparator) || (home != "." && home != "" && clean == home)
+}
+
+func unwrapShellCommand(words []shellWord) []shellWord {
+	for {
+		for len(words) > 0 && shellAssignment(words[0].value()) {
+			words = words[1:]
+		}
+		if len(words) == 0 {
+			return nil
+		}
+		wrapper := filepath.Base(words[0].value())
+		if wrapper != "env" && wrapper != "sudo" && wrapper != "command" {
+			return words
+		}
+		words = consumeWrapperOptions(words[1:], wrapper)
+	}
+}
+
+func consumeWrapperOptions(words []shellWord, wrapper string) []shellWord {
+	for len(words) > 0 {
+		option := words[0].value()
+		if option == "--" {
+			return words[1:]
+		}
+		if option == "-" || !strings.HasPrefix(option, "-") {
+			return words
+		}
+		words = words[1:]
+		if wrapperOptionTakesArgument(wrapper, option) && len(words) > 0 {
+			words = words[1:]
+		}
+	}
+	return nil
+}
+
+func wrapperOptionTakesArgument(wrapper, option string) bool {
+	if strings.Contains(option, "=") || (strings.HasPrefix(option, "-") && !strings.HasPrefix(option, "--") && len(option) > 2) {
+		return false
+	}
+	withArgument := map[string]map[string]bool{
+		"env": {
+			"-u": true, "--unset": true, "-C": true, "--chdir": true,
+			"-S": true, "--split-string": true, "--argv0": true,
+		},
+		"sudo": {
+			"-u": true, "--user": true, "-g": true, "--group": true,
+			"-h": true, "--host": true, "-p": true, "--prompt": true,
+			"-C": true, "--chdir": true, "-T": true, "--command-timeout": true,
+			"-r": true, "--role": true, "-t": true, "--type": true,
+		},
+	}
+	return withArgument[wrapper][option]
+}
+
+func shellAssignment(value string) bool {
+	equals := strings.IndexByte(value, '=')
+	if equals <= 0 {
+		return false
+	}
+	for i, r := range value[:equals] {
+		if !(r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || i > 0 && r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
 }
 
 func shellSegments(command string) []string {
@@ -178,20 +245,73 @@ func shellSegments(command string) []string {
 // shellWords recognizes the ordinary quoting and escaping used in destructive
 // commands. Malformed or exotic shell syntax simply fails closed to recognition:
 // this is a narrow breaker, not a shell sandbox.
-func shellWords(s string) []string {
-	var words []string
+type shellWordPart struct {
+	text                string
+	parameterExpandable bool
+}
+
+type shellWord struct {
+	parts            []shellWordPart
+	tildeExpansionOK bool
+	started          bool
+}
+
+func (w shellWord) value() string {
 	var b strings.Builder
+	for _, part := range w.parts {
+		b.WriteString(part.text)
+	}
+	return b.String()
+}
+
+func (w shellWord) expandHome(home string) string {
+	var b strings.Builder
+	for _, part := range w.parts {
+		value := part.text
+		if part.parameterExpandable {
+			value = strings.ReplaceAll(value, "${HOME}", home)
+			value = strings.ReplaceAll(value, "$HOME", home)
+		}
+		b.WriteString(value)
+	}
+	return b.String()
+}
+
+func (w shellWord) tildeExpandable() bool {
+	return w.tildeExpansionOK
+}
+
+func shellWords(s string) []shellWord {
+	var words []shellWord
+	var word shellWord
 	var quote rune
 	escaped := false
+	partBoundary := false
+	appendRune := func(r rune, parameterExpandable, tildeExpandable bool) {
+		if !word.started {
+			word.tildeExpansionOK = tildeExpandable
+		}
+		word.started = true
+		if !partBoundary && len(word.parts) > 0 && word.parts[len(word.parts)-1].parameterExpandable == parameterExpandable {
+			word.parts[len(word.parts)-1].text += string(r)
+			return
+		}
+		partBoundary = false
+		word.parts = append(word.parts, shellWordPart{
+			text:                string(r),
+			parameterExpandable: parameterExpandable,
+		})
+	}
 	flush := func() {
-		if b.Len() > 0 {
-			words = append(words, b.String())
-			b.Reset()
+		if word.started {
+			words = append(words, word)
+			word = shellWord{}
+			partBoundary = false
 		}
 	}
 	for _, r := range s {
 		if escaped {
-			b.WriteRune(r)
+			appendRune(r, false, false)
 			escaped = false
 			continue
 		}
@@ -202,20 +322,23 @@ func shellWords(s string) []string {
 		if quote != 0 {
 			if r == quote {
 				quote = 0
+				partBoundary = true
 			} else {
-				b.WriteRune(r)
+				appendRune(r, quote == '"', false)
 			}
 			continue
 		}
 		if r == '\'' || r == '"' {
 			quote = r
+			word.started = true
+			partBoundary = true
 			continue
 		}
 		if r == ' ' || r == '\t' {
 			flush()
 			continue
 		}
-		b.WriteRune(r)
+		appendRune(r, true, !word.started)
 	}
 	flush()
 	return words

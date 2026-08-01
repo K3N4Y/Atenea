@@ -44,7 +44,21 @@ func TestYoloPolicyBlocksRecognizedRecursiveRMOfRootOrHome(t *testing.T) {
 	home := t.TempDir()
 	root := t.TempDir()
 	policy := NewYoloPolicy(yoloFixedPolicy(Ask), NewYoloMode(true), root, home)
-	blocked := []string{"rm -rf /", "echo ok && rm -R -- /./", "sudo rm --recursive $HOME", `rm -rf "` + home + `"`}
+	blocked := []string{
+		"rm -rf /",
+		"echo ok && rm -R -- /./",
+		"sudo rm --recursive $HOME",
+		`rm -rf "$HOME"`,
+		"rm -rf ~",
+		`rm -rf ~""`,
+		`rm -rf "` + home + `"`,
+		"env -i rm -rf /",
+		"sudo -n rm -rf /",
+		"FOO=bar rm -rf /",
+		"command -p rm -rf /",
+		"env -i FOO=bar sudo -n -- command -- rm -rf /",
+		"echo ok; env --ignore-environment FOO=bar rm --recursive ${HOME}",
+	}
 	for _, command := range blocked {
 		t.Run(command, func(t *testing.T) {
 			if got := policy.Decide("s", yoloBashCall(t, command)); got != Deny {
@@ -52,11 +66,29 @@ func TestYoloPolicyBlocksRecognizedRecursiveRMOfRootOrHome(t *testing.T) {
 			}
 		})
 	}
-	allowed := []string{"rm file", "rm -rf " + filepath.Join(root, "build"), "find / -delete", "echo rm -rf /", `echo "safe; rm -rf /"`}
+	allowed := []string{
+		"rm file",
+		"rm -rf " + filepath.Join(root, "build"),
+		"find / -delete",
+		"echo rm -rf /",
+		`echo "safe; rm -rf /"`,
+		`rm -rf '$HOME'`,
+		`rm -rf \$HOME`,
+		`rm -rf "\$HOME"`,
+		`rm -rf '~'`,
+		`rm -rf \~`,
+		`rm -rf ""~`,
+		`rm -rf $HO""ME`,
+		`rm -rf '${HOME}' && echo safe`,
+		`sudo -u rm echo -rf /`,
+		`env -u rm echo -rf /`,
+	}
 	for _, command := range allowed {
-		if got := policy.Decide("s", yoloBashCall(t, command)); got != Allow {
-			t.Fatalf("%q got %v", command, got)
-		}
+		t.Run(command, func(t *testing.T) {
+			if got := policy.Decide("s", yoloBashCall(t, command)); got != Allow {
+				t.Fatalf("got %v", got)
+			}
+		})
 	}
 }
 
