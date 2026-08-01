@@ -823,6 +823,12 @@ func (m Model) composerBoxWithWidth(width int) string {
 }
 
 func (m Model) composerModelLabel() string {
+	if yolo, ok := m.agent.(yoloAgent); ok && yolo.YoloEnabled() {
+		if m.model == "" {
+			return "YOLO"
+		}
+		return m.model + " · YOLO"
+	}
 	if m.planMode && m.model != "" {
 		return m.model + " · plan"
 	}

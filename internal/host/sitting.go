@@ -32,6 +32,8 @@ type Sitting struct {
 	Grants *permission.SessionGrants
 	// AutoAccept is the per-session safe-edit mode for this process sitting.
 	AutoAccept *permission.AutoAcceptModes
+	// Yolo is process-local launch authority and activation state.
+	Yolo *permission.YoloMode
 	// Inbox is the prompt queue the runner drains per session.
 	Inbox session.Inbox
 	// Agent is the UI-independent turn lifecycle both hosts drive. It is
@@ -50,12 +52,15 @@ type Sitting struct {
 // decides what a sitting is made of, so the engine that assembles one for itself
 // and the host that hands one to both UIs cannot end up with different ideas of
 // it.
-func NewSitting() *Sitting {
+func NewSitting() *Sitting { return NewSittingWithYolo(false) }
+
+func NewSittingWithYolo(authorized bool) *Sitting {
 	inbox := session.NewMemoryInbox()
 	return &Sitting{
 		Gate:       permission.NewMemoryGate(),
 		Grants:     permission.NewSessionGrants(),
 		AutoAccept: permission.NewAutoAcceptModes(),
+		Yolo:       permission.NewYoloMode(authorized),
 		Inbox:      inbox,
 		Agent:      agent.NewService(inbox),
 		Snapshots:  tool.NewSessionSnapshots(),

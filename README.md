@@ -58,6 +58,15 @@ cd /path/to/project
 atenea
 ```
 
+For an explicitly unrestricted interactive session, launch `atenea --yolo`
+(alias: `--dangerously-skip-permissions`). YOLO skips permission prompts for
+recognized and unrecognized tools. It is not a sandbox: commands, network
+access, and deletion elsewhere remain possible. Atenea only blocks positively
+recognized `rm -r`/`rm -R` attempts against filesystem root or the resolved user
+home. The warning and `YOLO` composer indicator remain visible; `/mode:ask` or
+`/mode:auto-accept` leaves YOLO, and `/mode:yolo` can re-enter it only in a
+process launched with one of those flags. Authorization is never persisted.
+
 `atenea` uses the current directory as its workspace and supports a local
 `/model` command. Type `/model ` followed by any
 provider or model fragment, select a result from the normal composer popup,

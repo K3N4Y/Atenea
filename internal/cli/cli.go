@@ -52,7 +52,7 @@ type Env struct {
 	// means. It is injected so this package never imports Bubble Tea: dispatching
 	// is choosing, not launching, and a test of the dispatch must not need a
 	// terminal.
-	Interactive func() error
+	Interactive func(InteractiveOptions) error
 	// Host assembles the outer composition root. nil is host.New, which is what the
 	// entrypoint leaves it as.
 	//
@@ -117,9 +117,12 @@ var commands = []command{
 // from a test.
 func Main(env Env) int {
 	if len(env.Args) == 0 {
-		return interactive(env)
+		return interactive(env, InteractiveOptions{})
 	}
 	name := env.Args[0]
+	if (name == "--yolo" || name == "--dangerously-skip-permissions") && len(env.Args) == 1 {
+		return interactive(env, InteractiveOptions{Yolo: true})
+	}
 	// --version predates the subcommands and is the public spelling: install.sh
 	// verifies an installation with it and the release smoke test asserts its
 	// output. It stays an alias of `atenea version` rather than a second
@@ -147,12 +150,16 @@ func Main(env Env) int {
 
 // interactive runs the terminal interface. A build that did not provide it says so
 // rather than doing nothing.
-func interactive(env Env) int {
+type InteractiveOptions struct {
+	Yolo bool
+}
+
+func interactive(env Env, options InteractiveOptions) int {
 	if env.Interactive == nil {
 		fmt.Fprintln(env.Stderr, "atenea: the interactive interface is unavailable in this build; try `atenea run -h`")
 		return ExitUsage
 	}
-	if err := env.Interactive(); err != nil {
+	if err := env.Interactive(options); err != nil {
 		fmt.Fprintln(env.Stderr, "atenea:", err)
 		// The interface failing is the generic failure of what the command was asked
 		// to do, which is the same 1 a failed turn reports and the same 1 this
@@ -172,6 +179,9 @@ func usage(w io.Writer, env Env) {
 
 Usage:
   atenea                    start the interactive terminal interface
+  atenea --yolo             start interactively and allow almost all tool calls
+  atenea --dangerously-skip-permissions
+                            alias of --yolo
   atenea <command> [flags]
 
 Commands:

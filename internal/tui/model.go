@@ -79,6 +79,12 @@ type autoAcceptAgent interface {
 	AutoAcceptEnabled(sessionID string) bool
 }
 
+type yoloAgent interface {
+	YoloAuthorized() bool
+	YoloEnabled() bool
+	SetYolo(bool) bool
+}
+
 type modelAgent interface {
 	ModelCatalog() []providerconfig.ProviderModels
 	CurrentModel() providerconfig.Active

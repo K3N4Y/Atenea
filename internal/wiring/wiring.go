@@ -69,6 +69,8 @@ type Config struct {
 	Grants *permission.SessionGrants
 	// AutoAccept is sitting-owned and therefore survives rewires.
 	AutoAccept *permission.AutoAcceptModes
+	// Yolo is process-local interactive authorization and activation state.
+	Yolo *permission.YoloMode
 	// Snaps is the per-session read state that read, write and edit share. The
 	// caller creates it once so it survives a re-assembly.
 	Snaps *tool.SessionSnapshots
@@ -356,6 +358,8 @@ func Build(cfg Config) Built {
 	policy := permission.NewRulePolicy(cfg.Policy(registry), cfg.PersistentGrants, registry)
 	policy = permission.NewGrantedPolicy(policy, cfg.Grants, registry)
 	policy = permission.NewAutoAcceptPolicy(policy, cfg.AutoAccept, registry)
+	home, _ := os.UserHomeDir()
+	policy = permission.NewYoloPolicy(policy, cfg.Yolo, root, home)
 	// Security: propagate ask-before-run to the child runner with the SAME gate
 	// and the SAME policy as the main chat. Without this a "general" subagent
 	// would run gated tools (bash, write, edit, web_fetch) without the

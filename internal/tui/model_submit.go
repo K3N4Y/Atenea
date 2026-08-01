@@ -15,19 +15,33 @@ func (m Model) submitPrompt() (Model, tea.Cmd) {
 		return m, nil
 	}
 	trimmed := strings.TrimSpace(text)
-	if trimmed == "/mode" || trimmed == "/mode:auto-accept" || trimmed == "/mode:ask" {
+	if trimmed == "/mode" || trimmed == "/mode:auto-accept" || trimmed == "/mode:ask" || trimmed == "/mode:yolo" {
 		controller, ok := m.agent.(autoAcceptAgent)
 		if !ok {
 			return m.appendError("permission mode is unavailable"), nil
 		}
 		if trimmed == "/mode:auto-accept" {
+			if yolo, ok := m.agent.(yoloAgent); ok {
+				yolo.SetYolo(false)
+			}
 			controller.SetAutoAccept(m.sessionID, true)
 		}
 		if trimmed == "/mode:ask" {
+			if yolo, ok := m.agent.(yoloAgent); ok {
+				yolo.SetYolo(false)
+			}
 			controller.SetAutoAccept(m.sessionID, false)
 		}
+		if trimmed == "/mode:yolo" {
+			yolo, ok := m.agent.(yoloAgent)
+			if !ok || !yolo.YoloAuthorized() || !yolo.SetYolo(true) {
+				return m.appendError("YOLO mode requires launching with --yolo"), nil
+			}
+		}
 		mode := "ask"
-		if controller.AutoAcceptEnabled(m.sessionID) {
+		if yolo, ok := m.agent.(yoloAgent); ok && yolo.YoloEnabled() {
+			mode = "yolo"
+		} else if controller.AutoAcceptEnabled(m.sessionID) {
 			mode = "auto-accept"
 		}
 		m.input.SetValue("")

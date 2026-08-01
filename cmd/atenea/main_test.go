@@ -123,6 +123,33 @@ func TestTUI_PromptHistorySurvivesRestartUnderPTY(t *testing.T) {
 	waitForPTYExit(t, secondDone)
 }
 
+func TestTUI_YoloLaunchShowsWarningIndicatorAndModeTransitionsUnderPTY(t *testing.T) {
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "atenea")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, output)
+	}
+	cmd, terminal, output, _ := startTUIUnderPTY(t, binary, repoRoot, filepath.Join(t.TempDir(), "atenea.db"), "--yolo")
+	defer stopPTYProcess(cmd, terminal)
+	waitForPTYText(t, output, "YOLO mode is active")
+	waitForPTYText(t, output, "demo · YOLO")
+	before := output.String()
+	if _, err := terminal.Write([]byte("/mode:ask\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYTextAfter(t, output, before, "permission mode: ask")
+	before = output.String()
+	if _, err := terminal.Write([]byte("/mode:yolo\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYTextAfter(t, output, before, "permission mode: yolo")
+}
+
 // TestTUI_StartsFreshSessionOnLaunchUnderPTY pins the launch contract end to
 // end: a new run of the binary starts an empty conversation, without the
 // transcript or the plan mode of the previous run. Old sessions stay
@@ -799,9 +826,9 @@ func waitForPTYTextWithin(t *testing.T, output *lockedBuffer, want string, timeo
 	t.Fatalf("PTY output did not contain %q:\n%s", want, ansi.Strip(output.String()))
 }
 
-func startTUIUnderPTY(t *testing.T, binary, workdir, database string) (*exec.Cmd, *os.File, *lockedBuffer, <-chan struct{}) {
+func startTUIUnderPTY(t *testing.T, binary, workdir, database string, args ...string) (*exec.Cmd, *os.File, *lockedBuffer, <-chan struct{}) {
 	t.Helper()
-	cmd := exec.Command(binary)
+	cmd := exec.Command(binary, args...)
 	cmd.Dir = workdir
 	// These tests depend on the demo provider: every API key the built-in catalog
 	// reads is blanked and XDG_CONFIG_HOME is isolated, so neither the environment

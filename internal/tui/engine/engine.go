@@ -111,6 +111,7 @@ type Engine struct {
 	gate       *permission.MemoryGate
 	grants     *permission.SessionGrants
 	autoAccept *permission.AutoAcceptModes
+	yolo       *permission.YoloMode
 	agent      *agent.Service
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -167,6 +168,7 @@ func New(cfg Config) *Engine {
 		gate:               sitting.Gate,
 		grants:             sitting.Grants,
 		autoAccept:         sitting.AutoAccept,
+		yolo:               sitting.Yolo,
 		agent:              sitting.Agent,
 		pendingCompactions: map[string]bool{},
 		compacting:         map[string]bool{},
@@ -205,6 +207,7 @@ func New(cfg Config) *Engine {
 		Gate:       e.gate,
 		Grants:     e.grants,
 		AutoAccept: e.autoAccept,
+		Yolo:       e.yolo,
 		Snaps:      sitting.Snapshots,
 		Bus:        bus,
 		// The selection answers this, so switching to or from a local endpoint with
@@ -235,14 +238,14 @@ func (e *Engine) rewire() {
 	e.glob = built.Glob
 	e.tools = built.Tools
 	e.mu.Unlock()
-	commands := append(built.Commands.List(), localCommands()...)
+	commands := append(built.Commands.List(), localCommands(e.yolo.Authorized())...)
 	commands = append(commands, e.mcp.Commands()...)
 	commandSet, err := command.NewChecked(commands, e.mcp.Mentions()...)
 	if err != nil {
 		// A discovered skill or MCP prompt cannot take over a local command. Keep
 		// the host usable with its local catalog and make the collision explicit.
 		log.Printf("atenea: could not register slash commands: %v", err)
-		commandSet = command.New(localCommands(), e.mcp.Mentions()...)
+		commandSet = command.New(localCommands(e.yolo.Authorized()), e.mcp.Mentions()...)
 	}
 	e.agent.Configure(built.Runner, commandSet)
 	e.lifecycleMu.Unlock()
@@ -405,9 +408,12 @@ func (e *Engine) Commands() []command.Command {
 
 func (e *Engine) SetAutoAccept(sessionID string, enabled bool) { e.autoAccept.Set(sessionID, enabled) }
 func (e *Engine) AutoAcceptEnabled(sessionID string) bool      { return e.autoAccept.Enabled(sessionID) }
+func (e *Engine) YoloAuthorized() bool                         { return e.yolo.Authorized() }
+func (e *Engine) YoloEnabled() bool                            { return e.yolo.Enabled() }
+func (e *Engine) SetYolo(enabled bool) bool                    { return e.yolo.Set(enabled) }
 
-func localCommands() []command.Command {
-	return []command.Command{
+func localCommands(yoloAuthorized bool) []command.Command {
+	commands := []command.Command{
 		{Name: "compact", Description: "Compact conversation context", BuiltIn: true},
 		{Name: "connect", Description: "Connect a provider by API key or ChatGPT login", BuiltIn: true},
 		{Name: "mcp", Description: "Toggle MCP servers on or off", BuiltIn: true},
@@ -419,6 +425,10 @@ func localCommands() []command.Command {
 		{Name: "resume", Description: "Resume a TUI session in this workspace", BuiltIn: true},
 		{Name: "undo", Description: "Undo the last prompt and its file changes", BuiltIn: true},
 	}
+	if yoloAuthorized {
+		commands = append(commands, command.Command{Name: "mode:yolo", Description: "Skip almost all tool permission prompts", BuiltIn: true})
+	}
+	return commands
 }
 
 // ProjectFiles lists the workspace files (paths relative to the root, honoring .gitignore and excluding .git) for the composer's @-menu, bounded by the glob's limit (the mirror of App.ListProjectFiles).

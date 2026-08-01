@@ -377,13 +377,25 @@ func TestMain_NoArgumentsStartsTheInteractiveInterface(t *testing.T) {
 	code := Main(Env{
 		Stdout:      &bytes.Buffer{},
 		Stderr:      &bytes.Buffer{},
-		Interactive: func() error { started = true; return nil },
+		Interactive: func(InteractiveOptions) error { started = true; return nil },
 	})
 	if !started {
 		t.Error("a bare `atenea` did not start the interactive interface")
 	}
 	if code != ExitOK {
 		t.Errorf("exit code = %d, want %d", code, ExitOK)
+	}
+}
+
+func TestMain_YoloAliasesAuthorizeOnlyInteractiveLaunch(t *testing.T) {
+	for _, alias := range []string{"--yolo", "--dangerously-skip-permissions"} {
+		t.Run(alias, func(t *testing.T) {
+			var got InteractiveOptions
+			code := Main(Env{Args: []string{alias}, Stdout: io.Discard, Stderr: io.Discard, Interactive: func(options InteractiveOptions) error { got = options; return nil }})
+			if code != ExitOK || !got.Yolo {
+				t.Fatalf("code=%d options=%+v", code, got)
+			}
+		})
 	}
 }
 
@@ -397,7 +409,7 @@ func TestMain_UnknownCommandIsAUsageError(t *testing.T) {
 		Args:        []string{"rnu"},
 		Stdout:      &bytes.Buffer{},
 		Stderr:      &stderr,
-		Interactive: func() error { started = true; return nil },
+		Interactive: func(InteractiveOptions) error { started = true; return nil },
 	})
 	if started {
 		t.Error("an unknown command started the interactive interface")

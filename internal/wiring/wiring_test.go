@@ -107,6 +107,25 @@ func buildWithHome(t *testing.T, cfg Config, home string) Built {
 	return Build(cfg)
 }
 
+func TestBuild_YoloPolicySurvivesRewireAndClassifiesChildSessionsIdentically(t *testing.T) {
+	mode := permission.NewYoloMode(true)
+	cfg := Config{Yolo: mode}
+	first := buildWith(t, cfg)
+	second := buildWith(t, cfg)
+	call := tool.Call{Name: "bash", Input: json.RawMessage(`{"command":"echo allowed"}`)}
+	for _, built := range []Built{first, second} {
+		for _, sessionID := range []string{"main", "child-agent"} {
+			if got := built.Policy.Decide(sessionID, call); got != permission.Allow {
+				t.Fatalf("session %q after rewire = %v, want Allow", sessionID, got)
+			}
+		}
+	}
+	mode.Set(false)
+	if got := second.Policy.Decide("child-agent", call); got != permission.Ask {
+		t.Fatalf("shared mode after leaving YOLO = %v, want Ask", got)
+	}
+}
+
 // buildForTest assembles the wiring over an empty workspace with the MCP tools the
 // case wants to see in the registry, and nothing else varied.
 func buildForTest(t *testing.T, mcpTools ...tool.Tool) Built {

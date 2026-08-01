@@ -63,9 +63,11 @@ type fakeAgent struct {
 	// capabilities is what the adapter serving the current model declares;
 	// declared == false is the agent that says nothing, which the UI must treat
 	// as "unknown" rather than as "no window".
-	capabilities llm.Capabilities
-	declared     bool
-	autoAccept   map[string]bool
+	capabilities   llm.Capabilities
+	declared       bool
+	autoAccept     map[string]bool
+	yoloAuthorized bool
+	yoloEnabled    bool
 }
 
 func (f *fakeAgent) SetAutoAccept(sessionID string, enabled bool) {
@@ -75,6 +77,42 @@ func (f *fakeAgent) SetAutoAccept(sessionID string, enabled bool) {
 	f.autoAccept[sessionID] = enabled
 }
 func (f *fakeAgent) AutoAcceptEnabled(sessionID string) bool { return f.autoAccept[sessionID] }
+func (f *fakeAgent) YoloAuthorized() bool                    { return f.yoloAuthorized }
+func (f *fakeAgent) YoloEnabled() bool                       { return f.yoloEnabled }
+func (f *fakeAgent) SetYolo(enabled bool) bool {
+	if enabled && !f.yoloAuthorized {
+		return false
+	}
+	f.yoloEnabled = enabled
+	return true
+}
+
+func TestModel_YoloCanLeaveAndReenterOnlyWhenLaunchAuthorized(t *testing.T) {
+	fake := &fakeAgent{yoloAuthorized: true, yoloEnabled: true}
+	m := NewModel(fake, "s1", nil).WithStatus("build", "model")
+	if label := m.composerModelLabel(); !strings.Contains(label, "YOLO") {
+		t.Fatalf("label = %q", label)
+	}
+	for _, input := range []string{"/mode:ask", "/mode:yolo", "/mode"} {
+		m = typeRunes(t, m, input)
+		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		if cmd != nil {
+			t.Fatalf("%s returned a command", input)
+		}
+		m = updated.(Model)
+	}
+	if !fake.yoloEnabled || !strings.Contains(m.entries[len(m.entries)-1].text, "permission mode: yolo") {
+		t.Fatalf("mode not restored: %+v", m.entries)
+	}
+
+	ordinary := &fakeAgent{}
+	m = typeRunes(t, NewModel(ordinary, "s1", nil), "/mode:yolo")
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if ordinary.yoloEnabled || m.entries[len(m.entries)-1].kind != entryError {
+		t.Fatal("ordinary launch slash-activated YOLO")
+	}
+}
 
 func TestModel_ModeCommandsStayLocal(t *testing.T) {
 	fake := &fakeAgent{}

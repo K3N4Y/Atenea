@@ -1,0 +1,68 @@
+package permission
+
+import (
+	"encoding/json"
+	"path/filepath"
+	"testing"
+
+	"github.com/K3N4Y/atenea/internal/tool"
+)
+
+type yoloFixedPolicy Decision
+
+func (p yoloFixedPolicy) Decide(string, tool.Call) Decision { return Decision(p) }
+
+func yoloBashCall(t *testing.T, command string) tool.Call {
+	t.Helper()
+	input, err := json.Marshal(map[string]string{"command": command})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tool.Call{Name: "bash", Input: input}
+}
+
+func TestYoloPolicyMonotonicAndProcessLocal(t *testing.T) {
+	mode := NewYoloMode(true)
+	policy := NewYoloPolicy(yoloFixedPolicy(Ask), mode, t.TempDir(), t.TempDir())
+	if got := policy.Decide("main", tool.Call{Name: "write"}); got != Allow {
+		t.Fatalf("enabled = %v", got)
+	}
+	mode.Set(false)
+	if got := policy.Decide("child", tool.Call{Name: "write"}); got != Ask {
+		t.Fatalf("disabled = %v", got)
+	}
+	if got := NewYoloPolicy(yoloFixedPolicy(Deny), NewYoloMode(true), "/tmp", "/home/user").Decide("s", tool.Call{Name: "write"}); got != Deny {
+		t.Fatalf("deny became %v", got)
+	}
+	unauthorized := NewYoloMode(false)
+	if unauthorized.Set(true) || unauthorized.Enabled() {
+		t.Fatal("ordinary launch activated YOLO")
+	}
+}
+
+func TestYoloPolicyBlocksRecognizedRecursiveRMOfRootOrHome(t *testing.T) {
+	home := t.TempDir()
+	root := t.TempDir()
+	policy := NewYoloPolicy(yoloFixedPolicy(Ask), NewYoloMode(true), root, home)
+	blocked := []string{"rm -rf /", "echo ok && rm -R -- /./", "sudo rm --recursive $HOME", `rm -rf "` + home + `"`}
+	for _, command := range blocked {
+		t.Run(command, func(t *testing.T) {
+			if got := policy.Decide("s", yoloBashCall(t, command)); got != Deny {
+				t.Fatalf("got %v", got)
+			}
+		})
+	}
+	allowed := []string{"rm file", "rm -rf " + filepath.Join(root, "build"), "find / -delete", "echo rm -rf /", `echo "safe; rm -rf /"`}
+	for _, command := range allowed {
+		if got := policy.Decide("s", yoloBashCall(t, command)); got != Allow {
+			t.Fatalf("%q got %v", command, got)
+		}
+	}
+}
+
+func TestYoloBreakerOverridesAnExistingAllow(t *testing.T) {
+	policy := NewYoloPolicy(yoloFixedPolicy(Allow), NewYoloMode(true), "/work", "/home/user")
+	if got := policy.Decide("s", yoloBashCall(t, "rm -rf /")); got != Deny {
+		t.Fatalf("breaker = %v, want Deny", got)
+	}
+}

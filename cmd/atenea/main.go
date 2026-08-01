@@ -58,7 +58,7 @@ func isTerminal(f *os.File) bool {
 	return term.IsTerminal(int(f.Fd()))
 }
 
-func runInteractive() error {
+func runInteractive(options cli.InteractiveOptions) error {
 	// The standard log (tool failures, skills that failed to be discovered) would go
 	// to stderr and paint over Bubble Tea's alternate screen: it is redirected to a
 	// file. This happens FIRST, so every warning the host bootstrap emits — an
@@ -78,6 +78,9 @@ func runInteractive() error {
 		Dotenv:               ".env",
 		ExtractBuiltinSkills: true,
 	})
+	if options.Yolo {
+		h.Sitting = host.NewSittingWithYolo(true)
+	}
 	// The active selection is read ONCE: the same value feeds the engine and the
 	// composer footer.
 	active := h.Providers.Active()
@@ -107,6 +110,9 @@ func runInteractive() error {
 		WithStatus("build", active.Model).
 		WithWorkspaceRoot(gitBranch(h.Root), displayDir(h.Root), h.Root).
 		WithCompletions(eng.Commands(), eng.ProjectFiles)
+	if options.Yolo {
+		m = m.WithNotice("YOLO mode is active: tool permission prompts are skipped. Only recursive deletion of / or your home directory is blocked; this is not a sandbox.")
+	}
 	// Starting on the offline provider means there is no key anywhere (neither
 	// environment nor stored credential): say so, and say how to get out of it,
 	// instead of letting the user chat with the fake and find out the hard way.
