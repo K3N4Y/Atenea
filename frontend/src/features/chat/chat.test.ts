@@ -15,6 +15,8 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   ListProjectFiles: vi.fn(() => Promise.resolve([])),
   ListCommands: vi.fn(() => Promise.resolve([])),
   PermissionMode: vi.fn(() => Promise.resolve('ask')),
+  ReasoningEffort: vi.fn(() => Promise.resolve('high')),
+  SetReasoningEffort: vi.fn(() => Promise.resolve()),
   Workspace: vi.fn(() => Promise.resolve('/home/u/a')),
   SetWorkspace: vi.fn(() => Promise.resolve()),
   SelectWorkspace: vi.fn(() => Promise.resolve('/home/u/picked')),
@@ -781,6 +783,40 @@ describe('chat store: acciones sobre los bindings', () => {
 
     expect(store.running).toBe(false)
     expect(App.SendPrompt).not.toHaveBeenCalled()
+  })
+
+  it('send muestra el nivel actual y la ayuda de reasoning', async () => {
+    const store = useChatStore()
+    vi.mocked(App.ReasoningEffort).mockResolvedValueOnce('high')
+
+    await store.send('/reasoning')
+
+    expect(App.ReasoningEffort).toHaveBeenCalled()
+    expect(store.statusText).toBe(
+      'Reasoning effort: high; choose /reasoning:<level> (default, minimal, low, medium, high)',
+    )
+    expect(App.SendPrompt).not.toHaveBeenCalled()
+  })
+
+  it('send permite restaurar default con reasoning', async () => {
+    const store = useChatStore()
+
+    await store.send('/reasoning:default')
+
+    expect(App.SetReasoningEffort).toHaveBeenCalledWith('')
+    expect(store.statusText).toBe('Reasoning effort: default')
+  })
+
+  it('un fallo al consultar reasoning se conserva como error', async () => {
+    const store = useChatStore()
+    vi.mocked(App.ReasoningEffort).mockRejectedValueOnce(
+      new Error('reasoning unavailable'),
+    )
+
+    await store.send('/reasoning')
+
+    expect(store.statusText).toBeNull()
+    expect(store.errorText).toBe('reasoning unavailable')
   })
 
   it('send maneja /mode localmente sin crear un prompt', async () => {

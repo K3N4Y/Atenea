@@ -192,8 +192,9 @@ func (m *Manager) rebuildLocked(root string) {
 	built := wiring.Build(wiring.Config{
 		Root: root, Provider: m.provider, Store: m.store, Inbox: m.sitting.Inbox,
 		Gate: m.sitting.Gate, Snaps: m.sitting.Snapshots, Bus: m.bus, LocalPrompt: m.localPrompt,
-		AutoAccept: m.sitting.AutoAccept,
-		NextID:     wiring.NewIDGen(), Mode: m.sitting.Agent.Mode, MCPTools: m.mcp.Tools(),
+		AutoAccept: m.sitting.AutoAccept, Yolo: m.sitting.Yolo,
+		Reasoning: func() *llm.ReasoningPreference { return m.sitting.Reasoning.Get() },
+		NextID:    wiring.NewIDGen(), Mode: m.sitting.Agent.Mode, MCPTools: m.mcp.Tools(),
 		PersistentGrants: m.mcp.PermissionRules(),
 	})
 	m.mu.Lock()

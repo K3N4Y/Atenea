@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/K3N4Y/atenea/internal/command"
+	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/session"
 )
 
@@ -74,8 +75,11 @@ func TestApp_ListCommandsReturnsRegisteredCommands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListCommands: %v", err)
 	}
-	if len(cmds) != 5 || cmds[0].Name != "abc" || cmds[1].Name != "commit" || cmds[2].Name != "mode" || cmds[3].Name != "mode:auto-accept" || cmds[4].Name != "mode:ask" {
-		t.Fatalf("ListCommands = %+v, want [abc commit mode mode:auto-accept mode:ask]", cmds)
+	if len(cmds) != 6 || cmds[0].Name != "abc" || cmds[1].Name != "commit" || cmds[2].Name != "mode" || cmds[3].Name != "mode:auto-accept" || cmds[4].Name != "mode:ask" || cmds[5].Name != "reasoning" {
+		t.Fatalf("ListCommands = %+v, want [abc commit mode mode:auto-accept mode:ask reasoning]", cmds)
+	}
+	if got := cmds[5].Description; got != llm.ReasoningCommandDescription {
+		t.Fatalf("reasoning description = %q, want %q", got, llm.ReasoningCommandDescription)
 	}
 }
 

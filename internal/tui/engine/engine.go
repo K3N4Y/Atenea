@@ -103,7 +103,8 @@ type ConnectService interface {
 // the Wails app uses); what is wired here is only the boundary, Bus -> TUI
 // channel.
 type Engine struct {
-	events chan tea.Msg
+	events    chan tea.Msg
+	reasoning *llm.ReasoningSelection
 	// inbox, gate, grants and agent come from the sitting: they outlive every
 	// rewire, so the user's permission answers and the turn lifecycle are not
 	// dropped when the wiring is rebuilt.
@@ -169,6 +170,7 @@ func New(cfg Config) *Engine {
 		grants:             sitting.Grants,
 		autoAccept:         sitting.AutoAccept,
 		yolo:               sitting.Yolo,
+		reasoning:          sitting.Reasoning,
 		agent:              sitting.Agent,
 		pendingCompactions: map[string]bool{},
 		compacting:         map[string]bool{},
@@ -200,18 +202,17 @@ func New(cfg Config) *Engine {
 		return cfg.Models.Active().Model
 	})
 	e.wiring = wiring.Config{
-		Root:       cfg.Root,
-		Provider:   cfg.Provider,
-		Store:      e.store,
-		Inbox:      e.inbox,
-		Gate:       e.gate,
-		Grants:     e.grants,
-		AutoAccept: e.autoAccept,
-		Yolo:       e.yolo,
-		Snaps:      sitting.Snapshots,
-		Bus:        bus,
-		// The selection answers this, so switching to or from a local endpoint with
-		// /model changes the prompt on the next turn instead of the next launch.
+		Root:        cfg.Root,
+		Provider:    cfg.Provider,
+		Store:       e.store,
+		Inbox:       e.inbox,
+		Gate:        e.gate,
+		Grants:      e.grants,
+		AutoAccept:  e.autoAccept,
+		Yolo:        e.yolo,
+		Reasoning:   func() *llm.ReasoningPreference { return e.reasoning.Get() },
+		Snaps:       sitting.Snapshots,
+		Bus:         bus,
 		LocalPrompt: e.localModels,
 		NextID:      wiring.NewIDGen(),
 		Mode:        e.agent.Mode,
@@ -328,6 +329,14 @@ func (e *Engine) SelectModel(providerID, model string) (providerconfig.Active, e
 	return e.models.Select(context.Background(), providerID, model)
 }
 
+func (e *Engine) ReasoningEffort() llm.ReasoningEffort {
+	return e.reasoning.Effort()
+}
+
+func (e *Engine) SetReasoningEffort(effort llm.ReasoningEffort) error {
+	return e.reasoning.Set(effort)
+}
+
 // ConnectableProviders lists the providers /connect can manage, or nil when
 // the model service does not support connections.
 func (e *Engine) ConnectableProviders() []providerconfig.ConnectableProvider {
@@ -417,6 +426,7 @@ func localCommands(yoloAuthorized bool) []command.Command {
 		{Name: "compact", Description: "Compact conversation context", BuiltIn: true},
 		{Name: "connect", Description: "Connect a provider by API key or ChatGPT login", BuiltIn: true},
 		{Name: "mcp", Description: "Toggle MCP servers on or off", BuiltIn: true},
+		{Name: "reasoning", Description: llm.ReasoningCommandDescription, BuiltIn: true},
 		{Name: "model", Description: "Select provider and model", BuiltIn: true},
 		{Name: "new", Description: "Start a new session", BuiltIn: true},
 		{Name: "mode", Description: "Show safe auto-accept mode", BuiltIn: true},

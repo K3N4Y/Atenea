@@ -85,6 +85,11 @@ type yoloAgent interface {
 	SetYolo(bool) bool
 }
 
+type reasoningAgent interface {
+	ReasoningEffort() llm.ReasoningEffort
+	SetReasoningEffort(llm.ReasoningEffort) error
+}
+
 type modelAgent interface {
 	ModelCatalog() []providerconfig.ProviderModels
 	CurrentModel() providerconfig.Active

@@ -365,19 +365,41 @@ func (a *App) SendPrompt(sessionID, text string) error {
 
 // PermissionMode handles the exact local /mode commands without recording a turn.
 func (a *App) PermissionMode(sessionID, command string) (string, error) {
+	sitting := a.workspace.Sitting()
 	switch command {
 	case "/mode:auto-accept":
-		a.workspace.Sitting().AutoAccept.Set(sessionID, true)
+		sitting.Yolo.Set(false)
+		sitting.AutoAccept.Set(sessionID, true)
 	case "/mode:ask":
-		a.workspace.Sitting().AutoAccept.Set(sessionID, false)
+		sitting.Yolo.Set(false)
+		sitting.AutoAccept.Set(sessionID, false)
+	case "/mode:yolo":
+		if !sitting.Yolo.Authorized() || !sitting.Yolo.Set(true) {
+			return "", errors.New("YOLO mode requires launching with --yolo")
+		}
 	case "/mode":
 	default:
 		return "", fmt.Errorf("unknown permission mode command")
 	}
-	if a.workspace.Sitting().AutoAccept.Enabled(sessionID) {
+	if sitting.Yolo.Enabled() {
+		return "yolo", nil
+	}
+	if sitting.AutoAccept.Enabled(sessionID) {
 		return "auto-accept", nil
 	}
 	return "ask", nil
+}
+
+// ReasoningEffort returns the shared model effort preference; an empty value is
+// the provider default.
+func (a *App) ReasoningEffort() string {
+	return string(a.workspace.Sitting().Reasoning.Effort())
+}
+
+// SetReasoningEffort updates the preference used by subsequent turns in both
+// desktop and TUI wiring.
+func (a *App) SetReasoningEffort(effort string) error {
+	return a.workspace.Sitting().Reasoning.Set(llm.ReasoningEffort(effort))
 }
 
 // Workspace returns the working folder in force. The UI shows it in the sidebar and
@@ -504,6 +526,7 @@ func (a *App) ListCommands() ([]command.Command, error) {
 		command.Command{Name: "mode", Description: "Show safe auto-accept mode", BuiltIn: true},
 		command.Command{Name: "mode:auto-accept", Description: "Auto-accept safe workspace edits", BuiltIn: true},
 		command.Command{Name: "mode:ask", Description: "Ask before workspace edits", BuiltIn: true},
+		command.Command{Name: "reasoning", Description: llm.ReasoningCommandDescription, BuiltIn: true},
 	)
 	return commands, nil
 }

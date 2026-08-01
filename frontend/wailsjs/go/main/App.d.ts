@@ -41,6 +41,9 @@ export function InitRepo():Promise<void>;
 export function ListCommands():Promise<Array<command.Command>>;
 
 export function PermissionMode(arg1:string,arg2:string):Promise<string>;
+export function ReasoningEffort():Promise<string>;
+
+export function SetReasoningEffort(arg1:string):Promise<void>;
 
 export function ListMCPs():Promise<Array<mcpclient.ServerStatus>>;
 

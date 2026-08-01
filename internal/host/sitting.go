@@ -2,6 +2,7 @@ package host
 
 import (
 	"github.com/K3N4Y/atenea/internal/agent"
+	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/permission"
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/tool"
@@ -34,6 +35,8 @@ type Sitting struct {
 	AutoAccept *permission.AutoAcceptModes
 	// Yolo is process-local launch authority and activation state.
 	Yolo *permission.YoloMode
+	// Reasoning stores the shared per-call model effort preference.
+	Reasoning *llm.ReasoningSelection
 	// Inbox is the prompt queue the runner drains per session.
 	Inbox session.Inbox
 	// Agent is the UI-independent turn lifecycle both hosts drive. It is
@@ -61,6 +64,7 @@ func NewSittingWithYolo(authorized bool) *Sitting {
 		Grants:     permission.NewSessionGrants(),
 		AutoAccept: permission.NewAutoAcceptModes(),
 		Yolo:       permission.NewYoloMode(authorized),
+		Reasoning:  &llm.ReasoningSelection{},
 		Inbox:      inbox,
 		Agent:      agent.NewService(inbox),
 		Snapshots:  tool.NewSessionSnapshots(),

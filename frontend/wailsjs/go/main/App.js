@@ -74,6 +74,14 @@ export function PermissionMode(arg1, arg2) {
   return window['go']['main']['App']['PermissionMode'](arg1, arg2);
 }
 
+export function ReasoningEffort() {
+  return window['go']['main']['App']['ReasoningEffort']();
+}
+
+export function SetReasoningEffort(arg1) {
+  return window['go']['main']['App']['SetReasoningEffort'](arg1);
+}
+
 export function ListMCPs() {
   return window['go']['main']['App']['ListMCPs']();
 }

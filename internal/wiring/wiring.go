@@ -83,6 +83,9 @@ type Config struct {
 	// family, because a local model id says nothing about its family. It is a
 	// question rather than a flag so a live provider switch takes effect on the
 	// next turn without re-assembling anything. nil means never local.
+	// Reasoning is read for every turn so both hosts share the same preference
+	// without rebuilding the workspace.
+	Reasoning   func() *llm.ReasoningPreference
 	LocalPrompt func() bool
 	// NextID generates the runner's assistantMessageIDs (see NewIDGen).
 	NextID func() string
@@ -385,6 +388,7 @@ func Build(cfg Config) Built {
 	r.SetCompactor(runner.NewContextCompactor(cfg.Store, cfg.Provider))
 	r.SetSystemPrompt(systemPromptBuilder(root, skillsBlock, cfg.LocalPrompt))
 	r.SetPermissionGate(cfg.Gate, policy)
+	r.SetReasoning(cfg.Reasoning)
 	// Plan mode: read-only investigation plus present_plan (no write/edit/bash). The
 	// mode hook decides per session; SetMode/SetPlanMode only take effect when
 	// cfg.Mode reports ModePlan (nil = always normal, the runner's default).

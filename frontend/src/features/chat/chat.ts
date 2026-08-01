@@ -9,6 +9,8 @@ import {
   ListProjectFiles,
   ListCommands,
   PermissionMode,
+  ReasoningEffort,
+  SetReasoningEffort,
 } from '../../../wailsjs/go/main/App'
 import { EventsOn } from '../../../wailsjs/runtime/runtime'
 import type { Command } from './command'
@@ -487,12 +489,34 @@ export const useChatStore = defineStore(
       if (
         trimmed === '/mode' ||
         trimmed === '/mode:auto-accept' ||
-        trimmed === '/mode:ask'
+        trimmed === '/mode:ask' ||
+        trimmed === '/mode:yolo'
       ) {
         try {
           const permissionMode = await PermissionMode(sessionID.value, trimmed)
           errorText.value = null
           statusText.value = `Permission mode: ${permissionMode}`
+        } catch (error) {
+          applyError(error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+      if (trimmed === '/reasoning' || trimmed.startsWith('/reasoning:')) {
+        if (trimmed === '/reasoning') {
+          try {
+            const effort = await ReasoningEffort()
+            errorText.value = null
+            statusText.value = `Reasoning effort: ${effort || 'default'}; choose /reasoning:<level> (default, minimal, low, medium, high)`
+          } catch (error) {
+            applyError(error instanceof Error ? error.message : String(error))
+          }
+          return
+        }
+        try {
+          const effort = trimmed.slice('/reasoning:'.length)
+          await SetReasoningEffort(effort === 'default' ? '' : effort)
+          errorText.value = null
+          statusText.value = `Reasoning effort: ${effort || 'default'}`
         } catch (error) {
           applyError(error instanceof Error ? error.message : String(error))
         }

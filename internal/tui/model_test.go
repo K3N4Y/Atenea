@@ -65,9 +65,19 @@ type fakeAgent struct {
 	// as "unknown" rather than as "no window".
 	capabilities   llm.Capabilities
 	declared       bool
+	reasoning      llm.ReasoningEffort
 	autoAccept     map[string]bool
 	yoloAuthorized bool
 	yoloEnabled    bool
+}
+
+func (f *fakeAgent) ReasoningEffort() llm.ReasoningEffort { return f.reasoning }
+func (f *fakeAgent) SetReasoningEffort(effort llm.ReasoningEffort) error {
+	if effort != "" && effort != llm.ReasoningEffortMinimal && effort != llm.ReasoningEffortLow && effort != llm.ReasoningEffortMedium && effort != llm.ReasoningEffortHigh {
+		return fmt.Errorf("unsupported reasoning effort %q", effort)
+	}
+	f.reasoning = effort
+	return nil
 }
 
 func (f *fakeAgent) SetAutoAccept(sessionID string, enabled bool) {
@@ -127,6 +137,32 @@ func TestModel_ModeCommandsStayLocal(t *testing.T) {
 	}
 	if len(fake.sent) != 0 || fake.AutoAcceptEnabled("s1") {
 		t.Fatalf("commands reached provider or left mode enabled: sent=%v mode=%v", fake.sent, fake.AutoAcceptEnabled("s1"))
+	}
+}
+
+func TestModel_ReasoningCommandExplainsAvailableEfforts(t *testing.T) {
+	fake := &fakeAgent{reasoning: llm.ReasoningEffortHigh}
+	m := typeRunes(t, NewModel(fake, "s1", nil), "/reasoning")
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatal("/reasoning returned an async command")
+	}
+	m = updated.(Model)
+	if got := m.entries[len(m.entries)-1].text; got != llm.ReasoningHelp(llm.ReasoningEffortHigh) {
+		t.Fatalf("reasoning help = %q, want %q", got, llm.ReasoningHelp(llm.ReasoningEffortHigh))
+	}
+}
+
+func TestModel_ReasoningCommandSetsEffort(t *testing.T) {
+	fake := &fakeAgent{}
+	m := typeRunes(t, NewModel(fake, "s1", nil), "/reasoning:low")
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatal("/reasoning:low returned an async command")
+	}
+	m = updated.(Model)
+	if fake.reasoning != llm.ReasoningEffortLow || m.entries[len(m.entries)-1].text != "reasoning effort: low" {
+		t.Fatalf("reasoning = %q, notice = %q", fake.reasoning, m.entries[len(m.entries)-1].text)
 	}
 }
 
@@ -7021,5 +7057,16 @@ func TestModel_PermissionPanelGenericFallbackForUnknownTool(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("View() = %q, want %q", view, want)
 		}
+	}
+}
+func TestModel_ReasoningCommandRestoresProviderDefault(t *testing.T) {
+	fake := &fakeAgent{reasoning: llm.ReasoningEffortHigh}
+	m := typeRunes(t, NewModel(fake, "s1", nil), "/reasoning:default")
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatal("/reasoning:default returned an async command")
+	}
+	if updated.(Model).agent.(*fakeAgent).reasoning != "" {
+		t.Fatalf("reasoning = %q, want provider default", fake.reasoning)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/K3N4Y/atenea/internal/llm"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/K3N4Y/atenea/internal/tui/engine"
@@ -48,6 +49,9 @@ func (m Model) submitPrompt() (Model, tea.Cmd) {
 		m.menuItems = nil
 		m.Transcript = m.Transcript.appendNotice("permission mode: " + mode)
 		return m.syncViewport(), nil
+	}
+	if next, handled := m.handleReasoningCommand(trimmed); handled {
+		return next, nil
 	}
 	if next, handled := m.handleCacheStatsCommand(trimmed); handled {
 		return next, nil
@@ -215,6 +219,38 @@ func (m Model) submitPrompt() (Model, tea.Cmd) {
 	m.activeRun = run.RunID
 	m.working = run.RunID != 0
 	return m.resizeViewport(), m.spinner.Tick
+}
+
+func (m Model) handleReasoningCommand(trimmed string) (Model, bool) {
+	if trimmed != "/reasoning" && !strings.HasPrefix(trimmed, "/reasoning:") {
+		return m, false
+	}
+	agent, ok := m.agent.(reasoningAgent)
+	if !ok {
+		return m.appendError("reasoning selection is unavailable"), true
+	}
+	if trimmed == "/reasoning" {
+		m.input.SetValue("")
+		m.menuItems = nil
+		m.Transcript = m.Transcript.appendNotice(llm.ReasoningHelp(agent.ReasoningEffort()))
+		return m.syncViewport(), true
+	}
+	effortText := strings.TrimPrefix(trimmed, "/reasoning:")
+	if effortText == "default" {
+		effortText = ""
+	}
+	effort := llm.ReasoningEffort(effortText)
+	if err := agent.SetReasoningEffort(effort); err != nil {
+		return m.appendError(err.Error()), true
+	}
+	m.input.SetValue("")
+	m.menuItems = nil
+	label := string(effort)
+	if label == "" {
+		label = "default"
+	}
+	m.Transcript = m.Transcript.appendNotice("reasoning effort: " + label)
+	return m.syncViewport(), true
 }
 
 func (m Model) stopRun() {
