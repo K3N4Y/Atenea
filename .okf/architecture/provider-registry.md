@@ -1,6 +1,6 @@
 ---
-updated_at: 2026-07-27
-summary: How a provider's declared wire format resolves to the adapter that speaks it — the factory registry that replaced two closed switches, why the dialect became the type, and how a format declares that its credential is a login rather than a string.
+updated_at: 2026-07-31
+summary: How a provider's declared wire format resolves to the adapter that speaks it — the factory registry that replaced two closed switches, why the dialect became the type, how a format declares that its credential is a login rather than a string, and how one discovers its own models.
 ---
 
 # Provider registry
@@ -91,7 +91,7 @@ can never reach another — the failure mode of a shared package-level registry.
 
 ## The type is the dialect
 
-Five wire formats ship:
+Six wire formats ship:
 
 | Type | Adapter | What it means |
 |---|---|---|
@@ -100,12 +100,20 @@ Five wire formats ship:
 | `openrouter` | OpenAI adapter, `WithOpenRouterCompatibility` | OpenRouter routing: `session_id`, `reasoning` unless opted out |
 | `openai-compatible` | OpenAI adapter, `WithoutOpenRouterReasoning` | the neutral dialect: chat completions, no vendor extension |
 | `openai-codex` | `llm.NewCodexProvider` | a ChatGPT subscription: the codex backend's Responses API, authenticated by a login |
+| `posthog` | `llm.NewAnthropicOAuthProvider` | PostHog's LLM gateway: the anthropic wire format, authenticated by an OAuth login whose bearer travels per request |
 
 `openai-codex` is the same vendor a third time, and the clearest case yet for the
 type deciding everything: a subscription token is refused by `api.openai.com` and
 by chat completions, and the endpoint that accepts it wants the system prompt in a
 field, refuses an output ceiling, and identifies the caller with a header. Nothing
 about that could have been an option on `openai`.
+
+`[updated 2026-07-31]` `posthog` is the inverse case: the *same wire format* as
+`anthropic` behind a different credential and a different catalog. It is still its
+own type — the credential is a login and the model list is the gateway's own — but
+the adapter is the Anthropic one built through a second constructor that takes an
+`llm.OAuthTokenSource` instead of a key. See
+[Driving atenea with a PostHog account](../specs/2026-07-31-posthog-oauth-provider.md).
 
 ### A format declares how it is authenticated
 
@@ -119,6 +127,30 @@ It lives on the format for the same reason the dialect became the type. The
 alternative is the credential wiring switching on type names, which is the coupling
 this registry exists to remove — and worse, it would hand a third party's OAuth
 format OpenAI's refresh protocol.
+
+`[updated 2026-07-31]` The `posthog` format proved the seam: a second `OAuthFlow`
+(authorization-code + PKCE over a loopback redirect, where OpenAI's is
+device-code) slotted in without the credential wiring, the device-login service or
+either host learning a new provider name. The login's `DeviceCode` carries an
+empty `UserCode` — there is nothing to type, the browser brings the approval back
+— and a host branches on that emptiness, never on the provider.
+
+### A format can discover its own models
+
+`[updated 2026-07-31]` `Format` gained a second optional hook, `Discover`, for a
+format whose model list the generic OpenAI-compatible `GET /models` cannot fetch:
+
+```go
+Discover func(ctx context.Context, def Provider, bearer string) ([]string, error)
+```
+
+Only `posthog` sets it — the gateway's list hangs off `/v1/models`, wants the
+OAuth bearer, and gates models by plan (`allowed: false`), so a curated list would
+offer models that fail at selection. The catalog resolves the bearer through the
+same freshness margin every turn uses and skips **silently** when the provider was
+never connected: an unconnected login provider sits in every default catalog, and
+a warning on every refresh would tell the user to log in to something they did not
+ask for.
 
 Keying the registry on `Type` alone would have left the `ID` switch alive inside
 the `openai-compatible` factory — a registry with a switch in it. Promoting the

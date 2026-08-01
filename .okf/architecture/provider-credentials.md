@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-27
+updated_at: 2026-07-31
 summary: How a stored provider secret becomes the credential an adapter authenticates with — the tagged Credential variant, the exec arm that covers Bedrock/Vertex/gateway auth, the oauth arm that carries a subscription login, and the resolver that separates persisting a credential from running or renewing one.
 ---
 
@@ -56,7 +56,7 @@ type OAuthCredential struct {
     AccessToken  string    `json:"access_token"`
     RefreshToken string    `json:"refresh_token"`
     ExpiresAt    time.Time `json:"expires_at,omitzero"`
-    AccountID    string    `json:"account_id"`
+    AccountID    string    `json:"account_id,omitempty"`
 }
 
 func (c Credential) Validate() error
@@ -96,10 +96,18 @@ subscription login (see
 [Driving atenea with a ChatGPT subscription](../specs/2026-07-27-openai-subscription-oauth.md)),
 and the exercise was as cheap as the shape promised — one field, one `case`, and
 no reader of the other two arms changed. `Validate` refuses a login with no
-refresh token (it dies within the hour with no way back) and one with no account
-id (no request could be routed); a zero `expires_at` is accepted and reads as
-"renew on first use", because an unknown lifetime and an expired one cost the same
-to get wrong.
+refresh token (it dies within the hour with no way back); a zero `expires_at` is
+accepted and reads as "renew on first use", because an unknown lifetime and an
+expired one cost the same to get wrong.
+
+`[updated 2026-07-31]` `account_id` stopped being the arm's requirement and became
+the ChatGPT flow's. It is a routing header only that endpoint demands, and the
+PostHog login (see
+[Driving atenea with a PostHog account](../specs/2026-07-31-posthog-oauth-provider.md))
+legitimately stores none — the gateway routes on the bearer alone. The protection
+moved to where the fact lives: OpenAI's token exchange refuses to issue a
+credential with no account, and the codex adapter refuses to send a request
+without one.
 
 **Validation runs at both ends, and deliberately not in the middle.** `Put`
 refuses a malformed credential so one never reaches disk; resolution refuses one

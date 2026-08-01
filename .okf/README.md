@@ -91,6 +91,7 @@ The project-wide vocabulary lives in the root [domain glossary](../CONTEXT.md).
 - [TUI provider and model selector](specs/2026-07-10-tui-model-selector.md)
 - [/connect command and credential store](specs/2026-07-18-connect-command.md)
 - [Driving atenea with a ChatGPT subscription](specs/2026-07-27-openai-subscription-oauth.md)
+- [Driving atenea with a PostHog account](specs/2026-07-31-posthog-oauth-provider.md)
 - [Single permission gate for shell and local FS tools](specs/2026-07-23-single-permission-gate.md)
 - [Session-scoped permission grants](specs/2026-07-24-session-permission-grants.md)
 - [TUI dark canvas](specs/2026-07-10-tui-dark-canvas.md)

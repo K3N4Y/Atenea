@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-27
+updated_at: 2026-07-31
 summary: Which providers a fresh install offers and which one a bare environment lands on — the embedded default catalog that replaced a table in an unimportable main package, and the environment fallback derived from it.
 ---
 
@@ -134,12 +134,18 @@ override; a provider that omits the field simply has no override.
 ## What the JSON cannot hold
 
 Comments. The rationale for each entry — why Anthropic leads, why model discovery
-is off everywhere but OpenRouter, why OpenAI, OpenRouter and the ChatGPT
-subscription declare three different types for the same vendor, why the first model
-matters — lives in the doc
+is off everywhere but OpenRouter and PostHog, why OpenAI, OpenRouter and the
+ChatGPT subscription declare three different types for the same vendor, why the
+first model matters — lives in the doc
 comment on `defaultCatalogJSON` in `defaults.go`, next to the `//go:embed` that
 pulls the file in. The invariants that comment asserts are pinned by
 `defaults_test.go`, so the prose and the data cannot drift apart silently.
+
+`[updated 2026-07-31]` PostHog's entry is the first whose remote list runs through
+a format-declared `Discover` rather than the generic `GET /models` — the gateway
+gates models by plan, so the curated list is the pre-login display and the
+discovered one is what the account actually gets. See
+[the registry's Discover hook](provider-registry.md#a-format-can-discover-its-own-models).
 
 ## The user can declare providers too
 
