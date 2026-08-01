@@ -62,8 +62,12 @@ For an explicitly unrestricted interactive session, launch `atenea --yolo`
 (alias: `--dangerously-skip-permissions`). YOLO skips permission prompts for
 recognized and unrecognized tools. It is not a sandbox: commands, network
 access, and deletion elsewhere remain possible. Atenea only blocks positively
-recognized `rm -r`/`rm -R` attempts against filesystem root or the resolved user
-home. The warning and `YOLO` composer indicator remain visible; `/mode:ask` or
+recognized direct `rm -r`/`rm -R` commands against filesystem root or the
+resolved user home. This check parses shell syntax and examines executable
+simple commands in lists, groups, subshells, and command substitutions, including
+their redirections and the supported `env`, `sudo`, and `command` wrappers. It
+does not resolve aliases, functions, generated commands, or arbitrary scripts.
+The warning and `YOLO` composer indicator remain visible; `/mode:ask` or
 `/mode:auto-accept` leaves YOLO, and `/mode:yolo` can re-enter it only in a
 process launched with one of those flags. Authorization is never persisted.
 

@@ -58,6 +58,12 @@ func TestYoloPolicyBlocksRecognizedRecursiveRMOfRootOrHome(t *testing.T) {
 		"command -p rm -rf /",
 		"env -i FOO=bar sudo -n -- command -- rm -rf /",
 		"echo ok; env --ignore-environment FOO=bar rm --recursive ${HOME}",
+		"rm -rf />/tmp/out",
+		"(rm -rf /)",
+		"{ rm -rf /; }",
+		"true || rm -rf /",
+		"if true; then rm -rf /; fi",
+		"echo $(rm -rf /)",
 	}
 	for _, command := range blocked {
 		t.Run(command, func(t *testing.T) {
@@ -82,6 +88,14 @@ func TestYoloPolicyBlocksRecognizedRecursiveRMOfRootOrHome(t *testing.T) {
 		`rm -rf '${HOME}' && echo safe`,
 		`sudo -u rm echo -rf /`,
 		`env -u rm echo -rf /`,
+		`command -v rm -rf /`,
+		`command -V rm -rf /`,
+		`command --help rm -rf /`,
+		`env --help rm -rf /`,
+		`env --version rm -rf /`,
+		`sudo --help rm -rf /`,
+		`f() { rm -rf /; }`,
+		`echo rm -rf / >/tmp/out`,
 	}
 	for _, command := range allowed {
 		t.Run(command, func(t *testing.T) {
