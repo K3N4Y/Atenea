@@ -55,6 +55,7 @@ type Capabilities struct {
     Streaming              bool
     Tools                  bool
     Reasoning              bool
+    ReasoningModels        map[string]bool
     Vision                 bool
     PromptCaching          PromptCaching  // none | implicit | keyed
     RetryTelemetry         bool

@@ -29,6 +29,11 @@ audit](../audits/2026-07-24-agnostic-extensibility-audit.md) §4 R1.
 |---|---|---|
 | `agentcore/tool` | `Tool`, `Call`, `Result`; the optional capabilities `Declaring`/`Effects` and `Presenter`/`Presentation`/`PresentationKind`, with their resolvers `EffectsOf` and `PresentationOf` | anyone shipping a tool |
 | `agentcore/llm` | `Provider`, `Request`, `Message`, `Part`/`PartKind` with `TextMessage`, `TextOnly` and `UnsupportedPartError`, `ToolCallPart`, `ToolDef`, `Event`, `EventKind`, `Usage`; the optional capability `Describing`/`Capabilities`/`PromptCaching`, with its resolver `CapabilitiesOf` | anyone shipping a model adapter |
+
+`llm.Request.Reasoning` is the optional provider-neutral per-call reasoning
+preference. `ReasoningPreference` carries an effort level (`minimal`, `low`,
+`medium`, or `high`); the zero value preserves the provider's configured default.
+Adapters reject explicit levels they do not support before network I/O.
 | `agentcore/session` | `SessionEvent`, `EventKind`, `Seq`, `Role`, `Message`, `ToolCall`, `Usage`, `ContextEpoch`, `CompactionCheckpoint`, `StructuredSummary`, `CompactionReason`, `PromptCheckpoint` | anyone reading or emitting the durable event stream |
 | `agentcore/permission` | `Policy`, `Gate`, `Decision`, `Verdict`, `Request`, `Rule`; the optional capability `Grantable` with its resolver `GrantRuleFor` | anyone replacing the ask-before-run behavior, or shipping a tool that can be granted for a session |
 

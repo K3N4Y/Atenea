@@ -51,7 +51,8 @@ type Runner struct {
 
 	// logf writes tool failures to stderr for development visibility. It defaults
 	// to log.Printf; tests replace it to capture output without touching stderr.
-	logf func(format string, args ...any)
+	logf      func(format string, args ...any)
+	reasoning func() *llm.ReasoningPreference
 }
 
 // Compactor decides whether a Request exceeds the model context and compacts
@@ -92,6 +93,12 @@ func NewRunner(store session.Store, inbox session.Inbox, provider llm.Provider,
 // assembly (app.go, in package main, cannot touch the unexported field).
 func (r *Runner) SetSystemPrompt(build func(model string) string) {
 	r.system = build
+}
+
+// SetReasoning wires the per-turn reasoning preference. A nil callback keeps
+// provider defaults, and the callback is evaluated when each request is built.
+func (r *Runner) SetReasoning(reasoning func() *llm.ReasoningPreference) {
+	r.reasoning = reasoning
 }
 
 // SetPermissionGate wires ask-before-run: policy classifies each tool call

@@ -111,6 +111,9 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string, final boo
 		model = providerSnapshot.Model
 	}
 	req := llm.Request{Model: model, SessionKey: sessionKey(sessionID), Messages: toLLMMessages(msgs), Tools: mat.Definitions}
+	if r.reasoning != nil {
+		req.Reasoning = r.reasoning()
+	}
 	if sys != nil {
 		req.System = sys(model)
 	}

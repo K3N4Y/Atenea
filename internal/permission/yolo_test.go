@@ -65,6 +65,7 @@ func TestYoloPolicyBlocksRecognizedRecursiveRMOfRootOrHome(t *testing.T) {
 		"if true; then rm -rf /; fi",
 		"echo $(rm -rf /)",
 	}
+
 	for _, command := range blocked {
 		t.Run(command, func(t *testing.T) {
 			if got := policy.Decide("s", yoloBashCall(t, command)); got != Deny {
@@ -72,6 +73,7 @@ func TestYoloPolicyBlocksRecognizedRecursiveRMOfRootOrHome(t *testing.T) {
 			}
 		})
 	}
+
 	allowed := []string{
 		"rm file",
 		"rm -rf " + filepath.Join(root, "build"),
@@ -103,6 +105,15 @@ func TestYoloPolicyBlocksRecognizedRecursiveRMOfRootOrHome(t *testing.T) {
 				t.Fatalf("got %v", got)
 			}
 		})
+	}
+}
+
+func TestYoloPolicyBlocksProtectedRootWithDynamicOperand(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	policy := NewYoloPolicy(yoloFixedPolicy(Ask), NewYoloMode(true), root, home)
+	if got := policy.Decide("s", yoloBashCall(t, `rm -rf / "$UNTRUSTED"`)); got != Deny {
+		t.Fatalf("got %v, want Deny", got)
 	}
 }
 

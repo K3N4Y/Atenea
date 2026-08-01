@@ -185,11 +185,13 @@ Do not fabricate support from model-name prefixes. If support is unknown, the pi
 
 ### Phase 3: UI and host behavior
 
-1. Add the control to the shared model-selection state, not only the TUI or only Vue.
-2. Show only levels supported by the selected model; retain “default”.
-3. Pass the selection into every host's `llm.Request` construction. Search all request construction sites before editing.
-4. Persist the preference at the narrowest intended scope (session/model selection unless product requirements say otherwise). Do not make it a global provider mutation.
-5. Display the selected level and handle an adapter validation error as an actionable selection error.
+The shared preference is now process-local sitting state. The runner reads it
+when constructing each turn, while the TUI exposes `/reasoning` and
+`/reasoning:<level>` and the desktop binding exposes `ReasoningEffort` and
+`SetReasoningEffort`. Rewiring a workspace or switching models preserves the
+selection. Model-specific support matrices remain a future requirement; the
+current GPT profile intentionally exposes only the four validated contract
+levels.
 
 ## Testing requirements
 

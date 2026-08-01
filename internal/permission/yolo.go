@@ -104,6 +104,7 @@ func recursiveRMProtectedPath(input []byte, root, home string) bool {
 type shellWord struct {
 	value           string
 	tildeExpandable bool
+	static          bool
 }
 
 func recursiveRMCall(call *syntax.CallExpr, source, root, home string) bool {
@@ -111,12 +112,13 @@ func recursiveRMCall(call *syntax.CallExpr, source, root, home string) bool {
 	for _, arg := range call.Args {
 		word, ok := staticShellWord(arg, source, home)
 		if !ok {
-			return false
+			words = append(words, shellWord{})
+			continue
 		}
 		words = append(words, word)
 	}
 	words = unwrapShellCommand(words)
-	if len(words) < 2 || filepath.Base(words[0].value) != "rm" {
+	if len(words) < 2 || !words[0].static || filepath.Base(words[0].value) != "rm" {
 		return false
 	}
 
@@ -124,6 +126,9 @@ func recursiveRMCall(call *syntax.CallExpr, source, root, home string) bool {
 	options := true
 	var operands []shellWord
 	for _, word := range words[1:] {
+		if !word.static {
+			continue
+		}
 		if options && word.value == "--" {
 			options = false
 			continue
@@ -163,7 +168,7 @@ func staticShellWord(word *syntax.Word, source, home string) (shellWord, bool) {
 			tilde = strings.HasPrefix(lit.Value, "~") && offset < len(source) && source[offset] == '~'
 		}
 	}
-	return shellWord{value: b.String(), tildeExpandable: tilde}, true
+	return shellWord{value: b.String(), tildeExpandable: tilde, static: true}, true
 }
 
 func appendStaticWordPart(b *strings.Builder, part syntax.WordPart, home string) bool {
