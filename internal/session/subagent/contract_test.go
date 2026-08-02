@@ -1,6 +1,7 @@
 package subagent
 
 import (
+	"context"
 	"encoding/json"
 	"strconv"
 	"sync/atomic"
@@ -36,4 +37,31 @@ func TestTaskTool_Contract(t *testing.T) {
 			Input: json.RawMessage(`{"subagent_type":"reviewer","prompt":"review this"}`),
 		}
 	})
+}
+
+func TestSupervisionTools_Contract(t *testing.T) {
+	for _, name := range []string{"task_status", "task_wait", "task_cancel"} {
+		t.Run(name, func(t *testing.T) {
+			tooltest.Contract(t, func(*testing.T) tooltest.Subject {
+				supervisor := NewSupervisor(func() string { return "job" })
+				started, err := supervisor.start(func(context.Context, *jobProgress) (string, error) { return "done", nil })
+				if err != nil {
+					t.Fatal(err)
+				}
+				var job struct {
+					ID string `json:"job_id"`
+				}
+				if err := json.Unmarshal([]byte(started.Output), &job); err != nil {
+					t.Fatal(err)
+				}
+				for _, candidate := range supervisor.tools() {
+					if candidate.Name() == name {
+						return tooltest.Subject{Tool: candidate, Input: json.RawMessage(`{"job_id":"` + job.ID + `"}`)}
+					}
+				}
+				t.Fatalf("supervision tool %q missing", name)
+				return tooltest.Subject{}
+			})
+		})
+	}
 }

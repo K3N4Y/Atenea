@@ -55,6 +55,20 @@ func TestPublisherDecoratesOnlyTaskSettlementsIncludingUnresolved(t *testing.T) 
 			t.Fatalf("total = %d, %v; want durable zero without a recorder", got, ok)
 		}
 	})
+	t.Run("detached acknowledgement", func(t *testing.T) {
+		spy := &recordingAppender{}
+		p := NewPublisher(spy, "s", "a", 0)
+		publishAll(t, p, llm.Event{Kind: llm.ToolCall, CallID: "c", ToolName: "task"})
+		r := tool.NewSettlementRecorder()
+		r.SetTaskDetached()
+		p.RegisterSettlementRecorder("c", r)
+		if err := p.ToolSuccess(context.Background(), "c", `{"job_id":"j","status":"running"}`, ""); err != nil {
+			t.Fatal(err)
+		}
+		if !session.TaskDetached(spy.events[len(spy.events)-1]) {
+			t.Fatal("detached task was persisted as completed usage")
+		}
+	})
 	spy := &recordingAppender{}
 	p := NewPublisher(spy, "s", "a", 0)
 	publishAll(t, p, llm.Event{Kind: llm.ToolCall, CallID: "c", ToolName: "echo"})

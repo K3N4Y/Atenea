@@ -16,6 +16,7 @@ import (
 	composer "github.com/K3N4Y/atenea/internal/command"
 	"github.com/K3N4Y/atenea/internal/event"
 	"github.com/K3N4Y/atenea/internal/host"
+	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/mcpclient"
 	"github.com/K3N4Y/atenea/internal/permission"
 	"github.com/K3N4Y/atenea/internal/providerconfig"
@@ -201,6 +202,12 @@ func execute(env Env, t turn) int {
 		Bus:    bus,
 		LocalPrompt: func() bool {
 			return h.Providers.Active().LocalModels
+		},
+		RoleProvider: func(ctx context.Context, def agent.Def) (llm.Provider, error) {
+			if def.Model == "" {
+				return nil, nil
+			}
+			return h.Providers.ResolveModel(ctx, def.Model)
 		},
 		NextID:           wiring.NewIDGen(),
 		Mode:             h.Agent.Mode,

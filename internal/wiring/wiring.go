@@ -104,6 +104,15 @@ type Config struct {
 	// LSP enables the native code-intelligence tool for hosts that own its
 	// process lifecycle. The standalone CLI and TUI enable it; false omits it.
 	LSP bool
+	// RoleProvider resolves a subagent manifest's optional model without changing
+	// the parent's active provider selection. Nil inherits Provider.
+	RoleProvider subagent.ProviderResolver
+	// TaskSupervisor owns detached jobs across assembly rewires. Nil creates an
+	// assembly-local supervisor.
+	TaskSupervisor *subagent.Supervisor
+	// Worktrees enables task requests with worktree:true. Nil installs the native
+	// Git worktree factory anchored at Root.
+	Worktrees subagent.EnvironmentResolver
 
 	// OutputLimit caps, in bytes, how much of a tool call's output reaches the
 	// model. The whole output is always kept for the UI to expand
@@ -341,7 +350,19 @@ func Build(cfg Config) Built {
 	}
 	// The task tool starts child subagents. Its own nextID (thread-safe) because
 	// several subagents can run in parallel (internal concurrency cap).
+	ownedSupervisor := cfg.TaskSupervisor == nil
 	taskTool := subagent.NewTaskTool(agentDefs, cfg.Provider, childRegistry, NewIDGen())
+	if cfg.TaskSupervisor != nil {
+		taskTool.SetSupervisor(cfg.TaskSupervisor)
+	}
+	if cfg.RoleProvider != nil {
+		taskTool.SetProviderResolver(cfg.RoleProvider)
+	}
+	worktrees := cfg.Worktrees
+	if worktrees == nil {
+		worktrees = worktreeResolver(root, cfg.OutputLimit)
+	}
+	taskTool.SetEnvironmentResolver(worktrees)
 	// Decorate the child runner's store over the shared bus. Permission events
 	// always reach the parent's channel so either host can resolve the child gate.
 	// The TUI additionally opts into ephemeral child tool-batch events; Desktop
@@ -359,6 +380,7 @@ func Build(cfg Config) Built {
 		tool.NewBashTool(root), tool.NewPresentPlanTool(root), tool.NewSkillTool(skills), taskTool,
 		tool.NewWebFetchTool(cfg.Provider), tool.TodoWriteTool{},
 	}
+	registryTools = append(registryTools, taskTool.SupervisionTools()...)
 	var lsp *tool.LSPTool
 	if cfg.LSP {
 		lsp = tool.NewLSPTool(root)
@@ -418,6 +440,9 @@ func Build(cfg Config) Built {
 	return Built{Runner: r, Glob: glob, Commands: commands, Tools: registry, Policy: policy, close: func() {
 		if lsp != nil {
 			_ = lsp.Close()
+		}
+		if ownedSupervisor {
+			taskTool.Close()
 		}
 	}}
 }

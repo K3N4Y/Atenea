@@ -23,6 +23,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/K3N4Y/atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/tool"
 )
 
 // Transcript is the conversation log and the pure state derived from it. Model
@@ -53,6 +54,8 @@ type Transcript struct {
 	revealing       bool
 	childBatches    map[string][]entry
 	childTotals     map[string]int
+	childSummaries  map[string]tool.TaskSettlement
+	childDetached   map[string]bool
 	childCandidates map[string]childCandidate
 }
 type childCandidate struct {
@@ -184,6 +187,14 @@ func (t Transcript) settleChildTotal(ev EventMsg) Transcript {
 	if ev.ToolName != "task" {
 		return t
 	}
+	if session.TaskDetached(session.SessionEvent(ev)) {
+		delete(t.childBatches, ev.CallID)
+		if t.childDetached == nil {
+			t.childDetached = make(map[string]bool)
+		}
+		t.childDetached[ev.CallID] = true
+		return t
+	}
 	total, ok := session.SubagentToolCalls(session.SessionEvent(ev))
 	if !ok {
 		return t
@@ -193,6 +204,12 @@ func (t Transcript) settleChildTotal(ev EventMsg) Transcript {
 	}
 	delete(t.childBatches, ev.CallID)
 	t.childTotals[ev.CallID] = total
+	if summary, ok := session.TaskSettlement(session.SessionEvent(ev)); ok {
+		if t.childSummaries == nil {
+			t.childSummaries = make(map[string]tool.TaskSettlement)
+		}
+		t.childSummaries[ev.CallID] = summary
+	}
 	return t
 }
 
@@ -313,6 +330,8 @@ func (t Transcript) replaceEvents(events []session.SessionEvent, sessionID strin
 	t.entries = nil
 	t.childBatches = nil
 	t.childTotals = nil
+	t.childSummaries = nil
+	t.childDetached = nil
 	t.childCandidates = nil
 	t.revealing = false
 	t.usage = nil

@@ -137,6 +137,19 @@ Extend the existing subagent runtime with:
 
 Do not start with a swarm DSL. A reliable `task` plus background supervision and typed output covers most value. Add DAG orchestration only after real missions demonstrate that parent-directed parallel calls are insufficient.
 
+Status: implemented for the Go core, standalone CLI, and TUI. `task` accepts an
+optional JSON Schema for its final result plus request, cumulative token, and
+wall-clock budgets. Detached calls run under a process-owned supervisor and are
+controlled through `task_status`, `task_wait`, and `task_cancel`; status and wait
+report compact request/token/tool/duration usage. Synchronous settlements persist
+the same summary in session attrs, and the TUI replaces live child activity with
+that durable compact line. Agent manifests can select a model on the active
+provider without mutating the parent's selection. `worktree: true` creates a
+detached Git worktree with root-bound native tools, retains successful work for
+integration, and discards failed worktrees; typed isolated results use a stable
+`{"result": ..., "worktree": ...}` envelope so artifact location stays outside
+the validated child payload. No swarm DSL or DAG orchestration was added.
+
 ### P3 — Expose context pruning and project memory deliberately
 
 Atenea's transactional compaction is already a strong base. Add model/user-facing checkpoint and rewind semantics across both hosts, then a small project-scoped memory contract with explicit retain/recall and provenance. Memory must not silently become prompt truth; recalled facts should identify source and age.

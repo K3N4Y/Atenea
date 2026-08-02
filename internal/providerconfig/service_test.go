@@ -838,3 +838,32 @@ func TestService_SelectDoesNotHoldTheLockWhileTheCommandRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestServiceResolveModelDoesNotChangeActiveSelection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "providers.json")
+	if err := os.WriteFile(path, []byte(`{"providers":[{"id":"p","name":"Provider","type":"openai-compatible","base_url":"http://p","models":["parent","review"]}],"selected":{"provider":"p","model":"parent"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var built []string
+	registry := everyType(func(params BuildParams) (llm.Provider, error) {
+		built = append(built, params.Model)
+		return inertProvider{}, nil
+	})
+	service, err := Open(context.Background(), path, "", fallbackSnapshot(), os.Getenv, registry, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := service.ResolveModel(context.Background(), "review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := llm.Acquire(provider).Model; got != "review" {
+		t.Fatalf("resolved model = %q", got)
+	}
+	if active := service.Active(); active.Model != "parent" {
+		t.Fatalf("active selection mutated: %#v", active)
+	}
+	if len(built) != 2 || built[0] != "parent" || built[1] != "review" {
+		t.Fatalf("built models = %v", built)
+	}
+}

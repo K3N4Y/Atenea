@@ -5,15 +5,17 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/K3N4Y/atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/tool"
 )
 
 func TestSubagentTotalReplacesLiveAndRehydrates(t *testing.T) {
 	called := session.SessionEvent{Kind: session.KindToolCalled, CallID: "task", ToolName: "task", SessionID: "parent"}
 	child := session.WithParentTaskCall(session.SessionEvent{Kind: session.KindToolCalled, CallID: "read", ToolName: "read", SessionID: "child"}, "task")
 	started := session.WithParentTaskCall(session.SessionEvent{Kind: session.KindStepStarted, SessionID: "child"}, "task")
-	settled := session.WithSubagentToolCalls(session.SessionEvent{Kind: session.KindToolSuccess, CallID: "task", ToolName: "task", SessionID: "parent"}, 1)
+	settled := session.WithTaskSettlement(session.SessionEvent{Kind: session.KindToolSuccess, CallID: "task", ToolName: "task", SessionID: "parent"}, tool.TaskSettlement{ToolCalls: 1, Requests: 2, Tokens: 30, Duration: 1500 * time.Millisecond})
 	tr := Transcript{}
 	for _, ev := range []session.SessionEvent{called, started, child} {
 		tr = tr.foldEvent(EventMsg(ev), "parent")
@@ -24,7 +26,7 @@ func TestSubagentTotalReplacesLiveAndRehydrates(t *testing.T) {
 	}
 	tr = tr.foldEvent(EventMsg(settled), "parent")
 	m.Transcript = tr
-	if got := m.renderTranscript(); !strings.Contains(got, "↳ 1 tool call") || strings.Contains(got, "read") {
+	if got := m.renderTranscript(); !strings.Contains(got, "↳ 1 tool call · 2 req · 30 tok · 1.5s") || strings.Contains(got, "read") {
 		t.Fatalf("render = %q", got)
 	}
 	if lines := m.entryLines(); len(lines) < 2 || !strings.Contains(lines[len(lines)-1].line, "1 tool call") {
@@ -60,7 +62,7 @@ func TestSubagentTotalPersistsThroughSQLiteReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	called := session.SessionEvent{Kind: session.KindToolCalled, CallID: "task", ToolName: "task"}
-	settled := session.WithSubagentToolCalls(session.SessionEvent{Kind: session.KindToolSuccess, CallID: "task", ToolName: "task"}, 4)
+	settled := session.WithTaskSettlement(session.SessionEvent{Kind: session.KindToolSuccess, CallID: "task", ToolName: "task"}, tool.TaskSettlement{ToolCalls: 4, Requests: 3, Tokens: 200, Duration: 2 * time.Second})
 	for _, event := range []session.SessionEvent{called, settled} {
 		if _, err := store.AppendEvent(context.Background(), "parent", event); err != nil {
 			t.Fatal(err)
@@ -81,10 +83,20 @@ func TestSubagentTotalPersistsThroughSQLiteReopen(t *testing.T) {
 	}
 	transcript := Transcript{}.replaceEvents(events, "parent")
 	rendered := (Model{Transcript: transcript}).renderTranscript()
-	if !strings.Contains(rendered, "↳ 4 tool calls") {
+	if !strings.Contains(rendered, "↳ 4 tool calls · 3 req · 200 tok · 2s") {
 		t.Fatalf("reopened render = %q", rendered)
 	}
 	if len(transcript.childBatches) != 0 {
 		t.Fatalf("reopened transcript restored live child details: %#v", transcript.childBatches)
+	}
+}
+
+func TestDetachedTaskRendersSupervisionHint(t *testing.T) {
+	called := session.SessionEvent{Kind: session.KindToolCalled, CallID: "task", ToolName: "task"}
+	settled := session.WithTaskDetached(session.SessionEvent{Kind: session.KindToolSuccess, CallID: "task", ToolName: "task"})
+	transcript := Transcript{}.replaceEvents([]session.SessionEvent{called, settled}, "parent")
+	got := (Model{Transcript: transcript}).renderTranscript()
+	if !strings.Contains(got, "background job; use task_status, task_wait, or task_cancel") || strings.Contains(got, "0 tool calls") {
+		t.Fatalf("render = %q", got)
 	}
 }

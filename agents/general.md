@@ -1,7 +1,6 @@
 ---
 name: general
 description: General-purpose subagent for scoped work that does not fit a specialized role. Investigates, edits files, runs commands, verifies the result, and returns a concise evidence-based report.
-model: claude-sonnet-5
 tools: read, grep, glob, edit, write, bash
 ---
 

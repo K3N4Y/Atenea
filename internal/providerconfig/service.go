@@ -200,6 +200,39 @@ func (s *Service) markBuiltIn(providers []ProviderModels) []ProviderModels {
 	return providers
 }
 
+// ResolveModel builds an immutable provider snapshot for model on the active
+// endpoint without persisting or changing the process-wide selection.
+func (s *Service) ResolveModel(ctx context.Context, model string) (llm.Provider, error) {
+	if strings.TrimSpace(model) == "" {
+		return nil, errors.New("role model is empty")
+	}
+	s.mu.RLock()
+	providerID := s.config.Selected.Provider
+	provider, ok := findProvider(s.config, providerID)
+	s.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("active provider %q is not configured", providerID)
+	}
+	apiKey, err := resolveAPIKey(ctx, provider, s.getenv, s.tokens)
+	if err != nil {
+		return nil, err
+	}
+	delegate, err := s.registry.Build(s.buildParams(provider, model, apiKey))
+	if err != nil {
+		return nil, err
+	}
+	return &fixedProvider{snapshot: snapshot(provider, model, delegate)}, nil
+}
+
+type fixedProvider struct{ snapshot llm.ProviderSnapshot }
+
+func (p *fixedProvider) Acquire() llm.ProviderSnapshot { return p.snapshot }
+
+func (p *fixedProvider) Stream(ctx context.Context, request llm.Request) (<-chan llm.Event, error) {
+	request.Model = p.snapshot.Model
+	return p.snapshot.Provider.Stream(ctx, request)
+}
+
 func (s *Service) Select(ctx context.Context, providerID, model string) (Active, error) {
 	if model == "" {
 		return s.Active(), errors.New("model is required")

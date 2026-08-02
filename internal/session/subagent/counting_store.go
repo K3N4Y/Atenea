@@ -11,13 +11,17 @@ import (
 // occurrences. Embedding preserves every other Store operation unchanged.
 type countingStore struct {
 	session.Store
-	total atomic.Int64
+	total    atomic.Int64
+	onChange func(int)
 }
 
 func (s *countingStore) AppendEvent(ctx context.Context, sessionID string, event session.SessionEvent) (session.Seq, error) {
 	seq, err := s.Store.AppendEvent(ctx, sessionID, event)
 	if err == nil && event.Kind == session.KindToolCalled {
-		s.total.Add(1)
+		total := int(s.total.Add(1))
+		if s.onChange != nil {
+			s.onChange(total)
+		}
 	}
 	return seq, err
 }

@@ -3,9 +3,15 @@ package subagent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/google/jsonschema-go/jsonschema"
 
 	"github.com/K3N4Y/atenea/internal/agent"
 	"github.com/K3N4Y/atenea/internal/llm"
@@ -35,6 +41,99 @@ func withDepth(ctx context.Context, d int) context.Context {
 // depthFrom lee la profundidad del ctx; 0 si no hay (el agente raiz).
 func depthFrom(ctx context.Context) int { d, _ := ctx.Value(depthKey{}).(int); return d }
 
+// BudgetError identifies which delegated execution limit was exhausted.
+type BudgetError struct {
+	Kind  string
+	Limit int
+}
+
+func (e *BudgetError) Error() string {
+	return fmt.Sprintf("subagent %s budget exhausted (limit %d)", e.Kind, e.Limit)
+}
+
+// ChildEnvironment is the injectable execution boundary used for isolated worktree jobs.
+type ChildEnvironment struct {
+	Store     session.Store
+	Inbox     session.Inbox
+	Registry  *tool.Registry
+	Workspace string
+	Cleanup   func() error
+	// Discard removes an isolated environment whose run did not complete.
+	Discard func() error
+}
+type EnvironmentResolver func(context.Context, agent.Def) (ChildEnvironment, error)
+type ProviderResolver func(context.Context, agent.Def) (llm.Provider, error)
+
+type taskInput struct {
+	SubagentType  string          `json:"subagent_type"`
+	Prompt        string          `json:"prompt"`
+	OutputSchema  json.RawMessage `json:"output_schema,omitempty"`
+	RequestBudget *int            `json:"request_budget,omitempty"`
+	TimeoutMS     *int            `json:"timeout_ms,omitempty"`
+	TokenBudget   *int            `json:"token_budget,omitempty"`
+	Detached      bool            `json:"detached,omitempty"`
+	Worktree      bool            `json:"worktree,omitempty"`
+}
+type taskUsage struct {
+	requests atomic.Int64
+	tokens   atomic.Int64
+}
+type budgetProvider struct {
+	provider                   llm.Provider
+	requestBudget, tokenBudget int
+	usage                      *taskUsage
+	cancel                     context.CancelFunc
+	exhausted                  atomic.Pointer[BudgetError]
+	onProgress                 func()
+}
+
+func (p *budgetProvider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Event, error) {
+	if p.requestBudget > 0 && int(p.usage.requests.Load()) >= p.requestBudget {
+		err := &BudgetError{Kind: "request", Limit: p.requestBudget}
+		p.exhausted.CompareAndSwap(nil, err)
+		p.cancel()
+		return nil, err
+	}
+	if p.tokenBudget > 0 && int(p.usage.tokens.Load()) >= p.tokenBudget {
+		err := &BudgetError{Kind: "token", Limit: p.tokenBudget}
+		p.exhausted.CompareAndSwap(nil, err)
+		p.cancel()
+		return nil, err
+	}
+	p.usage.requests.Add(1)
+	if p.onProgress != nil {
+		p.onProgress()
+	}
+	in, err := p.provider.Stream(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	out := make(chan llm.Event)
+	go func() {
+		defer close(out)
+		for ev := range in {
+			if ev.Kind == llm.StepEnded && ev.Usage != nil {
+				total := ev.Usage.InputTokens + ev.Usage.OutputTokens + ev.Usage.ReasoningTokens
+				used := p.usage.tokens.Add(int64(total))
+				if p.onProgress != nil {
+					p.onProgress()
+				}
+				if p.tokenBudget > 0 && int(used) > p.tokenBudget {
+					e := &BudgetError{Kind: "token", Limit: p.tokenBudget}
+					p.exhausted.CompareAndSwap(nil, e)
+					p.cancel()
+				}
+			}
+			select {
+			case out <- ev:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out, nil
+}
+
 // TaskTool delega una tarea a un subagente. catalog indexa las defs por nombre;
 // provider y children son las dependencias del runner hijo; nextID genera los IDs
 // de mensaje del hijo (determinista en tests). maxDepth topa la recursion.
@@ -47,6 +146,9 @@ type TaskTool struct {
 	// sem topa la concurrencia de subagentes (nil = sin tope).
 	sem chan struct{}
 
+	providerResolver    ProviderResolver
+	environmentResolver EnvironmentResolver
+	supervisor          *Supervisor
 	// gate and policy propagate the parent's ask-before-run to the child
 	// runner: the policy classifies each of the child's tool calls
 	// (Allow/Ask/Deny) and the gate blocks the asking ones until the user's
@@ -81,11 +183,28 @@ func NewTaskTool(defs []agent.Def, provider llm.Provider, children *tool.Registr
 	for _, d := range defs {
 		m[d.Name] = d
 	}
-	return &TaskTool{catalog: m, provider: provider, children: children, nextID: nextID, maxDepth: defaultMaxDepth, sem: make(chan struct{}, defaultMaxConcurrency)}
+	return &TaskTool{catalog: m, provider: provider, children: children, nextID: nextID, maxDepth: defaultMaxDepth, sem: make(chan struct{}, defaultMaxConcurrency), supervisor: NewSupervisor(nextID)}
 }
 
 // SetMaxDepth fija la profundidad maxima de anidamiento de subagentes.
 func (t *TaskTool) SetMaxDepth(n int) { t.maxDepth = n }
+
+func (t *TaskTool) SetProviderResolver(resolve ProviderResolver) { t.providerResolver = resolve }
+func (t *TaskTool) SetEnvironmentResolver(resolve EnvironmentResolver) {
+	t.environmentResolver = resolve
+}
+
+func (t *TaskTool) SetSupervisor(supervisor *Supervisor) {
+	if supervisor != nil {
+		t.supervisor = supervisor
+	}
+}
+
+// Close cancels and joins jobs owned by this task tool's supervisor.
+func (t *TaskTool) Close() { t.supervisor.Close() }
+
+// SupervisionTools returns the status, wait, and cancel tools sharing this supervisor.
+func (t *TaskTool) SupervisionTools() []tool.Tool { return t.supervisor.tools() }
 
 // SetPermissionGate propagates the parent's ask-before-run to the child
 // runner: policy classifies each tool call (Allow/Ask/Deny) and gate resolves
@@ -156,7 +275,7 @@ func (t *TaskTool) Description() string {
 }
 
 func (*TaskTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"subagent_type":{"type":"string"},"prompt":{"type":"string"}},"required":["subagent_type","prompt"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"subagent_type":{"type":"string"},"prompt":{"type":"string"},"output_schema":{"type":"object"},"request_budget":{"type":"integer","minimum":1},"timeout_ms":{"type":"integer","minimum":1},"token_budget":{"type":"integer","minimum":1},"detached":{"type":"boolean"},"worktree":{"type":"boolean"}},"required":["subagent_type","prompt"]}`)
 }
 
 // Effects: none of its own. A task runs no command and writes no file itself —
@@ -178,91 +297,206 @@ func (*TaskTool) Present(call tool.Call, _ tool.Result) tool.Presentation {
 	return tool.Presentation{Label: "SubAgent", Subject: in.Type}
 }
 
-// Execute parsea {subagent_type, prompt}, busca la def, levanta el subagente hijo
-// (un runner con MemoryStore en memoria) con la entrada como prompt en cola y
-// devuelve su reporte final (el ultimo texto del asistente del hijo).
+// Execute validates the request and either runs synchronously or transfers it
+// to the supervisor-owned detached context.
 func (t *TaskTool) Execute(ctx context.Context, input json.RawMessage) (tool.Result, error) {
-	var in struct {
-		SubagentType string `json:"subagent_type"`
-		Prompt       string `json:"prompt"`
+	var in taskInput
+	dec := json.NewDecoder(strings.NewReader(string(input)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil {
+		return tool.Result{}, fmt.Errorf("subagent: invalid input: %w", err)
 	}
-	if err := json.Unmarshal(input, &in); err != nil {
-		return tool.Result{}, fmt.Errorf("subagent: input invalido: %w", err)
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return tool.Result{}, errors.New("subagent: invalid input: trailing JSON value")
 	}
-
+	for name, value := range map[string]*int{"request_budget": in.RequestBudget, "timeout_ms": in.TimeoutMS, "token_budget": in.TokenBudget} {
+		if value != nil && *value <= 0 {
+			return tool.Result{}, fmt.Errorf("subagent: %s must be greater than zero", name)
+		}
+	}
 	def, ok := t.catalog[in.SubagentType]
 	if !ok {
 		return tool.Result{}, fmt.Errorf("subagent_type %q desconocido. Disponibles: %s", in.SubagentType, t.available())
 	}
+	if in.Worktree && t.environmentResolver == nil {
+		return tool.Result{}, errors.New("subagent: worktree requested but no isolated environment resolver is configured")
+	}
+	if in.Detached {
+		result, err := t.supervisor.start(func(jobCtx context.Context, progress *jobProgress) (string, error) {
+			return t.run(jobCtx, ctx, def, in, progress)
+		})
+		if err != nil {
+			return tool.Result{}, err
+		}
+		if recorder := tool.SettlementRecorderFrom(ctx); recorder != nil {
+			recorder.SetTaskDetached()
+		}
+		return result, nil
+	}
+	report, err := t.run(ctx, ctx, def, in, nil)
+	return tool.Result{Output: report}, err
+}
 
-	// Toma un slot del cap de concurrencia. El slot se mantiene mientras el hijo
-	// corre porque Execute es sincrono (Run es bloqueante). No hay deadlock por
-	// recursion: los built-in no anidan, y un subagente que si anida ya tiene el
-	// cap de recursion (maxDepth) que le quita la tool "task" en el tope.
-	if err := t.acquire(ctx); err != nil {
-		return tool.Result{}, err
+func (t *TaskTool) run(ctx, metadataCtx context.Context, def agent.Def, in taskInput, progress *jobProgress) (report string, err error) {
+	started := time.Now()
+	runCtx, cancel := context.WithCancel(ctx)
+	if in.TimeoutMS != nil {
+		runCtx, cancel = context.WithTimeout(ctx, time.Duration(*in.TimeoutMS)*time.Millisecond)
+	}
+	defer cancel()
+	if err := t.acquire(runCtx); err != nil {
+		if in.TimeoutMS != nil && errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+			return "", &BudgetError{Kind: "timeout_ms", Limit: *in.TimeoutMS}
+		}
+		return "", err
 	}
 	defer t.release()
-
-	memoryStore := session.NewMemoryStore()
-	counting := &countingStore{Store: memoryStore}
+	provider := t.provider
+	if t.providerResolver != nil {
+		var err error
+		provider, err = t.providerResolver(runCtx, def)
+		if err != nil {
+			return "", fmt.Errorf("subagent provider: %w", err)
+		}
+		if provider == nil {
+			provider = t.provider
+		}
+	}
+	env := ChildEnvironment{Store: session.NewMemoryStore(), Inbox: session.NewMemoryInbox(), Registry: t.children}
+	if in.Worktree {
+		var err error
+		env, err = t.environmentResolver(runCtx, def)
+		if err != nil {
+			return "", fmt.Errorf("subagent environment: %w", err)
+		}
+		if env.Cleanup != nil {
+			defer env.Cleanup()
+		}
+	}
+	completed := false
+	if env.Discard != nil {
+		defer func() {
+			if !completed {
+				err = errors.Join(err, env.Discard())
+			}
+		}()
+	}
+	if env.Store == nil || env.Inbox == nil || env.Registry == nil {
+		return "", errors.New("subagent: incomplete child environment")
+	}
+	counting := &countingStore{Store: env.Store}
 	var store session.Store = counting
-	// Always copy the immediate-child total on every exit after the child store
-	// exists, including runner, projection, and cancellation failures.
-	if recorder := tool.SettlementRecorderFrom(ctx); recorder != nil {
-		defer func() { recorder.SetSubagentToolCalls(counting.count()) }()
-	}
-	// The live decorator stays outside counting: counting reflects successful
-	// appends to the child's durable MemoryStore, independent of bus delivery.
 	if t.storeDecorator != nil {
-		store = t.storeDecorator(tool.SessionIDFrom(ctx), tool.CallIDFrom(ctx), store)
+		store = t.storeDecorator(tool.SessionIDFrom(metadataCtx), tool.CallIDFrom(metadataCtx), store)
 	}
-	inbox := session.NewMemoryInbox()
-	childID := t.nextID()
-
+	usage := &taskUsage{}
+	bp := &budgetProvider{provider: provider, usage: usage, cancel: cancel}
+	updateProgress := func() {
+		if progress != nil {
+			progress.set(tool.TaskSettlement{Requests: int(usage.requests.Load()), Tokens: int(usage.tokens.Load()), Duration: time.Since(started), ToolCalls: counting.count()})
+		}
+	}
+	counting.onChange = func(int) { updateProgress() }
+	bp.onProgress = updateProgress
+	if progress != nil {
+		progress.setWorkspace(env.Workspace)
+	}
+	if in.RequestBudget != nil {
+		bp.requestBudget = *in.RequestBudget
+	}
+	if in.TokenBudget != nil {
+		bp.tokenBudget = *in.TokenBudget
+	}
 	perms := tool.Permissions{}
 	for _, name := range def.Tools {
 		perms[name] = true
 	}
-
-	// Cap de recursion: el hijo correra en childDepth. Si esa profundidad ya
-	// alcanza (o pasa) el tope, le quitamos la tool "task" de sus permisos para
-	// que no pueda anidar mas subagentes.
-	depth := depthFrom(ctx)
-	childDepth := depth + 1
+	childDepth := depthFrom(metadataCtx) + 1
 	if childDepth >= t.maxDepth {
 		delete(perms, "task")
 	}
-
-	r := runner.NewRunner(store, inbox, t.provider, t.children, perms, t.nextID)
-	r.SetSystemPrompt(func(string) string { return def.Prompt })
-	// Propagate the parent's ask-before-run: if the subagent invokes a gated
-	// tool, the child runner asks for approval exactly like the main chat
-	// instead of running it blindly. Without a wired gate both stay nil and
-	// the child gates nothing (default).
+	childID := t.nextID()
+	r := runner.NewRunner(store, env.Inbox, bp, env.Registry, perms, t.nextID)
+	systemPrompt := def.Prompt
+	if env.Workspace != "" {
+		systemPrompt += "\n\nYou are working in an isolated Git worktree at " + env.Workspace + ". Include that path in your final report so the parent can inspect or integrate your changes."
+	}
+	if len(in.OutputSchema) > 0 {
+		systemPrompt += "\n\nYour final response must be only JSON that validates against this output schema:\n" + string(in.OutputSchema)
+	}
+	r.SetSystemPrompt(func(string) string { return systemPrompt })
 	if t.gate != nil && t.policy != nil {
 		r.SetPermissionGate(t.gate, t.policy)
 	}
-
-	if err := inbox.Admit(ctx, childID, session.Prompt{Text: in.Prompt}, session.DeliveryQueue); err != nil {
-		return tool.Result{}, err
+	finish := func() {
+		s := tool.TaskSettlement{Requests: int(usage.requests.Load()), Tokens: int(usage.tokens.Load()), Duration: time.Since(started), ToolCalls: counting.count(), Workspace: env.Workspace}
+		if rec := tool.SettlementRecorderFrom(metadataCtx); rec != nil {
+			rec.SetTaskSettlement(s)
+		}
+		if progress != nil {
+			progress.set(s)
+		}
 	}
-	// Propaga la profundidad al hijo: un nieto vera childDepth+1.
-	if err := r.Run(withDepth(ctx, childDepth), childID, false, def.Steps); err != nil {
-		return tool.Result{}, err
+	defer finish()
+	if err := env.Inbox.Admit(runCtx, childID, session.Prompt{Text: in.Prompt}, session.DeliveryQueue); err != nil {
+		return "", err
 	}
-
-	msgs, err := store.Messages(ctx, childID, 0)
+	err = r.Run(withDepth(runCtx, childDepth), childID, false, def.Steps)
+	if exhausted := bp.exhausted.Load(); exhausted != nil {
+		return "", exhausted
+	}
 	if err != nil {
-		return tool.Result{}, err
+		if in.TimeoutMS != nil && (errors.Is(err, context.DeadlineExceeded) || errors.Is(runCtx.Err(), context.DeadlineExceeded)) {
+			return "", &BudgetError{Kind: "timeout_ms", Limit: *in.TimeoutMS}
+		}
+		return "", err
 	}
-	report := ""
+	msgs, err := store.Messages(runCtx, childID, 0)
+	if err != nil {
+		return "", err
+	}
+	report = ""
 	for _, m := range msgs {
 		if m.Role == session.RoleAssistant {
 			report = m.Text
 		}
 	}
-	return tool.Result{Output: report}, nil
+	if len(in.OutputSchema) > 0 {
+		if err := validateReport(in.OutputSchema, report); err != nil {
+			return "", err
+		}
+	}
+	if env.Workspace != "" {
+		if len(in.OutputSchema) > 0 {
+			var result any
+			_ = json.Unmarshal([]byte(report), &result)
+			envelope, _ := json.Marshal(map[string]any{"result": result, "worktree": env.Workspace})
+			report = string(envelope)
+		} else {
+			report += "\n\nWorktree: " + env.Workspace
+		}
+	}
+	completed = true
+	return report, nil
+}
+
+func validateReport(raw json.RawMessage, report string) error {
+	var schema jsonschema.Schema
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		return fmt.Errorf("subagent output schema invalid: %w", err)
+	}
+	resolved, err := schema.Resolve(nil)
+	if err != nil {
+		return fmt.Errorf("subagent output schema invalid: %w", err)
+	}
+	var value any
+	if err := json.Unmarshal([]byte(report), &value); err != nil {
+		return fmt.Errorf("subagent output schema violation: report is not JSON: %w", err)
+	}
+	if err := resolved.Validate(value); err != nil {
+		return fmt.Errorf("subagent output schema violation: %w", err)
+	}
+	return nil
 }
 
 // available devuelve los nombres del catalogo ordenados, para el mensaje de error

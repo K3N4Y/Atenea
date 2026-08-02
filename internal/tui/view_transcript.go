@@ -307,12 +307,22 @@ func (m Model) renderVisibleBlock(ve visibleEntry, width int) string {
 	if ve.entry.kind != entryTool || ve.entry.tool != "task" {
 		return block
 	}
+	if m.childDetached[ve.entry.callID] {
+		return block + "\n  ↳ background job; use task_status, task_wait, or task_cancel"
+	}
 	if total, ok := m.childTotals[ve.entry.callID]; ok {
 		label := "tool calls"
 		if total == 1 {
 			label = "tool call"
 		}
-		return block + "\n  ↳ " + strconv.Itoa(total) + " " + label
+		summary := strconv.Itoa(total) + " " + label
+		if usage, ok := m.childSummaries[ve.entry.callID]; ok {
+			summary += " · " + strconv.Itoa(usage.Requests) + " req · " + strconv.Itoa(usage.Tokens) + " tok · " + usage.Duration.Round(time.Millisecond).String()
+			if usage.Workspace != "" {
+				summary += " · " + usage.Workspace
+			}
+		}
+		return block + "\n  ↳ " + summary
 	}
 	for _, child := range m.childBatches[ve.entry.callID] {
 		p := m.presentationOf(child)

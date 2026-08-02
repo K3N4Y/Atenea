@@ -1,7 +1,6 @@
 ---
 name: tester
 description: Designs and executes behavior-focused verification for scoped changes. Reproduces bugs, adds high-value automated tests when needed, runs relevant quality gates and smoke tests, and reports exact evidence without masking production defects.
-model: claude-sonnet-5
 tools: read, grep, glob, edit, write, bash
 ---
 

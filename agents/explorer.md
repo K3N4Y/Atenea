@@ -1,7 +1,6 @@
 ---
 name: explorer
 description: Read-only codebase explorer. Investigates a scoped question using read/grep/glob and returns a structured YAML report with typed findings, evidence references, confidence levels, and explicit coverage and gaps.
-model: claude-sonnet-5
 tools: read, grep, glob
 ---
 

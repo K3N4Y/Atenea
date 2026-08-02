@@ -820,3 +820,16 @@ func (denyAll) Decide(string, tool.Call) permission.Decision { return permission
 type askAll struct{}
 
 func (askAll) Decide(string, tool.Call) permission.Decision { return permission.Ask }
+
+func TestBuildClosesAssemblyOwnedTaskSupervisor(t *testing.T) {
+	built := buildWith(t, Config{})
+	task, ok := built.Tools.Lookup("task")
+	if !ok {
+		t.Fatal("task tool missing")
+	}
+	built.Close()
+	_, err := task.Execute(context.Background(), json.RawMessage(`{"subagent_type":"general","prompt":"x","detached":true}`))
+	if err == nil || !strings.Contains(err.Error(), "closed") {
+		t.Fatalf("detached start after assembly close err=%v", err)
+	}
+}

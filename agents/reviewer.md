@@ -1,7 +1,6 @@
 ---
 name: reviewer
 description: Reviews scoped code changes for correctness, regressions, security, performance, maintainability, and compliance with the requested behavior. Returns only actionable, evidence-backed findings and explicit verification gaps.
-model: claude-sonnet-5
 tools: read, grep, glob, bash
 ---
 

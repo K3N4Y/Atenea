@@ -1,7 +1,6 @@
 ---
 name: coder
 description: Implements scoped code changes end to end. Studies existing conventions, makes the smallest correct change, updates every affected caller, and verifies behavior with focused tests and an executable smoke test.
-model: claude-sonnet-5
 tools: read, grep, glob, edit, write, bash
 ---
 

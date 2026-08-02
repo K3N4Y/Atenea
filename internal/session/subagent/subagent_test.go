@@ -247,9 +247,11 @@ func TestTaskTool_ChildUsesToolThenReportsFinalText(t *testing.T) {
 type spyProvider struct {
 	toolNames []string
 	depth     int
+	system    string
 }
 
 func (p *spyProvider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Event, error) {
+	p.system = req.System
 	for _, td := range req.Tools {
 		p.toolNames = append(p.toolNames, td.Name)
 	}

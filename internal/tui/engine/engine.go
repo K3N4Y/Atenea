@@ -26,6 +26,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/providerconfig"
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/session/runner"
+	"github.com/K3N4Y/atenea/internal/session/subagent"
 	"github.com/K3N4Y/atenea/internal/tool"
 	"github.com/K3N4Y/atenea/internal/wiring"
 )
@@ -71,6 +72,10 @@ type ModelService interface {
 	Catalog() []providerconfig.ProviderModels
 	Refresh(context.Context) ([]providerconfig.ProviderModels, error)
 	Select(context.Context, string, string) (providerconfig.Active, error)
+}
+
+type RoleModelService interface {
+	ResolveModel(context.Context, string) (llm.Provider, error)
 }
 
 type ModelsRefreshedMsg struct {
@@ -127,8 +132,9 @@ type Engine struct {
 	// force. mcp is the engine's manager of local (stdio) MCP servers; the declared
 	// servers come from <root>/.mcp.json and are re-read on every listing, so an edit
 	// to the file shows up without a restart.
-	wiring wiring.Config
-	mcp    *mcpclient.Manager
+	wiring         wiring.Config
+	taskSupervisor *subagent.Supervisor
+	mcp            *mcpclient.Manager
 
 	// root and store mirror a.workspace.Root()/a.store in the Wails app: the workspace
 	// root and the store DECORATED with EmittingStore (the same one wiring.Build
@@ -202,23 +208,36 @@ func New(cfg Config) *Engine {
 		}
 		return cfg.Models.Active().Model
 	})
+	ids := wiring.NewIDGen()
+	e.taskSupervisor = subagent.NewSupervisor(ids)
+	var roleProvider subagent.ProviderResolver
+	if models, ok := cfg.Models.(RoleModelService); ok {
+		roleProvider = func(ctx context.Context, def agent.Def) (llm.Provider, error) {
+			if def.Model == "" {
+				return nil, nil
+			}
+			return models.ResolveModel(ctx, def.Model)
+		}
+	}
 	e.wiring = wiring.Config{
-		Root:          cfg.Root,
-		Provider:      cfg.Provider,
-		Store:         e.store,
-		Inbox:         e.inbox,
-		Gate:          e.gate,
-		Grants:        e.grants,
-		AutoAccept:    e.autoAccept,
-		Yolo:          e.yolo,
-		Reasoning:     func() *llm.ReasoningPreference { return e.reasoning.Get() },
-		Snaps:         sitting.Snapshots,
-		Bus:           bus,
-		ChildActivity: true,
-		LocalPrompt:   e.localModels,
-		NextID:        wiring.NewIDGen(),
-		Mode:          e.agent.Mode,
-		LSP:           true,
+		Root:           cfg.Root,
+		Provider:       cfg.Provider,
+		Store:          e.store,
+		Inbox:          e.inbox,
+		Gate:           e.gate,
+		Grants:         e.grants,
+		AutoAccept:     e.autoAccept,
+		Yolo:           e.yolo,
+		Reasoning:      func() *llm.ReasoningPreference { return e.reasoning.Get() },
+		Snaps:          sitting.Snapshots,
+		Bus:            bus,
+		ChildActivity:  true,
+		LocalPrompt:    e.localModels,
+		NextID:         ids,
+		Mode:           e.agent.Mode,
+		LSP:            true,
+		RoleProvider:   roleProvider,
+		TaskSupervisor: e.taskSupervisor,
 	}
 	e.rewire()
 	if configs, err := mcpclient.LoadConfig(cfg.Root); err == nil {
@@ -878,6 +897,7 @@ func (e *Engine) Shutdown(ctx context.Context) error {
 		e.shuttingDown = true
 		e.cancel()
 		e.agent.StopAll()
+		e.taskSupervisor.Close()
 		e.lifecycleMu.Unlock()
 		go func() {
 			e.agent.Wait()

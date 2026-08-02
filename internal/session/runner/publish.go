@@ -261,11 +261,13 @@ func (p *Publisher) decorateTaskSettlement(callID string, event session.SessionE
 	if p.tools[callID] != "task" {
 		return event
 	}
-	total := 0
 	if recorder := p.recorders[callID]; recorder != nil {
-		total = recorder.SubagentToolCalls()
+		if recorder.TaskDetached() {
+			return session.WithTaskDetached(event)
+		}
+		return session.WithTaskSettlement(event, recorder.TaskSettlement())
 	}
-	return session.WithSubagentToolCalls(event, total)
+	return session.WithSubagentToolCalls(event, 0)
 }
 
 // emit fija el SessionID del turno y persiste el evento. Aisla el unico punto que
