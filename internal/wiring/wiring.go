@@ -101,6 +101,9 @@ type Config struct {
 	// PersistentGrants are approvals loaded from durable configuration. They are
 	// composed before session grants, and can only turn Ask into Allow.
 	PersistentGrants []permission.Rule
+	// LSP enables the native code-intelligence tool for hosts that own its
+	// process lifecycle. The standalone CLI and TUI enable it; false omits it.
+	LSP bool
 
 	// OutputLimit caps, in bytes, how much of a tool call's output reaches the
 	// model. The whole output is always kept for the UI to expand
@@ -276,6 +279,14 @@ type Built struct {
 	// so what the agent gates stays answerable from outside the assembly instead of
 	// only from a turn.
 	Policy permission.Policy
+	close  func()
+}
+
+// Close releases process-backed tools owned by this assembly.
+func (b Built) Close() {
+	if b.close != nil {
+		b.close()
+	}
 }
 
 // Build assembles the whole wiring anchored at cfg.Root: the file and exec tools,
@@ -348,8 +359,16 @@ func Build(cfg Config) Built {
 		tool.NewBashTool(root), tool.NewPresentPlanTool(root), tool.NewSkillTool(skills), taskTool,
 		tool.NewWebFetchTool(cfg.Provider), tool.TodoWriteTool{},
 	}
+	var lsp *tool.LSPTool
+	if cfg.LSP {
+		lsp = tool.NewLSPTool(root)
+		registryTools = append(registryTools, lsp)
+	}
 	registryTools = append(registryTools, cfg.MCPTools...)
 	registry := tool.NewRegistry(tool.NewOutputStore(cfg.OutputLimit), registryTools...)
+	if lsp != nil {
+		registry.Use(tool.LSPDiagnosticsMiddleware(lsp))
+	}
 	// The effective ask-before-run policy: cfg.Policy classifies over this
 	// assembly's registry — by default from what each tool declares about itself
 	// (permission.EffectsPolicy) rather than from a list of names kept here — with
@@ -396,7 +415,11 @@ func Build(cfg Config) Built {
 	r.SetPlanMode(planSystemPromptBuilder(root, skillsBlock, cfg.LocalPrompt),
 		cfg.PlanMode.permissions())
 
-	return Built{Runner: r, Glob: glob, Commands: commands, Tools: registry, Policy: policy}
+	return Built{Runner: r, Glob: glob, Commands: commands, Tools: registry, Policy: policy, close: func() {
+		if lsp != nil {
+			_ = lsp.Close()
+		}
+	}}
 }
 
 // promptSetup anchors at root the shared preparation of the system prompt: it

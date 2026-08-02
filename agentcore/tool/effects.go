@@ -58,6 +58,14 @@ type Declaring interface {
 	Effects() Effects
 }
 
+// CallDeclaring optionally refines a tool's effects for one call. Deep tools
+// that combine read-only and mutating operations use it to keep harmless calls
+// unattended without understating the mutating operation.
+type CallDeclaring interface {
+	Tool
+	CallEffects(Call) Effects
+}
+
 // EffectsOf returns what t declares its calls affect, and whether t declared
 // anything at all. It is the one place a host should resolve the optional
 // interface, so "undeclared" and "declares nothing" never get flattened into the
@@ -68,6 +76,15 @@ func EffectsOf(t Tool) (Effects, bool) {
 		return NoEffects, false
 	}
 	return d.Effects(), true
+}
+
+// EffectsForCall returns the most specific effects t declares for call. A
+// per-call declaration takes precedence over the tool-wide declaration.
+func EffectsForCall(t Tool, call Call) (Effects, bool) {
+	if d, ok := t.(CallDeclaring); ok {
+		return d.CallEffects(call), true
+	}
+	return EffectsOf(t)
 }
 
 // Any reports whether e includes at least one of the flags in of. It is the

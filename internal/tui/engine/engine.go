@@ -118,9 +118,10 @@ type Engine struct {
 	cancel     context.CancelFunc
 
 	// runner, glob and tools are the mutable pieces of the assembly: rewire (on an MCP connect or disconnect) replaces them, so they are read under mu. glob feeds the composer's @-menu of files (the mirror of App.ListProjectFiles); tools is the catalog the TUI asks about a tool it only knows by name.
-	runner *runner.Runner
-	glob   *tool.GlobTool
-	tools  tool.Catalog
+	runner   *runner.Runner
+	glob     *tool.GlobTool
+	tools    tool.Catalog
+	assembly wiring.Built
 
 	// wiring is the base config of the assembly; rewire reuses it with the MCPTools in
 	// force. mcp is the engine's manager of local (stdio) MCP servers; the declared
@@ -217,6 +218,7 @@ func New(cfg Config) *Engine {
 		LocalPrompt:   e.localModels,
 		NextID:        wiring.NewIDGen(),
 		Mode:          e.agent.Mode,
+		LSP:           true,
 	}
 	e.rewire()
 	if configs, err := mcpclient.LoadConfig(cfg.Root); err == nil {
@@ -236,6 +238,8 @@ func (e *Engine) rewire() {
 	built := wiring.Build(cfg)
 	e.lifecycleMu.Lock()
 	e.mu.Lock()
+	previous := e.assembly
+	e.assembly = built
 	e.runner = built.Runner
 	e.glob = built.Glob
 	e.tools = built.Tools
@@ -250,6 +254,7 @@ func (e *Engine) rewire() {
 		commandSet = command.New(localCommands(e.yolo.Authorized()), e.mcp.Mentions()...)
 	}
 	e.agent.Configure(built.Runner, commandSet)
+	previous.Close()
 	e.lifecycleMu.Unlock()
 }
 
@@ -879,6 +884,10 @@ func (e *Engine) Shutdown(ctx context.Context) error {
 			e.compactions.Wait()
 			// With the runs already stopped, closing the MCPs kills their subprocesses.
 			e.mcp.Close()
+			e.mu.Lock()
+			e.assembly.Close()
+			e.assembly = wiring.Built{}
+			e.mu.Unlock()
 			close(e.shutdownDone)
 		}()
 	})

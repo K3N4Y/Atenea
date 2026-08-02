@@ -207,7 +207,9 @@ func execute(env Env, t turn) int {
 		Policy:           refused.over(t.permissions.policy),
 		MCPTools:         mcp.Tools(),
 		PersistentGrants: mcp.PermissionRules(),
+		LSP:              true,
 	})
+	defer built.Close()
 	commands := append(built.Commands.List(), mcp.Commands()...)
 	h.Agent.Configure(built.Runner, composer.New(commands, mcp.Mentions()...))
 	out.attach(newSink(t.format, env.Stdout, env.Stderr, built.Tools))

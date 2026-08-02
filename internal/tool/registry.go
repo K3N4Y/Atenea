@@ -16,9 +16,9 @@ import (
 // allowed tools and safe to call concurrently.
 type SettleFunc func(ctx context.Context, call Call) (Result, error)
 
-// Middleware decorates tool settlement. Registry.Materialize applies the
-// permission gate, input repair, and output cap first, followed by extensions
-// in registration order.
+// Middleware decorates tool settlement. Registry.Materialize repairs input,
+// applies the permission gate to exactly what will execute, caps output, then
+// applies extensions in registration order.
 type Middleware func(next SettleFunc) SettleFunc
 
 // PermissionRequester publishes an ask-before-run request and waits for its
@@ -153,8 +153,8 @@ func (r *Registry) Materialize(perms Permissions) Materialized {
 		return t.Execute(ctx, call.Input)
 	}
 	middlewares := []Middleware{
-		permissionMiddleware(gate, policy),
 		repairMiddleware(allowed),
+		permissionMiddleware(gate, policy),
 		outputMiddleware(r.outputs),
 	}
 	middlewares = append(middlewares, extensions...)

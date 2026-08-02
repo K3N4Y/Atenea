@@ -167,6 +167,14 @@ func TestBuiltins_Contract(t *testing.T) {
 			}
 		}},
 
+		{"lsp", func(t *testing.T) tooltest.Subject {
+			root := workspaceWithFile(t, "main.go", "package main\n")
+			return tooltest.Subject{
+				Tool:  testLSPTool(t, root),
+				Input: input(t, map[string]any{"operation": "diagnostics", "path": "main.go"}),
+			}
+		}},
+
 		{"web_fetch", func(t *testing.T) tooltest.Subject {
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")

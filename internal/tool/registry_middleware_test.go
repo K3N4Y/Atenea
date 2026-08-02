@@ -77,12 +77,14 @@ func TestRegistry_MaterializedMiddlewareSnapshotIsStable(t *testing.T) {
 	}
 }
 
-func TestRegistry_PermissionStopsBeforeRepairWhenRequesterIsMissing(t *testing.T) {
-	var input json.RawMessage
-	registry := NewRegistry(NewOutputStore(0), recorderTool{
-		name: "lister", schema: listerSchema, got: &input, out: "tool",
+func TestRegistry_RepairsBeforePermissionClassification(t *testing.T) {
+	var classified json.RawMessage
+	policy := policyFunc(func(_ string, call contracttool.Call) permission.Decision {
+		classified = append(classified[:0], call.Input...)
+		return permission.Ask
 	})
-	registry.SetPermissionGate(unusedGate{}, askingPolicy{})
+	registry := NewRegistry(NewOutputStore(0), recorderTool{name: "lister", schema: listerSchema})
+	registry.SetPermissionGate(unusedGate{}, policy)
 
 	_, err := registry.Materialize(Permissions{"lister": true}).Settle(
 		context.Background(),
@@ -91,7 +93,42 @@ func TestRegistry_PermissionStopsBeforeRepairWhenRequesterIsMissing(t *testing.T
 	if !errors.Is(err, ErrPermissionUnresolved) {
 		t.Fatalf("Settle error = %v, want ErrPermissionUnresolved", err)
 	}
-	if input != nil {
-		t.Fatalf("tool executed with %s before permission was resolved", input)
+	if string(classified) != `{"items":["a"]}` {
+		t.Fatalf("classified input = %s, want repaired input", classified)
 	}
+}
+
+func TestRegistry_RepairableLSPRenameCannotBypassPermission(t *testing.T) {
+	lsp := NewLSPTool(t.TempDir())
+	started := false
+	lsp.commandFor = func(string) ([]string, error) {
+		started = true
+		return nil, errors.New("must not start")
+	}
+	registry := NewRegistry(NewOutputStore(0), lsp)
+	registry.SetPermissionGate(unusedGate{}, policyFunc(func(_ string, call contracttool.Call) permission.Decision {
+		registered, _ := registry.Lookup(call.Name)
+		effects, _ := EffectsForCall(registered, call)
+		if effects == WritesFiles {
+			return permission.Ask
+		}
+		return permission.Allow
+	}))
+
+	_, err := registry.Materialize(Permissions{"lsp": true}).Settle(context.Background(), Call{
+		ID: "rename", Name: "lsp",
+		Input: json.RawMessage(`{"operation":"rename","path":"x.go","line":"1","column":"1","new_name":"renamed"}`),
+	})
+	if !errors.Is(err, ErrPermissionUnresolved) {
+		t.Fatalf("Settle error = %v, want permission before execution", err)
+	}
+	if started {
+		t.Fatal("language server started before rename permission")
+	}
+}
+
+type policyFunc func(string, contracttool.Call) permission.Decision
+
+func (f policyFunc) Decide(sessionID string, call contracttool.Call) permission.Decision {
+	return f(sessionID, call)
 }

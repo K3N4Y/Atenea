@@ -24,6 +24,9 @@
 //   - glob finds files by ripgrep pattern and returns workspace-relative paths;
 //     grep searches content and returns lines in hashline format so an edit can
 //     be chained onto the result.
+//   - lsp maintains installed language servers lazily for diagnostics,
+//     navigation, symbols and semantic rename; successful writes and edits ask
+//     the same instance for diagnostics.
 //   - bash runs a command per call with bash -c (no persistent session: cwd and
 //     env do not survive between calls), combines stdout and stderr, applies a
 //     tiered timeout (fast by default, slow with slow_ok), kills the process

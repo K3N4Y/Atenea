@@ -31,6 +31,15 @@ type declaringTool struct {
 
 func (d declaringTool) Effects() tool.Effects { return d.effects }
 
+type callDeclaringTool struct{ declaringTool }
+
+func (d callDeclaringTool) CallEffects(call tool.Call) tool.Effects {
+	if string(call.Input) == `{"write":true}` {
+		return tool.WritesFiles
+	}
+	return tool.NoEffects
+}
+
 // grantableTool declares its effects and offers a grant. grantable false is the
 // tool that refuses to summarize this particular input.
 type grantableTool struct {
@@ -118,6 +127,16 @@ func TestEffectsPolicy_AsksForDeclaredEffects(t *testing.T) {
 		if got := p.Decide("s1", tool.Call{Name: tc.name}); got != tc.want {
 			t.Errorf("Decide(%q) = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+func TestEffectsPolicy_UsesPerCallEffects(t *testing.T) {
+	p := NewEffectsPolicy(catalog{"deep": callDeclaringTool{declaring("deep", tool.NoEffects)}})
+	if got := p.Decide("s1", tool.Call{Name: "deep", Input: json.RawMessage(`{"query":true}`)}); got != Allow {
+		t.Fatalf("read-only call = %v, want Allow", got)
+	}
+	if got := p.Decide("s1", tool.Call{Name: "deep", Input: json.RawMessage(`{"write":true}`)}); got != Ask {
+		t.Fatalf("mutating call = %v, want Ask", got)
 	}
 }
 

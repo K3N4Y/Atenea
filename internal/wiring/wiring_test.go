@@ -104,7 +104,26 @@ func buildWithHome(t *testing.T, cfg Config, home string) Built {
 	if cfg.NextID == nil {
 		cfg.NextID = func() string { return "id" }
 	}
+	cfg.LSP = true
 	return Build(cfg)
+}
+
+func TestBuild_LSPIsOptIn(t *testing.T) {
+	without := Build(Config{
+		Root: t.TempDir(), Provider: llm.NewFakeProvider(llm.Event{Kind: llm.StepEnded}),
+		Store: session.NewMemoryStore(), Inbox: session.NewMemoryInbox(),
+		Gate: permission.NewMemoryGate(), Snaps: tool.NewSessionSnapshots(),
+		Bus: event.NewBus(func(string, ...interface{}) {}), NextID: func() string { return "id" },
+	})
+	without.Close()
+	if _, ok := without.Tools.Lookup("lsp"); ok {
+		t.Fatal("zero config registered lsp")
+	}
+	with := buildWith(t, Config{})
+	with.Close()
+	if _, ok := with.Tools.Lookup("lsp"); !ok {
+		t.Fatal("LSP-enabled host did not register lsp")
+	}
 }
 
 func TestBuild_YoloPolicySurvivesRewireAndClassifiesChildSessionsIdentically(t *testing.T) {
@@ -202,6 +221,7 @@ func TestBuild_PolicyGatesShellFSAndNetwork(t *testing.T) {
 		{"grep", permission.Allow},
 		{"skill", permission.Allow},
 		{"todo_write", permission.Allow},
+		{"lsp", permission.Allow},
 		{"present_plan", permission.Allow},
 		{"task", permission.Allow},
 	}
@@ -209,6 +229,10 @@ func TestBuild_PolicyGatesShellFSAndNetwork(t *testing.T) {
 		if got := policy.Decide("s1", tool.Call{Name: tc.name}); got != tc.want {
 			t.Errorf("policy.Decide(%q) = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+	rename := tool.Call{Name: "lsp", Input: json.RawMessage(`{"operation":"rename","path":"x.go","line":1,"column":1,"new_name":"renamed"}`)}
+	if got := policy.Decide("s1", rename); got != permission.Ask {
+		t.Errorf("policy.Decide(lsp rename) = %v, want %v", got, permission.Ask)
 	}
 }
 
@@ -660,7 +684,7 @@ func TestBuild_ZeroPlanModeAnnouncesTheDefaultSurface(t *testing.T) {
 	if slices.Contains(normal, "present_plan") {
 		t.Errorf("normal mode announced present_plan; it is plan mode's alone. tools = %v", normal)
 	}
-	for _, name := range []string{"read", "write", "edit", "bash", "glob", "grep", "skill", "task", "todo_write", "web_fetch"} {
+	for _, name := range []string{"read", "write", "edit", "bash", "glob", "grep", "lsp", "skill", "task", "todo_write", "web_fetch"} {
 		if !slices.Contains(normal, name) {
 			t.Errorf("normal mode did not announce %q; registration is what puts a tool there. tools = %v", name, normal)
 		}

@@ -17,6 +17,7 @@ type (
 	Result           = contract.Result
 	Effects          = contract.Effects
 	Declaring        = contract.Declaring
+	CallDeclaring    = contract.CallDeclaring
 	Presentation     = contract.Presentation
 	PresentationKind = contract.PresentationKind
 	Presenter        = contract.Presenter
@@ -33,10 +34,12 @@ const (
 	FileCreation = contract.FileCreation
 )
 
-// EffectsOf and PresentationOf resolve the optional capability interfaces. They
-// are the one place "the tool said nothing" is told apart from "the tool said
-// nothing of substance"; see the contract for why a host must not flatten them.
+// EffectsOf, EffectsForCall and PresentationOf resolve optional capability
+// interfaces. They are the one place "the tool said nothing" is told apart
+// from "the tool said nothing of substance"; see the contract for why a host
+// must not flatten them.
 var (
 	EffectsOf      = contract.EffectsOf
+	EffectsForCall = contract.EffectsForCall
 	PresentationOf = contract.PresentationOf
 )

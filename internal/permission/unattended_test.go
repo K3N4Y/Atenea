@@ -82,6 +82,23 @@ func TestUnattendedPolicy_BudgetIsASubsetTest(t *testing.T) {
 	}
 }
 
+func TestUnattendedPolicy_UsesPerCallEffects(t *testing.T) {
+	c := catalog{"deep": callDeclaringTool{declaring("deep", tool.NoEffects)}}
+	readOnly := tool.Call{Name: "deep"}
+	mutating := tool.Call{Name: "deep", Input: []byte(`{"write":true}`)}
+
+	strict := NewUnattendedPolicy(c, tool.NoEffects)
+	if got := strict.Decide("s1", readOnly); got != Allow {
+		t.Fatalf("read-only call = %v, want Allow", got)
+	}
+	if got := strict.Decide("s1", mutating); got != Deny {
+		t.Fatalf("mutating call = %v, want Deny", got)
+	}
+	if got := NewUnattendedPolicy(c, tool.WritesFiles).Decide("s1", mutating); got != Allow {
+		t.Fatalf("mutating call with write budget = %v, want Allow", got)
+	}
+}
+
 // TestUnattendedPolicy_UndeclaredToolIsDeniedByEveryBudget is the security
 // property that makes the allowlist mode worth having next to auto: even with
 // every effect this build knows allowed, a tool that says nothing about itself is

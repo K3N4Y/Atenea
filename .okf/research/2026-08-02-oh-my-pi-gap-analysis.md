@@ -120,6 +120,8 @@ Why first: without this, “as good as oh-my-pi” reduces to feature counting. 
 
 Start with one deep `lsp` tool rather than separate shallow tools. It should expose diagnostics, definitions/references, symbols, and rename, and it should feed diagnostics after writes/edits. Reuse installed language servers instead of implementing language semantics.
 
+Status: implemented for the Go core, standalone CLI, and TUI. The unified `lsp` tool lazily reuses installed language servers for diagnostics, definitions, references, document/workspace symbols, and semantic rename. Successful `write` and `edit` calls append available diagnostics. Rename is classified as a file-writing operation per call, validates all workspace edits before applying them, and rolls back multi-file commit failures. Supported server mappings are gopls, rust-analyzer, typescript-language-server, pyright-langserver, and clangd.
+
 Why second: this changes the agent from text manipulation to code-aware iteration and benefits almost every nontrivial coding task. DAP and AST mutation can follow only if evals show additional value.
 
 ### P2 — Complete delegated execution

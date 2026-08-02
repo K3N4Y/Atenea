@@ -77,7 +77,7 @@ func (p UnattendedPolicy) Decide(_ string, call tool.Call) Decision {
 	if !ok {
 		return Allow
 	}
-	effects, declared := tool.EffectsOf(t)
+	effects, declared := tool.EffectsForCall(t, call)
 	if !declared {
 		return Deny
 	}
