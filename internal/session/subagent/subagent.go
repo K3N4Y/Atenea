@@ -204,12 +204,16 @@ func (t *TaskTool) Execute(ctx context.Context, input json.RawMessage) (tool.Res
 	}
 	defer t.release()
 
-	var store session.Store = session.NewMemoryStore()
-	// Decora el store del hijo (en produccion, el EmittingStore) para que sus eventos
-	// de permiso lleguen al bus en el canal del padre; asi la UI ve el
-	// Tool.Permission.Requested del hijo y puede aprobar/denegar. parentSessionID sale
-	// del ctx de Execute (el runner padre lo anota via tool.WithSessionID). Sin
-	// decorator queda el MemoryStore aislado.
+	memoryStore := session.NewMemoryStore()
+	counting := &countingStore{Store: memoryStore}
+	var store session.Store = counting
+	// Always copy the immediate-child total on every exit after the child store
+	// exists, including runner, projection, and cancellation failures.
+	if recorder := tool.SettlementRecorderFrom(ctx); recorder != nil {
+		defer func() { recorder.SetSubagentToolCalls(counting.count()) }()
+	}
+	// The live decorator stays outside counting: counting reflects successful
+	// appends to the child's durable MemoryStore, independent of bus delivery.
 	if t.storeDecorator != nil {
 		store = t.storeDecorator(tool.SessionIDFrom(ctx), tool.CallIDFrom(ctx), store)
 	}

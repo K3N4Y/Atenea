@@ -1,6 +1,6 @@
 ---
 updated_at: 2026-08-01
-summary: TUI transcript activity hierarchy, including Bash details and live subagent tool batches.
+summary: TUI transcript activity hierarchy, including live subagent tool batches and durable completed totals.
 status: implemented
 ---
 
@@ -98,13 +98,18 @@ viewport content line by line to map mouse clicks back to entries.
   stay in provider call order and independently show running, success, or
   failure through the normal tool presentation. The first tool call in a later
   tool-bearing turn replaces the complete prior batch; a text-only turn does
-  not erase it, and parent task settlement leaves the final batch visible.
-  Concurrent children are anchored by the parent task call ID and their own
-  session IDs, so colliding child call IDs cannot cross-settle. This projection
-  is bus-only and ephemeral: reopening a session restores the durable parent
-  task row but not its child batch. Only the TUI opts into these activity
-  events; the Vue/Desktop transcript remains unchanged. Nested permission
-  requests still surface as their own `?` rows keyed by child `SessionID`.
+  not erase it. When the parent task succeeds or fails, the live rows are
+  replaced by one `↳ 0 tool calls`, `↳ 1 tool call`, or `↳ N tool calls` row.
+  The total counts every direct `Tool.Called` occurrence in that child,
+  including repeats and a direct nested `task`, but not tools used inside its
+  descendants. Concurrent children are anchored by the parent task call ID and
+  their own session IDs, so colliding child call IDs cannot cross-settle. Live
+  rows remain bus-only and ephemeral; only the integer total is stored on the
+  durable parent settlement, so reopening restores the total without child
+  names, inputs, outputs, or errors. Only the TUI opts into live child activity,
+  and the Vue/Desktop transcript ignores the private total metadata. Nested
+  permission requests still surface as their own `?` rows keyed by child
+  `SessionID`.
 - Permission (`entryPermission`): `? <tool> <summarized input> (allow/deny)`.
 - Plan approval (`entryPlanApproval`): the same `?` grammar with `plan` as the
   name and `presented` as the summary, plus the resolving suffix
@@ -128,8 +133,11 @@ convention.
 
 ## Tests
 
-`internal/tui/model_test.go` and `internal/tui/transcript_test.go` cover the
-rendered and pure-projection contracts: lifecycle markers, compact grouping,
-diff stats, permission/error joins, click-target parity, ordered parallel child
-calls, out-of-order settlement, latest-batch replacement, colliding child call
-IDs, spinner state, and clearing ephemeral activity during durable rehydration.
+`internal/tui/model_test.go`, `internal/tui/transcript_test.go`, and
+`internal/tui/subagent_totals_test.go` cover the rendered and pure-projection
+contracts: lifecycle markers, compact grouping, diff stats, permission/error
+joins, click-target parity, ordered parallel child calls, out-of-order
+settlement, latest-batch replacement, colliding child call IDs, spinner state,
+0/1/N totals on success and failure, live-to-final replacement, and SQLite
+close/reopen restoration without child details. Runner tests cover denied,
+final-turn, unresolved, provider-executed, and interrupted task settlements.

@@ -7,6 +7,7 @@ import (
 
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/tool"
 )
 
 // eventAppender es lo unico que el Publisher necesita del Store: agregar eventos
@@ -31,13 +32,14 @@ type Publisher struct {
 	asstMsgID string // assistantMessageID del turno
 
 	mu                   sync.Mutex
-	text                 strings.Builder   // buffer del bloque de texto en curso
-	assistantText        strings.Builder   // texto del assistant acumulado del turno (se materializa en Step.Ended)
-	reason               strings.Builder   // buffer del bloque de razonamiento en curso
-	input                map[string][]byte // input JSON acumulado por callID
-	tools                map[string]string // callID -> toolName (mapa de tool calls del turno)
-	order                []string          // orden de Tool.Called del turno
-	settled              map[string]bool   // callID -> ya tiene Tool.Success/Tool.Failed
+	text                 strings.Builder                     // buffer del bloque de texto en curso
+	assistantText        strings.Builder                     // texto del assistant acumulado del turno (se materializa en Step.Ended)
+	reason               strings.Builder                     // buffer del bloque de razonamiento en curso
+	input                map[string][]byte                   // input JSON acumulado por callID
+	tools                map[string]string                   // callID -> toolName (mapa de tool calls del turno)
+	order                []string                            // orden de Tool.Called del turno
+	settled              map[string]bool                     // callID -> ya tiene Tool.Success/Tool.Failed
+	recorders            map[string]*tool.SettlementRecorder // callID -> private task settlement data
 	estimatedInputTokens int
 }
 
@@ -52,6 +54,7 @@ func NewPublisher(store eventAppender, sessionID, assistantMessageID string, est
 		input:                make(map[string][]byte),
 		tools:                make(map[string]string),
 		settled:              make(map[string]bool),
+		recorders:            make(map[string]*tool.SettlementRecorder),
 		estimatedInputTokens: estimatedInputTokens,
 	}
 }
@@ -167,6 +170,14 @@ func (p *Publisher) ToolPermissionRequested(ctx context.Context, callID string) 
 	})
 }
 
+// RegisterSettlementRecorder associates private execution data with one local
+// call. Registration and settlement share the publisher lock.
+func (p *Publisher) RegisterSettlementRecorder(callID string, recorder *tool.SettlementRecorder) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.recorders[callID] = recorder
+}
+
 // ToolSuccess publica el resultado de una tool local asentada: persiste un
 // Tool.Success con el output acotado (lo que vera el modelo) y materializa un
 // Message{Role: tool, ID: callID} para que el resultado entre en la proyeccion y
@@ -179,14 +190,12 @@ func (p *Publisher) ToolSuccess(ctx context.Context, callID, output, diff string
 	if p.settled[callID] {
 		return nil
 	}
-	if err := p.emit(ctx, session.SessionEvent{
-		Kind:     session.KindToolSuccess,
-		CallID:   callID,
-		ToolName: p.tools[callID],
-		Text:     output,
-		Diff:     diff,
-		Message:  &session.Message{ID: callID, Role: session.RoleTool, Text: output, ToolCallID: callID},
-	}); err != nil {
+	event := session.SessionEvent{
+		Kind: session.KindToolSuccess, CallID: callID, ToolName: p.tools[callID],
+		Text: output, Diff: diff,
+		Message: &session.Message{ID: callID, Role: session.RoleTool, Text: output, ToolCallID: callID},
+	}
+	if err := p.emit(ctx, p.decorateTaskSettlement(callID, event)); err != nil {
 		return err
 	}
 	p.settled[callID] = true
@@ -237,17 +246,26 @@ func (p *Publisher) failTool(ctx context.Context, callID string, cause error) er
 		return nil
 	}
 	msg := cause.Error()
-	if err := p.emit(ctx, session.SessionEvent{
-		Kind:     session.KindToolFailed,
-		CallID:   callID,
-		ToolName: p.tools[callID],
-		Error:    msg,
-		Message:  &session.Message{ID: callID, Role: session.RoleTool, Text: msg, ToolCallID: callID, IsError: true},
-	}); err != nil {
+	event := session.SessionEvent{
+		Kind: session.KindToolFailed, CallID: callID, ToolName: p.tools[callID], Error: msg,
+		Message: &session.Message{ID: callID, Role: session.RoleTool, Text: msg, ToolCallID: callID, IsError: true},
+	}
+	if err := p.emit(ctx, p.decorateTaskSettlement(callID, event)); err != nil {
 		return err
 	}
 	p.settled[callID] = true
 	return nil
+}
+
+func (p *Publisher) decorateTaskSettlement(callID string, event session.SessionEvent) session.SessionEvent {
+	if p.tools[callID] != "task" {
+		return event
+	}
+	total := 0
+	if recorder := p.recorders[callID]; recorder != nil {
+		total = recorder.SubagentToolCalls()
+	}
+	return session.WithSubagentToolCalls(event, total)
 }
 
 // emit fija el SessionID del turno y persiste el evento. Aisla el unico punto que

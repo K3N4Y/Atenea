@@ -100,13 +100,17 @@ func (r *Runner) failInterruptedTools(ctx context.Context, sessionID string) err
 		return err
 	}
 	for _, p := range pending {
-		if _, err := r.store.AppendEvent(ctx, sessionID, session.SessionEvent{
+		event := session.SessionEvent{
 			Kind:     session.KindToolFailed,
 			CallID:   p.CallID,
 			ToolName: p.ToolName,
 			Error:    interruptedToolMessage,
 			Message:  &session.Message{ID: p.CallID, Role: session.RoleTool, Text: interruptedToolMessage},
-		}); err != nil {
+		}
+		if p.ToolName == "task" {
+			event = session.WithSubagentToolCalls(event, 0)
+		}
+		if _, err := r.store.AppendEvent(ctx, sessionID, event); err != nil {
 			return err
 		}
 	}

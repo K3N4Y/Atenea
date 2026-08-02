@@ -52,6 +52,7 @@ type Transcript struct {
 	// scheduling (revealTick, which produces a tea.Cmd) stays near Update.
 	revealing       bool
 	childBatches    map[string][]entry
+	childTotals     map[string]int
 	childCandidates map[string]childCandidate
 }
 type childCandidate struct {
@@ -130,8 +131,10 @@ func (t Transcript) foldEvent(ev EventMsg, sessionID string) Transcript {
 		})
 	case session.KindToolSuccess:
 		t = t.settleTool(ev.CallID, ev.SessionID, toolOK, "", ev.Text, ev.Diff)
+		t = t.settleChildTotal(ev)
 	case session.KindToolFailed:
 		t = t.settleTool(ev.CallID, ev.SessionID, toolFailed, ev.Error, "", "")
+		t = t.settleChildTotal(ev)
 	case session.KindToolPermissionRequested:
 		input := string(ev.Input)
 		if input == "" {
@@ -177,6 +180,22 @@ func (t Transcript) foldEvent(ev EventMsg, sessionID string) Transcript {
 	}
 	return t
 }
+func (t Transcript) settleChildTotal(ev EventMsg) Transcript {
+	if ev.ToolName != "task" {
+		return t
+	}
+	total, ok := session.SubagentToolCalls(session.SessionEvent(ev))
+	if !ok {
+		return t
+	}
+	if t.childTotals == nil {
+		t.childTotals = make(map[string]int)
+	}
+	delete(t.childBatches, ev.CallID)
+	t.childTotals[ev.CallID] = total
+	return t
+}
+
 func (t Transcript) foldChildActivity(ev EventMsg, parentCallID string) Transcript {
 	if t.childCandidates == nil {
 		t.childCandidates = make(map[string]childCandidate)
@@ -293,6 +312,7 @@ func (t Transcript) toolCallInput(callID, sessionID string) string {
 func (t Transcript) replaceEvents(events []session.SessionEvent, sessionID string) Transcript {
 	t.entries = nil
 	t.childBatches = nil
+	t.childTotals = nil
 	t.childCandidates = nil
 	t.revealing = false
 	t.usage = nil

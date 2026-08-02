@@ -221,6 +221,11 @@ func TestRunner_RunFailsInterruptedToolsBeforeTurn(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("AppendEvent (tool colgada) error inesperado: %v", err)
 	}
+	if _, err := store.AppendEvent(ctx, "s1", session.SessionEvent{
+		Kind: session.KindToolCalled, CallID: "c2", ToolName: "task",
+	}); err != nil {
+		t.Fatalf("AppendEvent (interrupted task) unexpected error: %v", err)
+	}
 	if err := inbox.Admit(ctx, "s1", session.Prompt{Text: "sigue"}, session.DeliveryQueue); err != nil {
 		t.Fatalf("Admit (queue) error inesperado: %v", err)
 	}
@@ -254,6 +259,21 @@ func TestRunner_RunFailsInterruptedToolsBeforeTurn(t *testing.T) {
 	if !hasToolMessage(msgs, "c1", interruptedToolMessage) {
 		t.Errorf("la proyeccion no contiene Message{ID:c1, Role:tool, Text:%q}; mensajes = %+v", interruptedToolMessage, msgs)
 	}
+	events, err := store.Events(ctx, "s1", 0)
+	if err != nil {
+		t.Fatalf("Events error: %v", err)
+	}
+	for _, event := range events {
+		if event.Kind == session.KindToolFailed && event.CallID == "c2" {
+			if total, ok := session.SubagentToolCalls(event); !ok || total != 0 {
+				t.Fatalf("interrupted task total = %d, %v; want durable zero", total, ok)
+			}
+			goto taskRecovered
+		}
+	}
+	t.Fatal("interrupted task was not settled")
+
+taskRecovered:
 	var foundAssistant bool
 	for _, m := range msgs {
 		if m.Role == session.RoleAssistant && m.Text == "ok" {

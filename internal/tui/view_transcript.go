@@ -290,6 +290,13 @@ func (m Model) renderVisibleBlock(ve visibleEntry, width int) string {
 	if ve.entry.kind != entryTool || ve.entry.tool != "task" {
 		return block
 	}
+	if total, ok := m.childTotals[ve.entry.callID]; ok {
+		label := "tool calls"
+		if total == 1 {
+			label = "tool call"
+		}
+		return block + "\n  ↳ " + strconv.Itoa(total) + " " + label
+	}
 	for _, child := range m.childBatches[ve.entry.callID] {
 		childBlock := child.render(width, m.presentationOf(child))
 		childBlock = "  ↳ " + strings.ReplaceAll(childBlock, "\n", "\n    ")
