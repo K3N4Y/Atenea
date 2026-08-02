@@ -263,6 +263,47 @@ func TestRunner_TwoToolCallsSettleConcurrentlyAndTurnWaits(t *testing.T) {
 	}
 }
 
+type callIDTool struct {
+	mu  sync.Mutex
+	got map[string]string
+}
+
+func (*callIDTool) Name() string        { return "call_id" }
+func (*callIDTool) Description() string { return "records settlement call IDs" }
+func (*callIDTool) Schema() json.RawMessage {
+	return json.RawMessage(`{"type":"object","properties":{"key":{"type":"string"}}}`)
+}
+func (c *callIDTool) Execute(ctx context.Context, input json.RawMessage) (tool.Result, error) {
+	var in struct {
+		Key string `json:"key"`
+	}
+	_ = json.Unmarshal(input, &in)
+	c.mu.Lock()
+	c.got[in.Key] = tool.CallIDFrom(ctx)
+	c.mu.Unlock()
+	return tool.Result{}, nil
+}
+
+func TestRunner_ParallelSettlementCarriesExactProviderCallID(t *testing.T) {
+	store := newRecordingStore()
+	seedUser(t, store, "s1")
+	recorder := &callIDTool{got: make(map[string]string)}
+	provider := llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.ToolCall, CallID: "provider-a", ToolName: "call_id", Input: json.RawMessage(`{"key":"a"}`)},
+		llm.Event{Kind: llm.ToolCall, CallID: "provider-b", ToolName: "call_id", Input: json.RawMessage(`{"key":"b"}`)},
+		llm.Event{Kind: llm.StepEnded},
+	)
+	reg := tool.NewRegistry(tool.NewOutputStore(0), recorder)
+	r := NewRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"call_id": true}, func() string { return "a1" })
+	if _, err := r.runTurn(context.Background(), "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(recorder.got, map[string]string{"a": "provider-a", "b": "provider-b"}) {
+		t.Fatalf("settlement call IDs = %#v", recorder.got)
+	}
+}
+
 // TestRunner_MultiToolResultsFollowAssistantMessage triangula el invariante de
 // orden del historial con DOS tool calls locales que asientan al instante: en la
 // proyeccion (Messages) el Message assistant que declara AMBOS call ids debe

@@ -74,9 +74,12 @@ type Config struct {
 	// Snaps is the per-session read state that read, write and edit share. The
 	// caller creates it once so it survives a re-assembly.
 	Snaps *tool.SessionSnapshots
-	// Bus publishes the subagents' permission events on the parent's channel
-	// (ChildPermissionStore), the same one the frontend already listens to.
+	// Bus publishes child permission events on the parent's channel. When
+	// ChildActivity is true it also carries ephemeral child tool batches.
 	Bus *event.Bus
+	// ChildActivity enables live child tool-batch events for hosts that render
+	// them. Permissions are always surfaced regardless of this flag.
+	ChildActivity bool
 	// LocalPrompt answers, once per turn, whether the provider that will serve it
 	// runs local models (LM Studio, Ollama): then the base system prompt switches
 	// to the explicit function-calling protocol instead of routing by model
@@ -328,15 +331,12 @@ func Build(cfg Config) Built {
 	// The task tool starts child subagents. Its own nextID (thread-safe) because
 	// several subagents can run in parallel (internal concurrency cap).
 	taskTool := subagent.NewTaskTool(agentDefs, cfg.Provider, childRegistry, NewIDGen())
-	// Surfacing a subagent's permission in the UI: decorate the child runner's store
-	// with ChildPermissionStore over the SAME bus, so the child's permission events
-	// (Tool.Permission.Requested and its resolution) are published on the PARENT's
-	// channel (the one the frontend already listens to), keeping the child's SessionID
-	// in the payload. The frontend shows Approve/Deny and resolves with (childID,
-	// callID) through the shared gate, which already keys by that pair. Without this the
-	// child blocks in gate.Ask but the UI never sees the request.
-	taskTool.SetStoreDecorator(func(parentSessionID string, inner session.Store) session.Store {
-		return event.NewChildPermissionStore(parentSessionID, inner, cfg.Bus)
+	// Decorate the child runner's store over the shared bus. Permission events
+	// always reach the parent's channel so either host can resolve the child gate.
+	// The TUI additionally opts into ephemeral child tool-batch events; Desktop
+	// leaves them disabled so its existing transcript projection is unchanged.
+	taskTool.SetStoreDecorator(func(parentSessionID, parentCallID string, inner session.Store) session.Store {
+		return event.NewChildActivityStore(parentSessionID, parentCallID, inner, cfg.Bus, cfg.ChildActivity)
 	})
 	// present_plan is registered so the runner can execute it, but it does not enter
 	// the normal permission set: cfg.PlanMode claims it, and only plan mode announces

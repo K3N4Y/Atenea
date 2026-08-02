@@ -8,6 +8,18 @@ import (
 )
 
 type sessionIDKey struct{}
+type callIDKey struct{}
+
+// WithCallID annotates a tool settlement with the provider's exact call ID.
+func WithCallID(ctx context.Context, callID string) context.Context {
+	return context.WithValue(ctx, callIDKey{}, callID)
+}
+
+// CallIDFrom returns the provider call ID for the tool currently settling.
+func CallIDFrom(ctx context.Context) string {
+	callID, _ := ctx.Value(callIDKey{}).(string)
+	return callID
+}
 
 // WithSessionID anota el contexto de ejecucion de tools con la sesion actual.
 func WithSessionID(ctx context.Context, sessionID string) context.Context {

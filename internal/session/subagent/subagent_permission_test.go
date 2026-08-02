@@ -234,8 +234,10 @@ func TestTaskTool_StoreDecoratorReceivesChildPermissionRequest(t *testing.T) {
 
 	var dec *recordingStore
 	var gotParent string
-	tt.SetStoreDecorator(func(parentSessionID string, inner session.Store) session.Store {
+	var gotCall string
+	tt.SetStoreDecorator(func(parentSessionID, parentCallID string, inner session.Store) session.Store {
 		gotParent = parentSessionID
+		gotCall = parentCallID
 		dec = &recordingStore{Store: inner}
 		return dec
 	})
@@ -248,6 +250,9 @@ func TestTaskTool_StoreDecoratorReceivesChildPermissionRequest(t *testing.T) {
 		t.Fatal("el decorator de store no fue aplicado: el runner hijo uso un store aislado")
 	}
 	if gotParent != "parent" {
+		if gotCall != "" {
+			t.Errorf("parent call = %q, want empty for direct Execute", gotCall)
+		}
 		t.Errorf("parentSessionID del decorator = %q, quiero %q (el canal del padre que atiende la UI)", gotParent, "parent")
 	}
 	found := false

@@ -196,6 +196,7 @@ func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Ev
 			}
 			call := tool.Call{ID: ev.CallID, Name: ev.ToolName, Input: ev.Input}
 			settleCtx := tool.WithSessionID(gctx, sessionID)
+			settleCtx = tool.WithCallID(settleCtx, ev.CallID)
 			settleCtx = tool.WithPermissionRequester(settleCtx, func(askCtx context.Context, request permission.Request) (bool, error) {
 				if err := pub.ToolPermissionRequested(cleanupCtx, request.CallID); err != nil {
 					return false, &tool.SettlementAbortError{Err: err}

@@ -202,20 +202,21 @@ func New(cfg Config) *Engine {
 		return cfg.Models.Active().Model
 	})
 	e.wiring = wiring.Config{
-		Root:        cfg.Root,
-		Provider:    cfg.Provider,
-		Store:       e.store,
-		Inbox:       e.inbox,
-		Gate:        e.gate,
-		Grants:      e.grants,
-		AutoAccept:  e.autoAccept,
-		Yolo:        e.yolo,
-		Reasoning:   func() *llm.ReasoningPreference { return e.reasoning.Get() },
-		Snaps:       sitting.Snapshots,
-		Bus:         bus,
-		LocalPrompt: e.localModels,
-		NextID:      wiring.NewIDGen(),
-		Mode:        e.agent.Mode,
+		Root:          cfg.Root,
+		Provider:      cfg.Provider,
+		Store:         e.store,
+		Inbox:         e.inbox,
+		Gate:          e.gate,
+		Grants:        e.grants,
+		AutoAccept:    e.autoAccept,
+		Yolo:          e.yolo,
+		Reasoning:     func() *llm.ReasoningPreference { return e.reasoning.Get() },
+		Snaps:         sitting.Snapshots,
+		Bus:           bus,
+		ChildActivity: true,
+		LocalPrompt:   e.localModels,
+		NextID:        wiring.NewIDGen(),
+		Mode:          e.agent.Mode,
 	}
 	e.rewire()
 	if configs, err := mcpclient.LoadConfig(cfg.Root); err == nil {

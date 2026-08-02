@@ -248,6 +248,15 @@ func (m Model) updateSpinner(msg spinner.TickMsg) (Model, tea.Cmd) {
 			dirty = true
 		}
 	}
+	for parentCallID, batch := range m.childBatches {
+		for i := range batch {
+			if batch[i].status == toolRunning && batch[i].spin != frame {
+				batch[i].spin = frame
+				dirty = true
+			}
+		}
+		m.childBatches[parentCallID] = batch
+	}
 	if dirty {
 		m = m.syncViewport()
 	}

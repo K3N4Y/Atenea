@@ -67,7 +67,7 @@ type TaskTool struct {
 	// en el canal del padre; asi la UI ve el Tool.Permission.Requested del hijo y
 	// puede aprobar/denegar. Sin esto el hijo bloquea en gate.Ask pero la UI nunca
 	// ve la solicitud (el evento muere en el store aislado).
-	storeDecorator func(parentSessionID string, inner session.Store) session.Store
+	storeDecorator func(parentSessionID, parentCallID string, inner session.Store) session.Store
 }
 
 // NewTaskTool indexa las defs por nombre. Si dos comparten nombre gana la ultima
@@ -100,13 +100,9 @@ func (t *TaskTool) SetPermissionGate(gate permission.Gate, policy permission.Pol
 	t.policy = policy
 }
 
-// SetStoreDecorator inyecta el decorador del store del runner hijo. El decorador
-// recibe el sessionID del padre (capturado del ctx de Execute via tool.SessionIDFrom)
-// e inner (el MemoryStore del hijo). app.go pasa un EmittingStore que publica los
-// eventos de permiso del hijo en el canal del padre para que la UI los vea y pueda
-// aprobar/denegar. nil (default) deja el MemoryStore aislado del hijo (compatibilidad
-// con los tests). Mismo patron Set* que SetPermissionGate/SetMaxDepth.
-func (t *TaskTool) SetStoreDecorator(dec func(parentSessionID string, inner session.Store) session.Store) {
+// SetStoreDecorator injects the bus-only child activity decorator. Parent
+// session and exact task call IDs come from the settlement context.
+func (t *TaskTool) SetStoreDecorator(dec func(parentSessionID, parentCallID string, inner session.Store) session.Store) {
 	t.storeDecorator = dec
 }
 
@@ -215,7 +211,7 @@ func (t *TaskTool) Execute(ctx context.Context, input json.RawMessage) (tool.Res
 	// del ctx de Execute (el runner padre lo anota via tool.WithSessionID). Sin
 	// decorator queda el MemoryStore aislado.
 	if t.storeDecorator != nil {
-		store = t.storeDecorator(tool.SessionIDFrom(ctx), store)
+		store = t.storeDecorator(tool.SessionIDFrom(ctx), tool.CallIDFrom(ctx), store)
 	}
 	inbox := session.NewMemoryInbox()
 	childID := t.nextID()

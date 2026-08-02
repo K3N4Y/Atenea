@@ -1,6 +1,6 @@
 ---
 updated_at: 2026-08-01
-summary: TUI transcript activity hierarchy, including collapsed and independently expandable Bash details.
+summary: TUI transcript activity hierarchy, including Bash details and live subagent tool batches.
 status: implemented
 ---
 
@@ -92,18 +92,25 @@ viewport content line by line to map mouse clicks back to entries.
 - Skill (`tool == "skill"`): same grammar with the skill name as summary
   (`✓ skill    demo`); no output/diff detail — the SKILL.md body that travels
   in the output is for the model, not the transcript.
-- Subagent task: the `task` tool renders as a regular activity row (its name
-  column identifies it); nested permission requests from the child session
-  surface as their own `?` rows keyed by the event `SessionID`.
+- Subagent task: the `task` tool renders as a regular activity row. While its
+  child session is live, the TUI renders that child's latest tool-bearing turn
+  immediately below it as indented `↳` activity rows. Calls from the same turn
+  stay in provider call order and independently show running, success, or
+  failure through the normal tool presentation. The first tool call in a later
+  tool-bearing turn replaces the complete prior batch; a text-only turn does
+  not erase it, and parent task settlement leaves the final batch visible.
+  Concurrent children are anchored by the parent task call ID and their own
+  session IDs, so colliding child call IDs cannot cross-settle. This projection
+  is bus-only and ephemeral: reopening a session restores the durable parent
+  task row but not its child batch. Only the TUI opts into these activity
+  events; the Vue/Desktop transcript remains unchanged. Nested permission
+  requests still surface as their own `?` rows keyed by child `SessionID`.
 - Permission (`entryPermission`): `? <tool> <summarized input> (allow/deny)`.
 - Plan approval (`entryPlanApproval`): the same `?` grammar with `plan` as the
   name and `presented` as the summary, plus the resolving suffix
   (`? plan     presented (y run / n stay in plan)`). It is a decision
   gate like a permission, so it keeps its own paragraph and is not part of
   compact grouping.
- - Step error (`entryError`): `✗ error    <message>`.
- - Compaction (`entryCompaction`): unchanged (`[context]`/`[error]` status
-  lines); it is a transient state, not an activity row.
 - Step error (`entryError`): `✗ error    <message>`.
 - Compaction (`entryCompaction`): unchanged (`[context]`/`[error]` status
   lines); it is a transient state, not an activity row.
@@ -118,13 +125,11 @@ convention.
 - A distinct "final summary" presentation: no data model distinguishes the
   closing assistant message; narrative markdown already stands apart from the
   rail. Same deferral as the reverted desktop plan.
-- Nesting child-session activity under its `task` row: child events carry the
-  child `SessionID` but no parent call-id back-reference.
 
 ## Tests
 
-`internal/tui/model_test.go` — substring/line assertions over `Model.View()`,
-per repo convention: lifecycle markers, compact grouping, diff stat (table
-test on `diffStat`), no-stat on diff-less success, long-name and no-summary
-headers, permission/error joining groups, and click-targeting alignment with
-compact groups (`entryLines` separator parity).
+`internal/tui/model_test.go` and `internal/tui/transcript_test.go` cover the
+rendered and pure-projection contracts: lifecycle markers, compact grouping,
+diff stats, permission/error joins, click-target parity, ordered parallel child
+calls, out-of-order settlement, latest-batch replacement, colliding child call
+IDs, spinner state, and clearing ephemeral activity during durable rehydration.

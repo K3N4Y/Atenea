@@ -33,8 +33,8 @@ func TestEmittingStore_Contract(t *testing.T) {
 	})
 }
 
-func TestChildPermissionStore_Contract(t *testing.T) {
+func TestChildActivityStore_Contract(t *testing.T) {
 	sessiontest.StoreContract(t, func(t *testing.T) session.Store {
-		return NewChildPermissionStore("parent", session.NewMemoryStore(), NewBus((&countingEmitter{}).emit))
+		return NewChildActivityStore("parent", "task-call", session.NewMemoryStore(), NewBus((&countingEmitter{}).emit), true)
 	})
 }

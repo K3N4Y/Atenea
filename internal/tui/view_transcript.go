@@ -285,6 +285,19 @@ func (e entry) renderActivity(name, summary string, showDetail bool) string {
 	}
 }
 
+func (m Model) renderVisibleBlock(ve visibleEntry, width int) string {
+	block := ve.entry.render(width, m.presentationOf(ve.entry))
+	if ve.entry.kind != entryTool || ve.entry.tool != "task" {
+		return block
+	}
+	for _, child := range m.childBatches[ve.entry.callID] {
+		childBlock := child.render(width, m.presentationOf(child))
+		childBlock = "  ↳ " + strings.ReplaceAll(childBlock, "\n", "\n    ")
+		block += "\n" + childBlock
+	}
+	return block
+}
+
 func (m Model) renderTranscript() string {
 	width := 0
 	if m.ready {
@@ -299,7 +312,7 @@ func (m Model) renderTranscript() string {
 				b.WriteString("\n\n")
 			}
 		}
-		b.WriteString(ve.entry.render(width, m.presentationOf(ve.entry)))
+		b.WriteString(m.renderVisibleBlock(ve, width))
 	}
 	return b.String()
 }
@@ -319,7 +332,7 @@ func (m Model) entryLines() []entryLine {
 		if i > 0 && !ve.joinCompact {
 			out = append(out, entryLine{idx: -1, line: ""})
 		}
-		block := hardWrapOverflow(ve.entry.render(width, m.presentationOf(ve.entry)), width)
+		block := hardWrapOverflow(m.renderVisibleBlock(ve, width), width)
 		for _, line := range strings.Split(block, "\n") {
 			out = append(out, entryLine{idx: ve.idx, line: line})
 		}

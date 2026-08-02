@@ -50,13 +50,23 @@ type Transcript struct {
 	// backlog drains; a later delta restarts it. The flag prevents duplicating
 	// tick chains when several deltas arrive before the next tick. The tick
 	// scheduling (revealTick, which produces a tea.Cmd) stays near Update.
-	revealing bool
+	revealing       bool
+	childBatches    map[string][]entry
+	childCandidates map[string]childCandidate
+}
+type childCandidate struct {
+	parentCallID string
+	open         bool
+	hasTools     bool
 }
 
 // foldEvent applies a durable event to the conversation entries. sessionID is
 // the Model's current session, used to scope the compaction upsert (a durable
 // event carries no session context of its own here).
 func (t Transcript) foldEvent(ev EventMsg, sessionID string) Transcript {
+	if parentCallID := session.ParentTaskCallID(session.SessionEvent(ev)); parentCallID != "" {
+		return t.foldChildActivity(ev, parentCallID)
+	}
 	switch ev.Kind {
 	case session.KindStepStarted:
 		if ev.Usage != nil {
@@ -119,9 +129,9 @@ func (t Transcript) foldEvent(ev EventMsg, sessionID string) Transcript {
 			input: string(ev.Input), sessionID: ev.SessionID,
 		})
 	case session.KindToolSuccess:
-		t = t.settleTool(ev.CallID, toolOK, "", ev.Text, ev.Diff)
+		t = t.settleTool(ev.CallID, ev.SessionID, toolOK, "", ev.Text, ev.Diff)
 	case session.KindToolFailed:
-		t = t.settleTool(ev.CallID, toolFailed, ev.Error, "", "")
+		t = t.settleTool(ev.CallID, ev.SessionID, toolFailed, ev.Error, "", "")
 	case session.KindToolPermissionRequested:
 		input := string(ev.Input)
 		if input == "" {
@@ -165,6 +175,69 @@ func (t Transcript) foldEvent(ev EventMsg, sessionID string) Transcript {
 			kind: entryEvent, eventKind: string(ev.Kind), text: genericEventText(ev),
 		})
 	}
+	return t
+}
+func (t Transcript) foldChildActivity(ev EventMsg, parentCallID string) Transcript {
+	if t.childCandidates == nil {
+		t.childCandidates = make(map[string]childCandidate)
+	}
+	candidate := t.childCandidates[ev.SessionID]
+	switch ev.Kind {
+	case session.KindStepStarted:
+		t.childCandidates[ev.SessionID] = childCandidate{parentCallID: parentCallID, open: true}
+	case session.KindToolCalled:
+		if !candidate.open || candidate.parentCallID != parentCallID {
+			return t
+		}
+		if t.childBatches == nil {
+			t.childBatches = make(map[string][]entry)
+		}
+		if !candidate.hasTools {
+			t.childBatches[parentCallID] = nil
+			candidate.hasTools = true
+		}
+		t.childBatches[parentCallID] = append(t.childBatches[parentCallID], entry{kind: entryTool, callID: ev.CallID, tool: ev.ToolName, status: toolRunning, input: string(ev.Input), sessionID: ev.SessionID})
+		t.childCandidates[ev.SessionID] = candidate
+	case session.KindToolSuccess, session.KindToolFailed:
+		batch := t.childBatches[parentCallID]
+		for i := range batch {
+			if batch[i].sessionID != ev.SessionID || batch[i].callID != ev.CallID {
+				continue
+			}
+			if ev.Kind == session.KindToolSuccess {
+				batch[i].status, batch[i].output, batch[i].diff = toolOK, ev.Text, ev.Diff
+			} else {
+				batch[i].status, batch[i].err = toolFailed, ev.Error
+			}
+		}
+		t.childBatches[parentCallID] = batch
+		t = t.removePermission(ev.CallID, ev.SessionID)
+	case session.KindToolPermissionRequested:
+		input := string(ev.Input)
+		for _, child := range t.childBatches[parentCallID] {
+			if input == "" && child.sessionID == ev.SessionID && child.callID == ev.CallID {
+				input = child.input
+			}
+		}
+		t.entries = append(t.entries, entry{kind: entryPermission, callID: ev.CallID, tool: ev.ToolName, input: input, sessionID: ev.SessionID})
+	case session.KindStepEnded, session.KindStepFailed:
+		if candidate.parentCallID == parentCallID {
+			candidate.open = false
+			t.childCandidates[ev.SessionID] = candidate
+		}
+	}
+	return t
+}
+
+func (t Transcript) removePermission(callID, sessionID string) Transcript {
+	kept := t.entries[:0]
+	for _, e := range t.entries {
+		if e.kind == entryPermission && e.callID == callID && e.sessionID == sessionID {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	t.entries = kept
 	return t
 }
 
@@ -219,6 +292,8 @@ func (t Transcript) toolCallInput(callID, sessionID string) string {
 // derived state (usage, reveal loop) before folding each event.
 func (t Transcript) replaceEvents(events []session.SessionEvent, sessionID string) Transcript {
 	t.entries = nil
+	t.childBatches = nil
+	t.childCandidates = nil
 	t.revealing = false
 	t.usage = nil
 	t.liveUsage = false
@@ -292,14 +367,14 @@ func estimatedTokens(bytes int) int {
 // when non-empty the view shows it instead of the output preview. A present_plan
 // settled with success appends, at the end, the plan approval offer (y execute
 // / n stay in plan).
-func (t Transcript) settleTool(callID string, status toolStatus, errMsg, output, diff string) Transcript {
+func (t Transcript) settleTool(callID, sessionID string, status toolStatus, errMsg, output, diff string) Transcript {
 	planPresented := false
 	kept := make([]entry, 0, len(t.entries))
 	for _, e := range t.entries {
-		if e.kind == entryPermission && e.callID == callID {
+		if e.kind == entryPermission && e.callID == callID && (sessionID == "" || e.sessionID == sessionID) {
 			continue
 		}
-		if e.kind == entryTool && e.callID == callID {
+		if e.kind == entryTool && e.callID == callID && (sessionID == "" || e.sessionID == sessionID) {
 			if !(e.status == toolDenied && status == toolFailed && errMsg == "tool denied by the user") {
 				e.status = status
 				e.err = errMsg

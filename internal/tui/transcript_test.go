@@ -512,3 +512,65 @@ func TestTranscript_ReplaceEventsRebuildsAndResets(t *testing.T) {
 		t.Fatalf("rebuilt entries = %+v, want [user, assistant 'a']", tr.entries)
 	}
 }
+
+func childEvent(kind session.EventKind, parent, child, callID, name string) EventMsg {
+	ev := session.WithParentTaskCall(session.SessionEvent{Kind: kind, SessionID: child, CallID: callID, ToolName: name}, parent)
+	return EventMsg(ev)
+}
+
+func TestTranscriptChildToolBatchLifecycle(t *testing.T) {
+	tr := Transcript{}
+	tr = fold(tr, EventMsg{Kind: session.KindToolCalled, CallID: "task-1", ToolName: "task"})
+	tr = fold(tr, childEvent(session.KindStepStarted, "task-1", "child", "", ""))
+	tr = fold(tr, childEvent(session.KindToolCalled, "task-1", "child", "same", "read"))
+	tr = fold(tr, childEvent(session.KindToolCalled, "task-1", "child", "second", "grep"))
+	tr = fold(tr, childEvent(session.KindStepEnded, "task-1", "child", "", ""))
+	tr = fold(tr, childEvent(session.KindToolSuccess, "task-1", "child", "second", "grep"))
+	tr = fold(tr, childEvent(session.KindToolFailed, "task-1", "child", "same", "read"))
+	if got := tr.childBatches["task-1"]; len(got) != 2 || got[0].tool != "read" || got[0].status != toolFailed || got[1].status != toolOK {
+		t.Fatalf("first batch = %#v", got)
+	}
+	// A text-only candidate retains the prior batch.
+	tr = fold(tr, childEvent(session.KindStepStarted, "task-1", "child", "", ""))
+	tr = fold(tr, childEvent(session.KindStepEnded, "task-1", "child", "", ""))
+	if len(tr.childBatches["task-1"]) != 2 {
+		t.Fatal("text-only turn erased batch")
+	}
+	// The first call of the next tool-bearing turn replaces all prior rows.
+	tr = fold(tr, childEvent(session.KindStepStarted, "task-1", "child", "", ""))
+	tr = fold(tr, childEvent(session.KindToolCalled, "task-1", "child", "same", "bash"))
+	if got := tr.childBatches["task-1"]; len(got) != 1 || got[0].tool != "bash" {
+		t.Fatalf("replacement = %#v", got)
+	}
+	// Colliding call IDs under another parent/child remain isolated.
+	tr = fold(tr, EventMsg{Kind: session.KindToolCalled, CallID: "task-2", ToolName: "task"})
+	tr = fold(tr, childEvent(session.KindStepStarted, "task-2", "child-2", "", ""))
+	tr = fold(tr, childEvent(session.KindToolCalled, "task-2", "child-2", "same", "glob"))
+	tr = fold(tr, childEvent(session.KindToolSuccess, "task-2", "child-2", "same", "glob"))
+	if tr.childBatches["task-1"][0].status != toolRunning {
+		t.Fatal("colliding result settled wrong parent")
+	}
+	tr = tr.replaceEvents(nil, testSession)
+	if tr.childBatches != nil || tr.childCandidates != nil {
+		t.Fatal("replaceEvents retained ephemeral child activity")
+	}
+}
+
+func TestChildRowsRenderBelowTaskAndEntryLinesMatch(t *testing.T) {
+	m := NewModel(nil, testSession, nil)
+	m = m.foldEvent(EventMsg{Kind: session.KindToolCalled, CallID: "task", ToolName: "task", Input: []byte(`{"subagent_type":"general"}`)})
+	m = m.foldEvent(childEvent(session.KindStepStarted, "task", "child", "", ""))
+	m = m.foldEvent(childEvent(session.KindToolCalled, "task", "child", "c", "bash"))
+	m.childBatches["task"][0].spin = "⠋"
+	rendered := m.renderTranscript()
+	if !strings.Contains(rendered, "task") || !strings.Contains(rendered, "↳") || !strings.Contains(rendered, "⠋") {
+		t.Fatalf("render = %q", rendered)
+	}
+	var lines []string
+	for _, line := range m.entryLines() {
+		lines = append(lines, line.line)
+	}
+	if strings.Join(lines, "\n") != rendered {
+		t.Fatalf("entryLines diverged:\n%s\n!=\n%s", strings.Join(lines, "\n"), rendered)
+	}
+}
