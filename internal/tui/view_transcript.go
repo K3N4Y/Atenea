@@ -332,7 +332,7 @@ func (m Model) transcriptView() string {
 		if m.viewport.Height <= 0 {
 			return ""
 		}
-		view := m.viewport.View()
+		view := m.renderSelection(m.viewport.View(), m.viewport.YOffset)
 		if m.hasNewActivity {
 			view = renderNewActivityIndicator(view, m.viewport.Width)
 		}

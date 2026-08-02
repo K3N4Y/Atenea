@@ -2,6 +2,7 @@ package tui
 
 import (
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -32,6 +33,32 @@ type transcriptSelection struct {
 	pointerStartX int
 	pointerStartY int
 	dragged       bool
+}
+
+func (s transcriptSelection) selectedGraphemes() []selectableGrapheme {
+	start, end := s.anchor.ordinal, s.active.ordinal
+	if start > end {
+		start, end = end, start
+	}
+	start = max(start, 0)
+	end = min(end, len(s.projection.graphemes)-1)
+	if start > end || start >= len(s.projection.graphemes) || end < 0 {
+		return nil
+	}
+	// Cap the slice at the selection boundary so downstream rendering cannot
+	// accidentally extend work into the rest of a large response.
+	return s.projection.graphemes[start : end+1 : end+1]
+}
+
+func (s transcriptSelection) visibleSelectedGraphemes(firstLine, lastLine int) []selectableGrapheme {
+	selected := s.selectedGraphemes()
+	start := sort.Search(len(selected), func(i int) bool {
+		return selected[i].line >= firstLine
+	})
+	end := start + sort.Search(len(selected)-start, func(i int) bool {
+		return selected[start+i].line > lastLine
+	})
+	return selected[start:end:end]
 }
 
 type copySnackbar struct {
@@ -82,7 +109,10 @@ func stripMarkdownMargin(line string) string {
 }
 
 func assistantCopySource(text string) []string {
-	plain := ansi.Strip(renderMarkdown(text, 100_000))
+	// A zero width asks Glamour for its natural, unwrapped document. A huge
+	// width also prevents wrapping, but Glamour right-pads rows to that width
+	// and turns selection startup into work proportional to an arbitrary cap.
+	plain := ansi.Strip(renderMarkdown(text, 0))
 	lines := strings.Split(plain, "\n")
 	for i := range lines {
 		lines[i] = strings.TrimRight(stripMarkdownMargin(lines[i]), " ")
@@ -238,7 +268,7 @@ func (m Model) cancelSelection() Model {
 		return m
 	}
 	m.selection = nil
-	return m.syncViewport()
+	return m
 }
 
 func (m Model) startSelection(msg tea.MouseMsg) (Model, bool) {
@@ -264,7 +294,7 @@ func (m Model) dragSelection(msg tea.MouseMsg) Model {
 	point := m.clampSelectionPoint(msg.X, line, *m.selection)
 	m.selection.active = point
 	m.selection.dragged = m.selection.dragged || msg.X != m.selection.pointerStartX || msg.Y != m.selection.pointerStartY
-	return m.syncViewport()
+	return m
 }
 
 func (m Model) finishSelection() (Model, tea.Cmd) {
@@ -273,7 +303,6 @@ func (m Model) finishSelection() (Model, tea.Cmd) {
 	}
 	text := m.selectedText()
 	m.selection = nil
-	m = m.syncViewport()
 	if strings.TrimSpace(text) == "" {
 		return m, nil
 	}
@@ -291,47 +320,49 @@ func (m Model) finishSelection() (Model, tea.Cmd) {
 	return m, snackbarExpiryCmd(m.copyGeneration)
 }
 
-func (m Model) renderSelection(transcript string) string {
+func (m Model) renderSelection(transcript string, lineOffset int) string {
 	if m.selection == nil || !m.selection.dragged {
 		return transcript
 	}
-	start, end := m.selection.anchor.ordinal, m.selection.active.ordinal
-	if start > end {
-		start, end = end, start
+	selected := m.selection.selectedGraphemes()
+	if len(selected) == 0 {
+		return transcript
 	}
 	lines := strings.Split(transcript, "\n")
 	first := m.selection.firstLine
 	if first < 0 {
 		return transcript
 	}
-	projection := m.selection.projection
+	firstVisibleLine := lineOffset - first
+	lastVisibleLine := firstVisibleLine + len(lines) - 1
+	selected = m.selection.visibleSelectedGraphemes(firstVisibleLine, lastVisibleLine)
 	type selectedSpan struct{ left, right int }
-	spans := make(map[int]selectedSpan)
-	for ordinal, grapheme := range projection.graphemes {
-		if ordinal < start || ordinal > end {
-			continue
-		}
-		span, exists := spans[grapheme.line]
-		if !exists || grapheme.x < span.left {
-			span.left = grapheme.x
-		}
-		if right := grapheme.x + grapheme.width; !exists || right > span.right {
-			span.right = right
-		}
-		spans[grapheme.line] = span
-	}
-
 	inverse := lipgloss.NewStyle().Reverse(true)
-	for relativeRow, span := range spans {
-		row := first + relativeRow
-		if row < 0 || row >= len(lines) {
-			continue
-		}
+	renderSpan := func(relativeRow int, span selectedSpan) {
+		row := first + relativeRow - lineOffset
 		lineWidth := ansi.StringWidth(lines[row])
 		left := ansi.Cut(lines[row], 0, span.left)
-		selected := keepReverseVideo(ansi.Cut(lines[row], span.left, span.right))
+		selectedText := keepReverseVideo(ansi.Cut(lines[row], span.left, span.right))
 		right := ansi.Cut(lines[row], span.right, lineWidth)
-		lines[row] = left + inverse.Render(selected) + right
+		lines[row] = left + inverse.Render(selectedText) + right
+	}
+
+	activeRow := -1
+	var span selectedSpan
+	for _, grapheme := range selected {
+		if grapheme.line != activeRow {
+			if activeRow >= 0 {
+				renderSpan(activeRow, span)
+			}
+			activeRow = grapheme.line
+			span = selectedSpan{left: grapheme.x, right: grapheme.x + grapheme.width}
+			continue
+		}
+		span.left = min(span.left, grapheme.x)
+		span.right = max(span.right, grapheme.x+grapheme.width)
+	}
+	if activeRow >= 0 {
+		renderSpan(activeRow, span)
 	}
 	return strings.Join(lines, "\n")
 }

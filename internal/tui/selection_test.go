@@ -81,6 +81,66 @@ func TestModel_DragCopiesPreciseSettledAssistantSelection(t *testing.T) {
 	}
 }
 
+func TestAssistantCopySourceAllocationsStayBounded(t *testing.T) {
+	text := strings.Repeat("A paragraph with **styled text**, a [link](https://example.com), and enough words to represent a realistic response.\n\n", 100)
+	result := testing.Benchmark(func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = assistantCopySource(text)
+		}
+	})
+	const maxBytesPerCopy = 16 << 20
+	if got := result.AllocedBytesPerOp(); got > maxBytesPerCopy {
+		t.Fatalf("assistantCopySource allocated %d bytes per copy, want at most %d", got, maxBytesPerCopy)
+	}
+}
+
+func TestModel_DragHighlightDoesNotRewriteViewportContent(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(previousProfile) })
+	m := settledAssistant(t, strings.Repeat("selectable response text ", 20), 50, 18)
+	x, y := assistantCell(t, m, "selectable", 0)
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: x, Y: y})
+	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: x + 5, Y: y})
+	if strings.Contains(m.viewport.View(), reverseVideoSGR) {
+		t.Fatal("mouse motion rewrote viewport content; selection must be overlaid at View time")
+	}
+	if !strings.Contains(m.View(), reverseVideoSGR) {
+		t.Fatal("View() must still render the active selection highlight")
+	}
+}
+
+func TestRenderSelectionBoundsTraversalToVisibleSelection(t *testing.T) {
+	const (
+		graphemeCount = 100_000
+		visibleLine   = 50_000
+		firstLine     = 37
+	)
+	graphemes := make([]selectableGrapheme, graphemeCount)
+	for i := range graphemes {
+		graphemes[i] = selectableGrapheme{line: i, x: 0, width: 2, source: i}
+	}
+	selection := transcriptSelection{
+		anchor:     selectionPoint{ordinal: graphemeCount - 1},
+		active:     selectionPoint{ordinal: 0},
+		projection: assistantProjection{graphemes: graphemes},
+		firstLine:  firstLine,
+		dragged:    true,
+	}
+
+	visible := selection.visibleSelectedGraphemes(visibleLine, visibleLine)
+	if len(visible) != 1 || cap(visible) != 1 || visible[0].line != visibleLine {
+		t.Fatalf("visible selection = len %d cap %d %#v, want one capacity-bounded grapheme on line %d", len(visible), cap(visible), visible, visibleLine)
+	}
+
+	m := Model{selection: &selection}
+	transcript := "\x1b[31m界\x1b[0m"
+	got := m.renderSelection(transcript, firstLine+visibleLine)
+	if ansi.Strip(got) != "界" || !strings.Contains(got, reverseVideoSGR) {
+		t.Fatalf("renderSelection() = %q, want the visible wide grapheme highlighted without changing content", got)
+	}
+}
+
 func TestSelectionHighlightSurvivesMarkdownStyleResets(t *testing.T) {
 	selected := "before\x1b[0mafter\x1b[mbeyond"
 	got := keepReverseVideo(selected)

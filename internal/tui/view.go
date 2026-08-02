@@ -92,7 +92,6 @@ func (m Model) syncViewportContent(agentActivity bool) Model {
 	}
 	offset := m.viewport.YOffset
 	transcript := hardWrapOverflow(rawTranscript, m.viewport.Width)
-	transcript = m.renderSelection(transcript)
 	m.viewport.SetContent(transcript)
 	if m.followAgent {
 		m.viewport.GotoBottom()

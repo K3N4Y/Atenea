@@ -24,6 +24,15 @@ allowing precise text selection inside a settled assistant response:
 - Resize, transcript mutation, scrolling, or terminal focus loss cancels an
   active selection without copying.
 
+## Rendering architecture
+
+Selection builds its copy projection from Glamour's natural-width Markdown
+render, so copied text preserves Markdown semantics without introducing visual
+wraps or allocating padding for an artificial width. During a drag, mouse
+motion updates only selection coordinates. Reverse-video highlighting is
+overlaid on the viewport output in `View`; it does not rebuild or replace the
+rendered transcript.
+
 ## Copy confirmation
 
 A successful OSC 52 write shows `Copied to clipboard` for two seconds. A write
