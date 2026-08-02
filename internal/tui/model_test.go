@@ -4751,10 +4751,13 @@ func TestModel_ComposerTopBorderShowsTokenUsage(t *testing.T) {
 	if topBorder == "" {
 		t.Fatalf("View() = %q, want a composer top border", plain)
 	}
-	for _, want := range []string{"↑ 1.2k", "↓ 345", "ctx 1.2k/200k"} {
+	for _, want := range []string{"↑ 1.2k", "↓ 345"} {
 		if !strings.Contains(topBorder, want) {
 			t.Fatalf("composer top border = %q, want it to contain %q", topBorder, want)
 		}
+	}
+	if strings.Contains(topBorder, "ctx") {
+		t.Fatalf("composer top border = %q, context usage must not be shown alongside token counts", topBorder)
 	}
 	assertBoxLinesExactWidth(t, m.View(), 60)
 }
@@ -4766,23 +4769,23 @@ func TestModel_ComposerTokenUsageUpdatesDuringStreaming(t *testing.T) {
 		Kind:  session.KindStepStarted,
 		Usage: &session.Usage{InputTokens: 1_200},
 	})
-	if view := ansi.Strip(m.View()); !strings.Contains(view, "↑ ~1.2k ↓ 0 ctx ~1.2k/200k") {
-		t.Fatalf("View() = %q, want live input usage at step start", view)
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "↑ ~1.2k ↓ 0") || strings.Contains(view, "ctx") {
+		t.Fatalf("View() = %q, want live input usage without context usage", view)
 	}
 
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: strings.Repeat("a", 3_000)})
-	if view := ansi.Strip(m.View()); !strings.Contains(view, "↑ ~1.2k ↓ ~1k ctx ~1.2k/200k") {
-		t.Fatalf("View() = %q, want live output usage after text delta", view)
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "↑ ~1.2k ↓ ~1k") || strings.Contains(view, "ctx") {
+		t.Fatalf("View() = %q, want live output usage without context usage", view)
 	}
 
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: strings.Repeat("b", 1_500)})
-	if view := ansi.Strip(m.View()); !strings.Contains(view, "↑ ~1.2k ↓ ~1.5k ctx ~1.2k/200k") {
-		t.Fatalf("View() = %q, want live output usage after reasoning delta", view)
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "↑ ~1.2k ↓ ~1.5k") || strings.Contains(view, "ctx") {
+		t.Fatalf("View() = %q, want live reasoning usage without context usage", view)
 	}
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolInputDelta, Text: strings.Repeat("c", 1_500)})
-	if view := ansi.Strip(m.View()); !strings.Contains(view, "↑ ~1.2k ↓ ~2k ctx ~1.2k/200k") {
-		t.Fatalf("View() = %q, want live output usage after tool input delta", view)
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "↑ ~1.2k ↓ ~2k") || strings.Contains(view, "ctx") {
+		t.Fatalf("View() = %q, want live tool usage without context usage", view)
 	}
 
 	m = apply(t, m, EventMsg{
@@ -4793,8 +4796,8 @@ func TestModel_ComposerTokenUsageUpdatesDuringStreaming(t *testing.T) {
 			ReasoningTokens: 100,
 		},
 	})
-	if view := ansi.Strip(m.View()); !strings.Contains(view, "↑ 1.3k ↓ 900 ctx 1.3k/200k") {
-		t.Fatalf("View() = %q, want exact provider usage after step end", view)
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "↑ 1.3k ↓ 900") || strings.Contains(view, "ctx") {
+		t.Fatalf("View() = %q, want exact provider usage without context usage", view)
 	}
 }
 
@@ -4851,8 +4854,8 @@ func TestModel_ComposerDistinguishesEstimatedAndExactInputUsage(t *testing.T) {
 		Usage: &session.Usage{InputTokens: 10_000},
 	})
 
-	if view := ansi.Strip(m.View()); !strings.Contains(view, "↑ ~10k") || !strings.Contains(view, "ctx ~10k/200k") {
-		t.Fatalf("live View() = %q, want the conservative 10k estimate marked as approximate", view)
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "↑ ~10k") || strings.Contains(view, "ctx") {
+		t.Fatalf("live View() = %q, want the conservative 10k estimate marked as approximate without context usage", view)
 	}
 
 	m = apply(t, m, EventMsg{
@@ -4861,8 +4864,8 @@ func TestModel_ComposerDistinguishesEstimatedAndExactInputUsage(t *testing.T) {
 	})
 
 	view := ansi.Strip(m.View())
-	if !strings.Contains(view, "↑ 9.1k") || !strings.Contains(view, "ctx 9.1k/200k") {
-		t.Fatalf("completed View() = %q, want exact provider usage 9.1k", view)
+	if !strings.Contains(view, "↑ 9.1k") || strings.Contains(view, "ctx") {
+		t.Fatalf("completed View() = %q, want exact provider usage without context usage", view)
 	}
 	if strings.Contains(view, "~9.1k") {
 		t.Fatalf("completed View() = %q, exact provider usage must not be marked approximate", view)
