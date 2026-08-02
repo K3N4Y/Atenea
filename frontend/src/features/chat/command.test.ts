@@ -39,6 +39,10 @@ describe('detectCommand', () => {
   it('texto vacio: inactivo', () => {
     expect(detectCommand('', 0).active).toBe(false)
   })
+
+  it('caret antes del slash: inactivo', () => {
+    expect(detectCommand('/skill', 0).active).toBe(false)
+  })
 })
 
 describe('filterCommands', () => {

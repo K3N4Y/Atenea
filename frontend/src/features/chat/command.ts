@@ -28,7 +28,7 @@ const INACTIVE: CommandQuery = { active: false, query: '', start: -1, end: -1 }
 // "/" y el caret). Al teclear el primer espacio el menu se cierra: lo que sigue son
 // los argumentos del comando. La query es el texto entre el "/" y el caret.
 export function detectCommand(text: string, caret: number): CommandQuery {
-  if (caret < 0 || caret > text.length) return INACTIVE
+  if (caret <= 0 || caret > text.length) return INACTIVE
   if (text[0] !== '/') return INACTIVE
   for (let i = 1; i < caret; i++) {
     if (/\s/.test(text[i])) return INACTIVE

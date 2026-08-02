@@ -380,3 +380,27 @@ func TestComposer_PushHistoryTrimsAndParksNavigation(t *testing.T) {
 		t.Fatalf("histIdx = %d, push must park navigation at the end (%d)", c.histIdx, len(c.history))
 	}
 }
+func TestDetectCommand_CaretBeforeSlashIsInactive(t *testing.T) {
+	got := detectCommand("/skill", 0)
+	if got.active {
+		t.Fatalf("detectCommand at caret 0 = %+v, want inactive without panicking", got)
+	}
+}
+func TestComposer_MovingCaretBeforeSlashClosesMenuWithoutPanic(t *testing.T) {
+	commands := []command.Command{{Name: "skill", Description: "load a skill"}}
+	models := modelSource{catalog: func() ([]providerconfig.ProviderModels, bool) { return nil, false }}
+	c := typeInto(newTestComposer(), "/skill", commands, nil, models)
+	if !c.menuOpen() {
+		t.Fatal("typing a skill command did not open the slash menu")
+	}
+	for range len("/skill") {
+		var intent composerIntent
+		c, intent, _ = c.handleKey(keyMsg(tea.KeyLeft), commands, nil, models)
+		if !intent.handled {
+			t.Fatal("left-arrow key was not handled by the composer")
+		}
+	}
+	if c.menuOpen() {
+		t.Fatalf("menu remained open at caret position %d", c.input.Position())
+	}
+}

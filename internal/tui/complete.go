@@ -41,7 +41,7 @@ var inactiveToken = tokenQuery{start: -1, end: -1}
 // detectCommand recognizes a command only when "/" is the first character of the text and the caret follows within the name (without any white space between the "/" and the caret). When you type the first space the menu closes: what follows are the command arguments. Caret out of range = inactive. It operates on []rune because the textinput caret is per rune, not per byte.
 func detectCommand(text string, caret int) tokenQuery {
 	runes := []rune(text)
-	if caret < 0 || caret > len(runes) {
+	if caret <= 0 || caret > len(runes) {
 		return inactiveToken
 	}
 	if len(runes) == 0 || runes[0] != '/' {
