@@ -23,7 +23,7 @@ func builtins(manifests fs.FS) ([]Def, error) {
 	if err != nil {
 		return nil, err
 	}
-	defs := make([]Def, 0, len(entries)+2)
+	defs := make([]Def, 0, len(entries))
 	for _, path := range entries {
 		raw, err := fs.ReadFile(manifests, path)
 		if err != nil {
@@ -35,24 +35,5 @@ func builtins(manifests fs.FS) ([]Def, error) {
 		}
 		defs = append(defs, def)
 	}
-	return append(defs, legacyBuiltins()...), nil
-}
-
-// legacyBuiltins remain in code until their canonical manifests are migrated.
-// They deliberately omit task: nested delegation is opt-in.
-func legacyBuiltins() []Def {
-	return []Def{
-		{
-			Name:        "explore",
-			Description: "Explora el codigo en modo solo lectura y devuelve un informe.",
-			Tools:       []string{"read", "grep", "glob"},
-			Prompt:      "Eres un subagente de exploracion de solo lectura. Investiga el codigo del workspace y devuelve un informe conciso. No modificas archivos ni ejecutas comandos.",
-		},
-		{
-			Name:        "general",
-			Description: "Subagente de proposito general con acceso completo a las tools.",
-			Tools:       []string{"read", "grep", "glob", "edit", "write", "bash"},
-			Prompt:      "Eres un subagente de proposito general. Investiga y resuelve la tarea del workspace usando las tools disponibles y devuelve un informe conciso.",
-		},
-	}
+	return defs, nil
 }

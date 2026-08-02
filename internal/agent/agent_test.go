@@ -216,70 +216,68 @@ func TestDiscover_MergesMultipleDirs(t *testing.T) {
 	}
 }
 
-// Builtins devuelve las definiciones de agente canonicas (al estilo opencode).
-// El agente 'explore' es de SOLO LECTURA: solo puede read/grep/glob, nunca
-// edit/write/bash. Esto encodea el scoping de tools por agente del milestone S4.
-// RED: Builtins aun no existe.
-func TestBuiltins_ExploreIsReadOnly(t *testing.T) {
+func TestBuiltins_ExplorerIsReadOnly(t *testing.T) {
 	defs := Builtins()
 
-	var explore Def
-	found := false
-	for _, d := range defs {
-		if d.Name == "explore" {
-			explore = d
-			found = true
+	var explorer Def
+	for _, def := range defs {
+		if def.Name == "explorer" {
+			explorer = def
 			break
 		}
 	}
-	if !found {
-		t.Fatalf("Builtins no incluye un agente 'explore'; got %v", defs)
+	if explorer.Name == "" {
+		t.Fatalf("Builtins does not include explorer; got %v", defs)
 	}
-
-	// Read-only: debe poder leer y buscar.
 	for _, want := range []string{"read", "grep", "glob"} {
-		if !slices.Contains(explore.Tools, want) {
-			t.Errorf("explore debe poder %s (read-only); Tools = %v", want, explore.Tools)
+		if !slices.Contains(explorer.Tools, want) {
+			t.Errorf("explorer.Tools = %v, want %q", explorer.Tools, want)
 		}
 	}
-	// Read-only: no debe poder modificar ni ejecutar.
-	for _, deny := range []string{"edit", "write", "bash"} {
-		if slices.Contains(explore.Tools, deny) {
-			t.Errorf("explore no debe poder %s (read-only)", deny)
+	for _, denied := range []string{"edit", "write", "bash"} {
+		if slices.Contains(explorer.Tools, denied) {
+			t.Errorf("explorer must not receive mutating tool %q", denied)
 		}
-	}
-	// Un agente usable necesita descripcion y system prompt.
-	if explore.Description == "" {
-		t.Errorf("explore.Description vacio; un agente usable necesita descripcion")
-	}
-	if explore.Prompt == "" {
-		t.Errorf("explore.Prompt vacio; un agente usable necesita system prompt")
 	}
 }
 
-// TRIANGULATE: contraste full vs read-only. El agente 'general' es de proposito
-// general y SI puede modificar y ejecutar: sus Tools deben incluir edit, write y
-// bash. Tumba una version donde 'general' tambien fuera de solo lectura.
 func TestBuiltins_GeneralHasFullTools(t *testing.T) {
 	defs := Builtins()
 
 	var general Def
-	found := false
-	for _, d := range defs {
-		if d.Name == "general" {
-			general = d
-			found = true
+	for _, def := range defs {
+		if def.Name == "general" {
+			general = def
 			break
 		}
 	}
-	if !found {
-		t.Fatalf("Builtins no incluye un agente 'general'; got %v", defs)
+	if general.Name == "" {
+		t.Fatalf("Builtins does not include general; got %v", defs)
 	}
-
 	for _, want := range []string{"edit", "write", "bash"} {
 		if !slices.Contains(general.Tools, want) {
-			t.Errorf("general debe poder %s (acceso completo); Tools = %v", want, general.Tools)
+			t.Errorf("general.Tools = %v, want %q", general.Tools, want)
 		}
+	}
+}
+
+func TestBuiltins_HasOnlyPackagedAgentDefinitions(t *testing.T) {
+	defs := Builtins()
+	names := make(map[string]bool, len(defs))
+	for _, def := range defs {
+		names[def.Name] = true
+	}
+
+	for _, want := range []string{"coder", "explorer", "general", "reviewer", "tester"} {
+		if !names[want] {
+			t.Errorf("Builtins does not include packaged agent %q; got %v", want, names)
+		}
+	}
+	if names["explore"] {
+		t.Errorf("Builtins still includes removed legacy agent explore; got %v", names)
+	}
+	if len(defs) != 5 {
+		t.Errorf("len(Builtins()) = %d, want 5 packaged manifests", len(defs))
 	}
 }
 
@@ -324,47 +322,32 @@ func TestBuiltins_AllWellFormed(t *testing.T) {
 	}
 }
 
-// Catalog fusiona las defs descubiertas en dirs (que ganan) con los built-in no
-// sobreescritos. Una def del workspace con el mismo nombre que un built-in lo
-// OVERRIDE (igual que las skills propias ganan sobre las estandar); un built-in
-// sin choque se conserva. RED: Catalog aun no existe.
+// Catalog merges discovered definitions first, so a workspace definition can
+// override a packaged built-in by name without removing the other built-ins.
 func TestCatalog_WorkspaceOverridesBuiltin(t *testing.T) {
 	dir := t.TempDir()
-	// def propia llamada 'explore' que choca con el built-in homonimo.
-	writeAgent(t, dir, "explore", "explore", "explore del workspace")
+	writeAgent(t, dir, "explorer", "explorer", "workspace explorer")
 
 	defs, err := Catalog(dir)
 	if err != nil {
-		t.Fatalf("Catalog: error inesperado: %v", err)
+		t.Fatalf("Catalog: %v", err)
 	}
 
-	// El 'explore' del workspace gano sobre el built-in.
-	var explore Def
-	foundExplore := false
-	for _, d := range defs {
-		if d.Name == "explore" {
-			explore = d
-			foundExplore = true
-			break
-		}
-	}
-	if !foundExplore {
-		t.Fatalf("Catalog no incluye un agente 'explore'; got %v", defs)
-	}
-	if explore.Description != "explore del workspace" {
-		t.Errorf("explore.Description = %q, quiero %q (la del workspace gano)", explore.Description, "explore del workspace")
-	}
-
-	// Un built-in no sobreescrito se conserva en el catalogo.
-	foundGeneral := false
-	for _, d := range defs {
-		if d.Name == "general" {
+	var explorer Def
+	var foundGeneral bool
+	for _, def := range defs {
+		switch def.Name {
+		case "explorer":
+			explorer = def
+		case "general":
 			foundGeneral = true
-			break
 		}
+	}
+	if explorer.Description != "workspace explorer" {
+		t.Errorf("explorer.Description = %q, want workspace override", explorer.Description)
 	}
 	if !foundGeneral {
-		t.Fatalf("Catalog no incluye el built-in 'general' no sobreescrito; got %v", defs)
+		t.Fatalf("Catalog does not retain the non-overridden general built-in; got %v", defs)
 	}
 }
 
@@ -389,11 +372,8 @@ func TestDiscover_DedupesByNameFirstWins(t *testing.T) {
 	}
 }
 
-// TRIANGULATE: una def del workspace que NO choca con ningun built-in se anade al
-// catalogo junto a todos los built-in. El catalogo debe contener el agente nuevo
-// 'auditor' Y los built-in 'explore' y 'general'. Tumba una version que devuelva
-// solo lo descubierto (perdiendo los built-in) o solo los built-in (ignorando el
-// workspace).
+// A workspace definition with a new name extends rather than replaces the
+// packaged built-in catalog.
 func TestCatalog_AddsWorkspaceAgentsAlongsideBuiltins(t *testing.T) {
 	dir := t.TempDir()
 	writeAgent(t, dir, "auditor", "auditor", "agente del workspace")
@@ -407,16 +387,14 @@ func TestCatalog_AddsWorkspaceAgentsAlongsideBuiltins(t *testing.T) {
 	for _, d := range defs {
 		names[d.Name] = true
 	}
-	for _, want := range []string{"auditor", "explore", "general"} {
+	for _, want := range []string{"auditor", "explorer", "general"} {
 		if !names[want] {
 			t.Errorf("Catalog no incluye %q; got %v", want, names)
 		}
 	}
 }
 
-// TRIANGULATE: sin dirs, Catalog devuelve exactamente los built-in. Contiene
-// 'explore' y 'general' y su longitud coincide con Builtins(). Tumba una version
-// que pierda los built-in cuando no se pasan directorios.
+// With no discovery directories Catalog returns exactly the packaged built-ins.
 func TestCatalog_NoDirsReturnsBuiltins(t *testing.T) {
 	defs, err := Catalog()
 	if err != nil {
@@ -427,7 +405,7 @@ func TestCatalog_NoDirsReturnsBuiltins(t *testing.T) {
 	for _, d := range defs {
 		names[d.Name] = true
 	}
-	for _, want := range []string{"explore", "general"} {
+	for _, want := range []string{"explorer", "general"} {
 		if !names[want] {
 			t.Errorf("Catalog() no incluye el built-in %q; got %v", want, names)
 		}
@@ -437,9 +415,8 @@ func TestCatalog_NoDirsReturnsBuiltins(t *testing.T) {
 	}
 }
 
-// TRIANGULATE: un directorio inexistente no es error ni vacia el catalogo; Catalog
-// devuelve los built-in igualmente. Confirma que un dir ausente no rompe el
-// descubrimiento ni descarta los built-in.
+// A missing discovery directory is empty rather than fatal and leaves all
+// packaged built-ins available.
 func TestCatalog_MissingDirReturnsBuiltins(t *testing.T) {
 	defs, err := Catalog(filepath.Join(t.TempDir(), "no", "existe"))
 	if err != nil {
@@ -450,7 +427,7 @@ func TestCatalog_MissingDirReturnsBuiltins(t *testing.T) {
 	for _, d := range defs {
 		names[d.Name] = true
 	}
-	for _, want := range []string{"explore", "general"} {
+	for _, want := range []string{"explorer", "general"} {
 		if !names[want] {
 			t.Errorf("Catalog(dir ausente) no incluye el built-in %q; got %v", want, names)
 		}

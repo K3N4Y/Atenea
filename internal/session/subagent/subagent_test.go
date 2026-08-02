@@ -594,36 +594,27 @@ func (stubTool) Execute(context.Context, json.RawMessage) (tool.Result, error) {
 	return tool.Result{}, nil
 }
 
-// TestTaskTool_ReadOnlyAgentNotOfferedMutatingTools prueba END-TO-END que el
-// allowlist por def.Tools acota lo que ve el hijo: aunque el registry del hijo
-// contenga las tools mutantes (edit/write/bash), un agente read-only como 'explore'
-// solo debe recibir las que declara (read/grep/glob). Tumba una version que ofrezca
-// al hijo TODO el registry en vez del allowlist de def.Tools.
+// TestTaskTool_ReadOnlyAgentNotOfferedMutatingTools verifies end to end that
+// def.Tools narrows the child registry for the packaged explorer agent.
 func TestTaskTool_ReadOnlyAgentNotOfferedMutatingTools(t *testing.T) {
 	prov := &spyProvider{}
-
-	// El registry del hijo tiene de todo, incluidas las mutantes.
 	children := tool.NewRegistry(tool.NewOutputStore(0),
 		stubTool{"read"}, stubTool{"grep"}, stubTool{"glob"},
 		stubTool{"edit"}, stubTool{"write"}, stubTool{"bash"})
 
-	// La def 'explore' (read-only) sale de los built-ins reales.
-	var explore agent.Def
-	found := false
-	for _, d := range agent.Builtins() {
-		if d.Name == "explore" {
-			explore = d
-			found = true
+	var explorer agent.Def
+	for _, def := range agent.Builtins() {
+		if def.Name == "explorer" {
+			explorer = def
 			break
 		}
 	}
-	if !found {
-		t.Fatal("agent.Builtins no incluye 'explore'")
+	if explorer.Name == "" {
+		t.Fatal("agent.Builtins does not include explorer")
 	}
 
-	tt := NewTaskTool([]agent.Def{explore}, prov, children, idCounter())
-
-	_, err := tt.Execute(context.Background(), json.RawMessage(`{"subagent_type":"explore","prompt":"investiga"}`))
+	tt := NewTaskTool([]agent.Def{explorer}, prov, children, idCounter())
+	_, err := tt.Execute(context.Background(), json.RawMessage(`{"subagent_type":"explorer","prompt":"investigate"}`))
 	if err != nil {
 		t.Fatalf("Execute error inesperado: %v", err)
 	}

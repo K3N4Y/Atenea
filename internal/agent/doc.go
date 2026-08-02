@@ -8,7 +8,7 @@
 // es el system prompt que el subagente usara cuando se le invoque. Espeja
 // internal/skill.
 //
-// Builtins returns Atenea's canonical definitions: manifests packaged from the
-// repository's agents/*.md directory plus the legacy definitions still declared
-// in Go. Catalog lets discovered user definitions override either kind by name.
+// Builtins returns Atenea's canonical definitions from the manifests packaged
+// from the repository's agents/*.md directory. Catalog lets discovered user
+// definitions override a packaged definition by name.
 package agent

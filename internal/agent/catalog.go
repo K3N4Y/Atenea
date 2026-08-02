@@ -1,10 +1,9 @@
 package agent
 
-// Catalog fusiona las defs de subagente descubiertas en dirs con las built-in:
-// las del workspace GANAN sobre un built-in homonimo (override), y los built-in
-// no sobreescritos se conservan. Asi un usuario puede redefinir 'explore' con un
-// .md propio sin perder el resto del catalogo canonico. Un dir inexistente no
-// aporta defs (ver Discover).
+// Catalog merges subagent definitions discovered from dirs with the packaged
+// built-ins. Workspace definitions win by name, so a user can redefine
+// explorer without losing the rest of the canonical catalog. Missing
+// directories contribute no definitions.
 func Catalog(dirs ...string) ([]Def, error) {
 	discovered, err := Discover(dirs...)
 	if err != nil {

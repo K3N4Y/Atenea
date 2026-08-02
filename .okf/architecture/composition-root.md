@@ -225,11 +225,12 @@ deduplicated while preserving that order. `wiring.Config.resolve` consumes this
 shared policy; the former `DefaultSkillDirs` and `DefaultAgentDirs` functions are
 compatibility wrappers only.
 
-Atenea's own subagent manifests live in the repository-level `agents/*.md` and
-are embedded in the binary at build time. They do not depend on the process's
-working directory and are always merged into the catalog. `AgentDirs` controls
-only external definitions: project and global agents discovered there override
-a packaged built-in with the same name, while new names extend the catalog.
+Atenea's complete built-in subagent catalog lives in the repository-level
+`agents/*.md` and is embedded in the binary at build time; there are no
+hardcoded fallback definitions. The catalog does not depend on the process's
+working directory. `AgentDirs` controls only external definitions: project and
+global agents discovered there override a packaged built-in with the same name,
+while new names extend the catalog.
 
 ## The offline demo provider
 

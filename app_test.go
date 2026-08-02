@@ -495,9 +495,8 @@ func TestApp_OffersTaskToolToModel(t *testing.T) {
 	t.Errorf("el modelo no recibe la tool 'task'; el wiring no la registra; tools = %v", names)
 }
 
-// TestApp_TaskToolDescriptionListsBuiltinSubagents asserts that the catalog
-// assembled by wiring reaches the task tool description announced to the model.
-// It covers both legacy built-ins and the manifests packaged from agents/*.md.
+// TestApp_TaskToolDescriptionListsBuiltinSubagents asserts that every packaged
+// manifest reaches the task tool description announced to the model.
 func TestApp_TaskToolDescriptionListsBuiltinSubagents(t *testing.T) {
 	rec := &recordingEmit{}
 	prov := &requestRecordingProvider{FakeProvider: llm.NewFakeProvider(
@@ -525,7 +524,7 @@ func TestApp_TaskToolDescriptionListsBuiltinSubagents(t *testing.T) {
 	if taskDef == nil {
 		t.Fatalf("el modelo no recibe la tool 'task'; tools = %+v", req.Tools)
 	}
-	for _, name := range []string{"coder", "explore", "explorer", "general", "reviewer", "tester"} {
+	for _, name := range []string{"coder", "explorer", "general", "reviewer", "tester"} {
 		if !strings.Contains(taskDef.Description, name) {
 			t.Errorf("task description does not list built-in %q; description = %q", name, taskDef.Description)
 		}
@@ -1078,12 +1077,9 @@ func TestApp_ResolveToolPermissionWiredToGate(t *testing.T) {
 	}
 }
 
-// taskAwareProvider devuelve un guion distinto segun el system prompt del Request:
-// el turno PADRE (system del agente principal) pide la tool "task" para delegar en
-// el subagente "general"; el turno HIJO (system del subagente "general", que en el
-// wiring real es su Prompt fijo) pide una bash. Asi un mismo provider sirve al
-// runner padre y al runner hijo del subagente, que comparten el provider en app.go.
-// El segundo turno de cada uno cierra con texto para no agotar MaxSteps.
+// taskAwareProvider returns a different script for the parent and for the
+// packaged general subagent, identified by its system prompt. Both runners share
+// this provider in the real wiring; their second turns finish with text.
 type taskAwareProvider struct {
 	mu          sync.Mutex
 	sentinel    string // ruta que el bash del hijo intentaria crear (touch)
@@ -1093,7 +1089,7 @@ type taskAwareProvider struct {
 
 func (p *taskAwareProvider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Event, error) {
 	p.mu.Lock()
-	isChild := strings.Contains(req.System, "subagente de proposito general")
+	isChild := strings.Contains(req.System, "general-purpose implementation subagent")
 	var script []llm.Event
 	if isChild {
 		if p.childCalls == 0 {
