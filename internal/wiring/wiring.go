@@ -113,6 +113,10 @@ type Config struct {
 	// Worktrees enables task requests with worktree:true. Nil installs the native
 	// Git worktree factory anchored at Root.
 	Worktrees subagent.EnvironmentResolver
+	// Checkpoint and Rewind are host-owned operations. Setting both exposes
+	// model-facing tools with the host's durable semantics; nil omits them.
+	Checkpoint tool.CheckpointFunc
+	Rewind     tool.RewindFunc
 
 	// OutputLimit caps, in bytes, how much of a tool call's output reaches the
 	// model. The whole output is always kept for the UI to expand
@@ -379,6 +383,13 @@ func Build(cfg Config) Built {
 		tool.NewGlobTool(root), tool.NewGrepToolWithSnapshotProvider(root, cfg.Snaps),
 		tool.NewBashTool(root), tool.NewPresentPlanTool(root), tool.NewSkillTool(skills), taskTool,
 		tool.NewWebFetchTool(cfg.Provider), tool.TodoWriteTool{},
+	}
+	if memory, ok := cfg.Store.(session.ProjectMemory); ok {
+		project := filepath.Clean(root)
+		registryTools = append(registryTools, tool.NewRetainMemoryTool(project, memory), tool.NewRecallMemoryTool(project, memory))
+	}
+	if cfg.Checkpoint != nil && cfg.Rewind != nil {
+		registryTools = append(registryTools, tool.NewCheckpointTool(cfg.Checkpoint), tool.NewRewindTool(cfg.Rewind))
 	}
 	registryTools = append(registryTools, taskTool.SupervisionTools()...)
 	var lsp *tool.LSPTool

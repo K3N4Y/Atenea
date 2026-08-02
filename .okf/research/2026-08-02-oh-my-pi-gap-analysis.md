@@ -154,6 +154,14 @@ the validated child payload. No swarm DSL or DAG orchestration was added.
 
 Atenea's transactional compaction is already a strong base. Add model/user-facing checkpoint and rewind semantics across both hosts, then a small project-scoped memory contract with explicit retain/recall and provenance. Memory must not silently become prompt truth; recalled facts should identify source and age.
 
+**Implemented (2026-08-02, Go core and standalone TUI):** `/checkpoint` and
+`/rewind` expose durable conversation/workspace checkpoints to users, while the
+`checkpoint` and `rewind` tools expose the same semantics to the model. Project
+memory is explicit through `retain_memory` and `recall_memory`; facts are scoped
+to the normalized workspace root, persist in the session SQLite database, and
+every recall includes source, retention timestamp, and age. Memory is never
+injected into the system prompt or recalled automatically.
+
 ### P4 — Add role routing and resilient provider fallback
 
 Use the existing provider registry and capability metadata to configure `default`, `fast/cheap`, `deep`, `plan`, and `review` roles. Add explicit fallback only for retryable transport/quota failures, preserving session affinity and recording the model transition durably.

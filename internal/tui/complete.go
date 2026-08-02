@@ -15,8 +15,9 @@ import (
 	"github.com/K3N4Y/atenea/internal/providerconfig"
 )
 
-// menuLimit limits how many items the autocomplete popup displays. It grows with the builtin set (/new, /compact, /model, /mcp, /connect) so builtins never crowd skill commands out of the popup.
-const menuLimit = 8
+// menuLimit bounds popup height while keeping the shipped local controls visible
+// in the unfiltered menu; typed queries still devote the same bound to matches.
+const menuLimit = 10
 
 // menuItem is a popup row, source agnostic: menu "/" populates it with "/<name>" and the skill description in faint style; the @-menu of files, with the path as a label and without description.
 type menuItem struct {

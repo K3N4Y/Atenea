@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"strings"
 )
 
 var ErrNothingToUndo = errors.New("nothing to undo")
@@ -24,7 +25,17 @@ type UndoStore interface {
 func EffectiveEvents(events []SessionEvent) []SessionEvent {
 	reverted := make(map[string]struct{})
 	ranges := make(map[string][2]Seq)
+	origins := make(map[string]string)
 	for _, event := range events {
+		if event.Kind == KindToolSuccess || event.Kind == KindToolFailed {
+			if id := origins[event.CallID]; id != "" {
+				rangeSeq := ranges[id]
+				rangeSeq[0] = event.Seq + 1
+				ranges[id] = rangeSeq
+				delete(origins, event.CallID)
+			}
+			continue
+		}
 		if event.Checkpoint == nil {
 			continue
 		}
@@ -33,11 +44,17 @@ func EffectiveEvents(events []SessionEvent) []SessionEvent {
 			rangeSeq := ranges[event.Checkpoint.ID]
 			rangeSeq[0] = event.Seq
 			ranges[event.Checkpoint.ID] = rangeSeq
+			if event.Checkpoint.OriginCallID != "" {
+				origins[event.Checkpoint.OriginCallID] = event.Checkpoint.ID
+			}
 		case KindPromptCheckpointFinished:
 			rangeSeq := ranges[event.Checkpoint.ID]
 			rangeSeq[1] = event.Seq
 			ranges[event.Checkpoint.ID] = rangeSeq
 		case KindPromptCheckpointReverted:
+			rangeSeq := ranges[event.Checkpoint.ID]
+			rangeSeq[1] = event.Seq
+			ranges[event.Checkpoint.ID] = rangeSeq
 			reverted[event.Checkpoint.ID] = struct{}{}
 		}
 	}
@@ -45,6 +62,11 @@ func EffectiveEvents(events []SessionEvent) []SessionEvent {
 	for _, event := range events {
 		if event.Kind == KindPromptCheckpointReverted {
 			continue
+		}
+		if event.Checkpoint != nil {
+			if _, ok := reverted[event.Checkpoint.ID]; ok {
+				continue
+			}
 		}
 		hidden := false
 		for id := range reverted {
@@ -62,11 +84,19 @@ func EffectiveEvents(events []SessionEvent) []SessionEvent {
 }
 
 func LatestEffectiveCheckpoint(events []SessionEvent) (EffectiveCheckpoint, error) {
+	return latestEffectiveCheckpoint(events, false)
+}
+
+func LatestExplicitCheckpoint(events []SessionEvent) (EffectiveCheckpoint, error) {
+	return latestEffectiveCheckpoint(events, true)
+}
+
+func latestEffectiveCheckpoint(events []SessionEvent, explicit bool) (EffectiveCheckpoint, error) {
 	reverted := make(map[string]struct{})
 	checkpoints := make(map[string]EffectiveCheckpoint)
 	order := make([]string, 0)
 	for _, event := range events {
-		if event.Checkpoint == nil {
+		if event.Checkpoint == nil || IsExplicitCheckpointID(event.Checkpoint.ID) != explicit {
 			continue
 		}
 		checkpoint := event.Checkpoint
@@ -95,3 +125,8 @@ func LatestEffectiveCheckpoint(events []SessionEvent) (EffectiveCheckpoint, erro
 	}
 	return EffectiveCheckpoint{}, ErrNothingToUndo
 }
+
+const explicitCheckpointPrefix = "explicit-checkpoint-"
+
+func ExplicitCheckpointID(suffix string) string { return explicitCheckpointPrefix + suffix }
+func IsExplicitCheckpointID(id string) bool     { return strings.HasPrefix(id, explicitCheckpointPrefix) }

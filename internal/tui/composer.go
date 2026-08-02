@@ -340,7 +340,7 @@ func (c composer) handleKey(msg tea.KeyMsg, commands []command.Command, listFile
 	// away (the value already IS the command), matching the root's former
 	// early-out before the menu block.
 	if msg.Type == tea.KeyEnter && !c.menuOpen() &&
-		(c.input.Value() == "/new" || c.input.Value() == "/compact" || c.input.Value() == "/resume") {
+		(c.input.Value() == "/new" || c.input.Value() == "/compact" || c.input.Value() == "/checkpoint" || c.input.Value() == "/rewind" || c.input.Value() == "/resume") {
 		return c, composerIntent{submit: true, handled: true}, nil
 	}
 	if c.menuOpen() {
@@ -359,7 +359,7 @@ func (c composer) handleKey(msg tea.KeyMsg, commands []command.Command, listFile
 			// A builtin selection completes the command onto the input and submits
 			// it through the root; every other selection completes inline.
 			selected := c.menuItems[c.menuSelected]
-			if selected.builtin && (selected.label == "/new" || selected.label == "/compact" || selected.label == "/resume" || selected.label == "/model" || selected.label == "/mcp" || selected.label == "/connect" || selected.label == "/mode" || selected.label == "/mode:auto-accept" || selected.label == "/mode:ask" || selected.label == "/mode:yolo" || isDevelopmentBuiltinSelection(selected.label)) {
+			if selected.builtin && (selected.label == "/new" || selected.label == "/compact" || selected.label == "/checkpoint" || selected.label == "/rewind" || selected.label == "/resume" || selected.label == "/model" || selected.label == "/mcp" || selected.label == "/connect" || selected.label == "/mode" || selected.label == "/mode:auto-accept" || selected.label == "/mode:ask" || selected.label == "/mode:yolo" || isDevelopmentBuiltinSelection(selected.label)) {
 				c.input.SetValue(selected.label)
 				c.input.SetCursor(len([]rune(selected.label)))
 				c = c.closeMenu()

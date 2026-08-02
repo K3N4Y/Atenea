@@ -10,7 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/K3N4Y/atenea/agentcore/memory"
 	"github.com/K3N4Y/atenea/agentcore/tool/tooltest"
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/skill"
@@ -165,6 +167,26 @@ func TestBuiltins_Contract(t *testing.T) {
 					{"content": "Ship the kits", "status": "in_progress"},
 				}}),
 			}
+		}},
+
+		{"retain_memory", func(t *testing.T) tooltest.Subject {
+			return tooltest.Subject{
+				Tool:  NewRetainMemoryTool(t.TempDir(), &memoryStub{}),
+				Input: input(t, map[string]any{"text": "Use SQLite", "source": "docs/architecture.md:12"}),
+			}
+		}},
+
+		{"recall_memory", func(t *testing.T) tooltest.Subject {
+			store := &memoryStub{fact: memory.Fact{ID: 1, Project: "project", Text: "Use SQLite", Source: "docs/architecture.md:12", CreatedAt: time.Now().UTC()}}
+			return tooltest.Subject{Tool: NewRecallMemoryTool("project", store), Input: input(t, map[string]any{"query": "sqlite"})}
+		}},
+
+		{"checkpoint", func(t *testing.T) tooltest.Subject {
+			return tooltest.Subject{Tool: NewCheckpointTool(func(string, string) (string, error) { return "checkpoint-1", nil }), Input: input(t, map[string]any{})}
+		}},
+
+		{"rewind", func(t *testing.T) tooltest.Subject {
+			return tooltest.Subject{Tool: NewRewindTool(func(string) (string, error) { return "checkpoint-1", nil }), Input: input(t, map[string]any{})}
 		}},
 
 		{"lsp", func(t *testing.T) tooltest.Subject {

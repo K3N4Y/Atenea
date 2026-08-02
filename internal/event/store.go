@@ -26,6 +26,7 @@ func NewEmittingStore(inner session.Store, bus *Bus) *EmittingStore {
 // que el decorador cumple la interface.
 var _ session.Store = (*EmittingStore)(nil)
 var _ session.CompactionStore = (*EmittingStore)(nil)
+var _ session.ProjectMemory = (*EmittingStore)(nil)
 
 // AppendEvent delega en inner bajo candado y, si el append fue exitoso, sella su
 // copia local con SessionID y Seq y la publica en el bus. Si inner falla,
@@ -114,4 +115,20 @@ func (s *EmittingStore) CommitCompaction(ctx context.Context, sessionID string, 
 		Compaction: &checkpointCopy,
 	})
 	return seq, nil
+}
+
+func (s *EmittingStore) Retain(ctx context.Context, project, text, source string) (session.MemoryFact, error) {
+	store, ok := s.inner.(session.ProjectMemory)
+	if !ok {
+		return session.MemoryFact{}, errors.New("inner store does not support project memory")
+	}
+	return store.Retain(ctx, project, text, source)
+}
+
+func (s *EmittingStore) Recall(ctx context.Context, project, query string, limit int) ([]session.MemoryFact, error) {
+	store, ok := s.inner.(session.ProjectMemory)
+	if !ok {
+		return nil, errors.New("inner store does not support project memory")
+	}
+	return store.Recall(ctx, project, query, limit)
 }

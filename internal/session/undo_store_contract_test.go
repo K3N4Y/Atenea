@@ -116,7 +116,7 @@ func TestUndoStoreContract_SQLiteCheckpointSurvivesReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = store.AppendEvent(context.Background(), "s1", SessionEvent{Kind: KindPromptCheckpointStarted, Checkpoint: &PromptCheckpoint{ID: "cp-1", Prompt: "first", BeforeTree: "before"}})
+	_, err = store.AppendEvent(context.Background(), "s1", SessionEvent{Kind: KindPromptCheckpointStarted, Checkpoint: &PromptCheckpoint{ID: "cp-1", Prompt: "first", BeforeTree: "before", OriginCallID: "call-1"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,5 +131,27 @@ func TestUndoStoreContract_SQLiteCheckpointSurvivesReopen(t *testing.T) {
 	got, err := store.LatestPromptCheckpoint(context.Background(), "s1")
 	if err != nil || got.ID != "cp-1" || got.Prompt != "first" || got.BeforeTree != "before" {
 		t.Fatalf("checkpoint = %+v, err = %v", got, err)
+	}
+	events, err := store.Events(context.Background(), "s1", 0)
+	if err != nil || len(events) != 1 || events[0].Checkpoint == nil || events[0].Checkpoint.OriginCallID != "call-1" {
+		t.Fatalf("events after reopen = %+v, err = %v, want checkpoint origin call", events, err)
+	}
+}
+
+func TestEffectiveEvents_ModelCheckpointPreservesItsToolCallSettlement(t *testing.T) {
+	events := []SessionEvent{
+		{Seq: 1, Kind: KindStepEnded, Message: &Message{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "call-1", Name: "checkpoint"}}}},
+		{Seq: 2, Kind: KindToolCalled, CallID: "call-1", ToolName: "checkpoint"},
+		{Seq: 3, Kind: KindPromptCheckpointStarted, Checkpoint: &PromptCheckpoint{ID: ExplicitCheckpointID("1"), BeforeTree: "tree", OriginCallID: "call-1"}},
+		{Seq: 4, Kind: KindToolSuccess, CallID: "call-1", ToolName: "checkpoint", Message: &Message{Role: RoleTool, ToolCallID: "call-1", Text: "created"}},
+		{Seq: 5, Kind: KindStepEnded, Message: &Message{Role: RoleAssistant, Text: "work after checkpoint"}},
+		{Seq: 6, Kind: KindPromptCheckpointReverted, Checkpoint: &PromptCheckpoint{ID: ExplicitCheckpointID("1")}},
+	}
+	effective := EffectiveEvents(events)
+	if len(effective) != 3 {
+		t.Fatalf("EffectiveEvents = %+v, want assistant call, checkpoint call, and settlement", effective)
+	}
+	if effective[0].Seq != 1 || effective[1].Seq != 2 || effective[2].Seq != 4 {
+		t.Fatalf("effective sequences = [%d %d %d], want [1 2 4]", effective[0].Seq, effective[1].Seq, effective[2].Seq)
 	}
 }

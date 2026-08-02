@@ -53,6 +53,14 @@ type UndoResult struct {
 	Prompt string
 	Events []session.SessionEvent
 }
+type CheckpointResult struct {
+	ID string
+}
+
+type RewindResult struct {
+	CheckpointID string
+	Events       []session.SessionEvent
+}
 
 type ResumeResult struct {
 	SessionID string
@@ -151,6 +159,7 @@ type Engine struct {
 	mu                 sync.Mutex
 	pendingCompactions map[string]bool
 	compacting         map[string]bool
+	pendingRewinds     map[string]bool
 
 	lifecycleMu  sync.Mutex
 	shuttingDown bool
@@ -181,6 +190,7 @@ func New(cfg Config) *Engine {
 		agent:              sitting.Agent,
 		pendingCompactions: map[string]bool{},
 		compacting:         map[string]bool{},
+		pendingRewinds:     map[string]bool{},
 		ctx:                ctx,
 		cancel:             cancel,
 		shutdownDone:       make(chan struct{}),
@@ -233,6 +243,8 @@ func New(cfg Config) *Engine {
 		Bus:            bus,
 		ChildActivity:  true,
 		LocalPrompt:    e.localModels,
+		Checkpoint:     e.checkpointFromTool,
+		Rewind:         e.rewindFromTool,
 		NextID:         ids,
 		Mode:           e.agent.Mode,
 		LSP:            true,
@@ -449,6 +461,7 @@ func (e *Engine) SetYolo(enabled bool) bool                    { return e.yolo.S
 func localCommands(yoloAuthorized bool) []command.Command {
 	commands := []command.Command{
 		{Name: "compact", Description: "Compact conversation context", BuiltIn: true},
+		{Name: "checkpoint", Description: "Save an explicit conversation and workspace checkpoint", BuiltIn: true},
 		{Name: "connect", Description: "Connect a provider by API key or ChatGPT login", BuiltIn: true},
 		{Name: "mcp", Description: "Toggle MCP servers on or off", BuiltIn: true},
 		{Name: "reasoning", Description: llm.ReasoningCommandDescription, BuiltIn: true},
@@ -458,6 +471,7 @@ func localCommands(yoloAuthorized bool) []command.Command {
 		{Name: "mode:auto-accept", Description: "Auto-accept safe workspace edits", BuiltIn: true},
 		{Name: "mode:ask", Description: "Ask before workspace edits", BuiltIn: true},
 		{Name: "resume", Description: "Resume a TUI session in this workspace", BuiltIn: true},
+		{Name: "rewind", Description: "Rewind to the latest explicit checkpoint", BuiltIn: true},
 		{Name: "undo", Description: "Undo the last prompt and its file changes", BuiltIn: true},
 	}
 	if yoloAuthorized {
@@ -798,6 +812,12 @@ func (e *Engine) turnHooks(sessionID, composerPrompt string, mode session.Mode) 
 					err = captureErr
 				}
 			}
+			if e.takePendingRewind(sessionID) {
+				_, rewindErr := e.rewind(sessionID)
+				if err == nil {
+					err = rewindErr
+				}
+			}
 			compact := e.finishRun(sessionID, result.Current)
 			msg := ""
 			if err != nil {
@@ -809,6 +829,118 @@ func (e *Engine) turnHooks(sessionID, composerPrompt string, mode session.Mode) 
 			}
 		},
 	}
+}
+
+func (e *Engine) Checkpoint(sessionID string) (CheckpointResult, error) {
+	if e.checkpoints == nil {
+		return CheckpointResult{}, session.ErrNothingToUndo
+	}
+	if run, ok := e.agent.Stop(sessionID); ok {
+		<-run.Done()
+	}
+	var result CheckpointResult
+	err := e.agent.Synchronize(sessionID, func() error {
+		id, err := e.createCheckpoint(sessionID, "")
+		result.ID = id
+		return err
+	})
+	return result, err
+}
+
+func (e *Engine) Rewind(sessionID string) (RewindResult, error) {
+	if e.checkpoints == nil {
+		return RewindResult{}, session.ErrNothingToUndo
+	}
+	if run, ok := e.agent.Stop(sessionID); ok {
+		<-run.Done()
+	}
+	var result RewindResult
+	err := e.agent.Synchronize(sessionID, func() error {
+		var err error
+		result, err = e.rewind(sessionID)
+		return err
+	})
+	return result, err
+}
+
+func (e *Engine) createCheckpoint(sessionID, originCallID string) (string, error) {
+	if e.checkpoints == nil {
+		return "", session.ErrNothingToUndo
+	}
+	if _, err := e.store.LoadSession(context.Background(), sessionID); err != nil {
+		if !errors.Is(err, session.ErrSessionNotFound) {
+			return "", err
+		}
+		if _, err := e.store.AppendEvent(context.Background(), sessionID, session.SessionEvent{Kind: session.KindSessionCwd, Text: e.root}); err != nil {
+			return "", err
+		}
+	}
+	tree, err := e.checkpoints.Capture(context.Background(), e.root)
+	if err != nil {
+		return "", err
+	}
+	id := session.ExplicitCheckpointID(strconv.FormatInt(time.Now().UnixNano(), 10))
+	_, err = e.store.AppendEvent(context.Background(), sessionID, session.SessionEvent{
+		Kind: session.KindPromptCheckpointStarted, Checkpoint: &session.PromptCheckpoint{ID: id, BeforeTree: string(tree), OriginCallID: originCallID},
+	})
+	return id, err
+}
+func (e *Engine) checkpointFromTool(sessionID, callID string) (string, error) {
+	return e.createCheckpoint(sessionID, callID)
+}
+
+func (e *Engine) rewindFromTool(sessionID string) (string, error) {
+	events, err := e.store.Events(context.Background(), sessionID, 0)
+	if err != nil {
+		return "", err
+	}
+	boundary, err := session.LatestExplicitCheckpoint(events)
+	if err != nil {
+		return "", err
+	}
+	e.mu.Lock()
+	e.pendingRewinds[sessionID] = true
+	e.mu.Unlock()
+	return boundary.ID, nil
+}
+
+func (e *Engine) takePendingRewind(sessionID string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	pending := e.pendingRewinds[sessionID]
+	delete(e.pendingRewinds, sessionID)
+	return pending
+}
+
+func (e *Engine) rewind(sessionID string) (RewindResult, error) {
+	events, err := e.store.Events(context.Background(), sessionID, 0)
+	if err != nil {
+		return RewindResult{}, err
+	}
+	boundary, err := session.LatestExplicitCheckpoint(events)
+	if err != nil {
+		return RewindResult{}, err
+	}
+	current, err := e.checkpoints.Capture(context.Background(), e.root)
+	if err != nil {
+		return RewindResult{}, err
+	}
+	if err := e.checkpoints.Restore(context.Background(), e.root, checkpoint.Tree(boundary.BeforeTree)); err != nil {
+		return RewindResult{}, err
+	}
+	if _, err := e.store.AppendEvent(context.Background(), sessionID, session.SessionEvent{
+		Kind: session.KindPromptCheckpointReverted, Checkpoint: &session.PromptCheckpoint{ID: boundary.ID},
+	}); err != nil {
+		if restoreErr := e.checkpoints.Restore(context.Background(), e.root, current); restoreErr != nil {
+			return RewindResult{}, errors.Join(err, restoreErr)
+		}
+		return RewindResult{}, err
+	}
+	events, err = e.store.Events(context.Background(), sessionID, 0)
+	if err != nil {
+		return RewindResult{}, err
+	}
+	return RewindResult{CheckpointID: boundary.ID, Events: events}, nil
 }
 
 func (e *Engine) Undo(sessionID string) (UndoResult, error) {

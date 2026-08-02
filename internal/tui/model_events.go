@@ -14,6 +14,16 @@ type UndoDoneMsg struct {
 	Err    string
 }
 
+type CheckpointDoneMsg struct {
+	Result CheckpointResult
+	Err    string
+}
+
+type RewindDoneMsg struct {
+	Result RewindResult
+	Err    string
+}
+
 type ResumeDoneMsg struct {
 	Generation uint64
 	SessionID  string
@@ -104,6 +114,21 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = m.appendError(ev.Err)
 		}
 		return m.resizeViewport(), waitForEvent(m.events)
+	case CheckpointDoneMsg:
+		if ev.Err != "" {
+			return m.appendError(ev.Err).syncViewport(), nil
+		}
+		m.Transcript = m.Transcript.appendNotice("checkpoint saved: " + ev.Result.ID)
+		return m.syncViewport(), nil
+	case RewindDoneMsg:
+		if ev.Err != "" {
+			return m.appendError(ev.Err).syncViewport(), nil
+		}
+		m = m.resetRunState()
+		m = m.replaceEvents(ev.Result.Events)
+		m.Transcript = m.Transcript.appendNotice("rewound to checkpoint: " + ev.Result.CheckpointID)
+		m = m.resizeViewport()
+		return m.requestWorkspaceRefresh()
 	case UndoDoneMsg:
 		if ev.Err != "" {
 			return m.appendError(ev.Err).syncViewport(), nil

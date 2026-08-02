@@ -69,4 +69,7 @@ type PromptCheckpoint struct {
 	Prompt     string
 	BeforeTree string
 	AfterTree  string
+	// OriginCallID identifies a model-created checkpoint. Rewind preserves that
+	// tool call and its settlement, then prunes subsequent conversation events.
+	OriginCallID string
 }

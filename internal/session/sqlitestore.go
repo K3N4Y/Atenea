@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS events (
 	checkpoint_prompt TEXT,
 	checkpoint_before_tree TEXT,
 	checkpoint_after_tree TEXT,
+	checkpoint_origin_call_id TEXT,
 	activity_at INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (session_id, seq)
 );
@@ -55,7 +56,17 @@ CREATE TABLE IF NOT EXISTS session_context (
   baseline_seq INTEGER NOT NULL DEFAULT 0,
   revision     INTEGER NOT NULL DEFAULT 0,
   checkpoint   BLOB
-);`
+);
+
+CREATE TABLE IF NOT EXISTS project_memory (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  project    TEXT    NOT NULL,
+  text       TEXT    NOT NULL,
+  source     TEXT    NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS project_memory_project_created
+  ON project_memory(project, created_at DESC, id DESC);`
 
 const sqliteCurrentUnixMilli = `(CAST(strftime('%s', 'now') AS INTEGER) * 1000 + CAST(substr(strftime('%f', 'now'), 4, 3) AS INTEGER))`
 
@@ -78,6 +89,7 @@ type SQLiteStore struct {
 var _ Store = (*SQLiteStore)(nil)
 var _ CompactionStore = (*SQLiteStore)(nil)
 var _ UndoStore = (*SQLiteStore)(nil)
+var _ ProjectMemory = (*SQLiteStore)(nil)
 
 // NewSQLiteStore abre (o crea) la base en dsn y asegura el esquema. dsn puede ser
 // ":memory:" o una ruta de archivo. Para archivo construye un DSN URI del driver
@@ -147,6 +159,7 @@ func migrateSQLiteSchema(db *sql.DB) error {
 		{"checkpoint_prompt", "TEXT"},
 		{"checkpoint_before_tree", "TEXT"},
 		{"checkpoint_after_tree", "TEXT"},
+		{"checkpoint_origin_call_id", "TEXT"},
 		{"activity_at", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if columns[column.name] {
@@ -337,12 +350,13 @@ func (s *SQLiteStore) AppendEvent(ctx context.Context, sessionID string, ev Sess
 		}
 		attrs = b
 	}
-	var checkpointID, checkpointPrompt, checkpointBefore, checkpointAfter sql.NullString
+	var checkpointID, checkpointPrompt, checkpointBefore, checkpointAfter, checkpointOriginCallID sql.NullString
 	if ev.Checkpoint != nil {
 		checkpointID = sql.NullString{String: ev.Checkpoint.ID, Valid: true}
 		checkpointPrompt = sql.NullString{String: ev.Checkpoint.Prompt, Valid: true}
 		checkpointBefore = sql.NullString{String: ev.Checkpoint.BeforeTree, Valid: true}
 		checkpointAfter = sql.NullString{String: ev.Checkpoint.AfterTree, Valid: true}
+		checkpointOriginCallID = sql.NullString{String: ev.Checkpoint.OriginCallID, Valid: true}
 	}
 
 	// ev_text guarda el Text top-level del SessionEvent (Reasoning/Text.*,
@@ -357,12 +371,12 @@ func (s *SQLiteStore) AppendEvent(ctx context.Context, sessionID string, ev Sess
 	var seq int64
 	if err := tx.QueryRowContext(ctx,
 		`INSERT INTO events
-		   (session_id, seq, kind, has_message, msg_id, role, text, call_id, tool_name, input, usage, error, tool_calls, tool_call_id, message_is_error, ev_text, diff, attrs, compaction, checkpoint_id, checkpoint_prompt, checkpoint_before_tree, checkpoint_after_tree, activity_at)
-		 VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM events WHERE session_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+sqliteCurrentUnixMilli+`)
+		   (session_id, seq, kind, has_message, msg_id, role, text, call_id, tool_name, input, usage, error, tool_calls, tool_call_id, message_is_error, ev_text, diff, attrs, compaction, checkpoint_id, checkpoint_prompt, checkpoint_before_tree, checkpoint_after_tree, checkpoint_origin_call_id, activity_at)
+		 VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM events WHERE session_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+sqliteCurrentUnixMilli+`)
 		 RETURNING seq`,
 		sessionID, sessionID, string(ev.Kind), hasMessage, msgID, role, text,
 		ev.CallID, ev.ToolName, []byte(ev.Input), usage, ev.Error, toolCalls, toolCallID, messageIsError, ev.Text, ev.Diff, attrs, compaction,
-		checkpointID, checkpointPrompt, checkpointBefore, checkpointAfter,
+		checkpointID, checkpointPrompt, checkpointBefore, checkpointAfter, checkpointOriginCallID,
 	).Scan(&seq); err != nil {
 		return 0, err
 	}
@@ -521,7 +535,7 @@ func sqliteRawEvents(ctx context.Context, queryer sqliteQueryer, sessionID strin
 	rows, err := queryer.QueryContext(ctx,
 		`SELECT seq, kind, has_message, msg_id, role, text, call_id, tool_name,
 		        input, usage, error, tool_calls, tool_call_id, message_is_error, ev_text, diff, attrs, compaction,
-		        checkpoint_id, checkpoint_prompt, checkpoint_before_tree, checkpoint_after_tree
+		        checkpoint_id, checkpoint_prompt, checkpoint_before_tree, checkpoint_after_tree, checkpoint_origin_call_id
 		   FROM events
 		  WHERE session_id = ?
 		  ORDER BY seq`,
@@ -535,18 +549,18 @@ func sqliteRawEvents(ctx context.Context, queryer sqliteQueryer, sessionID strin
 	out := make([]SessionEvent, 0)
 	for rows.Next() {
 		var (
-			seq                                                               int64
-			kind                                                              string
-			hasMessage                                                        int
-			msgID, role, text, callID, toolName, tcID                         sql.NullString
-			errText, evText, diff                                             sql.NullString
-			messageIsError                                                    int
-			checkpointID, checkpointPrompt, checkpointBefore, checkpointAfter sql.NullString
-			input, usage, toolCalls, attrs, compaction                        []byte
+			seq                                                                                       int64
+			kind                                                                                      string
+			hasMessage                                                                                int
+			msgID, role, text, callID, toolName, tcID                                                 sql.NullString
+			errText, evText, diff                                                                     sql.NullString
+			messageIsError                                                                            int
+			checkpointID, checkpointPrompt, checkpointBefore, checkpointAfter, checkpointOriginCallID sql.NullString
+			input, usage, toolCalls, attrs, compaction                                                []byte
 		)
 		if err := rows.Scan(&seq, &kind, &hasMessage, &msgID, &role, &text,
 			&callID, &toolName, &input, &usage, &errText, &toolCalls, &tcID, &messageIsError, &evText, &diff, &attrs, &compaction,
-			&checkpointID, &checkpointPrompt, &checkpointBefore, &checkpointAfter); err != nil {
+			&checkpointID, &checkpointPrompt, &checkpointBefore, &checkpointAfter, &checkpointOriginCallID); err != nil {
 			return nil, err
 		}
 
@@ -605,7 +619,7 @@ func sqliteRawEvents(ctx context.Context, queryer sqliteQueryer, sessionID strin
 			ev.Compaction = &checkpoint
 		}
 		if checkpointID.Valid {
-			ev.Checkpoint = &PromptCheckpoint{ID: checkpointID.String, Prompt: checkpointPrompt.String, BeforeTree: checkpointBefore.String, AfterTree: checkpointAfter.String}
+			ev.Checkpoint = &PromptCheckpoint{ID: checkpointID.String, Prompt: checkpointPrompt.String, BeforeTree: checkpointBefore.String, AfterTree: checkpointAfter.String, OriginCallID: checkpointOriginCallID.String}
 		}
 		out = append(out, ev)
 	}
@@ -998,4 +1012,56 @@ func sqliteEventsForValidation(ctx context.Context, queryer sqliteQueryer, sessi
 		return nil, err
 	}
 	return events, nil
+}
+
+func (s *SQLiteStore) Retain(ctx context.Context, project, text, source string) (MemoryFact, error) {
+	project, text, source, err := normalizeMemoryInput(project, text, source)
+	if err != nil {
+		return MemoryFact{}, err
+	}
+	createdAt := time.Now().UTC()
+	result, err := s.db.ExecContext(ctx,
+		`INSERT INTO project_memory(project, text, source, created_at) VALUES (?, ?, ?, ?)`,
+		project, text, source, createdAt.UnixMilli())
+	if err != nil {
+		return MemoryFact{}, fmt.Errorf("retain project memory: %w", err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return MemoryFact{}, fmt.Errorf("read retained memory id: %w", err)
+	}
+	return MemoryFact{ID: id, Project: project, Text: text, Source: source, CreatedAt: createdAt}, nil
+}
+
+func (s *SQLiteStore) Recall(ctx context.Context, project, query string, limit int) ([]MemoryFact, error) {
+	project = strings.TrimSpace(project)
+	if project == "" {
+		return nil, ErrInvalidMemory
+	}
+	query = strings.TrimSpace(query)
+	limit = normalizeRecallLimit(limit)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, project, text, source, created_at
+		  FROM project_memory
+		 WHERE project = ? AND (? = '' OR instr(lower(text), lower(?)) > 0)
+		 ORDER BY created_at DESC, id DESC
+		 LIMIT ?`, project, query, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("recall project memory: %w", err)
+	}
+	defer rows.Close()
+	facts := make([]MemoryFact, 0)
+	for rows.Next() {
+		var fact MemoryFact
+		var createdAt int64
+		if err := rows.Scan(&fact.ID, &fact.Project, &fact.Text, &fact.Source, &createdAt); err != nil {
+			return nil, fmt.Errorf("scan project memory: %w", err)
+		}
+		fact.CreatedAt = time.UnixMilli(createdAt).UTC()
+		facts = append(facts, fact)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate project memory: %w", err)
+	}
+	return facts, nil
 }

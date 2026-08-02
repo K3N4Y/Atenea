@@ -2844,3 +2844,84 @@ func TestEngine_LocalEndpointSelectionSwitchesTheSystemPrompt(t *testing.T) {
 		t.Fatalf("system prompt after switching to a cloud model = %q, want the family-routed prompt", systems)
 	}
 }
+
+func TestEngine_CheckpointAndRewindRestoreWorkspaceAndPruneConversation(t *testing.T) {
+	root := newUndoWorkspace(t)
+	provider := newTurnProvider(
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.ToolCall, CallID: "write-1", ToolName: "write", Input: json.RawMessage(`{"path":"after.txt","content":"after checkpoint\n"}`)}, {Kind: llm.StepEnded}},
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.StepEnded}},
+	)
+	store := session.NewMemoryStore()
+	engine := New(Config{Root: root, Provider: provider, Store: store, Checkpoints: checkpoint.NewGitStore(t.TempDir())})
+	checkpointResult, err := engine.Checkpoint("s1")
+	if err != nil || checkpointResult.ID == "" {
+		t.Fatalf("Checkpoint = %+v, err = %v", checkpointResult, err)
+	}
+	if _, err := engine.SendPrompt("s1", "change after checkpoint"); err != nil {
+		t.Fatal(err)
+	}
+	if _, done := collectUntilRunDone(t, engine.Events(), 10*time.Second, approveAllPermissions(t, engine)); done.Err != "" {
+		t.Fatal(done.Err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "after.txt")); err != nil {
+		t.Fatalf("turn did not change workspace: %v", err)
+	}
+
+	rewind, err := engine.Rewind("s1")
+	if err != nil || rewind.CheckpointID != checkpointResult.ID {
+		t.Fatalf("Rewind = %+v, err = %v", rewind, err)
+	}
+	assertUndoMissing(t, root, "after.txt")
+	messages, err := store.Messages(context.Background(), "s1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 0 {
+		t.Fatalf("messages after rewind = %+v, want checkpoint context", messages)
+	}
+	if _, err := engine.SendPrompt("s1", "continue from checkpoint"); err != nil {
+		t.Fatal(err)
+	}
+	if _, done := collectUntilRunDone(t, engine.Events(), 10*time.Second, approveAllPermissions(t, engine)); done.Err != "" {
+		t.Fatal(done.Err)
+	}
+	messages, err = store.Messages(context.Background(), "s1", 0)
+	if err != nil || len(messages) == 0 || messages[0].Text != "continue from checkpoint" {
+		t.Fatalf("continued messages = %+v, err = %v", messages, err)
+	}
+}
+
+func TestEngine_ModelToolsCheckpointThenRewindWithoutOrphanedToolCalls(t *testing.T) {
+	root := newUndoWorkspace(t)
+	provider := newTurnProvider(
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.ToolCall, CallID: "checkpoint-1", ToolName: "checkpoint", Input: json.RawMessage(`{}`)}, {Kind: llm.StepEnded}},
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.StepEnded}},
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.ToolCall, CallID: "write-1", ToolName: "write", Input: json.RawMessage(`{"path":"after.txt","content":"after checkpoint\n"}`)}, {Kind: llm.StepEnded}},
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.StepEnded}},
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.ToolCall, CallID: "rewind-1", ToolName: "rewind", Input: json.RawMessage(`{}`)}, {Kind: llm.StepEnded}},
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.StepEnded}},
+	)
+	store := session.NewMemoryStore()
+	engine := New(Config{Root: root, Provider: provider, Store: store, Checkpoints: checkpoint.NewGitStore(t.TempDir())})
+	for _, prompt := range []string{"checkpoint before exploration", "do exploratory work", "rewind exploration"} {
+		if _, err := engine.SendPrompt("s1", prompt); err != nil {
+			t.Fatal(err)
+		}
+		if _, done := collectUntilRunDone(t, engine.Events(), 10*time.Second, approveAllPermissions(t, engine)); done.Err != "" {
+			t.Fatalf("run %q failed: %s", prompt, done.Err)
+		}
+	}
+	assertUndoMissing(t, root, "after.txt")
+	messages, err := store.Messages(context.Background(), "s1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range messages {
+		if message.Role == session.RoleTool && message.ToolCallID == "" {
+			t.Fatalf("orphaned tool result after model rewind: %+v", messages)
+		}
+	}
+	if len(messages) < 3 || messages[len(messages)-1].ToolCallID != "checkpoint-1" {
+		t.Fatalf("messages after model rewind = %+v, want checkpoint call and settlement preserved", messages)
+	}
+}

@@ -15,6 +15,8 @@ type (
 	RunHandle           = engine.RunHandle
 	RunDoneMsg          = engine.RunDoneMsg
 	UndoResult          = engine.UndoResult
+	CheckpointResult    = engine.CheckpointResult
+	RewindResult        = engine.RewindResult
 	ResumeResult        = engine.ResumeResult
 	CompactionState     = engine.CompactionState
 	CompactionStatusMsg = engine.CompactionStatusMsg

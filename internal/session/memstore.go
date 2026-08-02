@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -14,9 +15,9 @@ type MemoryStore struct {
 	sessions    map[string][]SessionEvent
 	epochs      map[string]ContextEpoch
 	checkpoints map[string]CompactionCheckpoint
-	// lastSeen marca el orden global de insercion del ultimo evento de cada
-	// sesion: el equivalente en memoria del MAX(rowid) que ordena Sessions por
-	// recencia. Un contador monotonico global lo alimenta en cada AppendEvent.
+	memories    map[string][]MemoryFact
+	nextMemory  int64
+	// lastSeen marks the global insertion order of each session's latest event.
 	lastSeen     map[string]int
 	lastActivity map[string]time.Time
 	clock        int
@@ -28,6 +29,7 @@ func NewMemoryStore() *MemoryStore {
 		sessions:     make(map[string][]SessionEvent),
 		epochs:       make(map[string]ContextEpoch),
 		checkpoints:  make(map[string]CompactionCheckpoint),
+		memories:     make(map[string][]MemoryFact),
 		lastSeen:     make(map[string]int),
 		lastActivity: make(map[string]time.Time),
 	}
@@ -38,6 +40,7 @@ func NewMemoryStore() *MemoryStore {
 var _ Store = (*MemoryStore)(nil)
 var _ CompactionStore = (*MemoryStore)(nil)
 var _ UndoStore = (*MemoryStore)(nil)
+var _ ProjectMemory = (*MemoryStore)(nil)
 
 // AppendEvent agrega ev al log durable de sessionID, le asigna el siguiente Seq
 // monotonico y lo devuelve. Crea la sesion si es su primer evento. El SessionID
@@ -338,4 +341,42 @@ func (s *MemoryStore) DeleteSession(ctx context.Context, sessionID string) error
 	delete(s.epochs, sessionID)
 	delete(s.checkpoints, sessionID)
 	return nil
+}
+
+func (s *MemoryStore) Retain(ctx context.Context, project, text, source string) (MemoryFact, error) {
+	if err := ctx.Err(); err != nil {
+		return MemoryFact{}, err
+	}
+	project, text, source, err := normalizeMemoryInput(project, text, source)
+	if err != nil {
+		return MemoryFact{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.nextMemory++
+	fact := MemoryFact{ID: s.nextMemory, Project: project, Text: text, Source: source, CreatedAt: time.Now().UTC()}
+	s.memories[project] = append(s.memories[project], fact)
+	return fact, nil
+}
+
+func (s *MemoryStore) Recall(ctx context.Context, project, query string, limit int) ([]MemoryFact, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	project = strings.TrimSpace(project)
+	if project == "" {
+		return nil, ErrInvalidMemory
+	}
+	query = strings.ToLower(strings.TrimSpace(query))
+	limit = normalizeRecallLimit(limit)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	facts := s.memories[project]
+	out := make([]MemoryFact, 0, min(limit, len(facts)))
+	for i := len(facts) - 1; i >= 0 && len(out) < limit; i-- {
+		if query == "" || strings.Contains(strings.ToLower(facts[i].Text), query) {
+			out = append(out, facts[i])
+		}
+	}
+	return out, nil
 }

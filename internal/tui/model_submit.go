@@ -17,6 +17,8 @@ const (
 	localCommandReasoning
 	localCommandCacheStats
 	localCommandUndo
+	localCommandCheckpoint
+	localCommandRewind
 	localCommandResume
 	localCommandMCP
 	localCommandConnect
@@ -31,6 +33,11 @@ type localCommand struct {
 	original string
 }
 
+type checkpointAgent interface {
+	Checkpoint(sessionID string) (CheckpointResult, error)
+	Rewind(sessionID string) (RewindResult, error)
+}
+
 func parseLocalCommand(text string) (localCommand, bool) {
 	trimmed := strings.TrimSpace(text)
 	switch {
@@ -42,6 +49,10 @@ func parseLocalCommand(text string) (localCommand, bool) {
 		return localCommand{kind: localCommandCacheStats, text: trimmed, original: text}, true
 	case strings.HasPrefix(trimmed, "/undo"):
 		return localCommand{kind: localCommandUndo, text: trimmed}, true
+	case trimmed == "/checkpoint":
+		return localCommand{kind: localCommandCheckpoint, text: trimmed}, true
+	case trimmed == "/rewind":
+		return localCommand{kind: localCommandRewind, text: trimmed}, true
 	case strings.HasPrefix(trimmed, "/resume"):
 		return localCommand{kind: localCommandResume, text: trimmed}, true
 	case strings.HasPrefix(trimmed, "/mcp"):
@@ -85,6 +96,10 @@ func (m Model) executeLocalCommand(command localCommand) (Model, tea.Cmd) {
 		return m.submitAgentPrompt(command.original)
 	case localCommandUndo:
 		return m.submitUndoCommand(command.text)
+	case localCommandCheckpoint:
+		return m.submitCheckpointCommand()
+	case localCommandRewind:
+		return m.submitRewindCommand()
 	case localCommandResume:
 		return m.submitResumeCommand(command.text)
 	case localCommandMCP:
@@ -148,6 +163,38 @@ func (m Model) submitUndoCommand(command string) (Model, tea.Cmd) {
 			return UndoDoneMsg{Err: err.Error()}
 		}
 		return UndoDoneMsg{Result: result}
+	}
+}
+
+func (m Model) submitCheckpointCommand() (Model, tea.Cmd) {
+	controller, ok := m.agent.(checkpointAgent)
+	if !ok {
+		return m.appendError("checkpoint management is unavailable"), nil
+	}
+	sessionID := m.sessionID
+	m.composer = m.composer.clear()
+	return m, func() tea.Msg {
+		result, err := controller.Checkpoint(sessionID)
+		if err != nil {
+			return CheckpointDoneMsg{Err: err.Error()}
+		}
+		return CheckpointDoneMsg{Result: result}
+	}
+}
+
+func (m Model) submitRewindCommand() (Model, tea.Cmd) {
+	controller, ok := m.agent.(checkpointAgent)
+	if !ok {
+		return m.appendError("checkpoint management is unavailable"), nil
+	}
+	sessionID := m.sessionID
+	m.composer = m.composer.clear()
+	return m, func() tea.Msg {
+		result, err := controller.Rewind(sessionID)
+		if err != nil {
+			return RewindDoneMsg{Err: err.Error()}
+		}
+		return RewindDoneMsg{Result: result}
 	}
 }
 
