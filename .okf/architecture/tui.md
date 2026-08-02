@@ -134,20 +134,28 @@ Three surfaces, one pipeline: only the last arrow differs.
   and non-ignored untracked files, executable modes, and symlinks. Ignored
   files remain untouched, and the workspace's main `.git` directory, index,
   branch, HEAD, refs, and staged changes are never mutated.
-- `internal/tui/model.go` + `transcript.go` + `composer.go` + `complete.go` +
-  `view.go` + `reveal.go` — the
-  Model of Bubble Tea. `transcript.go` is the `Transcript` module: a pure,
-  I/O-free value type (embedded on `Model`) that projects durable
-  `SessionEvent` to conversation inputs (streaming assistant text, collapsible
-  thought blocks, user messages, stateful tool calls, pending permissions,
-  errors) and keeps live token usage: estimated request input from
-  `Step.Started`, generated tokens estimated from streaming deltas, and exact
-  provider usage from `Step.Ended`. It also owns the keyboard-gate query
-  predicates (`pendingPermission`, `hasPendingPlan`) and the smooth-reveal
-  cursor, and exposes one ordered `visibleEntries` projection (see below) that
-  both the render and click-targeting paths consume; `model.go` handles
-  keyboard and channel event pump (its thin `foldEvent`/`replaceEvents`/
-  `foldCompactionStatus` wrappers thread the session id into the module).
+- `internal/tui/model.go` + `model_events.go` + `model_input.go` +
+  `model_mouse.go` + `model_overlays.go` + `model_state.go` + `transcript.go` +
+  `composer.go` + `complete.go` + `view.go` + `reveal.go` — the Bubble Tea
+  model. `model.go` keeps the root `Model`, construction, and Bubble Tea
+  `Init`/`Update` boundary; `model_events.go` dispatches engine, session,
+  lifecycle, focus, resize, and spinner messages; `model_input.go` owns
+  keyboard, composer, and run cancellation flows; `model_mouse.go` owns pointer
+  routing, scrolling, and hit testing; `model_overlays.go` routes the resume
+  overlay while the model, MCP, connect, and permission overlays retain their
+  existing dedicated files; and `model_state.go` keeps state helpers plus
+  optional agent capabilities. `transcript.go` is the `Transcript` module: a
+  pure, I/O-free
+  value type (embedded on `Model`) that projects durable `SessionEvent` to
+  conversation inputs (streaming assistant text, collapsible thought blocks,
+  user messages, stateful tool calls, pending permissions, errors) and keeps
+  live token usage: estimated request input from `Step.Started`, generated
+  tokens estimated from streaming deltas, and exact provider usage from
+  `Step.Ended`. It also owns the keyboard-gate query predicates
+  (`pendingPermission`, `hasPendingPlan`) and the smooth-reveal cursor, and
+  exposes one ordered `visibleEntries` projection (see below) that both the
+  render and click-targeting paths consume. Thin Model wrappers in
+  `model_state.go` thread the session id into transcript folds.
   `input_router.go` owns the input-precedence ORDER once as
   `Model.activeInputTarget` (resume/model/mcp pickers, connect panel,
   permission gate, plan gate, then the composer): the keyboard router,

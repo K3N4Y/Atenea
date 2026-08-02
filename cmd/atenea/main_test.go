@@ -1040,14 +1040,12 @@ func waitForPTYRawAfter(t *testing.T, output *lockedBuffer, previous, want strin
 	t.Fatalf("PTY raw output after interaction did not contain %q:\n%q", want, output.String())
 }
 
-func stopPTYProcess(cmd *exec.Cmd, terminal *os.File) func() {
-	return func() {
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
-		_ = terminal.Close()
-		_ = cmd.Wait()
+func stopPTYProcess(cmd *exec.Cmd, terminal *os.File) {
+	if cmd.Process != nil {
+		_ = cmd.Process.Kill()
 	}
+	_ = terminal.Close()
+	_ = cmd.Wait()
 }
 
 func waitForStablePTYOutputAfter(t *testing.T, output *lockedBuffer, previous string) string {
