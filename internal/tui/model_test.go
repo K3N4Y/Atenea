@@ -2101,11 +2101,15 @@ func TestModel_RendersTaskToolAsSubAgentWithSpinner(t *testing.T) {
 	}
 
 	m = apply(t, m, EventMsg{
-		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "task", Text: "subagent report",
-		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "subagent report", ToolCallID: "c1"},
+		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "task", Text: "scope: project\nagent: explorer\nsubagent report",
+		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "scope: project\nagent: explorer\nsubagent report", ToolCallID: "c1"},
 	})
-	if got := ansi.Strip(m.View()); !strings.Contains(got, "✓ SubAgent explorer") {
+	got := ansi.Strip(m.View())
+	if !strings.Contains(got, "✓ SubAgent explorer") {
 		t.Fatalf("View() = %q, a finished task must settle as %q", got, "✓ SubAgent explorer")
+	}
+	if strings.Contains(got, "scope: project") || strings.Contains(got, "agent: explorer") || strings.Contains(got, "subagent report") {
+		t.Fatalf("View() = %q, task output must not appear below the agent title", got)
 	}
 }
 

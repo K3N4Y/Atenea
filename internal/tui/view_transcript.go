@@ -223,7 +223,9 @@ func (e entry) renderTool(p tool.Presentation, width int) string {
 		}
 	}
 	showDetail := !p.HidesOutput
-	if e.tool == "bash" {
+	if e.tool == "task" {
+		showDetail = false
+	} else if e.tool == "bash" {
 		showDetail = e.expanded
 	} else if e.status == toolFailed {
 		showDetail = true
@@ -298,7 +300,8 @@ func (m Model) renderVisibleBlock(ve visibleEntry, width int) string {
 		return block + "\n  ↳ " + strconv.Itoa(total) + " " + label
 	}
 	for _, child := range m.childBatches[ve.entry.callID] {
-		childBlock := child.render(width, m.presentationOf(child))
+		p := m.presentationOf(child)
+		childBlock := child.renderActivity(activityLabel(p, child), displaySubject(p.Subject), false)
 		childBlock = "  ↳ " + strings.ReplaceAll(childBlock, "\n", "\n    ")
 		block += "\n" + childBlock
 	}

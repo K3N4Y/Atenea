@@ -574,3 +574,22 @@ func TestChildRowsRenderBelowTaskAndEntryLinesMatch(t *testing.T) {
 		t.Fatalf("entryLines diverged:\n%s\n!=\n%s", strings.Join(lines, "\n"), rendered)
 	}
 }
+func TestChildRowsShowToolAndParametersWithoutResult(t *testing.T) {
+	m := NewModel(nil, testSession, nil)
+	m = m.foldEvent(EventMsg{Kind: session.KindToolCalled, CallID: "task", ToolName: "task"})
+	m = m.foldEvent(EventMsg(session.WithParentTaskCall(session.SessionEvent{Kind: session.KindStepStarted, SessionID: "child"}, "task")))
+	m = m.foldEvent(EventMsg(session.WithParentTaskCall(session.SessionEvent{
+		Kind: session.KindToolCalled, SessionID: "child", CallID: "grep-1", ToolName: "grep", Input: []byte(`{"pattern":"needle"}`),
+	}, "task")))
+	m = m.foldEvent(EventMsg(session.WithParentTaskCall(session.SessionEvent{
+		Kind: session.KindToolSuccess, SessionID: "child", CallID: "grep-1", ToolName: "grep", Text: "secret result line",
+	}, "task")))
+
+	rendered := m.renderTranscript()
+	if !strings.Contains(rendered, "grep") || !strings.Contains(rendered, "needle") {
+		t.Fatalf("render = %q, child tool name and parameters must remain visible", rendered)
+	}
+	if strings.Contains(rendered, "secret result line") {
+		t.Fatalf("render = %q, child tool result must stay hidden", rendered)
+	}
+}

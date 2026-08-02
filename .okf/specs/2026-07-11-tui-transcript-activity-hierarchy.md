@@ -92,15 +92,8 @@ viewport content line by line to map mouse clicks back to entries.
 - Skill (`tool == "skill"`): same grammar with the skill name as summary
   (`✓ skill    demo`); no output/diff detail — the SKILL.md body that travels
   in the output is for the model, not the transcript.
-- Subagent task: the `task` tool renders as a regular activity row. While its
-  child session is live, the TUI renders that child's latest tool-bearing turn
-  immediately below it as indented `↳` activity rows. Calls from the same turn
-  stay in provider call order and independently show running, success, or
-  failure through the normal tool presentation. The first tool call in a later
-  tool-bearing turn replaces the complete prior batch; a text-only turn does
-  not erase it. When the parent task succeeds or fails, the live rows are
-  replaced by one `↳ 0 tool calls`, `↳ 1 tool call`, or `↳ N tool calls` row.
-  The total counts every direct `Tool.Called` occurrence in that child,
+ - Subagent task: the `task` tool renders as a regular activity row. While its child session is live, the TUI renders that child's latest tool-bearing turn immediately below it as indented `↳` activity rows. Calls from the same turn stay in provider call order and independently show running, success, or failure through the normal tool marker and header. Child rows show only the tool name and summarized parameters; their output, diffs, and failure details are intentionally omitted from the parent transcript. The first tool call in a later tool-bearing turn replaces the complete prior batch; a text-only turn does not erase it. When the parent task succeeds or fails, the live rows are replaced by one `↳ 0 tool calls`, `↳ 1 tool call`, or `↳ N tool calls` row.
+ - The total counts every direct `Tool.Called` occurrence in that child, including repeats and a direct nested `task`, but not tools used inside its descendants. Concurrent children are anchored by the parent task call ID and their own session IDs, so colliding child call IDs cannot cross-settle. Live rows remain bus-only and ephemeral; only the integer total is stored on the durable parent settlement, so reopening restores the total without child names, inputs, outputs, or errors. Only the TUI opts into live child activity, and the Vue/Desktop transcript ignores the private total metadata. Nested permission requests still surface as their own `?` rows keyed by child `SessionID`.
   including repeats and a direct nested `task`, but not tools used inside its
   descendants. Concurrent children are anchored by the parent task call ID and
   their own session IDs, so colliding child call IDs cannot cross-settle. Live
