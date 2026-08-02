@@ -217,14 +217,14 @@ func TestModel_ModeAutocompleteExecutesOnFirstEnter(t *testing.T) {
 				t.Fatal("local mode selection returned an async prompt command")
 			}
 			m = updated.(Model)
-			if got := m.input.Value(); got != "" {
+			if got := m.composer.input.Value(); got != "" {
 				t.Fatalf("composer = %q, want cleared after one Enter", got)
 			}
 			if fake.AutoAcceptEnabled("s1") != tt.enabled {
 				t.Fatalf("enabled = %v, want %v", fake.AutoAcceptEnabled("s1"), tt.enabled)
 			}
-			if len(fake.sent) != 0 || len(fake.planSent) != 0 || len(m.history) != 0 {
-				t.Fatalf("mode leaked: sent=%v plan=%v history=%v", fake.sent, fake.planSent, m.history)
+			if len(fake.sent) != 0 || len(fake.planSent) != 0 || len(m.composer.history) != 0 {
+				t.Fatalf("mode leaked: sent=%v plan=%v history=%v", fake.sent, fake.planSent, m.composer.history)
 			}
 			if len(m.entries) == 0 || !strings.Contains(m.entries[len(m.entries)-1].text, tt.status) {
 				t.Fatalf("status not shown: %+v", m.entries)
@@ -368,8 +368,8 @@ func TestModel_ResumePickerListsFiltersSelectsAndLoadsExactSession(t *testing.T)
 	}
 	m := NewModel(fake, "tui-current", nil)
 	m.entries = []entry{{kind: entryUser, text: "current transcript"}}
-	m.history = []string{"current prompt"}
-	m.histIdx = len(m.history)
+	m.composer.history = []string{"current prompt"}
+	m.composer.histIdx = len(m.composer.history)
 	m = typeRunes(t, m, "/resume")
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -377,8 +377,8 @@ func TestModel_ResumePickerListsFiltersSelectsAndLoadsExactSession(t *testing.T)
 	if cmd == nil || !m.resumePicker.open || !m.resumePicker.loading {
 		t.Fatalf("resume submit = cmd:%v picker:%+v, want async open loading picker", cmd != nil, m.resumePicker)
 	}
-	if m.input.Value() != "" || len(m.menuItems) != 0 {
-		t.Fatalf("composer/menu = %q/%+v, want cleared", m.input.Value(), m.menuItems)
+	if m.composer.input.Value() != "" || len(m.composer.menuItems) != 0 {
+		t.Fatalf("composer/menu = %q/%+v, want cleared", m.composer.input.Value(), m.composer.menuItems)
 	}
 	if len(m.entries) != 1 || m.entries[0].text != "current transcript" {
 		t.Fatalf("entries changed while listing: %+v", m.entries)
@@ -415,8 +415,8 @@ func TestModel_ResumePickerListsFiltersSelectsAndLoadsExactSession(t *testing.T)
 	if len(m.entries) != 1 || m.entries[0].text != "restored transcript" {
 		t.Fatalf("entries = %+v, want restored transcript", m.entries)
 	}
-	if !slices.Equal(m.history, []string{"first restored prompt", "latest restored prompt"}) || m.histIdx != 2 {
-		t.Fatalf("history = %q idx=%d, want restored history at end", m.history, m.histIdx)
+	if !slices.Equal(m.composer.history, []string{"first restored prompt", "latest restored prompt"}) || m.composer.histIdx != 2 {
+		t.Fatalf("history = %q idx=%d, want restored history at end", m.composer.history, m.composer.histIdx)
 	}
 }
 
@@ -424,8 +424,8 @@ func TestModel_ResumePickerCapturesKeysAndEscapePreservesChat(t *testing.T) {
 	fake := &fakeAgent{resumeSessions: []session.SessionSummary{{ID: "tui-old", Title: "Old session"}}}
 	m := NewModel(fake, "tui-current", nil)
 	m.entries = []entry{{kind: entryUser, text: "keep chat"}}
-	m.history = []string{"keep history"}
-	m.histIdx = 1
+	m.composer.history = []string{"keep history"}
+	m.composer.histIdx = 1
 	m.ready = true
 	m.viewport.Height = 1
 	m.viewport.SetContent("one\ntwo\nthree")
@@ -440,8 +440,8 @@ func TestModel_ResumePickerCapturesKeysAndEscapePreservesChat(t *testing.T) {
 		t.Fatalf("viewport offset = %d, want picker to capture PgDown at %d", m.viewport.YOffset, offset)
 	}
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
-	if m.resumePicker.open || m.sessionID != "tui-current" || len(m.entries) != 1 || m.entries[0].text != "keep chat" || !slices.Equal(m.history, []string{"keep history"}) {
-		t.Fatalf("escape changed model: picker:%+v session:%q entries:%+v history:%q", m.resumePicker, m.sessionID, m.entries, m.history)
+	if m.resumePicker.open || m.sessionID != "tui-current" || len(m.entries) != 1 || m.entries[0].text != "keep chat" || !slices.Equal(m.composer.history, []string{"keep history"}) {
+		t.Fatalf("escape changed model: picker:%+v session:%q entries:%+v history:%q", m.resumePicker, m.sessionID, m.entries, m.composer.history)
 	}
 }
 
@@ -471,7 +471,7 @@ func TestModel_ResumePickerErrorsPreserveCurrentSession(t *testing.T) {
 		fake := &fakeAgent{resumeListErr: errors.New("list failed")}
 		m := NewModel(fake, "tui-current", nil)
 		m.entries = []entry{{kind: entryUser, text: "keep chat"}}
-		m.history = []string{"keep history"}
+		m.composer.history = []string{"keep history"}
 		m = typeRunes(t, m, "/resume")
 		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 		m = apply(t, updated.(Model), cmd())
@@ -479,8 +479,8 @@ func TestModel_ResumePickerErrorsPreserveCurrentSession(t *testing.T) {
 		if !m.resumePicker.open || m.resumePicker.loading || m.resumePicker.err == nil || m.resumePicker.err.Error() != "list failed" {
 			t.Fatalf("picker = %+v, want closable list failure", m.resumePicker)
 		}
-		if m.sessionID != "tui-current" || len(m.entries) != 1 || !slices.Equal(m.history, []string{"keep history"}) {
-			t.Fatalf("list failure changed current session: session=%q entries=%+v history=%q", m.sessionID, m.entries, m.history)
+		if m.sessionID != "tui-current" || len(m.entries) != 1 || !slices.Equal(m.composer.history, []string{"keep history"}) {
+			t.Fatalf("list failure changed current session: session=%q entries=%+v history=%q", m.sessionID, m.entries, m.composer.history)
 		}
 	})
 
@@ -491,7 +491,7 @@ func TestModel_ResumePickerErrorsPreserveCurrentSession(t *testing.T) {
 		}
 		m := NewModel(fake, "tui-current", nil)
 		m.entries = []entry{{kind: entryUser, text: "keep chat"}}
-		m.history = []string{"keep history"}
+		m.composer.history = []string{"keep history"}
 		m.planMode = true
 		m.activeRun = 77
 		m.followAgent = false
@@ -504,8 +504,8 @@ func TestModel_ResumePickerErrorsPreserveCurrentSession(t *testing.T) {
 		if !m.resumePicker.open || m.resumePicker.loading || m.resumePicker.err == nil || m.resumePicker.err.Error() != "load failed" {
 			t.Fatalf("picker = %+v, want load failure", m.resumePicker)
 		}
-		if m.sessionID != "tui-current" || len(m.entries) != 1 || m.entries[0].text != "keep chat" || !slices.Equal(m.history, []string{"keep history"}) || !m.planMode || m.activeRun != 77 || m.followAgent {
-			t.Fatalf("load failure changed session: session=%q entries=%+v history=%q plan=%v run=%d follow=%v", m.sessionID, m.entries, m.history, m.planMode, m.activeRun, m.followAgent)
+		if m.sessionID != "tui-current" || len(m.entries) != 1 || m.entries[0].text != "keep chat" || !slices.Equal(m.composer.history, []string{"keep history"}) || !m.planMode || m.activeRun != 77 || m.followAgent {
+			t.Fatalf("load failure changed session: session=%q entries=%+v history=%q plan=%v run=%d follow=%v", m.sessionID, m.entries, m.composer.history, m.planMode, m.activeRun, m.followAgent)
 		}
 	})
 }
@@ -538,13 +538,13 @@ func TestModel_ResumeBuiltinMenuEnterOpensPicker(t *testing.T) {
 	fake := &fakeAgent{resumeSessions: []session.SessionSummary{{ID: "tui-old", Title: "Old"}}}
 	m := NewModel(fake, "tui-current", nil).WithCompletions([]command.Command{{Name: "resume", Description: "Resume a session", BuiltIn: true}}, nil)
 	m = typeRunes(t, m, "/res")
-	if len(m.menuItems) != 1 || !m.menuItems[0].builtin || m.menuItems[0].label != "/resume" {
-		t.Fatalf("menuItems = %+v, want builtin /resume", m.menuItems)
+	if len(m.composer.menuItems) != 1 || !m.composer.menuItems[0].builtin || m.composer.menuItems[0].label != "/resume" {
+		t.Fatalf("menuItems = %+v, want builtin /resume", m.composer.menuItems)
 	}
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(Model)
-	if cmd == nil || !m.resumePicker.open || m.input.Value() != "" || len(m.menuItems) != 0 {
-		t.Fatalf("menu Enter = cmd:%v picker:%+v input:%q menu:%+v", cmd != nil, m.resumePicker, m.input.Value(), m.menuItems)
+	if cmd == nil || !m.resumePicker.open || m.composer.input.Value() != "" || len(m.composer.menuItems) != 0 {
+		t.Fatalf("menu Enter = cmd:%v picker:%+v input:%q menu:%+v", cmd != nil, m.resumePicker, m.composer.input.Value(), m.composer.menuItems)
 	}
 	m = apply(t, m, cmd())
 	if len(fake.resumeLists) != 1 || fake.resumeLists[0] != "tui-current" {
@@ -580,7 +580,7 @@ func TestModel_ResumePickerIgnoresLoadResultAfterCloseAndReopen(t *testing.T) {
 	fake := &fakeAgent{resumeSessions: []session.SessionSummary{{ID: "tui-old", Title: "Old target"}}}
 	m := NewModel(fake, "tui-current", nil)
 	m.entries = []entry{{kind: entryUser, text: "keep current chat"}}
-	m.history = []string{"keep current history"}
+	m.composer.history = []string{"keep current history"}
 	m = typeRunes(t, m, "/resume")
 	updated, listOld := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = apply(t, updated.(Model), listOld())
@@ -603,8 +603,8 @@ func TestModel_ResumePickerIgnoresLoadResultAfterCloseAndReopen(t *testing.T) {
 	m = apply(t, updated.(Model), listNew())
 
 	m = apply(t, m, resultOld)
-	if !m.resumePicker.open || m.sessionID != "tui-current" || len(m.entries) != 1 || m.entries[0].text != "keep current chat" || !slices.Equal(m.history, []string{"keep current history"}) {
-		t.Fatalf("stale load replaced current session: picker=%+v session=%q entries=%+v history=%q", m.resumePicker, m.sessionID, m.entries, m.history)
+	if !m.resumePicker.open || m.sessionID != "tui-current" || len(m.entries) != 1 || m.entries[0].text != "keep current chat" || !slices.Equal(m.composer.history, []string{"keep current history"}) {
+		t.Fatalf("stale load replaced current session: picker=%+v session=%q entries=%+v history=%q", m.resumePicker, m.sessionID, m.entries, m.composer.history)
 	}
 }
 
@@ -624,8 +624,8 @@ func TestModel_ResumePickerAcceptsLoadFromCurrentGenerationAndTarget(t *testing.
 	updated, load := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = apply(t, updated.(Model), load())
 
-	if m.resumePicker.open || m.sessionID != "tui-target" || len(m.entries) != 1 || m.entries[0].text != "target chat" || !slices.Equal(m.history, []string{"target history"}) {
-		t.Fatalf("current load = picker:%+v session:%q entries:%+v history:%q", m.resumePicker, m.sessionID, m.entries, m.history)
+	if m.resumePicker.open || m.sessionID != "tui-target" || len(m.entries) != 1 || m.entries[0].text != "target chat" || !slices.Equal(m.composer.history, []string{"target history"}) {
+		t.Fatalf("current load = picker:%+v session:%q entries:%+v history:%q", m.resumePicker, m.sessionID, m.entries, m.composer.history)
 	}
 }
 
@@ -729,21 +729,21 @@ func TestModel_ResumePickerOwnsFocusAcrossTerminalFocusChanges(t *testing.T) {
 	m = typeRunes(t, m, "/resume")
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(Model)
-	if m.input.Focused() || !m.resumePicker.query.Focused() {
-		t.Fatalf("open focus = composer:%v query:%v, want picker-only focus", m.input.Focused(), m.resumePicker.query.Focused())
+	if m.composer.input.Focused() || !m.resumePicker.query.Focused() {
+		t.Fatalf("open focus = composer:%v query:%v, want picker-only focus", m.composer.input.Focused(), m.resumePicker.query.Focused())
 	}
 
 	m = apply(t, m, tea.BlurMsg{})
-	if m.input.Focused() || m.resumePicker.query.Focused() {
-		t.Fatalf("terminal blur focus = composer:%v query:%v, want both blurred", m.input.Focused(), m.resumePicker.query.Focused())
+	if m.composer.input.Focused() || m.resumePicker.query.Focused() {
+		t.Fatalf("terminal blur focus = composer:%v query:%v, want both blurred", m.composer.input.Focused(), m.resumePicker.query.Focused())
 	}
 	m = apply(t, m, tea.FocusMsg{})
-	if m.input.Focused() || !m.resumePicker.query.Focused() {
-		t.Fatalf("terminal refocus = composer:%v query:%v, want picker-only focus", m.input.Focused(), m.resumePicker.query.Focused())
+	if m.composer.input.Focused() || !m.resumePicker.query.Focused() {
+		t.Fatalf("terminal refocus = composer:%v query:%v, want picker-only focus", m.composer.input.Focused(), m.resumePicker.query.Focused())
 	}
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
-	if !m.input.Focused() || m.resumePicker.query.Focused() {
-		t.Fatalf("picker close focus = composer:%v query:%v, want composer restored", m.input.Focused(), m.resumePicker.query.Focused())
+	if !m.composer.input.Focused() || m.resumePicker.query.Focused() {
+		t.Fatalf("picker close focus = composer:%v query:%v, want composer restored", m.composer.input.Focused(), m.resumePicker.query.Focused())
 	}
 }
 
@@ -919,8 +919,8 @@ func TestModel_WithSessionRestoresTranscriptAndModeWithinBuilderChain(t *testing
 	if m.sessionID != "tui-session" || len(m.entries) != 1 || m.entries[0].text != "restored chat" || !m.planMode {
 		t.Fatalf("WithSession = session:%q entries:%+v plan:%v", m.sessionID, m.entries, m.planMode)
 	}
-	if !slices.Equal(m.history, []string{"restored history"}) {
-		t.Fatalf("builder history = %q, want supplied by WithHistory", m.history)
+	if !slices.Equal(m.composer.history, []string{"restored history"}) {
+		t.Fatalf("builder history = %q, want supplied by WithHistory", m.composer.history)
 	}
 }
 
@@ -931,8 +931,8 @@ func TestModel_UndoIsNativeCommandAndRestoresComposer(t *testing.T) {
 	}}
 	m := NewModel(fake, "s1", nil)
 	m.entries = []entry{{kind: entryUser, text: "old"}, {kind: entryAssistant, text: "answer"}}
-	m.history = []string{"old prompt"}
-	m.histIdx = len(m.history)
+	m.composer.history = []string{"old prompt"}
+	m.composer.histIdx = len(m.composer.history)
 	m = typeRunes(t, m, "/undo")
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(Model)
@@ -949,11 +949,11 @@ func TestModel_UndoIsNativeCommandAndRestoresComposer(t *testing.T) {
 	if len(m.entries) != 1 || m.entries[0].kind != entryUser || m.entries[0].text != "kept" {
 		t.Fatalf("entries = %+v", m.entries)
 	}
-	if m.input.Value() != "original prompt" || m.input.Position() != len([]rune("original prompt")) {
-		t.Fatalf("composer = %q cursor=%d", m.input.Value(), m.input.Position())
+	if m.composer.input.Value() != "original prompt" || m.composer.input.Position() != len([]rune("original prompt")) {
+		t.Fatalf("composer = %q cursor=%d", m.composer.input.Value(), m.composer.input.Position())
 	}
-	if len(m.history) != 1 || m.history[0] != "old prompt" {
-		t.Fatalf("history = %v", m.history)
+	if len(m.composer.history) != 1 || m.composer.history[0] != "old prompt" {
+		t.Fatalf("history = %v", m.composer.history)
 	}
 }
 
@@ -965,8 +965,8 @@ func TestModel_UndoFailureKeepsTranscriptAndComposer(t *testing.T) {
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(Model)
 	m = apply(t, m, cmd())
-	if m.input.Value() != "/undo" {
-		t.Fatalf("composer = %q", m.input.Value())
+	if m.composer.input.Value() != "/undo" {
+		t.Fatalf("composer = %q", m.composer.input.Value())
 	}
 	if len(m.entries) != 2 || m.entries[0].text != "old" || m.entries[1].kind != entryError || m.entries[1].text != "undo failed" {
 		t.Fatalf("entries = %+v", m.entries)
@@ -987,8 +987,8 @@ func TestModel_UndoAppearsInSlashCompletion(t *testing.T) {
 	}
 	m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(commands, nil)
 	m = typeRunes(t, m, "/un")
-	if len(m.menuItems) == 0 || m.menuItems[0].label != "/undo" {
-		t.Fatalf("menuItems = %+v", m.menuItems)
+	if len(m.composer.menuItems) == 0 || m.composer.menuItems[0].label != "/undo" {
+		t.Fatalf("menuItems = %+v", m.composer.menuItems)
 	}
 }
 
@@ -1020,9 +1020,9 @@ func settleDiskWork(t *testing.T, m Model) Model {
 	t.Helper()
 	for {
 		switch {
-		case m.filesLoading:
+		case m.composer.filesLoading:
 			files, err := m.listFiles()
-			updated, _ := m.Update(filesListedMsg{target: fileListMenu, generation: m.filesGen, files: files, err: err})
+			updated, _ := m.Update(filesListedMsg{target: fileListMenu, generation: m.composer.filesGen, files: files, err: err})
 			m = updated.(Model)
 		default:
 			return m
@@ -1053,16 +1053,16 @@ func TestModel_AsyncDiskWorkTracksLoadingErrorsAndLatestResult(t *testing.T) {
 		m := NewModel(&fakeAgent{}, "s1", nil).WithCompletions(nil, func() ([]string, error) {
 			return []string{"internal/tui/model.go"}, nil
 		})
-		m.input.SetValue("@")
-		m.input.CursorEnd()
+		m.composer.input.SetValue("@")
+		m.composer.input.CursorEnd()
 
 		m, cmd := m.refreshMenu()
-		if cmd == nil || !m.filesLoading || len(m.menuItems) != 1 || m.menuItems[0].label != "Loading files…" {
-			t.Fatalf("mention loading state = loading:%v cmd:%v items:%+v", m.filesLoading, cmd != nil, m.menuItems)
+		if cmd == nil || !m.composer.filesLoading || len(m.composer.menuItems) != 1 || m.composer.menuItems[0].label != "Loading files…" {
+			t.Fatalf("mention loading state = loading:%v cmd:%v items:%+v", m.composer.filesLoading, cmd != nil, m.composer.menuItems)
 		}
 		m = apply(t, m, cmd())
-		if m.filesLoading || len(m.menuItems) != 1 || m.menuItems[0].label != "internal/tui/model.go" {
-			t.Fatalf("mention result state = loading:%v items:%+v", m.filesLoading, m.menuItems)
+		if m.composer.filesLoading || len(m.composer.menuItems) != 1 || m.composer.menuItems[0].label != "internal/tui/model.go" {
+			t.Fatalf("mention result state = loading:%v items:%+v", m.composer.filesLoading, m.composer.menuItems)
 		}
 	})
 }
@@ -1197,15 +1197,15 @@ func TestModel_ModelCommandCompletesInlineThenSelects(t *testing.T) {
 	lineWith(t, view, "OpenAI")
 	lineWith(t, view, "chatgpt5.5")
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if got := m.input.Value(); got != "/model openrouter openai/chatgpt5.5 " {
+	if got := m.composer.input.Value(); got != "/model openrouter openai/chatgpt5.5 " {
 		t.Fatalf("first Enter completed %q", got)
 	}
 	m = apply(t, m, ModelsRefreshedMsg{Providers: agent.models})
-	if len(m.menuItems) != 0 {
-		t.Fatalf("refresh reopened popup over canonical command: %#v", m.menuItems)
+	if len(m.composer.menuItems) != 0 {
+		t.Fatalf("refresh reopened popup over canonical command: %#v", m.composer.menuItems)
 	}
-	if len(agent.sent) != 0 || len(m.history) != 0 {
-		t.Fatalf("/model leaked to prompts/history: sent=%v history=%v", agent.sent, m.history)
+	if len(agent.sent) != 0 || len(m.composer.history) != 0 {
+		t.Fatalf("/model leaked to prompts/history: sent=%v history=%v", agent.sent, m.composer.history)
 	}
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if got := m.model; got != "openai/chatgpt5.5" {
@@ -1214,7 +1214,7 @@ func TestModel_ModelCommandCompletesInlineThenSelects(t *testing.T) {
 	if len(agent.selected) != 1 || agent.selected[0].providerID != "openrouter" || agent.selected[0].model != "openai/chatgpt5.5" {
 		t.Fatalf("selected = %#v", agent.selected)
 	}
-	if got := m.input.Value(); got != "" {
+	if got := m.composer.input.Value(); got != "" {
 		t.Fatalf("input after selection = %q", got)
 	}
 }
@@ -1237,8 +1237,8 @@ func TestModel_ModelCommandOpensTwoColumnPicker(t *testing.T) {
 			t.Fatalf("model picker missing %q:\n%s", want, view)
 		}
 	}
-	if len(agent.sent) != 0 || len(m.history) != 0 {
-		t.Fatalf("/model leaked to prompts/history: sent=%v history=%v", agent.sent, m.history)
+	if len(agent.sent) != 0 || len(m.composer.history) != 0 {
+		t.Fatalf("/model leaked to prompts/history: sent=%v history=%v", agent.sent, m.composer.history)
 	}
 }
 
@@ -3183,7 +3183,7 @@ func TestModel_PermissionKeysResolveViaAgent(t *testing.T) {
 	if got := fake.resolved[0]; got.sessionID != "s1" || got.callID != "c1" || !got.approved() {
 		t.Fatalf("ResolvePermission(%q, %q, %v), expected ResolvePermission(%q, %q, true)", got.sessionID, got.callID, got.approved(), "s1", "c1")
 	}
-	if got := m.input.Value(); got != "" {
+	if got := m.composer.input.Value(); got != "" {
 		t.Fatalf("input.Value() = %q, rune 'y' MUST NOT enter input while permission is pending", got)
 	}
 	if callID, ok := m.PendingPermission(); ok {
@@ -3204,7 +3204,7 @@ func TestModel_PermissionKeysResolveViaAgent(t *testing.T) {
 	m2 = apply(t, m2, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c2", ToolName: "write", Input: json.RawMessage(`{"path":"a.go"}`)})
 
 	m2 = apply(t, m2, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello")})
-	if got := m2.input.Value(); got != "" {
+	if got := m2.composer.input.Value(); got != "" {
 		t.Fatalf("input.Value() = %q, runes MUST NOT enter input while permission is pending", got)
 	}
 	m2 = apply(t, m2, tea.KeyMsg{Type: tea.KeyEnter})
@@ -3226,7 +3226,7 @@ func TestModel_PermissionKeysResolveViaAgent(t *testing.T) {
 func TestModel_PermissionPanelRendersInlineAboveComposer(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil).
 		WithWorkspace("main", "~/dev/atenea")
-	m.input.SetValue("draft stays here")
+	m.composer.input.SetValue("draft stays here")
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = apply(t, m, EventMsg{
 		Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "bash",
@@ -3265,7 +3265,7 @@ func TestModel_PermissionPanelRendersInlineAboveComposer(t *testing.T) {
 		!strings.Contains(lines[titleIndex+4], "Deny") {
 		t.Fatalf("View() = %q, Bash panel must space title, command, and actions like the reference", view)
 	}
-	if m.input.Focused() {
+	if m.composer.input.Focused() {
 		t.Fatal("composer must be blurred while permission is pending")
 	}
 }
@@ -3386,7 +3386,7 @@ func TestModel_PermissionPanelQueuesFIFOAndShowsOrigin(t *testing.T) {
 func TestModel_PermissionPanelKeyboardNavigationAndEscape(t *testing.T) {
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
-	m.input.SetValue("preserved draft")
+	m.composer.input.SetValue("preserved draft")
 	m = apply(t, m, tea.WindowSizeMsg{Width: 64, Height: 18})
 	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"command":"echo ok"}`)})
 
@@ -3401,7 +3401,7 @@ func TestModel_PermissionPanelKeyboardNavigationAndEscape(t *testing.T) {
 	if len(fake.resolved) != 2 || !fake.resolved[1].approved() {
 		t.Fatalf("resolved = %+v, Right then Enter must approve", fake.resolved)
 	}
-	if got := m.input.Value(); got != "preserved draft" {
+	if got := m.composer.input.Value(); got != "preserved draft" {
 		t.Fatalf("input.Value() = %q, want preserved draft", got)
 	}
 
@@ -3749,7 +3749,7 @@ func TestModel_EscConfirmationDisarms(t *testing.T) {
 	if m.cancelPending || strings.Contains(ansi.Strip(m.View()), "Esc again to cancel") {
 		t.Fatal("a key other than Esc must disarm the confirmation")
 	}
-	if got := m.input.Value(); got != "x" {
+	if got := m.composer.input.Value(); got != "x" {
 		t.Fatalf("input = %q, the disarming key must be processed normally", got)
 	}
 
@@ -3804,11 +3804,11 @@ func TestModel_RunDoneStopsWorkingAndShowsError(t *testing.T) {
 func TestModel_StaleRunDoneDoesNotStopReplacementRun(t *testing.T) {
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
-	m.input.SetValue("first")
+	m.composer.input.SetValue("first")
 	m, _ = m.submitPrompt()
 	firstRunID := m.activeRun
 
-	m.input.SetValue("second")
+	m.composer.input.SetValue("second")
 	m, _ = m.submitPrompt()
 	secondRunID := m.activeRun
 	if firstRunID == secondRunID {
@@ -3933,7 +3933,7 @@ func TestModel_PgUpScrollsHistoryBack(t *testing.T) {
 	if !strings.Contains(view, "message-") {
 		t.Fatalf("View() = %q, an earlier history message should be visible after PgUp", view)
 	}
-	if got := m.input.Value(); got != "" {
+	if got := m.composer.input.Value(); got != "" {
 		t.Fatalf("input.Value() = %q, PgUp must NOT write to the text input", got)
 	}
 
@@ -3944,7 +3944,7 @@ func TestModel_PgUpScrollsHistoryBack(t *testing.T) {
 	if got := m.View(); !strings.Contains(got, "message-29") {
 		t.Fatalf("View() = %q, after several PgDn the tail %q must become visible again", got, "message-29")
 	}
-	if got := m.input.Value(); got != "" {
+	if got := m.composer.input.Value(); got != "" {
 		t.Fatalf("input.Value() = %q, PgDn must NOT write to the text input", got)
 	}
 
@@ -3969,7 +3969,7 @@ func TestModel_PgUpScrollsHistoryBack(t *testing.T) {
 	if len(fake.resolved) != 0 {
 		t.Fatalf("ResolvePermission was called %d times; PgUp must NOT trigger the permission gate", len(fake.resolved))
 	}
-	if got := m2.input.Value(); got != "" {
+	if got := m2.composer.input.Value(); got != "" {
 		t.Fatalf("input.Value() = %q, PgUp with pending permission must NOT write to the text input", got)
 	}
 }
@@ -4003,7 +4003,7 @@ func TestModel_MouseWheelScrollsHistory(t *testing.T) {
 	if !strings.Contains(view, "message-") {
 		t.Fatalf("View() = %q, an earlier history message should be visible after scrolling up", view)
 	}
-	if got := m.input.Value(); got != "" {
+	if got := m.composer.input.Value(); got != "" {
 		t.Fatalf("input.Value() = %q, the wheel must NOT write to the text input", got)
 	}
 
@@ -4025,7 +4025,7 @@ func TestModel_MouseWheelScrollsHistory(t *testing.T) {
 	if len(fake.resolved) != 0 {
 		t.Fatalf("ResolvePermission was called %d times; the wheel must NOT trigger the permission gate", len(fake.resolved))
 	}
-	if got := m2.input.Value(); got != "" {
+	if got := m2.composer.input.Value(); got != "" {
 		t.Fatalf("input.Value() = %q, the wheel with pending permission must NOT write to the text input", got)
 	}
 }
@@ -4196,7 +4196,7 @@ func TestModel_MouseClickIsInert(t *testing.T) {
 	if len(fake.resolved) != 0 {
 		t.Fatalf("ResolvePermission was called %d times; a click must NOT trigger the permission gate", len(fake.resolved))
 	}
-	if got := m.input.Value(); got != "" {
+	if got := m.composer.input.Value(); got != "" {
 		t.Fatalf("input.Value() = %q, the click and movement must NOT write to the text input", got)
 	}
 	if got := m.View(); got != before {
@@ -4675,7 +4675,7 @@ func TestModel_ComposerCtrlJInsertsNewlineAndEnterSubmitsMultilinePrompt(t *test
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyCtrlJ})
 	m = typeRunes(t, m, "second line")
 
-	if got, want := m.input.Value(), "first line\nsecond line"; got != want {
+	if got, want := m.composer.input.Value(), "first line\nsecond line"; got != want {
 		t.Fatalf("input.Value() = %q, Ctrl+J must insert a newline and preserve draft %q", got, want)
 	}
 	if got := strings.Count(ansi.Strip(m.composerBox()), "\n"); got != 3 {
@@ -4717,7 +4717,7 @@ func TestModel_ComposerGrowthStopsAtFiveLines(t *testing.T) {
 		}
 	}
 
-	if got := m.input.Height(); got != composerMaxLines {
+	if got := m.composer.input.Height(); got != composerMaxLines {
 		t.Fatalf("input.Height() = %d, the composer must stop growing at %d lines", got, composerMaxLines)
 	}
 	if got := strings.Count(ansi.Strip(m.composerBox()), "\n"); got != composerMaxLines+1 {
@@ -5186,7 +5186,7 @@ func TestModel_PlanApprovalCapturesKeyboard(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindToolSuccess, CallID: "p1"})
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
-	if got := m.input.Value(); got != "" {
+	if got := m.composer.input.Value(); got != "" {
 		t.Fatalf("input.Value() = %q, normal runes must NOT enter input while a plan is pending", got)
 	}
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -5226,7 +5226,7 @@ func TestModel_PresentPlanFailedDoesNotOfferApproval(t *testing.T) {
 	if len(fake.accepted) != 0 {
 		t.Fatalf("AcceptPlan was called %d times; without a pending offer 'y' must NOT accept anything", len(fake.accepted))
 	}
-	if got := m.input.Value(); got != "y" {
+	if got := m.composer.input.Value(); got != "y" {
 		t.Fatalf("input.Value() = %q, without a pending offer the rune 'y' must go to normal input", got)
 	}
 }
@@ -5258,8 +5258,8 @@ func TestModel_SendFailuresKeepPendingUserAction(t *testing.T) {
 		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 		m = updated.(Model)
 
-		if cmd != nil || m.Working() || m.input.Value() != "hello" {
-			t.Fatalf("cmd=%v working=%v composer=%q", cmd != nil, m.Working(), m.input.Value())
+		if cmd != nil || m.Working() || m.composer.input.Value() != "hello" {
+			t.Fatalf("cmd=%v working=%v composer=%q", cmd != nil, m.Working(), m.composer.input.Value())
 		}
 		if got := m.entries[len(m.entries)-1]; got.kind != entryError || got.text != "send failed" {
 			t.Fatalf("last entry = %+v", got)
@@ -5275,8 +5275,8 @@ func TestModel_SendFailuresKeepPendingUserAction(t *testing.T) {
 		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 		m = updated.(Model)
 
-		if cmd != nil || m.Working() || !m.planMode || m.input.Value() != "research" {
-			t.Fatalf("cmd=%v working=%v planMode=%v composer=%q", cmd != nil, m.Working(), m.planMode, m.input.Value())
+		if cmd != nil || m.Working() || !m.planMode || m.composer.input.Value() != "research" {
+			t.Fatalf("cmd=%v working=%v planMode=%v composer=%q", cmd != nil, m.Working(), m.planMode, m.composer.input.Value())
 		}
 		if got := m.entries[len(m.entries)-1]; got.kind != entryError || got.text != "plan send failed" {
 			t.Fatalf("last entry = %+v", got)
@@ -5387,13 +5387,13 @@ func TestModel_CompactSubmitsWithoutPromptHistoryOrWorkingSpinner(t *testing.T) 
 	if len(fake.sent) != 1 || fake.sent[0].text != "/compact" {
 		t.Fatalf("sent = %+v", fake.sent)
 	}
-	if len(m.history) != 0 {
-		t.Fatalf("history = %v, /compact must not enter prompt history", m.history)
+	if len(m.composer.history) != 0 {
+		t.Fatalf("history = %v, /compact must not enter prompt history", m.composer.history)
 	}
 	if m.Working() {
 		t.Fatal("Working() = true, compact status must own progress")
 	}
-	if got := m.input.Value(); got != "" {
+	if got := m.composer.input.Value(); got != "" {
 		t.Fatalf("input = %q, want cleared", got)
 	}
 }
@@ -5524,7 +5524,7 @@ func TestModel_MenuKeysNavigateSelection(t *testing.T) {
 
 	// Entering a skill preserves the fill-with-space flow.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if got := m.input.Value(); got != "/commit " {
+	if got := m.composer.input.Value(); got != "/commit " {
 		t.Fatalf("input.Value() = %q, Enter on a skill must complete it with a space for arguments", got)
 	}
 	if got := menuSelectedLine(m.View()); got != "" {
@@ -5554,7 +5554,7 @@ func TestModel_MenuKeysNavigateSelection(t *testing.T) {
 	if !strings.Contains(view, "message-29") {
 		t.Fatalf("View() = %q, with the menu open Up/Down must NOT scroll the viewport: the tail (message-29) must remain visible", view)
 	}
-	if got := mCycle.input.Value(); got != "/" {
+	if got := mCycle.composer.input.Value(); got != "/" {
 		t.Fatalf("input.Value() = %q, with the menu open Up/Down must NOT write to the input", got)
 	}
 }
@@ -5572,11 +5572,11 @@ func TestModel_TabAppliesSelectedCommand(t *testing.T) {
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyTab})
 
-	if got := m.input.Value(); got != "/commit " {
+	if got := m.composer.input.Value(); got != "/commit " {
 		t.Fatalf("input.Value() = %q, Tab must replace the token with %q (command + space for args)", got, "/commit ")
 	}
-	if got := m.input.Position(); got != len("/commit ") {
-		t.Fatalf("input.Position() = %d, the caret must remain after the space (%d)", m.input.Position(), len("/commit "))
+	if got := m.composer.input.Position(); got != len("/commit ") {
+		t.Fatalf("input.Position() = %d, the caret must remain after the space (%d)", m.composer.input.Position(), len("/commit "))
 	}
 	view := m.View()
 	if got := menuSelectedLine(view); got != "" {
@@ -5599,7 +5599,7 @@ func TestModel_EnterAppliesSelectionInsteadOfSending(t *testing.T) {
 	if len(fake.sent) != 0 {
 		t.Fatalf("SendPrompt was called %d times; Enter with the menu open must apply the selection, NOT send", len(fake.sent))
 	}
-	if got := m.input.Value(); got != "/commit " {
+	if got := m.composer.input.Value(); got != "/commit " {
 		t.Fatalf("input.Value() = %q; Enter with the menu open must apply the selection (%q)", got, "/commit ")
 	}
 	if got := menuSelectedLine(m.View()); got != "" {
@@ -5636,7 +5636,7 @@ func TestModel_EscClosesMenuWithoutStopping(t *testing.T) {
 	if len(fake.stopped) != 0 {
 		t.Fatalf("Stop was called %d times; Esc with the menu open must NOT stop the run", len(fake.stopped))
 	}
-	if got := m.input.Value(); got != "/c" {
+	if got := m.composer.input.Value(); got != "/c" {
 		t.Fatalf("input.Value() = %q; Esc only closes the popup: text %q must remain intact", got, "/c")
 	}
 
@@ -5734,11 +5734,11 @@ func TestModel_TabAppliesSelectedMention(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyTab})
 
 	want := "hello @internal/tui/model.go "
-	if got := m.input.Value(); got != want {
+	if got := m.composer.input.Value(); got != want {
 		t.Fatalf("input.Value() = %q; Tab must replace the token with the mention while preserving surrounding text (%q)", got, want)
 	}
-	if got := m.input.Position(); got != len([]rune(want)) {
-		t.Fatalf("input.Position() = %d; the caret must remain after the space (%d)", m.input.Position(), len([]rune(want)))
+	if got := m.composer.input.Position(); got != len([]rune(want)) {
+		t.Fatalf("input.Position() = %d; the caret must remain after the space (%d)", m.composer.input.Position(), len([]rune(want)))
 	}
 	if got := menuSelectedLine(m.View()); got != "" {
 		t.Fatalf("selected menu line = %q; applying the mention must close the menu", got)
@@ -5798,7 +5798,7 @@ func TestModel_CommandMenuPrioritizesNewAndEnterCreatesSession(t *testing.T) {
 	if got := m.sessionID; got != "s2" {
 		t.Fatalf("sessionID = %q; Enter on /new must activate new session %q", got, "s2")
 	}
-	if got := m.input.Value(); got != "" {
+	if got := m.composer.input.Value(); got != "" {
 		t.Fatalf("input.Value() = %q; executing /new from the menu must clear the composer without leaving a space", got)
 	}
 	if got := menuSelectedLine(m.View()); got != "" {
@@ -5863,7 +5863,7 @@ func TestModel_ExactNewEnterBeatsFuzzySkillSelection(t *testing.T) {
 	if got := m.sessionID; got != "s2" {
 		t.Fatalf("sessionID = %q, Enter with /new typed must activate the new session %q even with a fuzzy skill", got, "s2")
 	}
-	if got := m.input.Value(); got != "" {
+	if got := m.composer.input.Value(); got != "" {
 		t.Fatalf("input.Value() = %q, Enter with /new typed must execute it, not complete a skill", got)
 	}
 	if got := menuSelectedLine(m.View()); got != "" {
@@ -5884,7 +5884,7 @@ func TestModel_NewWithTrailingSpaceKeepsComposerForArguments(t *testing.T) {
 	if got := menuSelectedLine(m.View()); got != "" {
 		t.Fatalf("selected menu line = %q, /new with trailing space must close the menu", got)
 	}
-	if got := m.input.Value(); got != "/new " {
+	if got := m.composer.input.Value(); got != "/new " {
 		t.Fatalf("input.Value() = %q, /new with trailing space must be preserved for arguments", got)
 	}
 	if got := m.sessionID; got != "s1" {
@@ -6092,27 +6092,27 @@ func TestModel_UpArrowRecallsPromptHistory(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
-	if got := m.input.Value(); got != "segundo" {
+	if got := m.composer.input.Value(); got != "segundo" {
 		t.Fatalf("input.Value() = %q, the up arrow must recall the last sent prompt (%q)", got, "segundo")
 	}
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
-	if got := m.input.Value(); got != "primero" {
+	if got := m.composer.input.Value(); got != "primero" {
 		t.Fatalf("input.Value() = %q, the second up arrow must go back to the previous prompt (%q)", got, "primero")
 	}
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
-	if got := m.input.Value(); got != "primero" {
+	if got := m.composer.input.Value(); got != "primero" {
 		t.Fatalf("input.Value() = %q, at the top of history another up arrow stays at %q: it does not cycle or empty", got, "primero")
 	}
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
-	if got := m.input.Value(); got != "segundo" {
+	if got := m.composer.input.Value(); got != "segundo" {
 		t.Fatalf("input.Value() = %q, the down arrow must undo forward and return to the most recent prompt (%q)", got, "segundo")
 	}
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
-	if got := m.input.Value(); got != "" {
+	if got := m.composer.input.Value(); got != "" {
 		t.Fatalf("input.Value() = %q, past the most recent prompt the down arrow must restore the input from before navigation (empty after Enter)", got)
 	}
 }
@@ -6128,22 +6128,22 @@ func TestModel_NonEmptyInputBlocksHistoryExploration(t *testing.T) {
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("borrador")})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
-	if got := m.input.Value(); got != "borrador" {
+	if got := m.composer.input.Value(); got != "borrador" {
 		t.Fatalf("input.Value() = %q, with typed text the down arrow must not open or replace from history", got)
 	}
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
-	if got := m.input.Value(); got != "borrador" {
+	if got := m.composer.input.Value(); got != "borrador" {
 		t.Fatalf("input.Value() = %q, with typed text the up arrow must not open or replace from history", got)
 	}
 
 	// Emptying the composer enables navigation.
-	m.input.SetValue("")
+	m.composer.input.SetValue("")
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
-	if got := m.input.Value(); got != "primero" {
+	if got := m.composer.input.Value(); got != "primero" {
 		t.Fatalf("input.Value() = %q, with an empty composer the up arrow must recall %q", got, "primero")
 	}
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyDown})
-	if got := m.input.Value(); got != "" {
+	if got := m.composer.input.Value(); got != "" {
 		t.Fatalf("input.Value() = %q, advancing past the most recent prompt must leave the composer empty", got)
 	}
 }
@@ -6161,7 +6161,7 @@ func TestModel_HistoryKeepsOnlyLatestHundredPrompts(t *testing.T) {
 	for range 101 {
 		m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
 	}
-	if got := m.input.Value(); got != "prompt-003" {
+	if got := m.composer.input.Value(); got != "prompt-003" {
 		t.Fatalf("input.Value() = %q, after 102 sends history must retain only the 100 most recent prompts and stop at %q", got, "prompt-003")
 	}
 }
@@ -6182,7 +6182,7 @@ func TestModel_MenuOpenKeepsUpDownForSelection(t *testing.T) {
 	}
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
-	if got := m.input.Value(); got != "/" {
+	if got := m.composer.input.Value(); got != "/" {
 		t.Fatalf("input.Value() = %q, with the menu open the up arrow must NOT touch the input: menu selection handles navigation", got)
 	}
 	if got := menuSelectedLine(m.View()); !strings.Contains(got, "/review") && !strings.Contains(got, "/cache-stats") {
@@ -6206,7 +6206,7 @@ func TestModel_HistoryRecordsPlanPrompts(t *testing.T) {
 	m = apply(t, m, activeRunDone(m, ""))
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
-	if got := m.input.Value(); got != "plan-uno" {
+	if got := m.composer.input.Value(); got != "plan-uno" {
 		t.Fatalf("input.Value() = %q, the up arrow must recall the sent plan prompt (%q): plan prompts are also stored in history", got, "plan-uno")
 	}
 }
@@ -6224,11 +6224,11 @@ func TestModel_EmptySubmitDoesNotPolluteHistory(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
-	if got := m.input.Value(); got != "only-one" {
+	if got := m.composer.input.Value(); got != "only-one" {
 		t.Fatalf("input.Value() = %q, the first up arrow must recall the only sent prompt (%q), without an empty submit in history", got, "only-one")
 	}
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyUp})
-	if got := m.input.Value(); got != "only-one" {
+	if got := m.composer.input.Value(); got != "only-one" {
 		t.Fatalf("input.Value() = %q, at the top of history the up arrow stays at %q: the empty submit must not have been stored", got, "only-one")
 	}
 }
@@ -6785,20 +6785,20 @@ func TestModel_KeyRunesBatch_NormalTextInsertsIntoComposer(t *testing.T) {
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello world")})
 
-	if got, want := m.input.Value(), "hello world"; got != want {
+	if got, want := m.composer.input.Value(), "hello world"; got != want {
 		t.Fatalf("input.Value() = %q, want %q: normal text batch must preserve every rune in order", got, want)
 	}
 }
 
 func TestModel_ComposerCursorStartsBlinking(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
-	m.input.Cursor.BlinkSpeed = time.Millisecond
+	m.composer.input.Cursor.BlinkSpeed = time.Millisecond
 
 	cmd := m.Init()
 	if cmd == nil {
 		t.Fatal("Init() = nil, want composer cursor blink command")
 	}
-	if m.input.Cursor.Blink {
+	if m.composer.input.Cursor.Blink {
 		t.Fatal("composer cursor starts hidden, want it visible while chat is focused")
 	}
 	blinkMsg := cmd()
@@ -6808,7 +6808,7 @@ func TestModel_ComposerCursorStartsBlinking(t *testing.T) {
 		t.Fatal("initial cursor blink message did not schedule the next blink")
 	}
 	m = apply(t, m, next())
-	if !m.input.Cursor.Blink {
+	if !m.composer.input.Cursor.Blink {
 		t.Fatal("composer cursor did not toggle after its blink interval")
 	}
 }
@@ -6836,12 +6836,12 @@ func TestModel_ComposerCursorHidesWhileInputGateIsPending(t *testing.T) {
 			m := NewModel(&fakeAgent{}, "s1", nil)
 			m.entries = append(m.entries, test.entry)
 			m = apply(t, m, struct{}{})
-			if m.input.Focused() {
+			if m.composer.input.Focused() {
 				t.Fatal("composer remains focused while another input gate owns the keyboard")
 			}
 
 			m = apply(t, m, test.resolve)
-			if !m.input.Focused() {
+			if !m.composer.input.Focused() {
 				t.Fatal("composer remains blurred after the input gate is resolved")
 			}
 		})
@@ -6852,12 +6852,12 @@ func TestModel_ComposerCursorFollowsTerminalFocus(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
 	m = apply(t, m, tea.BlurMsg{})
-	if m.input.Focused() {
+	if m.composer.input.Focused() {
 		t.Fatal("composer remains focused after the terminal window loses focus")
 	}
 
 	m = apply(t, m, tea.FocusMsg{})
-	if !m.input.Focused() {
+	if !m.composer.input.Focused() {
 		t.Fatal("composer remains blurred after the terminal window regains focus")
 	}
 }

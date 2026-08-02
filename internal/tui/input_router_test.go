@@ -242,7 +242,7 @@ func TestSyncComposerFocus_MatchesResolver(t *testing.T) {
 			m := tc.setup(t, NewModel(&fakeAgent{}, "s1", nil))
 			m.terminalFocused = true
 			m.syncComposerFocus()
-			gotFocused := m.input.Focused()
+			gotFocused := m.composer.input.Focused()
 			wantComposer := m.activeInputTarget() == targetComposer
 			if gotFocused != tc.wantFocused {
 				t.Fatalf("input.Focused() = %v, want %v", gotFocused, tc.wantFocused)
@@ -263,7 +263,7 @@ func TestSyncComposerFocus_BlurredWhenTerminalUnfocused(t *testing.T) {
 		t.Fatalf("precondition: active target = %v, want targetComposer", m.activeInputTarget())
 	}
 	m.syncComposerFocus()
-	if m.input.Focused() {
+	if m.composer.input.Focused() {
 		t.Fatal("composer must stay blurred while the terminal is unfocused")
 	}
 }

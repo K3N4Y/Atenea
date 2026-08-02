@@ -3,9 +3,9 @@ package tui
 // The composer module owns the chat crossroads: the editable input field, the
 // in-memory prompt-history navigation, and the autocomplete popup (the "/"
 // slash-command menu, the "@" file-mention menu, and the inline "/model
-// <query>" search). The root Model embeds one composer, routes keyboard input
-// to it when the active target is targetComposer, and asks it for its input body
-// / menu popup in the layout.
+// <query>" search). The root Model owns one named composer field, routes
+// keyboard input to it when the active target is targetComposer, and asks it
+// for its input body / menu popup in the layout.
 //
 // The module owns everything about the editable field, the history slice, and
 // the popup EXCEPT the cross-panel concerns it must not reach into, which it
@@ -25,10 +25,6 @@ package tui
 //   - The model catalog behind the inline "/model" search is injected as a
 //     modelSource, so the composer never imports the agent interface.
 //
-// Model embeds composer anonymously, so the state fields below (input, history,
-// histIdx, menuItems, menuSelected, modelSearch, files, filesLoaded,
-// filesLoading, filesError, filesGen) promote onto Model — the same idiom the
-// Transcript module and the overlay pickers use.
 
 import (
 	"strings"
@@ -150,15 +146,14 @@ func (input *composerInput) SetWidth(width int) {
 // mirroring the package idiom.
 type composer struct {
 	// input is the editable textarea (draft, cursor, multi-row growth to
-	// composerMaxLines then scroll, literal newlines). Promoted onto Model as
-	// m.input; the behavior tests read and drive it there.
+	// composerMaxLines then scroll, literal newlines).
 	input composerInput
 
 	// history keeps the last historyLimit prompts submitted (Enter with text,
 	// either mode path). With an empty composer, Up/Down navigate them; histIdx
 	// == len(history) means "not navigating". The root seeds history
 	// (WithHistory, resume) and appends on submit (submitPrompt); the composer
-	// only navigates it. Promoted onto Model as m.history / m.histIdx.
+	// only navigates it.
 	history []string
 	histIdx int
 
@@ -166,9 +161,7 @@ type composer struct {
 	// recomputes them after every key that feeds the input, and the view renders
 	// one line per item above the composer box. modelSearch marks the inline
 	// "/model <query>" mode. files/filesLoaded/... cache the workspace listing
-	// while the "@" token stays active (loadFilesOnce/dropFileCache). All
-	// promoted onto Model so the layout helpers and behavior tests read them as
-	// the Model's own.
+	// while the "@" token stays active (loadFilesOnce/dropFileCache).
 	menuItems    []menuItem
 	menuSelected int
 	modelSearch  bool
@@ -216,6 +209,41 @@ func (c composer) setValue(value string) composer {
 	c.input.SetValue(value)
 	return c
 }
+
+// clear discards the current draft and closes autocomplete without changing
+// prompt history.
+func (c composer) clear() composer {
+	c.input.SetValue("")
+	return c.closeMenu()
+}
+
+// restoreDraft replaces the draft, places the cursor at its end, and closes
+// autocomplete. It is used when undo restores the submitted prompt.
+func (c composer) restoreDraft(value string) composer {
+	c.input.SetValue(value)
+	c.input.CursorEnd()
+	return c.closeMenu()
+}
+
+func (c composer) inputHeight() int { return c.input.Height() }
+
+func (c composer) setHeight(height int) composer {
+	c.input.SetHeight(height)
+	return c
+}
+
+func (c composer) inputView() string { return c.input.View() }
+
+// visitMenuItems exposes each popup row as immutable rendering values without
+// leaking the mutable backing slice or allocating a projection on every view.
+func (c composer) visitMenuItems(visit func(label, description string, selected bool)) {
+	for i := range c.menuItems {
+		item := c.menuItems[i]
+		visit(item.label, item.description, i == c.menuSelected)
+	}
+}
+
+func (c composer) menuHeight() int { return len(c.menuItems) }
 
 // focus focuses the textarea, returning the blink command; blur removes focus.
 // The root decides which to call via syncComposerFocus (activeInputTarget).
@@ -373,12 +401,12 @@ func (c composer) handleKey(msg tea.KeyMsg, commands []command.Command, listFile
 	return c, composerIntent{handled: true}, tea.Batch(inputCmd, refreshCmd)
 }
 
-// feed pushes a message the composer did not special-case (a rune batch, a
-// cursor blink) into the textarea and recomputes the popup. It is the composer
-// counterpart of the root's former default `m.input.Update` fallthrough.
-func (c composer) feed(msg tea.Msg, commands []command.Command, listFiles func() ([]string, error), models modelSource) (composer, tea.Cmd) {
-	var inputCmd tea.Cmd
-	c.input, inputCmd = c.input.Update(msg)
-	c, refreshCmd := c.refreshMenu(commands, listFiles, models)
-	return c, tea.Batch(inputCmd, refreshCmd)
+// update forwards a generic Bubble Tea message to the textarea. Autocomplete
+// is intentionally not recomputed here: only handleKey refreshes it after keys
+// that may change the text or caret. In particular, cursor blink messages must
+// not reopen a menu explicitly closed with Esc.
+func (c composer) update(msg tea.Msg) (composer, tea.Cmd) {
+	var cmd tea.Cmd
+	c.input, cmd = c.input.Update(msg)
+	return c, cmd
 }

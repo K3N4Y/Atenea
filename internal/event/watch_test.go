@@ -2,20 +2,19 @@ package event
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
-// Estos tests fijan el contrato de WatchStore, el poller que convierte el
-// PRAGMA data_version del store en la senal "otro proceso escribio la base"
-// para refrescar la sidebar en vivo. Se testea contra fakes DataVersioner
-// (jamas contra Wails ni contra SQLite real): notifica en cada cambio de
-// version, no notifica sin cambio, y termina al cancelarse el ctx.
+// These tests define the store watcher's contract: the poller turns PRAGMA
+// data_version into the signal that another process wrote to the database.
+// Fakes keep the tests independent from Wails and SQLite.
 
-// flipVersioner devuelve version 1 en las primeras lecturas y 2 despues:
-// simula la escritura de otro proceso entre dos ticks del watcher.
+// flipVersioner returns version 1 for the first reads and 2 afterward,
+// simulating another process writing between watcher ticks.
 type flipVersioner struct {
 	reads atomic.Int64
 }
@@ -29,30 +28,28 @@ func (f *flipVersioner) DataVersion(ctx context.Context) (int64, error) {
 	return 2, nil
 }
 
-// TestWatchStore_NotifiesOnVersionChange: cuando el DataVersion cambia entre
-// ticks, WatchStore llama onChange. Correr con -race.
-func TestWatchStore_NotifiesOnVersionChange(t *testing.T) {
+// A data version change between ticks triggers onChange.
+func TestStartStoreWatch_NotifiesOnVersionChange(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	changed := make(chan struct{}, 1)
-	go WatchStore(ctx, &flipVersioner{}, time.Millisecond, func() {
+	StartStoreWatch(ctx, &flipVersioner{}, time.Millisecond, func() {
 		select {
 		case changed <- struct{}{}:
-		default: // ya hay una notificacion pendiente; el test solo necesita una
+		default: // One pending notification is enough for this test.
 		}
 	})
 
 	select {
 	case <-changed:
 	case <-time.After(2 * time.Second):
-		t.Fatal("WatchStore no llamo onChange tras el cambio de data_version")
+		t.Fatal("store watcher did not call onChange after data_version changed")
 	}
 }
 
-// countingVersioner devuelve siempre la misma version y avisa por enough
-// cuando el watcher lleva al menos 3 lecturas: suficientes ticks para afirmar
-// que sin cambio de version no hay notificacion.
+// countingVersioner always returns the same version and signals after at least
+// three reads, enough ticks to establish that no change means no notification.
 type countingVersioner struct {
 	reads  atomic.Int64
 	once   sync.Once
@@ -68,44 +65,31 @@ func (c *countingVersioner) DataVersion(ctx context.Context) (int64, error) {
 	return 7, nil
 }
 
-// TestWatchStore_DoesNotNotifyWithoutChange: con la version constante, tras
-// varios ticks onChange no se llama ni una vez (las lecturas propias del store
-// no deben producir refrescos fantasma). Correr con -race.
-func TestWatchStore_DoesNotNotifyWithoutChange(t *testing.T) {
+// A stable version does not trigger onChange, including after several ticks.
+func TestStartStoreWatch_DoesNotNotifyWithoutChange(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	fake := &countingVersioner{enough: make(chan struct{})}
 	var calls atomic.Int64
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		WatchStore(ctx, fake, time.Millisecond, func() { calls.Add(1) })
-	}()
+	StartStoreWatch(ctx, fake, time.Millisecond, func() { calls.Add(1) })
 
 	select {
 	case <-fake.enough:
 	case <-time.After(2 * time.Second):
-		t.Fatal("el watcher no llego a 3 lecturas de DataVersion a tiempo")
+		t.Fatal("store watcher did not make three DataVersion reads")
 	}
 	cancel()
-	// Esperar a que el watcher retorne antes de leer calls (sin carreras).
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("WatchStore no retorno tras cancelar el ctx")
-	}
+	time.Sleep(5 * time.Millisecond)
 
 	if n := calls.Load(); n != 0 {
-		t.Fatalf("onChange llamado %d veces sin cambio de version, quiero 0", n)
+		t.Fatalf("onChange called %d times without a version change, want 0", n)
 	}
 }
 
-// steppedVersioner avanza la version con las lecturas: 1,1,2,2,3,3,3... (cada
-// version se lee dos veces y la 3 queda estable). Simula DOS escrituras
-// externas separadas por varios ticks del watcher. Cierra enough cuando lleva
-// al menos 8 lecturas: ticks de sobra en la version estable para afirmar que
-// no hay notificaciones extra.
+// steppedVersioner advances through 1,1,2,2,3,3,3..., simulating two external
+// writes separated by watcher ticks. It signals after eight reads, enough time
+// on the stable final version to detect extra notifications.
 type steppedVersioner struct {
 	reads  atomic.Int64
 	once   sync.Once
@@ -125,70 +109,143 @@ func (s *steppedVersioner) DataVersion(ctx context.Context) (int64, error) {
 	return 3, nil
 }
 
-// TestWatchStore_NotifiesOnEachChange: cada cambio de version produce SU
-// notificacion (dos cambios -> dos onChange) y la version estable posterior no
-// produce ninguna extra. Tumbaria un watcher que notifica una sola vez y deja
-// de mirar, o que no actualiza el baseline tras notificar (notificaria en cada
-// tick de la version estable). Correr con -race.
-func TestWatchStore_NotifiesOnEachChange(t *testing.T) {
+// Every version change produces its own notification, while the stable final
+// version produces no extras. This catches watchers that stop after one change
+// or fail to update the baseline after notifying.
+func TestStartStoreWatch_NotifiesOnEachChange(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	fake := &steppedVersioner{enough: make(chan struct{})}
 	changed := make(chan struct{}, 16)
 	var calls atomic.Int64
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		WatchStore(ctx, fake, time.Millisecond, func() {
-			calls.Add(1)
-			changed <- struct{}{}
-		})
-	}()
+	StartStoreWatch(ctx, fake, time.Millisecond, func() {
+		calls.Add(1)
+		changed <- struct{}{}
+	})
 
 	for i := 1; i <= 2; i++ {
 		select {
 		case <-changed:
 		case <-time.After(2 * time.Second):
-			t.Fatalf("no llego la notificacion #%d: el watcher debe notificar en CADA cambio de version, no solo en el primero", i)
+			t.Fatalf("notification #%d did not arrive: watcher must notify on every version change, not only the first", i)
 		}
 	}
 
-	// Dejar correr al watcher varios ticks sobre la version estable y esperar a
-	// que retorne antes de leer calls (sin carreras).
+	// Let the watcher poll the stable version, then wait for it before reading
+	// calls to avoid a race.
 	select {
 	case <-fake.enough:
 	case <-time.After(2 * time.Second):
-		t.Fatal("el watcher no llego a 8 lecturas de DataVersion a tiempo")
+		t.Fatal("store watcher did not make eight DataVersion reads")
 	}
 	cancel()
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("WatchStore no retorno tras cancelar el ctx")
-	}
+	time.Sleep(5 * time.Millisecond)
 
 	if n := calls.Load(); n != 2 {
-		t.Fatalf("onChange llamado %d veces, quiero exactamente 2 (una por cambio de version; el baseline debe actualizarse tras notificar)", n)
+		t.Fatalf("onChange called %d times, want exactly 2 (one per version change; the baseline must update after notification)", n)
 	}
 }
 
-// TestWatchStore_StopsOnCancel: cancelar el ctx hace retornar a WatchStore (el
-// watcher no queda vivo tras el shutdown de la app). Correr con -race.
-func TestWatchStore_StopsOnCancel(t *testing.T) {
+type recoveringVersioner struct {
+	reads atomic.Int64
+}
+
+func (v *recoveringVersioner) DataVersion(context.Context) (int64, error) {
+	if v.reads.Add(1) == 1 {
+		return 0, errors.New("temporary read failure")
+	}
+	return 9, nil
+}
+
+// When initialization fails, the first valid read must notify before becoming
+// the baseline so a write in the unobserved interval cannot be lost.
+func TestStartStoreWatch_InitialErrorNotifiesOnFirstValidRead(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		WatchStore(ctx, &countingVersioner{enough: make(chan struct{})}, time.Millisecond, func() {})
-	}()
-
-	cancel()
+	changed := make(chan struct{}, 1)
+	fake := &recoveringVersioner{}
+	StartStoreWatch(ctx, fake, time.Millisecond, func() { changed <- struct{}{} })
 
 	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("WatchStore no retorno tras cancelar el ctx")
+	case <-changed:
+	case <-time.After(time.Second):
+		t.Fatal("first valid DataVersion read after initialization failure did not notify")
+	}
+	if reads := fake.reads.Load(); reads < 2 {
+		t.Fatalf("DataVersion reads = %d, want at least 2", reads)
+	}
+}
+
+// A context canceled before startup causes no reads, polling, or callbacks.
+func TestStartStoreWatch_CanceledContextDoesNothing(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	fake := &countingVersioner{enough: make(chan struct{})}
+	var calls atomic.Int64
+	StartStoreWatch(ctx, fake, time.Millisecond, func() { calls.Add(1) })
+
+	if reads := fake.reads.Load(); reads != 0 {
+		t.Fatalf("DataVersion reads = %d after cancellation, want 0", reads)
+	}
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("onChange calls = %d after cancellation, want 0", got)
+	}
+}
+
+func TestStartStoreWatch_DefaultsNonPositiveInterval(t *testing.T) {
+	for _, interval := range []time.Duration{0, -time.Second} {
+		t.Run(interval.String(), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			fake := &countingVersioner{enough: make(chan struct{})}
+
+			StartStoreWatch(ctx, fake, interval, func() {})
+			cancel()
+
+			if reads := fake.reads.Load(); reads != 1 {
+				t.Fatalf("DataVersion reads = %d at startup, want 1", reads)
+			}
+		})
+	}
+}
+
+type blockedPollVersioner struct {
+	reads       atomic.Int64
+	pollStarted chan struct{}
+	releasePoll chan struct{}
+}
+
+func (v *blockedPollVersioner) DataVersion(context.Context) (int64, error) {
+	if v.reads.Add(1) == 1 {
+		return 1, nil
+	}
+	close(v.pollStarted)
+	<-v.releasePoll
+	return 2, nil
+}
+
+// Cancellation while a poll is in flight suppresses a later successful result.
+func TestStartStoreWatch_CancelDuringReadDoesNotNotify(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	fake := &blockedPollVersioner{
+		pollStarted: make(chan struct{}),
+		releasePoll: make(chan struct{}),
+	}
+	var calls atomic.Int64
+	StartStoreWatch(ctx, fake, time.Millisecond, func() { calls.Add(1) })
+
+	select {
+	case <-fake.pollStarted:
+	case <-time.After(time.Second):
+		t.Fatal("poll did not start")
+	}
+	cancel()
+	close(fake.releasePoll)
+	time.Sleep(5 * time.Millisecond)
+
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("onChange calls = %d after cancellation, want 0", got)
 	}
 }

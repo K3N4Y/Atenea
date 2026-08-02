@@ -32,7 +32,7 @@ type Model struct {
 	events    <-chan tea.Msg
 
 	Transcript
-	composer
+	composer composer
 
 	working bool
 

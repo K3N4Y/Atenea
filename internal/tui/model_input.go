@@ -35,17 +35,6 @@ func (m Model) refreshMenu() (Model, tea.Cmd) {
 	return m.resizeViewport(), cmd
 }
 
-func (m Model) closeMenu() Model {
-	m.composer = m.composer.closeMenu()
-	return m.resizeViewport()
-}
-
-func (m Model) applySelection() (Model, tea.Cmd) {
-	var cmd tea.Cmd
-	m.composer, cmd = m.composer.applySelection(m.commands, m.listFiles, m.modelSource())
-	return m.resizeViewport(), cmd
-}
-
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		m.cancelPending = false
@@ -79,11 +68,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m = m.toggleThinking()
 		return m.syncViewport(), nil
 	}
-	if !m.working && m.input.Value() == "" && m.lastErrorIsProvider() && keyRune(msg) == "d" {
+	if !m.working && m.composer.value() == "" && m.lastErrorIsProvider() && keyRune(msg) == "d" {
 		m.Transcript = m.Transcript.toggleLastErrorDetails()
 		return m.syncViewport(), nil
 	}
-	if !m.working && m.input.Value() == "" && m.lastErrorIsProvider() && keyRune(msg) == "r" {
+	if !m.working && m.composer.value() == "" && m.lastErrorIsProvider() && keyRune(msg) == "r" {
 		retrier, ok := m.agent.(retryAgent)
 		if !ok {
 			return m, nil
@@ -108,7 +97,7 @@ func (m Model) composerKey(msg tea.KeyMsg, confirmCancel bool) (tea.Model, tea.C
 		intent composerIntent
 		cmd    tea.Cmd
 	)
-	menuWasOpen := m.menuOpen()
+	menuWasOpen := m.composer.menuOpen()
 	m.composer, intent, cmd = m.composer.handleKey(msg, m.commands, m.listFiles, m.modelSource())
 	switch {
 	case intent.submit:

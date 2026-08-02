@@ -5,41 +5,65 @@ import (
 	"time"
 )
 
-// DataVersioner expone la version de datos de un store (PRAGMA data_version en
-// SQLite): un contador que cambia cuando OTRA conexion (tipicamente otro
-// proceso, como la TUI) modifica la base, y no por las escrituras propias.
+// DataVersioner exposes a store's data version (PRAGMA data_version in SQLite):
+// a counter changed by writes from another connection, typically another
+// process such as the TUI, but not by writes through the current connection.
 type DataVersioner interface {
 	DataVersion(ctx context.Context) (int64, error)
 }
 
-// WatchStore sondea DataVersion cada interval y llama onChange cuando la
-// version cambia: es el puente para que la sidebar se entere de sesiones
-// escritas por otro proceso (la TUI) en el SQLite compartido. El emit concreto
-// lo decide el caller (la frontera Wails vive fuera de este paquete). La
-// lectura inicial fija el baseline; si falla, el baseline se toma en el primer
-// tick exitoso. Los errores de lectura se ignoran y se reintenta en el
-// siguiente tick. Retorna al cancelarse ctx.
-func WatchStore(ctx context.Context, v DataVersioner, interval time.Duration, onChange func()) {
-	baseline, err := v.DataVersion(ctx)
-	seeded := err == nil
+const DefaultStoreWatchInterval = time.Second
 
+// StartStoreWatch makes the initial DataVersion attempt synchronously, then
+// starts polling in a goroutine. If that attempt fails, the first later valid
+// read is reported conservatively because a write may have happened before a
+// baseline could be established. Read errors are retried on the next tick.
+func StartStoreWatch(ctx context.Context, v DataVersioner, interval time.Duration, onChange func()) {
+	if ctx.Err() != nil {
+		return
+	}
+	baseline, err := v.DataVersion(ctx)
+	if ctx.Err() != nil {
+		return
+	}
+	if interval <= 0 {
+		interval = DefaultStoreWatchInterval
+	}
 	ticker := time.NewTicker(interval)
+
+	go pollStore(ctx, v, ticker, baseline, err == nil, onChange)
+}
+
+func pollStore(ctx context.Context, v DataVersioner, ticker *time.Ticker, baseline int64, hasBaseline bool, onChange func()) {
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			version, err := v.DataVersion(ctx)
-			if err != nil {
-				continue // transitorio: se reintenta en el proximo tick
+			if ctx.Err() != nil {
+				return
 			}
-			if !seeded {
-				baseline, seeded = version, true
+			version, err := v.DataVersion(ctx)
+			if ctx.Err() != nil {
+				return
+			}
+			if err != nil {
+				continue
+			}
+			if !hasBaseline {
+				if ctx.Err() != nil {
+					return
+				}
+				baseline, hasBaseline = version, true
+				onChange()
 				continue
 			}
 			if version != baseline {
 				baseline = version
+				if ctx.Err() != nil {
+					return
+				}
 				onChange()
 			}
 		}

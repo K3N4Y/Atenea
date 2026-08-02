@@ -100,8 +100,8 @@ func TestModel_MCPCommandOpensPickerAndListsServers(t *testing.T) {
 	if !m.mcpPicker.open {
 		t.Fatal("/mcp must open the picker")
 	}
-	if m.input.Value() != "" {
-		t.Fatalf("composer input = %q, want empty after /mcp", m.input.Value())
+	if m.composer.input.Value() != "" {
+		t.Fatalf("composer input = %q, want empty after /mcp", m.composer.input.Value())
 	}
 	view := ansi.Strip(m.View())
 	for _, want := range []string{"MCP Servers", "github", "playwright", "12 tools", "on", "off", "npx @playwright/mcp"} {
@@ -246,12 +246,12 @@ func TestModel_CommandMenuOffersMCPBuiltin(t *testing.T) {
 	m := NewModel(newMCPTestAgent(), "s1", nil).WithCompletions([]command.Command{{Name: "mcp", BuiltIn: true}}, nil)
 	m = typeRunes(t, m, "/mc")
 	found := false
-	for _, item := range m.menuItems {
+	for _, item := range m.composer.menuItems {
 		if item.label == "/mcp" && item.builtin {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("menu items = %+v, want the /mcp builtin", m.menuItems)
+		t.Fatalf("menu items = %+v, want the /mcp builtin", m.composer.menuItems)
 	}
 }

@@ -40,7 +40,7 @@ func (m Model) chatContent() string {
 }
 
 func (m Model) reservedLines() int {
-	reserved := m.composerReservedLines() + len(m.menuItems)
+	reserved := m.composerReservedLines() + m.composer.menuHeight()
 	if m.showsWorking() {
 		reserved++
 	}
@@ -49,7 +49,7 @@ func (m Model) reservedLines() int {
 }
 
 func (m Model) composerReservedLines() int {
-	reserved := m.input.Height() + 2
+	reserved := m.composer.inputHeight() + 2
 	if _, permissionPending := m.pendingPermission(); !permissionPending {
 		reserved += composerOuterMargin
 	}
@@ -61,14 +61,13 @@ func (m Model) resizeViewport() Model {
 		return m
 	}
 	// One geometry pass owns every dimension applied here: the textarea width and
-	// height and the viewport width and height. resizeViewport only APPLIES them
-	// (it legitimately mutates m.input/m.viewport from Update); the arithmetic —
-	// stripping the box border/padding/prompt/cursor from the width and bounding
-	// the input against the reserved-line budget — lives in layout.go.
+	// height and the viewport width and height. resizeViewport only applies them;
+	// the arithmetic stripping box chrome and bounding the input against the
+	// reserved-line budget lives in layout.go.
 	l := m.layout()
-	m.input.SetWidth(l.inputWidth)
+	m.composer = m.composer.setWidth(l.inputWidth)
 	m.viewport.Width = l.viewportWidth
-	m.input.SetHeight(l.inputHeight)
+	m.composer = m.composer.setHeight(l.inputHeight)
 	m.viewport.Height = l.viewportHeight
 	return m.syncViewport()
 }

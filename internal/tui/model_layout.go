@@ -46,7 +46,7 @@ func (m Model) layoutSize() layoutSize {
 func (m Model) layout() Layout {
 	return computeLayout(m.layoutSize(), layoutState{
 		reservedLines: m.reservedLines(),
-		inputHeight:   m.input.Height(),
+		inputHeight:   m.composer.inputHeight(),
 	})
 }
 

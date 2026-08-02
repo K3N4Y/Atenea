@@ -109,9 +109,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.appendError(ev.Err).syncViewport(), nil
 		}
 		m = m.replaceEvents(ev.Result.Events)
-		m.input.SetValue(ev.Result.Prompt)
-		m.input.CursorEnd()
-		m.menuItems = nil
+		m.composer = m.composer.restoreDraft(ev.Result.Prompt)
 		m.working = false
 		m = m.resizeViewport()
 		return m.requestWorkspaceRefresh()
@@ -134,13 +132,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.activeRun = 0
 		m.working = false
 		m.followAgent = true
-		m.input.SetValue("")
-		m.menuItems = nil
-		m.history = append([]string(nil), ev.Result.History...)
-		if len(m.history) > historyLimit {
-			m.history = m.history[len(m.history)-historyLimit:]
-		}
-		m.histIdx = len(m.history)
+		m.composer = m.composer.clear().seedHistory(ev.Result.History)
 		return m.resizeViewport(), nil
 	case ResumeSessionsDoneMsg:
 		if !m.resumePicker.open || ev.Generation != m.resumeGen {
@@ -246,7 +238,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleMouse(ev)
 	}
 	var cmd tea.Cmd
-	m.input, cmd = m.input.Update(msg)
+	m.composer, cmd = m.composer.update(msg)
 	return m, cmd
 }
 

@@ -173,26 +173,27 @@ Three surfaces, one pipeline: only the last arrow differs.
   events and the plan gate has no pointer short-circuit);
   `composer.go` (with its autocomplete logic in `complete.go`) is the `composer`
   module: the chat input crossroads extracted into a self-contained value type
-  embedded on `Model` (its state fields — `input`, `history`/`histIdx`,
-	  `menuItems`/`menuSelected`,
-	  `modelSearch`, and the `@`-file cache `files`/`filesLoaded`/`filesLoading`/
-	  `filesError`/`filesGen` — promote onto `Model`). It owns the editable textarea (draft, cursor, growth to
-  five visible rows then scroll with literal newlines preserved), the in-memory
-  prompt-history navigation, and the autocomplete popup (the `/` slash-command
-  menu, the `@` file-mention menu with its once-per-token async listing through
-  the `listFiles`/`fileListMenu` path, and the
-  inline `/model <query>` search fed by an injected `modelSource` so the composer
-  never imports the agent). `composer.handleKey` encodes the composer-internal
-	  precedence (open menu wins over history over the default keys) and surfaces a
-	  small `composerIntent`: `submit` (Enter or a builtin menu selection — the root
-	  `submitPrompt` remains the SINGLE dispatch point for local-command
-	  interception, slash expansion, and build/plan mode routing), and `handled`
-	  (the composer consumed the key internally). It never owns
-  submission routing, prompt-history persistence, the Esc-cancel confirmation,
-  or focus: those stay on the root, which seeds/appends the history slice and
-  drives focus via `syncComposerFocus`. Thin `Model` seams (`refreshMenu`,
-  `closeMenu`, `applySelection`) add only the viewport recompute the popup's
-  line-count change requires;
+  held by `Model` as a named field. Its representation — the editable input,
+  `history`/`histIdx`, `menuItems`/`menuSelected`, model-search state, and the
+  `@`-file cache — stays private to the submodel. The root reads and changes it
+  through intent-level operations for draft clearing/restoration, history
+  seeding/appending, focus, layout dimensions, and menu rendering; autocomplete
+  rows are visited as immutable values rather than exposing the mutable slice.
+  The composer owns textarea growth to five visible rows, in-memory prompt-history
+  navigation, and the autocomplete popup (the `/` slash-command menu, the `@`
+  file-mention menu with its once-per-token async listing through the
+  `listFiles`/`fileListMenu` path, and inline `/model <query>` search fed by an
+  injected `modelSource` so the composer never imports the agent).
+  `composer.handleKey` encodes the composer-internal precedence (open menu wins
+  over history over the default keys) and surfaces a small `composerIntent`:
+  `submit` (Enter or a builtin menu selection — the root `submitPrompt` remains
+  the SINGLE dispatch point for local-command interception, slash expansion,
+  and build/plan mode routing), and `handled` (the composer consumed the key
+  internally). Generic Bubble Tea messages update the textarea without
+  recomputing autocomplete, so cursor blinks cannot reopen a menu closed with
+  Esc. Submission routing, durable prompt-history persistence, Esc-cancel
+  confirmation, and focus policy stay on the root; the root drives them through
+  the composer's API and recomputes the viewport when popup geometry changes;
   `view_transcript.go` renders entries, thinking, tools, and the activity rail
   inside a height-bounded viewport with smart following: incoming events and
   reveal ticks follow the queue only while the user is at the bottom; scrolling
@@ -572,10 +573,13 @@ via DSN) allow two processes at the same time on the same file: concurrent reade
 SQLITE_BUSY; The Seq per session is assigned in an atomic INSERT (subquery
 MAX(seq)+1 with RETURNING), so two processes do not race the sequence. Each
 TUI session records `Session.Cwd` in its first prompt and appears in the
-sidebar of the app grouped by that folder. The app refreshes itself: a
-watcher polls the store's `PRAGMA data_version` (it changes only with
-writes from ANOTHER connection) and emits `sessions:changed`, and the frontend re-requests
-`ListSessions` upon receipt. If opening SQLite fails, `OpenDefault` returns
+sidebar of the app grouped by that folder. The app refreshes itself: startup
+captures the store's initial `PRAGMA data_version` before returning, then a
+watcher polls it for writes from ANOTHER connection and emits
+`sessions:changed`; the frontend re-requests `ListSessions` upon receipt. If
+the initial version read fails, the first successful poll emits conservatively
+so a write in the unobserved interval cannot be lost. If opening SQLite fails,
+`OpenDefault` returns
 a store in usable memory along with the error: the TUI still works, just
 without persisting.
 

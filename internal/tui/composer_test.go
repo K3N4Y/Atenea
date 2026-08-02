@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/bubbles/cursor"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -214,6 +215,24 @@ func TestComposer_MenuTakesPriorityOverHistoryKeys(t *testing.T) {
 	}
 	if c.histIdx != len(c.history) {
 		t.Fatalf("histIdx = %d, history navigation must stay parked while the menu is open", c.histIdx)
+	}
+}
+
+func TestComposer_BlinkDoesNotReopenMenuClosedWithEsc(t *testing.T) {
+	commands := []command.Command{{Name: "commit", Description: "Commit changes"}}
+	models := modelSource{catalog: func() ([]providerconfig.ProviderModels, bool) { return nil, false }}
+	c := typeInto(newTestComposer(), "/co", commands, nil, models)
+	if !c.menuOpen() {
+		t.Fatal("typing /co did not open the slash menu")
+	}
+
+	c, intent, _ := c.handleKey(keyMsg(tea.KeyEsc), commands, nil, models)
+	if !intent.handled || c.menuOpen() {
+		t.Fatalf("Esc result = handled:%v menuOpen:%v, want handled and closed", intent.handled, c.menuOpen())
+	}
+	c, _ = c.update(cursor.BlinkMsg{})
+	if c.menuOpen() {
+		t.Fatal("cursor blink reopened the explicitly closed autocomplete menu")
 	}
 }
 

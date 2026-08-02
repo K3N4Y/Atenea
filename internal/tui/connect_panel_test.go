@@ -145,8 +145,8 @@ func TestModel_ConnectCommandOpensPanelListingProviders(t *testing.T) {
 	if !m.connectPanel.open {
 		t.Fatal("/connect must open the panel")
 	}
-	if m.input.Value() != "" {
-		t.Fatalf("composer input = %q, want empty after /connect", m.input.Value())
+	if m.composer.input.Value() != "" {
+		t.Fatalf("composer input = %q, want empty after /connect", m.composer.input.Value())
 	}
 	view := ansi.Strip(m.View())
 	for _, want := range []string{"Connect Provider", "OpenRouter", "not connected"} {
@@ -768,12 +768,12 @@ func TestModel_ConnectMenuOffersTheCommand(t *testing.T) {
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = typeRunes(t, m, "/conn")
 	found := false
-	for _, item := range m.menuItems {
+	for _, item := range m.composer.menuItems {
 		if item.label == "/connect" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("menu items = %#v, want /connect offered", m.menuItems)
+		t.Fatalf("menu items = %#v, want /connect offered", m.composer.menuItems)
 	}
 }

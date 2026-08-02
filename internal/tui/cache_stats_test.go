@@ -12,13 +12,13 @@ import (
 func TestModel_CacheStatsCommandTogglesLocallyWithoutSendingPrompt(t *testing.T) {
 	agent := &fakeAgent{}
 	m := NewModel(agent, "s1", nil)
-	m.input.SetValue("/cache-stats")
+	m.composer.input.SetValue("/cache-stats")
 
 	m, cmd := m.submitPrompt()
-	if cmd != nil || !m.cacheStatsEnabled || len(agent.sent) != 0 || m.input.Value() != "" {
-		t.Fatalf("first toggle = enabled:%v cmd:%v sent:%v input:%q", m.cacheStatsEnabled, cmd, agent.sent, m.input.Value())
+	if cmd != nil || !m.cacheStatsEnabled || len(agent.sent) != 0 || m.composer.input.Value() != "" {
+		t.Fatalf("first toggle = enabled:%v cmd:%v sent:%v input:%q", m.cacheStatsEnabled, cmd, agent.sent, m.composer.input.Value())
 	}
-	m.input.SetValue("/cache-stats")
+	m.composer.input.SetValue("/cache-stats")
 	m, cmd = m.submitPrompt()
 	if cmd != nil || m.cacheStatsEnabled || len(agent.sent) != 0 {
 		t.Fatalf("second toggle = enabled:%v cmd:%v sent:%v", m.cacheStatsEnabled, cmd, agent.sent)
@@ -50,13 +50,13 @@ func TestModel_CacheStatsRenderUsesNormalizedProviderDenominator(t *testing.T) {
 
 func TestModel_CacheStatsAppearsInDevelopmentAutocomplete(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
-	m.input.SetValue("/cache")
-	m.input.SetCursor(len([]rune("/cache")))
+	m.composer.input.SetValue("/cache")
+	m.composer.input.SetCursor(len([]rune("/cache")))
 	m, _ = m.refreshMenu()
-	for _, item := range m.menuItems {
+	for _, item := range m.composer.menuItems {
 		if item.label == "/cache-stats" && item.builtin {
 			return
 		}
 	}
-	t.Fatalf("development menu items = %#v, want /cache-stats builtin", m.menuItems)
+	t.Fatalf("development menu items = %#v, want /cache-stats builtin", m.composer.menuItems)
 }

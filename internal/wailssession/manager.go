@@ -44,7 +44,7 @@ type Manager struct {
 func New(cfg Config) *Manager {
 	period := cfg.WatchPeriod
 	if period <= 0 {
-		period = time.Second
+		period = event.DefaultStoreWatchInterval
 	}
 	return &Manager{store: cfg.Store, root: cfg.Root, forget: cfg.Forget, versioner: cfg.Versioner, emit: cfg.Emit, watchPeriod: period}
 }
@@ -75,7 +75,7 @@ func (m *Manager) Watch(ctx context.Context) {
 	if m.versioner == nil || m.emit == nil {
 		return
 	}
-	go event.WatchStore(ctx, m.versioner, m.watchPeriod, func() { m.emit("sessions:changed") })
+	event.StartStoreWatch(ctx, m.versioner, m.watchPeriod, func() { m.emit("sessions:changed") })
 }
 
 // Turn owns the first-prompt metadata work around one admitted agent turn.
@@ -98,7 +98,7 @@ func (t *Turn) BeforeAdmit() error {
 	}
 	t.first = true
 	if _, err := t.manager.store.AppendEvent(context.Background(), t.sessionID, session.SessionEvent{Kind: session.KindSessionCwd, Text: t.manager.root()}); err != nil {
-		log.Printf("atenea: no se pudo guardar la carpeta de %s: %v", t.sessionID, err)
+		log.Printf("atenea: could not save the working directory for %s: %v", t.sessionID, err)
 	}
 	return nil
 }
@@ -113,7 +113,7 @@ func (t *Turn) AfterRun(current bool) {
 		return
 	}
 	if _, err := t.manager.store.AppendEvent(context.Background(), t.sessionID, session.SessionEvent{Kind: session.KindSessionTitle, Text: title}); err != nil {
-		log.Printf("atenea: no se pudo guardar el titulo de %s: %v", t.sessionID, err)
+		log.Printf("atenea: could not save the title for %s: %v", t.sessionID, err)
 	}
 }
 

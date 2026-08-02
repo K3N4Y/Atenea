@@ -2,11 +2,84 @@ package wailssession
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/K3N4Y/atenea/internal/event"
 	"github.com/K3N4Y/atenea/internal/session"
 )
+
+type gatedVersioner struct {
+	version      atomic.Int64
+	firstStarted chan struct{}
+	releaseFirst chan struct{}
+	first        sync.Once
+}
+
+var _ event.DataVersioner = (*gatedVersioner)(nil)
+
+func (v *gatedVersioner) DataVersion(context.Context) (int64, error) {
+	v.first.Do(func() {
+		close(v.firstStarted)
+		<-v.releaseFirst
+	})
+	return v.version.Load(), nil
+}
+
+func TestManager_WatchWaitsForInitialDataVersion(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	versioner := &gatedVersioner{
+		firstStarted: make(chan struct{}),
+		releaseFirst: make(chan struct{}),
+	}
+	versioner.version.Store(1)
+	emitted := make(chan struct{}, 1)
+	manager := New(Config{
+		Versioner:   versioner,
+		Emit:        func(string, ...any) { emitted <- struct{}{} },
+		WatchPeriod: time.Millisecond,
+	})
+
+	watchReturned := make(chan struct{})
+	go func() {
+		manager.Watch(ctx)
+		close(watchReturned)
+	}()
+
+	<-versioner.firstStarted
+	select {
+	case <-watchReturned:
+		t.Fatal("Watch returned before the initial DataVersion attempt completed")
+	default:
+	}
+
+	close(versioner.releaseFirst)
+	<-watchReturned
+	versioner.version.Store(2)
+	select {
+	case <-emitted:
+	case <-time.After(time.Second):
+		t.Fatal("watcher did not emit after a change following initialization")
+	}
+}
+
+func TestManager_WatchWithoutVersionerIsNoOp(t *testing.T) {
+	returned := make(chan struct{})
+	go func() {
+		New(Config{}).Watch(context.Background())
+		close(returned)
+	}()
+
+	select {
+	case <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("Watch blocked without a versioner")
+	}
+}
 
 func TestTurnCapturesInitialCwdAndTitlesOnlyFirstCurrentRun(t *testing.T) {
 	store := session.NewMemoryStore()

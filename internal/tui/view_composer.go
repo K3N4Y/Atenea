@@ -20,20 +20,20 @@ var (
 
 func (m Model) menuView() string {
 	var b strings.Builder
-	for i, item := range m.menuItems {
+	m.composer.visitMenuItems(func(label, description string, selected bool) {
 		prefix := "  "
-		if i == m.menuSelected {
+		if selected {
 			prefix = accentStyle.Render("❯ ")
 		}
-		line := prefix + sanitizeTerminalText(item.label)
-		if item.description != "" {
-			line += "  " + statusStyle.Render(sanitizeTerminalText(item.description))
+		line := prefix + sanitizeTerminalText(label)
+		if description != "" {
+			line += "  " + statusStyle.Render(sanitizeTerminalText(description))
 		}
 		if width := m.chatContentWidth(); m.ready && width > 0 {
 			line = ansi.Truncate(line, width, "…")
 		}
 		b.WriteString(line + "\n")
-	}
+	})
 	return b.String()
 }
 
@@ -65,7 +65,7 @@ func (m Model) composerBoxWithWidth(width int) string {
 	if m.ready {
 		style = style.Width(max(width-composerBoxBorderWidth, 0))
 	}
-	box := style.Render(m.input.View())
+	box := style.Render(m.composer.inputView())
 	box = decorateComposerBorder(box, 0, m.tokenUsageLabel(), "╭", "╮", true, false)
 	return decorateComposerBorder(box, -1, m.composerModelLabel(), "╰", "╯", false, true)
 }

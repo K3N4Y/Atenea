@@ -60,7 +60,7 @@ func parseLocalCommand(text string) (localCommand, bool) {
 }
 
 func (m Model) submitPrompt() (Model, tea.Cmd) {
-	text := m.input.Value()
+	text := m.composer.value()
 	if text == "" || m.agent == nil {
 		return m, nil
 	}
@@ -131,8 +131,7 @@ func (m Model) submitModeCommand(command string) (Model, tea.Cmd) {
 	} else if controller.AutoAcceptEnabled(m.sessionID) {
 		mode = "auto-accept"
 	}
-	m.input.SetValue("")
-	m.menuItems = nil
+	m.composer = m.composer.clear()
 	m.Transcript = m.Transcript.appendNotice("permission mode: " + mode)
 	return m.syncViewport(), nil
 }
@@ -161,8 +160,7 @@ func (m Model) submitResumeCommand(command string) (Model, tea.Cmd) {
 	}
 	sessionID := m.sessionID
 	agent := m.agent
-	m.input.SetValue("")
-	m.menuItems = nil
+	m.composer = m.composer.clear()
 	m.resumeGen++
 	m.resumePicker = newResumePicker(sessionID)
 	generation := m.resumeGen
@@ -182,8 +180,7 @@ func (m Model) submitMCPCommand(command string) (Model, tea.Cmd) {
 	if _, ok := m.agent.(mcpAgent); !ok {
 		return m.appendError("MCP management is unavailable"), nil
 	}
-	m.input.SetValue("")
-	m.menuItems = nil
+	m.composer = m.composer.clear()
 	m.mcpGen++
 	m.mcpPicker = newMCPPicker()
 	m.mcpPicker.refreshFromAgent(m.agent)
@@ -216,8 +213,7 @@ func (m Model) submitConnectCommand(command string) (Model, tea.Cmd) {
 			return m.appendError(fmt.Sprintf("usage: /connect [provider-id]; %q is not connectable", parts[1])).syncViewport(), nil
 		}
 	}
-	m.input.SetValue("")
-	m.menuItems = nil
+	m.composer = m.composer.clear()
 	m.connectGen++
 	m.connectPanel = panel
 	if jump < 0 {
@@ -235,8 +231,7 @@ func (m Model) submitModelCommand(command string) (Model, tea.Cmd) {
 	}
 	parts := strings.Fields(command)
 	if len(parts) == 1 && parts[0] == "/model" {
-		m.input.SetValue("")
-		m.menuItems = nil
+		m.composer = m.composer.clear()
 		m.modelPicker = newModelPicker(controller.ModelCatalog(), controller.CurrentModel())
 		controller.RefreshModels()
 		return m.resizeViewport(), nil
@@ -249,8 +244,7 @@ func (m Model) submitModelCommand(command string) (Model, tea.Cmd) {
 		return m.appendError(err.Error()), nil
 	}
 	m.model = active.Model
-	m.input.SetValue("")
-	m.menuItems = nil
+	m.composer = m.composer.clear()
 	return m.resizeViewport(), nil
 }
 
@@ -262,8 +256,7 @@ func (m Model) startNewSession() (Model, tea.Cmd) {
 	m.sessionID = run.SessionID
 	m.activeRun = 0
 	m.entries = nil
-	m.history = nil
-	m.histIdx = 0
+	m.composer = m.composer.seedHistory(nil)
 	m.planMode = false
 	m.working = false
 	m.revealing = false
@@ -272,8 +265,7 @@ func (m Model) startNewSession() (Model, tea.Cmd) {
 	m.outputBytes = 0
 	m.reasoningBytes = 0
 	m.toolInputBytes = 0
-	m.input.SetValue("")
-	m.menuItems = nil
+	m.composer = m.composer.clear()
 	return m.resizeViewport(), nil
 }
 
@@ -281,8 +273,7 @@ func (m Model) submitCompactCommand() (Model, tea.Cmd) {
 	if _, err := m.agent.SendPrompt(m.sessionID, "/compact"); err != nil {
 		return m.appendError(err.Error()).syncViewport(), nil
 	}
-	m.input.SetValue("")
-	m.menuItems = nil
+	m.composer = m.composer.clear()
 	return m.resizeViewport(), nil
 }
 
@@ -297,12 +288,7 @@ func (m Model) submitAgentPrompt(text string) (Model, tea.Cmd) {
 	if err != nil {
 		return m.appendError(err.Error()).syncViewport(), nil
 	}
-	m.input.SetValue("")
-	m.history = append(m.history, text)
-	if len(m.history) > historyLimit {
-		m.history = m.history[len(m.history)-historyLimit:]
-	}
-	m.histIdx = len(m.history)
+	m.composer = m.composer.clear().pushHistory(text)
 	m.activeRun = run.RunID
 	m.working = run.RunID != 0
 	return m.resizeViewport(), m.spinner.Tick
@@ -317,8 +303,7 @@ func (m Model) handleReasoningCommand(trimmed string) (Model, bool) {
 		return m.appendError("reasoning selection is unavailable"), true
 	}
 	if trimmed == "/reasoning" {
-		m.input.SetValue("")
-		m.menuItems = nil
+		m.composer = m.composer.clear()
 		m.Transcript = m.Transcript.appendNotice(llm.ReasoningHelp(agent.ReasoningEffort()))
 		return m.syncViewport(), true
 	}
@@ -330,8 +315,7 @@ func (m Model) handleReasoningCommand(trimmed string) (Model, bool) {
 	if err := agent.SetReasoningEffort(effort); err != nil {
 		return m.appendError(err.Error()), true
 	}
-	m.input.SetValue("")
-	m.menuItems = nil
+	m.composer = m.composer.clear()
 	label := string(effort)
 	if label == "" {
 		label = "default"

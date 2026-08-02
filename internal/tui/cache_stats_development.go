@@ -16,8 +16,7 @@ func (m Model) handleCacheStatsCommand(input string) (Model, bool) {
 		return m, false
 	}
 	m.cacheStatsEnabled = !m.cacheStatsEnabled
-	m.input.SetValue("")
-	m.menuItems = nil
+	m.composer = m.composer.clear()
 	return m.resizeViewport(), true
 }
 
