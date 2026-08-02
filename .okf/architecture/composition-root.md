@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-27
+updated_at: 2026-08-01
 summary: The two-layer composition root — internal/host assembles what both entrypoints share (dotenv, root, store, provider service, sitting), internal/wiring.Build assembles what a workspace change rebuilds, and wiring.Config's policy half is what an embedder varies there.
 ---
 
@@ -224,6 +224,12 @@ native Atenea definitions override compatibility layouts. Identical paths are
 deduplicated while preserving that order. `wiring.Config.resolve` consumes this
 shared policy; the former `DefaultSkillDirs` and `DefaultAgentDirs` functions are
 compatibility wrappers only.
+
+Atenea's own subagent manifests live in the repository-level `agents/*.md` and
+are embedded in the binary at build time. They do not depend on the process's
+working directory and are always merged into the catalog. `AgentDirs` controls
+only external definitions: project and global agents discovered there override
+a packaged built-in with the same name, while new names extend the catalog.
 
 ## The offline demo provider
 

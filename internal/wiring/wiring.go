@@ -298,10 +298,10 @@ func Build(cfg Config) Built {
 	skillsBlock := skill.Format(skills)
 	// The composer's slash-commands, derived from the skills (one "/<name>" per skill).
 	commands := command.New(command.FromSkills(skills))
-	// Subagents: the catalog is the built-ins (explore read-only, general full) plus the
-	// .md files under the configured directories (.atenea/agents and the standard
-	// .agents/agents by default, the former overriding a namesake in the latter). A
-	// discovery failure is not fatal: the built-ins remain.
+	// Subagents: agent.Catalog merges the manifests packaged from agents/*.md and
+	// the legacy built-ins with definitions discovered from the configured user
+	// directories. Discovered definitions win by name, so users can override any
+	// built-in without modifying Atenea's installation.
 	agentDefs, err := agent.Catalog(cfg.AgentDirs...)
 	if err != nil {
 		log.Printf("atenea: could not discover the subagents: %v", err)

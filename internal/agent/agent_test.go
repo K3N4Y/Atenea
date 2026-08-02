@@ -283,6 +283,20 @@ func TestBuiltins_GeneralHasFullTools(t *testing.T) {
 	}
 }
 
+func TestBuiltins_IncludesPackagedAgentDefinitions(t *testing.T) {
+	defs := Builtins()
+	names := make(map[string]bool, len(defs))
+	for _, def := range defs {
+		names[def.Name] = true
+	}
+
+	for _, want := range []string{"coder", "explorer", "reviewer", "tester"} {
+		if !names[want] {
+			t.Errorf("Builtins does not include packaged agent %q; got %v", want, names)
+		}
+	}
+}
+
 // TRIANGULATE: cada built-in debe estar bien formado (Name, Description y Prompt no
 // vacios) y los nombres no se repiten. Tumba un built-in incompleto o con nombre
 // duplicado (que haria ambigua la seleccion por subagent_type).

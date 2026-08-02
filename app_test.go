@@ -495,11 +495,9 @@ func TestApp_OffersTaskToolToModel(t *testing.T) {
 	t.Errorf("el modelo no recibe la tool 'task'; el wiring no la registra; tools = %v", names)
 }
 
-// TestApp_TaskToolDescriptionListsBuiltinSubagents afirma que el catalogo de
-// subagentes fluye del wiring a la descripcion de la tool task: la Description del
-// ToolDef task anunciado lista los built-in (explore read-only y general). Tumba
-// un wiring que pasara defs vacias a NewTaskTool o que no conectara el catalogo
-// de agent.Catalog, casos en que la tool se anunciaria pero sin subagentes.
+// TestApp_TaskToolDescriptionListsBuiltinSubagents asserts that the catalog
+// assembled by wiring reaches the task tool description announced to the model.
+// It covers both legacy built-ins and the manifests packaged from agents/*.md.
 func TestApp_TaskToolDescriptionListsBuiltinSubagents(t *testing.T) {
 	rec := &recordingEmit{}
 	prov := &requestRecordingProvider{FakeProvider: llm.NewFakeProvider(
@@ -527,11 +525,10 @@ func TestApp_TaskToolDescriptionListsBuiltinSubagents(t *testing.T) {
 	if taskDef == nil {
 		t.Fatalf("el modelo no recibe la tool 'task'; tools = %+v", req.Tools)
 	}
-	if !strings.Contains(taskDef.Description, "explore") {
-		t.Errorf("la descripcion de task no lista el built-in 'explore'; description = %q", taskDef.Description)
-	}
-	if !strings.Contains(taskDef.Description, "general") {
-		t.Errorf("la descripcion de task no lista el built-in 'general'; description = %q", taskDef.Description)
+	for _, name := range []string{"coder", "explore", "explorer", "general", "reviewer", "tester"} {
+		if !strings.Contains(taskDef.Description, name) {
+			t.Errorf("task description does not list built-in %q; description = %q", name, taskDef.Description)
+		}
 	}
 }
 

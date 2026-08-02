@@ -502,7 +502,7 @@ func TestBuild_DefaultDiscoverySupportsAteneaAgentsAndClaudeLayouts(t *testing.T
 // discovery — so they survive an empty one.
 func TestBuild_AgentDirsFieldReplacesDiscovery(t *testing.T) {
 	root := t.TempDir()
-	writeAgent(t, filepath.Join(root, ".atenea", "agents"), "reviewer")
+	writeAgentWithDescription(t, filepath.Join(root, ".atenea", "agents"), "reviewer", "project reviewer override")
 	elsewhere := t.TempDir()
 	writeAgent(t, elsewhere, "auditor")
 
@@ -511,7 +511,7 @@ func TestBuild_AgentDirsFieldReplacesDiscovery(t *testing.T) {
 	if !strings.Contains(agents, "auditor") {
 		t.Errorf("the subagent in the configured directory is not in the catalog:\n%s", agents)
 	}
-	if strings.Contains(agents, "reviewer") {
+	if strings.Contains(agents, "project reviewer override") {
 		t.Errorf("the project's default directory was still scanned:\n%s", agents)
 	}
 	if !strings.Contains(agents, "general") {

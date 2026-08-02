@@ -8,7 +8,7 @@
 // es el system prompt que el subagente usara cuando se le invoque. Espeja
 // internal/skill.
 //
-// El paquete tambien provee definiciones de subagente canonicas via Builtins()
-// (built-in, sin archivo), donde cada una declara su scoping de tools (p.ej. el
-// agente read-only solo lista read/grep/glob).
+// Builtins returns Atenea's canonical definitions: manifests packaged from the
+// repository's agents/*.md directory plus the legacy definitions still declared
+// in Go. Catalog lets discovered user definitions override either kind by name.
 package agent
