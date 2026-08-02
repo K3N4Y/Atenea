@@ -266,3 +266,46 @@ func (m Model) toggleExpandableAt(viewportLine int) (Model, bool) {
 func (m Model) Working() bool {
 	return m.working
 }
+
+// resetRunState clears execution state that cannot survive a session transition
+// or a replacement of the durable transcript. It deliberately leaves the
+// session's mode, history, and follow preference to each transition.
+func (m Model) resetRunState() Model {
+	m.activeRun = 0
+	m.working = false
+	m.cancelPending = false
+	m.cancelDeadline = time.Time{}
+	return m
+}
+
+func (m Model) clearTranscript() Model {
+	return m.replaceEvents(nil)
+}
+
+// freshSession applies the local side of /new after the engine has created the
+// new durable session.
+func (m Model) freshSession(sessionID string) Model {
+	m.sessionID = sessionID
+	m = m.resetRunState()
+	m = m.clearTranscript()
+	m.planMode = false
+	m.composer = m.composer.seedHistory(nil).clear()
+	return m
+}
+
+func (m Model) restoreSession(result engine.ResumeResult) Model {
+	m.sessionID = result.SessionID
+	m = m.resetRunState()
+	m = m.replaceEvents(result.Events)
+	m.planMode = result.Mode == session.ModePlan
+	m.followAgent = true
+	m.composer = m.composer.clear().seedHistory(result.History)
+	return m
+}
+
+func (m Model) applyUndo(result engine.UndoResult) Model {
+	m = m.resetRunState()
+	m = m.replaceEvents(result.Events)
+	m.composer = m.composer.restoreDraft(result.Prompt)
+	return m
+}

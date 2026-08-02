@@ -108,9 +108,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if ev.Err != "" {
 			return m.appendError(ev.Err).syncViewport(), nil
 		}
-		m = m.replaceEvents(ev.Result.Events)
-		m.composer = m.composer.restoreDraft(ev.Result.Prompt)
-		m.working = false
+		m = m.applyUndo(ev.Result)
 		m = m.resizeViewport()
 		return m.requestWorkspaceRefresh()
 	case ResumeDoneMsg:
@@ -126,13 +124,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.resumePicker.close()
-		m.sessionID = ev.Result.SessionID
-		m = m.replaceEvents(ev.Result.Events)
-		m.planMode = ev.Result.Mode == session.ModePlan
-		m.activeRun = 0
-		m.working = false
-		m.followAgent = true
-		m.composer = m.composer.clear().seedHistory(ev.Result.History)
+		m = m.restoreSession(ev.Result)
 		return m.resizeViewport(), nil
 	case ResumeSessionsDoneMsg:
 		if !m.resumePicker.open || ev.Generation != m.resumeGen {

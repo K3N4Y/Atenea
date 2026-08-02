@@ -253,19 +253,7 @@ func (m Model) startNewSession() (Model, tea.Cmd) {
 	if err != nil {
 		return m.appendError(err.Error()).syncViewport(), nil
 	}
-	m.sessionID = run.SessionID
-	m.activeRun = 0
-	m.entries = nil
-	m.composer = m.composer.seedHistory(nil)
-	m.planMode = false
-	m.working = false
-	m.revealing = false
-	m.usage = nil
-	m.liveUsage = false
-	m.outputBytes = 0
-	m.reasoningBytes = 0
-	m.toolInputBytes = 0
-	m.composer = m.composer.clear()
+	m = m.freshSession(run.SessionID)
 	return m.resizeViewport(), nil
 }
 

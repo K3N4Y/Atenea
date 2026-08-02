@@ -7056,3 +7056,44 @@ func TestModel_ReasoningCommandRestoresProviderDefault(t *testing.T) {
 		t.Fatalf("reasoning = %q, want provider default", fake.reasoning)
 	}
 }
+
+func TestModelSessionTransitionsResetDerivedState(t *testing.T) {
+	seed := func() Model {
+		m := NewModel(nil, "old", nil)
+		m.entries = []entry{{kind: entryUser, text: "stale"}}
+		m.usage = &session.Usage{InputTokens: 9}
+		m.liveUsage = true
+		m.outputBytes, m.reasoningBytes, m.toolInputBytes = 1, 2, 3
+		m.revealing = true
+		m.working, m.activeRun, m.cancelPending = true, 42, true
+		m.composer = m.composer.seedHistory([]string{"stale history"})
+		return m
+	}
+	assertClean := func(t *testing.T, m Model) {
+		t.Helper()
+		if m.usage != nil || m.liveUsage || m.outputBytes != 0 || m.reasoningBytes != 0 || m.toolInputBytes != 0 || m.revealing || m.working || m.activeRun != 0 || m.cancelPending {
+			t.Fatalf("derived state was not reset")
+		}
+	}
+	t.Run("fresh", func(t *testing.T) {
+		m := seed().freshSession("new")
+		assertClean(t, m)
+		if m.sessionID != "new" || m.planMode || len(m.composer.history) != 0 {
+			t.Fatalf("fresh transition incorrect")
+		}
+	})
+	t.Run("restore", func(t *testing.T) {
+		m := seed().restoreSession(engine.ResumeResult{SessionID: "restored", Mode: session.ModePlan, History: []string{"past"}, Events: []session.SessionEvent{{Message: &session.Message{Role: session.RoleUser, Text: "restored"}}}})
+		assertClean(t, m)
+		if m.sessionID != "restored" || !m.planMode || len(m.entries) != 1 || m.composer.history[0] != "past" {
+			t.Fatalf("restore transition incorrect")
+		}
+	})
+	t.Run("undo", func(t *testing.T) {
+		m := seed().applyUndo(engine.UndoResult{Prompt: "retry", Events: []session.SessionEvent{{Message: &session.Message{Role: session.RoleUser, Text: "kept"}}}})
+		assertClean(t, m)
+		if m.sessionID != "old" || len(m.entries) != 1 || m.composer.input.Value() != "retry" {
+			t.Fatalf("undo transition incorrect")
+		}
+	})
+}
