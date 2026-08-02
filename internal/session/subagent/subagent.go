@@ -70,7 +70,6 @@ type taskInput struct {
 	OutputSchema  json.RawMessage `json:"output_schema,omitempty"`
 	RequestBudget *int            `json:"request_budget,omitempty"`
 	TimeoutMS     *int            `json:"timeout_ms,omitempty"`
-	TokenBudget   *int            `json:"token_budget,omitempty"`
 	Detached      bool            `json:"detached,omitempty"`
 	Worktree      bool            `json:"worktree,omitempty"`
 }
@@ -79,23 +78,17 @@ type taskUsage struct {
 	tokens   atomic.Int64
 }
 type budgetProvider struct {
-	provider                   llm.Provider
-	requestBudget, tokenBudget int
-	usage                      *taskUsage
-	cancel                     context.CancelFunc
-	exhausted                  atomic.Pointer[BudgetError]
-	onProgress                 func()
+	provider      llm.Provider
+	requestBudget int
+	usage         *taskUsage
+	cancel        context.CancelFunc
+	exhausted     atomic.Pointer[BudgetError]
+	onProgress    func()
 }
 
 func (p *budgetProvider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Event, error) {
 	if p.requestBudget > 0 && int(p.usage.requests.Load()) >= p.requestBudget {
 		err := &BudgetError{Kind: "request", Limit: p.requestBudget}
-		p.exhausted.CompareAndSwap(nil, err)
-		p.cancel()
-		return nil, err
-	}
-	if p.tokenBudget > 0 && int(p.usage.tokens.Load()) >= p.tokenBudget {
-		err := &BudgetError{Kind: "token", Limit: p.tokenBudget}
 		p.exhausted.CompareAndSwap(nil, err)
 		p.cancel()
 		return nil, err
@@ -114,14 +107,9 @@ func (p *budgetProvider) Stream(ctx context.Context, req llm.Request) (<-chan ll
 		for ev := range in {
 			if ev.Kind == llm.StepEnded && ev.Usage != nil {
 				total := ev.Usage.InputTokens + ev.Usage.OutputTokens + ev.Usage.ReasoningTokens
-				used := p.usage.tokens.Add(int64(total))
+				p.usage.tokens.Add(int64(total))
 				if p.onProgress != nil {
 					p.onProgress()
-				}
-				if p.tokenBudget > 0 && int(used) > p.tokenBudget {
-					e := &BudgetError{Kind: "token", Limit: p.tokenBudget}
-					p.exhausted.CompareAndSwap(nil, e)
-					p.cancel()
 				}
 			}
 			select {
@@ -275,7 +263,7 @@ func (t *TaskTool) Description() string {
 }
 
 func (*TaskTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"subagent_type":{"type":"string"},"prompt":{"type":"string"},"output_schema":{"type":"object"},"request_budget":{"type":"integer","minimum":1},"timeout_ms":{"type":"integer","minimum":1},"token_budget":{"type":"integer","minimum":1},"detached":{"type":"boolean"},"worktree":{"type":"boolean"}},"required":["subagent_type","prompt"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"subagent_type":{"type":"string"},"prompt":{"type":"string"},"output_schema":{"type":"object"},"request_budget":{"type":"integer","minimum":1},"timeout_ms":{"type":"integer","minimum":1},"detached":{"type":"boolean"},"worktree":{"type":"boolean"}},"required":["subagent_type","prompt"]}`)
 }
 
 // Effects: none of its own. A task runs no command and writes no file itself —
@@ -309,7 +297,7 @@ func (t *TaskTool) Execute(ctx context.Context, input json.RawMessage) (tool.Res
 	if err := dec.Decode(&struct{}{}); err != io.EOF {
 		return tool.Result{}, errors.New("subagent: invalid input: trailing JSON value")
 	}
-	for name, value := range map[string]*int{"request_budget": in.RequestBudget, "timeout_ms": in.TimeoutMS, "token_budget": in.TokenBudget} {
+	for name, value := range map[string]*int{"request_budget": in.RequestBudget, "timeout_ms": in.TimeoutMS} {
 		if value != nil && *value <= 0 {
 			return tool.Result{}, fmt.Errorf("subagent: %s must be greater than zero", name)
 		}
@@ -403,9 +391,6 @@ func (t *TaskTool) run(ctx, metadataCtx context.Context, def agent.Def, in taskI
 	}
 	if in.RequestBudget != nil {
 		bp.requestBudget = *in.RequestBudget
-	}
-	if in.TokenBudget != nil {
-		bp.tokenBudget = *in.TokenBudget
 	}
 	perms := tool.Permissions{}
 	for _, name := range def.Tools {

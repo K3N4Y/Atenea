@@ -48,21 +48,38 @@ func TestTaskOutputSchemaIsIncludedInChildPrompt(t *testing.T) {
 	}
 }
 
-func TestTaskRequestAndTokenBudgets(t *testing.T) {
+func TestTaskRequestBudget(t *testing.T) {
 	provider := &scriptedProvider{turns: [][]llm.Event{{{Kind: llm.ToolCall, CallID: "c", ToolName: "echo", Input: json.RawMessage(`{"text":"x"}`)}, {Kind: llm.StepEnded}}, {{Kind: llm.StepEnded}}}}
 	_, err := runtimeTool(provider).Execute(context.Background(), json.RawMessage(`{"subagent_type":"worker","prompt":"x","request_budget":1}`))
 	var budget *BudgetError
 	if !errors.As(err, &budget) || budget.Kind != "request" {
 		t.Fatalf("request budget err=%v", err)
 	}
+}
 
+func TestTaskCountsTokensWithoutEnforcingABudget(t *testing.T) {
 	usage := &llm.Usage{InputTokens: 2, OutputTokens: 3, ReasoningTokens: 4}
-	if _, err = runtimeTool(llm.NewFakeProvider(llm.Event{Kind: llm.StepEnded, Usage: usage})).Execute(context.Background(), json.RawMessage(`{"subagent_type":"worker","prompt":"x","token_budget":9}`)); err != nil {
-		t.Fatalf("exact token budget rejected: %v", err)
+	recorder := tool.NewSettlementRecorder()
+	ctx := tool.WithSettlementRecorder(context.Background(), recorder)
+	if _, err := runtimeTool(llm.NewFakeProvider(llm.Event{Kind: llm.StepEnded, Usage: usage})).Execute(ctx, json.RawMessage(`{"subagent_type":"worker","prompt":"x"}`)); err != nil {
+		t.Fatal(err)
 	}
-	_, err = runtimeTool(llm.NewFakeProvider(llm.Event{Kind: llm.StepEnded, Usage: usage})).Execute(context.Background(), json.RawMessage(`{"subagent_type":"worker","prompt":"x","token_budget":8}`))
-	if !errors.As(err, &budget) || budget.Kind != "token" {
-		t.Fatalf("token budget err=%v", err)
+	if got := recorder.TaskSettlement().Tokens; got != 9 {
+		t.Fatalf("recorded tokens = %d, want 9", got)
+	}
+}
+
+func TestTaskRejectsRemovedTokenBudget(t *testing.T) {
+	_, err := runtimeTool(llm.NewFakeProvider(llm.Event{Kind: llm.StepEnded})).Execute(context.Background(), json.RawMessage(`{"subagent_type":"worker","prompt":"x","token_budget":4000}`))
+	if err == nil || !strings.Contains(err.Error(), "unknown field \"token_budget\"") {
+		t.Fatalf("removed token_budget err=%v", err)
+	}
+}
+
+func TestTaskSchemaDoesNotOfferTokenBudget(t *testing.T) {
+	schema := string(runtimeTool(llm.NewFakeProvider(llm.Event{Kind: llm.StepEnded})).Schema())
+	if strings.Contains(schema, "token_budget") {
+		t.Fatalf("task schema still offers token_budget: %s", schema)
 	}
 }
 
