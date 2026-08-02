@@ -26,14 +26,16 @@ session store. Shutdown stops active runs, cancels and waits for context
 compactions, and disables further Bubble Tea messages once its event loop has
 ended. This preserves final events and prompt checkpoints before SQLite closes.
 
-The root `Model` intercepts built-in commands that never become model messages
-(the composer only submits the literal text; `submitPrompt` dispatches):
+The root `Model` intercepts built-in commands that never become model messages.
+The composer only submits literal text; `submitPrompt` is the single entry point,
+`parseLocalCommand` classifies local commands, and `executeLocalCommand` routes
+them to explicit handlers while ordinary text goes to `submitAgentPrompt`.
 `/new` stops any in-flight run and then creates a session (otherwise the old
 session would keep collecting events and win the resume-on-startup ordering),
-`/resume` opens a searchable picker of TUI sessions
-from the same workspace, `/compact` requests durable context compaction for the
-active session, and `/model` opens a full-screen two-column picker with
-providers on the left and the selected provider's models on the wider right.
+`/resume` opens a searchable picker of TUI sessions from the same workspace,
+`/compact` requests durable context compaction for the active session, and
+`/model` opens a full-screen two-column picker with providers on the left and
+the selected provider's models on the wider right.
 
 The engine registers `/new`, `/compact`, `/model`, `/mcp`, `/connect`, `/resume`,
 and `/undo` in the same `command.Set` as skill-derived and MCP commands. The

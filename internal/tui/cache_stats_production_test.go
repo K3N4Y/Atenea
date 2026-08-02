@@ -15,9 +15,11 @@ func TestModel_CacheStatsIsAbsentInProduction(t *testing.T) {
 			t.Fatalf("production menu unexpectedly contains /cache-stats: %#v", m.menuItems)
 		}
 	}
-	m.input.SetValue("/cache-stats")
-	m, _ = m.submitPrompt()
-	if len(agent.sent) != 1 || agent.sent[0].text != "/cache-stats" {
-		t.Fatalf("production command was intercepted: sent=%#v", agent.sent)
+	for _, input := range []string{"/cache-stats", " /cache-stats "} {
+		m.input.SetValue(input)
+		m, _ = m.submitPrompt()
+		if got := agent.sent[len(agent.sent)-1].text; got != input {
+			t.Fatalf("production command = %q, want literal prompt %q", got, input)
+		}
 	}
 }
