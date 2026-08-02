@@ -17,6 +17,8 @@ import (
 
 const inputPrompt = "❯ "
 
+const userMessageRail = "┃"
+
 const toolInputSummaryWidth = 48
 
 const (
@@ -86,8 +88,8 @@ func summarizeToolInput(raw string) string {
 }
 
 var (
-	userMessageStyle   = lipgloss.NewStyle().Background(lipgloss.Color(theme.UserMessage)).Padding(1, 3)
-	userMarkerStyle    = lipgloss.NewStyle().Faint(true)
+	userMessageStyle   = lipgloss.NewStyle().Background(lipgloss.Color(theme.UserMessage))
+	userRailStyle      = lipgloss.NewStyle().Faint(true).Background(lipgloss.Color(theme.UserMessage))
 	userTextStyle      = lipgloss.NewStyle().Background(lipgloss.Color(theme.UserMessage))
 	toolRunningStyle   = lipgloss.NewStyle().Faint(true)
 	toolOKStyle        = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color(theme.Success))
@@ -106,24 +108,37 @@ func activityHeader(marker, name, summary string) string {
 func (e entry) render(width int, p tool.Presentation) string {
 	switch e.kind {
 	case entryUser:
-		style := userMessageStyle
-		if width > 2*composerOuterMargin {
-			style = style.Width(width - 2*composerOuterMargin)
-		}
 		text := sanitizeTerminalText(e.text)
-		if width > 2*composerOuterMargin {
-			contentWidth := max(width-2*composerOuterMargin-userMessageStyle.GetHorizontalFrameSize(), 1)
-			text = ansi.Wrap(text, max(contentWidth-ansi.StringWidth(inputPrompt), 1), "")
+		margin := composerOuterMargin
+		horizontalPadding := 3
+		bodyWidth := 0
+		if width > 0 {
+			margin = min(margin, max((width-4)/2, 0))
+			blockWidth := width - 2*margin
+			bodyWidth = max(blockWidth-ansi.StringWidth(userMessageRail), 0)
+			horizontalPadding = min(horizontalPadding, max((bodyWidth-1)/2, 0))
+			contentWidth := max(bodyWidth-2*horizontalPadding, 1)
+			text = hardWrapOverflow(ansi.Wrap(text, contentWidth, ""), contentWidth)
+		} else {
+			for _, line := range strings.Split(text, "\n") {
+				bodyWidth = max(bodyWidth, ansi.StringWidth(line)+2*horizontalPadding)
+			}
 		}
 		lines := strings.Split(text, "\n")
-		for index, line := range lines {
-			prompt := strings.Repeat(" ", ansi.StringWidth(inputPrompt))
-			if index == 0 {
-				prompt = userMarkerStyle.Render(inputPrompt)
+		rows := make([]string, 0, len(lines)+2)
+		rows = append(rows, "")
+		rows = append(rows, lines...)
+		rows = append(rows, "")
+		rail := userRailStyle.Render(userMessageRail)
+		for index, line := range rows {
+			body := strings.Repeat(" ", bodyWidth)
+			if index > 0 && index < len(rows)-1 {
+				line = ansi.Truncate(line, max(bodyWidth-2*horizontalPadding, 0), "")
+				body = strings.Repeat(" ", horizontalPadding) + line + strings.Repeat(" ", max(bodyWidth-horizontalPadding-ansi.StringWidth(line), 0))
 			}
-			lines[index] = prompt + userTextStyle.Render(line)
+			rows[index] = rail + userTextStyle.Render(body)
 		}
-		return lipgloss.NewStyle().Margin(0, composerOuterMargin).Render(style.Render(strings.Join(lines, "\n")))
+		return lipgloss.NewStyle().Margin(0, margin).Render(userMessageStyle.Render(strings.Join(rows, "\n")))
 	case entryReasoning:
 		return e.renderThinking(width)
 	case entryTool:

@@ -1556,8 +1556,16 @@ func TestEntry_UserMessageMatchesReferenceWithoutTimestamp(t *testing.T) {
 			t.Fatalf("user message line width = %d, want 80:\n%q", got, view)
 		}
 	}
-	if got, want := lines[1], "     ❯ who are you and what are you capable of?"; !strings.HasPrefix(got, want) {
+	if got, want := lines[1], "  ┃   who are you and what are you capable of?"; !strings.HasPrefix(got, want) {
 		t.Fatalf("middle line = %q, want prefix %q", got, want)
+	}
+	for i, line := range lines {
+		if !strings.HasPrefix(line, "  ┃") {
+			t.Fatalf("user message row %d = %q, every block row must carry the left rail", i, line)
+		}
+	}
+	if strings.Contains(plain, "❯") {
+		t.Fatalf("user message must use a rail instead of the input arrow:\n%q", plain)
 	}
 	if !strings.Contains(view, "\x1b[48;2;36;36;36m") {
 		t.Fatalf("user message must use reference background #242424:\n%q", view)
@@ -1594,7 +1602,7 @@ func TestModel_UserMessageWrapsInsideReferenceBlock(t *testing.T) {
 	}
 }
 
-func TestModel_UserMessageWrapKeepsMarkerBesideFirstLine(t *testing.T) {
+func TestModel_UserMessageWrapKeepsRailAtBlockLeft(t *testing.T) {
 	for width := 16; width <= 80; width++ {
 		m := NewModel(nil, "s1", nil)
 		m = apply(t, m, tea.WindowSizeMsg{Width: width, Height: 100})
@@ -1605,23 +1613,40 @@ func TestModel_UserMessageWrapKeepsMarkerBesideFirstLine(t *testing.T) {
 		}})
 
 		plain := ansi.Strip(m.View())
-		markerHasText := false
+		messageRows := 0
 		for _, line := range strings.Split(plain, "\n") {
-			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, "❯ ") && trimmed != "❯" {
-				markerHasText = true
-			}
-			if trimmed == "❯" {
-				t.Fatalf("width %d user marker rendered alone on its own row:\n%s", width, plain)
+			if strings.Contains(line, "┃") {
+				messageRows++
+				if !strings.HasPrefix(line, "  ┃") {
+					t.Fatalf("width %d user rail is not at the block's left edge: %q\n%s", width, line, plain)
+				}
 			}
 		}
-		if !markerHasText {
-			t.Fatalf("width %d user marker must stay beside the first text row:\n%s", width, plain)
+		if messageRows < 4 {
+			t.Fatalf("width %d user rail rows = %d, want rail on padding and wrapped content rows:\n%s", width, messageRows, plain)
 		}
 	}
 }
 
-func TestModel_UserMessageKeepsGrayBackgroundAfterFaintMarker(t *testing.T) {
+func TestEntry_UserMessageKeepsRailWithinTinyWidths(t *testing.T) {
+	for width := 0; width <= 5; width++ {
+		plain := ansi.Strip(renderEntry(entry{kind: entryUser, text: "longword\nnext"}, width))
+		lines := strings.Split(plain, "\n")
+		if len(lines) < 4 {
+			t.Fatalf("width %d user message rows = %d, want padded multiline block:\n%q", width, len(lines), plain)
+		}
+		for row, line := range lines {
+			if !strings.Contains(line, "┃") {
+				t.Fatalf("width %d user message row %d lost its rail: %q", width, row, line)
+			}
+			if width > 0 && ansi.StringWidth(line) > width {
+				t.Fatalf("width %d user message row %d has width %d: %q", width, row, ansi.StringWidth(line), line)
+			}
+		}
+	}
+}
+
+func TestModel_UserMessagePaintsRailAndBodyBackground(t *testing.T) {
 	previousProfile := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	t.Cleanup(func() { lipgloss.SetColorProfile(previousProfile) })
@@ -1630,11 +1655,21 @@ func TestModel_UserMessageKeepsGrayBackgroundAfterFaintMarker(t *testing.T) {
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 10})
 	m = apply(t, m, EventMsg{Message: &session.Message{ID: "u1", Role: session.RoleUser, Text: "hello"}})
 
-	view := m.View()
-	grayText := "\x1b[48;2;36;36;36mhello"
-	if !strings.Contains(view, grayText) {
-		t.Fatalf("user text must restore #242424 after the faint marker; want %q in:\n%q", grayText, view)
+	backgroundParams := "48;2;36;36;36"
+	for _, row := range strings.Split(m.View(), "\n") {
+		if !strings.Contains(row, "┃") {
+			continue
+		}
+		beforeRail, afterRail, found := strings.Cut(row, "┃")
+		if !found || !strings.Contains(beforeRail, backgroundParams) {
+			t.Fatalf("user rail cell must paint #242424: %q", row)
+		}
+		if !strings.Contains(afterRail, backgroundParams) {
+			t.Fatalf("user message body must restore #242424 after the faint rail: %q", row)
+		}
+		return
 	}
+	t.Fatal("user message rendered no rail")
 }
 
 func TestModel_FoldsStreamingAssistantText(t *testing.T) {
@@ -2025,12 +2060,12 @@ func TestModel_RendersUserMessages(t *testing.T) {
 
 	view := m.View()
 	userLine := lineWith(t, ansi.Strip(view), "hello atenea")
-	if !strings.HasPrefix(userLine, "     ❯ ") {
-		t.Fatalf("user line = %q, must carry marker %q and the reference visual indentation", userLine, "     ❯ ")
+	if !strings.HasPrefix(userLine, "  ┃   ") {
+		t.Fatalf("user line = %q, must carry rail %q at the block's left edge", userLine, "  ┃")
 	}
 	assistantLine := lineWith(t, ansi.Strip(view), "hello human")
-	if strings.Contains(assistantLine, "❯ ") {
-		t.Fatalf("assistant line = %q, must NOT carry the user marker %q", assistantLine, "❯ ")
+	if strings.Contains(assistantLine, "┃") {
+		t.Fatalf("assistant line = %q, must NOT carry the user rail %q", assistantLine, "┃")
 	}
 }
 
