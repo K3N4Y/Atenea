@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-27
+updated_at: 2026-08-01
 summary: How a tool declares what it affects, what granting it authorizes and how it should read — the optional capability interfaces that replaced six name-keyed switches, and the ask-by-default security flip that came with them.
 ---
 
@@ -18,7 +18,7 @@ its name. Six of them, in six files:
 |---|---|
 | Ask before running | `internal/wiring/wiring.go` (`"bash","write","edit","web_fetch"`) |
 | Session-grant shape | `internal/permission/rule.go` |
-| Transcript rendering | `internal/tui/view.go` |
+| Transcript rendering | `internal/tui/view_transcript.go` |
 | Compact permission label and body | `internal/tui/permission_panel.go` |
 | Triggers a git-status refresh | `internal/tui/git_summary.go` |
 | Subagent tool sets validated | nowhere — an unknown name failed silently |

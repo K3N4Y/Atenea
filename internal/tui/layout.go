@@ -17,6 +17,14 @@ package tui
 // helpers, consuming a width/flag from here. See the discipline clause in the
 // architecture doc.
 
+const composerBoxBorderWidth = 2
+
+const composerBoxPadding = 1
+
+const composerOuterMargin = 2
+
+const inputCursorWidth = 1
+
 // topBarMargin is the vertical margin (in rows) above and below the top bar.
 // It is 1, not composerOuterMargin (the horizontal margin): one row is the
 // project's vertical rhythm (transcript blocks separate with a blank line) and
@@ -163,4 +171,12 @@ func computeLayout(size layoutSize, state layoutState) Layout {
 	l.inputHeight = min(state.inputHeight, max(l.bodyHeight-(state.reservedLines-state.inputHeight), 1))
 
 	return l
+}
+
+func (m Model) chatContentWidth() int {
+	return m.baseLayout().chatContentWidth
+}
+
+func (m Model) contentWidth() int {
+	return m.baseLayout().contentWidth
 }

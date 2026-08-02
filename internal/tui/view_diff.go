@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -11,6 +9,29 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/K3N4Y/atenea/internal/tui/theme"
+)
+
+const toolDiffPreviewLines = 16
+
+const editDiffCardMaxRows = 40
+
+const diffRailGlyph = "▌"
+
+const noMarker byte = 0
+
+var (
+	diffAddStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Success))
+	diffDelStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Error))
+	diffPathStyle    = lipgloss.NewStyle().Background(lipgloss.Color(theme.DiffHeaderBg))
+	diffHunkStyle    = lipgloss.NewStyle().Background(lipgloss.Color(theme.DiffHeaderBg)).Foreground(lipgloss.Color(theme.Muted))
+	diffDelBandStyle = lipgloss.NewStyle().Background(lipgloss.Color(theme.DiffDelBg)).Foreground(lipgloss.Color(theme.Error))
+	diffAddBandStyle = lipgloss.NewStyle().Background(lipgloss.Color(theme.DiffAddBg)).Foreground(lipgloss.Color(theme.Success))
+	diffDelRailStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Error))
+	diffAddRailStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Success))
+	diffCtxStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted))
+	writeBandStyle   = lipgloss.NewStyle().Background(lipgloss.Color(theme.CodeBlockHex)).Foreground(lipgloss.Color(theme.Muted))
+	writeRailStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted)).Background(lipgloss.Color(theme.CodeBlockHex))
+	writePathStyle   = lipgloss.NewStyle().Background(lipgloss.Color(theme.WriteCardPath)).Foreground(lipgloss.Color(theme.Canvas))
 )
 
 func diffStat(diff string) (added, removed int) {
@@ -24,55 +45,6 @@ func diffStat(diff string) (added, removed int) {
 		}
 	}
 	return added, removed
-}
-
-func summarizeToolInput(raw string) string {
-	if raw == "" {
-		return ""
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(raw), &fields); err != nil || len(fields) == 0 {
-		return ""
-	}
-	if len(fields) == 1 {
-		for _, v := range fields {
-			var s string
-			if err := json.Unmarshal(v, &s); err == nil && s != "" {
-				return s
-			}
-		}
-	}
-	var buf bytes.Buffer
-	if err := json.Compact(&buf, []byte(raw)); err != nil {
-		return ""
-	}
-	return buf.String()
-}
-
-func renderCappedLines(text string, maxLines int, renderLine func(line string) string) string {
-	text = sanitizeTerminalText(text)
-	if strings.TrimSpace(text) == "" {
-		return ""
-	}
-	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
-	shown := lines
-	if len(shown) > maxLines {
-		shown = shown[:maxLines]
-	}
-	rendered := make([]string, 0, len(shown)+1)
-	for _, line := range shown {
-		rendered = append(rendered, renderLine(line))
-	}
-	if hidden := len(lines) - len(shown); hidden > 0 {
-		rendered = append(rendered, toolOutputStyle.Render(activityRailPrefix+"… +"+strconv.Itoa(hidden)+" lines"))
-	}
-	return strings.Join(rendered, "\n")
-}
-
-func renderOutputPreview(output string) string {
-	return renderCappedLines(output, toolOutputPreviewLines, func(line string) string {
-		return toolOutputStyle.Render(activityRailPrefix + line)
-	})
 }
 
 func renderDiffPreview(diff string) string {

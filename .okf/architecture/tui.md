@@ -136,8 +136,13 @@ Three surfaces, one pipeline: only the last arrow differs.
   branch, HEAD, refs, and staged changes are never mutated.
 - `internal/tui/model.go` + `model_events.go` + `model_input.go` +
   `model_mouse.go` + `model_overlays.go` + `model_state.go` + `transcript.go` +
-  `composer.go` + `complete.go` + `view.go` + `reveal.go` — the Bubble Tea
-  model. `model.go` keeps the root `Model`, construction, and Bubble Tea
+  `composer.go` + `complete.go` + `view.go` + `view_transcript.go` +
+  `view_composer.go` + `view_canvas.go` + `view_status.go` +
+  `view_resume.go` + `view_markdown.go` + `view_diff.go` + `reveal.go` — the Bubble Tea
+  model. `view.go` owns only the top-level `View` composition and viewport/layout
+  synchronization; each `view_*` file keeps one visual surface and its nearby
+  styles and rendering primitives.
+  `model.go` keeps the root `Model`, construction, and Bubble Tea
   `Init`/`Update` boundary; `model_events.go` dispatches engine, session,
   lifecycle, focus, resize, and spinner messages; `model_input.go` owns
   keyboard, composer, and run cancellation flows; `model_mouse.go` owns pointer
@@ -186,15 +191,18 @@ Three surfaces, one pipeline: only the last arrow differs.
   drives focus via `syncComposerFocus`. Thin `Model` seams (`refreshMenu`,
   `closeMenu`, `applySelection`) add only the viewport recompute the popup's
   line-count change requires;
-  `view.go` renders with a height-bounded viewport and smart following:
-  incoming events and reveal ticks follow the queue only while the user is at
-  the bottom; scrolling upward preserves the reading position during streaming
-  and shows a passive `↓` at the lower-right when new agent activity arrives;
-  returning manually to the bottom clears the indicator and resumes following.
-  PgUp/PgDn and the mouse wheel navigate the transcript,
-  job status line, composer box with rounded edge and a compact
-  `↑ input ↓ output ctx used/window` label in its top-left border, and
-  footer with agent/model, all with lipgloss styles. Live estimates carry a
+  `view_transcript.go` renders entries, thinking, tools, and the activity rail
+  inside a height-bounded viewport with smart following: incoming events and
+  reveal ticks follow the queue only while the user is at the bottom; scrolling
+  upward preserves the reading position during streaming and shows a passive
+  `↓` at the lower-right when new agent activity arrives; returning manually to
+  the bottom clears the indicator and resumes following. PgUp/PgDn and the mouse
+  wheel navigate the transcript. `view_composer.go` owns the completion menu,
+  rounded composer box, active-model label, and compact
+  `↑ input ↓ output ctx used/window` token label. `view_status.go` owns the job
+  status line and Git summary; `view_canvas.go` owns background restoration and
+  body sizing; `view_diff.go` and `view_markdown.go` own those specialized
+  renderers. Live estimates carry a
   `~` prefix and lose it when the step closes; when `Step.Ended` omits usage,
   the last estimate remains visible without the approximation marker. The
   built-in `/new` command clears both exact and live token usage so a new
@@ -218,8 +226,9 @@ Three surfaces, one pipeline: only the last arrow differs.
 
 - `internal/tui/theme/theme.go` (package `theme`) — the color palette: the
   single source of truth for every color the presentation layer paints with.
-  `view.go` and the widgets compose their lipgloss styles (and the markdown
-  glamour theme) from it, so changing the visual identity is a one-line edit.
+  The `view_*` surfaces and widgets compose their nearby lipgloss styles (and
+  the markdown glamour theme) from it, so changing the visual identity is a
+  one-line edit.
 
 - `internal/wiring` — the shared assembly extracted from `app.go`: registry de
  tools, skills and slash-commands, catalog of subagents with the propagated gate,
