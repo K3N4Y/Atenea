@@ -81,6 +81,7 @@ The project-wide vocabulary lives in the root [domain glossary](../CONTEXT.md).
 - [Agent loops and graph orchestration](research/2026-07-27-graphs-over-agent-loops.md)
 - [OpenAI ChatGPT subscription: device-code OAuth and the codex backend](research/2026-07-27-openai-chatgpt-oauth-device-code.md)
 - [PostHog reasoning levels](research/2026-08-01-posthog-reasoning-levels.md)
+- [Atenea compared with oh-my-pi](research/2026-08-02-oh-my-pi-gap-analysis.md)
 
 ## Specifications
 
