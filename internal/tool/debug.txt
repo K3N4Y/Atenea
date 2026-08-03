@@ -1,0 +1,7 @@
+Control one persistent Debug Adapter Protocol (DAP) session over stdio.
+
+Start with `launch` or `attach`, supplying `adapter_command` and optional `adapter_args` (the adapter is executed directly, never through a shell). Launch accepts a workspace-rooted `program`, `args`, and `cwd`; attach accepts `pid` and/or `host` and `port. All target paths and source files must remain inside the workspace.
+
+Operations: `launch`, `attach`, `set_breakpoint`, `remove_breakpoint`, `continue`, `next`, `step_in`, `step_out`, `pause`, `threads`, `stack_trace`, `scopes`, `variables`, `evaluate`, `output`, `sessions`, and `terminate`. Use the IDs returned by threads, stack traces, and scopes. If omitted, thread_id and frame_id use the most recently stopped thread/frame when available. `timeout_seconds` bounds the call.
+
+Only one session can be active. Breakpoints are synchronized as complete per-file or function breakpoint sets. `output` returns bounded adapter output and recent events. `terminate` ends and reaps the adapter; closing the tool does the same.
