@@ -26,14 +26,14 @@ func TestSubagentTotalReplacesLiveAndRehydrates(t *testing.T) {
 	}
 	tr = tr.foldEvent(EventMsg(settled), "parent")
 	m.Transcript = tr
-	if got := m.renderTranscript(); !strings.Contains(got, "↳ 1 tool call · 2 req · 30 tok · 1.5s") || strings.Contains(got, "read") {
+	if got := m.renderTranscript(); !strings.Contains(got, "└─ 1 tool call · 2 req · 30 tok · 1.5s") || strings.Contains(got, "read") {
 		t.Fatalf("render = %q", got)
 	}
 	if lines := m.entryLines(); len(lines) < 2 || !strings.Contains(lines[len(lines)-1].line, "1 tool call") {
 		t.Fatalf("entryLines = %#v", lines)
 	}
 	rehydrated := Transcript{}.replaceEvents([]session.SessionEvent{called, started, child, settled}, "parent")
-	if got := (Model{Transcript: rehydrated}).renderTranscript(); !strings.Contains(got, "↳ 1 tool call") {
+	if got := (Model{Transcript: rehydrated}).renderTranscript(); !strings.Contains(got, "└─ 1 tool call") {
 		t.Fatalf("rehydrated = %q", got)
 	}
 }
@@ -47,7 +47,7 @@ func TestSubagentTotalGrammarIsolationAndInvalidLegacy(t *testing.T) {
 	tr = tr.foldEvent(EventMsg(session.WithSubagentToolCalls(session.SessionEvent{Kind: session.KindToolSuccess, CallID: "many", ToolName: "task"}, 3)), "s")
 	tr = tr.foldEvent(EventMsg(session.SessionEvent{Kind: session.KindToolSuccess, CallID: "invalid", ToolName: "task", Attrs: map[string]string{"atenea.internal.subagent_tool_calls": "03"}}), "s")
 	out := (Model{Transcript: tr}).renderTranscript()
-	if !strings.Contains(out, "↳ 0 tool calls") || !strings.Contains(out, "↳ 3 tool calls") {
+	if !strings.Contains(out, "└─ 0 tool calls") || !strings.Contains(out, "└─ 3 tool calls") {
 		t.Fatalf("render = %q", out)
 	}
 	if _, ok := tr.childTotals["invalid"]; ok {
@@ -83,7 +83,7 @@ func TestSubagentTotalPersistsThroughSQLiteReopen(t *testing.T) {
 	}
 	transcript := Transcript{}.replaceEvents(events, "parent")
 	rendered := (Model{Transcript: transcript}).renderTranscript()
-	if !strings.Contains(rendered, "↳ 4 tool calls · 3 req · 200 tok · 2s") {
+	if !strings.Contains(rendered, "└─ 4 tool calls · 3 req · 200 tok · 2s") {
 		t.Fatalf("reopened render = %q", rendered)
 	}
 	if len(transcript.childBatches) != 0 {

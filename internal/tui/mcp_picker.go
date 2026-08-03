@@ -243,12 +243,10 @@ func mcpPickerWidths(innerWidth int) (int, int, int, int) {
 func (m Model) mcpPickerRow(server mcpclient.ServerStatus, selected bool, nameWidth, statusWidth, toolsWidth, commandWidth int) string {
 	prefix := "  "
 	if selected {
-		prefix = "> "
+		prefix = "❯ "
 	}
-	glyph := "○ "
-	if m.mcpPicker.busy[server.Name] {
-		glyph = "◌ "
-	} else if server.Connected {
+	glyph := " "
+	if server.Connected || m.mcpPicker.busy[server.Name] {
 		glyph = "● "
 	}
 	status := "off"

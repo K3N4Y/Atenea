@@ -563,7 +563,7 @@ func TestChildRowsRenderBelowTaskAndEntryLinesMatch(t *testing.T) {
 	m = m.foldEvent(childEvent(session.KindToolCalled, "task", "child", "c", "bash"))
 	m.childBatches["task"][0].spin = "⠋"
 	rendered := m.renderTranscript()
-	if !strings.Contains(rendered, "task") || !strings.Contains(rendered, "↳") || !strings.Contains(rendered, "⠋") {
+	if !strings.Contains(rendered, "task") || !strings.Contains(rendered, "└─") || !strings.Contains(rendered, "⠋") {
 		t.Fatalf("render = %q", rendered)
 	}
 	var lines []string

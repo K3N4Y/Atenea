@@ -195,14 +195,19 @@ func (m Model) modelPickerView() string {
 	providerStart, providerEnd := m.modelPicker.providerList.window(itemRows)
 	for index := providerStart; index < providerEnd; index++ {
 		provider := m.modelPicker.providers[index]
-		prefix := "  "
-		if !m.modelPicker.modelsFocused && index == m.modelPicker.providerList.selected {
-			prefix = "> "
-		} else if provider.ID == m.modelPicker.active.ProviderID {
+		isSelected := !m.modelPicker.modelsFocused && index == m.modelPicker.providerList.selected
+		isActive := provider.ID == m.modelPicker.active.ProviderID
+		prefix, status := "  ", ""
+		if isSelected {
+			prefix = "❯ "
+			if isActive {
+				status = "active"
+			}
+		} else if isActive {
 			prefix = "● "
 		}
-		row := modelPickerProviderRow(prefix, provider.Name, len(provider.Models), leftWidth)
-		if !m.modelPicker.modelsFocused && index == m.modelPicker.providerList.selected {
+		row := modelPickerProviderRow(prefix, provider.Name, status, len(provider.Models), leftWidth)
+		if isSelected {
 			row = selectedRowStyle.Render(row)
 		}
 		providers = append(providers, row)
@@ -220,14 +225,19 @@ func (m Model) modelPickerView() string {
 		modelStart, modelEnd := m.modelPicker.modelList.window(itemRows - len(models))
 		for index := modelStart; index < modelEnd; index++ {
 			model := selectedProvider.Models[index]
-			prefix := "  "
-			if m.modelPicker.modelsFocused && index == m.modelPicker.modelList.selected {
-				prefix = "> "
-			} else if selectedProvider.ID == m.modelPicker.active.ProviderID && model == m.modelPicker.active.Model {
+			isSelected := m.modelPicker.modelsFocused && index == m.modelPicker.modelList.selected
+			isActive := selectedProvider.ID == m.modelPicker.active.ProviderID && model == m.modelPicker.active.Model
+			prefix, status := "  ", ""
+			if isSelected {
+				prefix = "❯ "
+				if isActive {
+					status = "active"
+				}
+			} else if isActive {
 				prefix = "● "
 			}
-			row := modelPickerModelRow(prefix, model, selectedProvider.Capabilities, rightWidth)
-			if m.modelPicker.modelsFocused && index == m.modelPicker.modelList.selected {
+			row := modelPickerModelRow(prefix, model, status, selectedProvider.Capabilities, rightWidth)
+			if isSelected {
 				row = selectedRowStyle.Render(row)
 			}
 			models = append(models, row)
@@ -336,11 +346,14 @@ func (m Model) confirmModelSelection() (Model, tea.Cmd) {
 	return m, nil
 }
 
-func modelPickerProviderRow(prefix, name string, count, width int) string {
+func modelPickerProviderRow(prefix, name, status string, count, width int) string {
 	countText := strconv.Itoa(count)
-	nameWidth := max(width-lipgloss.Width(prefix)-lipgloss.Width(countText)-2, 0)
+	nameWidth := max(width-lipgloss.Width(prefix)-lipgloss.Width(status)-lipgloss.Width(countText)-3, 0)
 	name = ansi.Truncate(sanitizeTerminalText(name), nameWidth, "…")
 	row := prefix + name
+	if status != "" {
+		row += strings.Repeat(" ", max(width-lipgloss.Width(row)-lipgloss.Width(status)-lipgloss.Width(countText)-2, 0)) + status
+	}
 	gap := max(width-lipgloss.Width(row)-lipgloss.Width(countText)-1, 0)
 	return ansi.Truncate(row+strings.Repeat(" ", gap)+countText+" ", width, "")
 }
@@ -350,9 +363,13 @@ func modelPickerModelHeader(title string, width int) string {
 	return overlayCell(title, nameWidth) + overlayCell("Context", contextWidth) + overlayRightCell("Price $/1M", priceWidth)
 }
 
-func modelPickerModelRow(prefix, model string, capabilities llm.Capabilities, width int) string {
+func modelPickerModelRow(prefix, model, status string, capabilities llm.Capabilities, width int) string {
 	nameWidth, contextWidth, priceWidth := modelPickerMetadataWidths(width)
-	return overlayCell(prefix+sanitizeTerminalText(model), nameWidth) +
+	name := prefix + sanitizeTerminalText(model)
+	if status != "" {
+		name += strings.Repeat(" ", max(nameWidth-lipgloss.Width(name)-lipgloss.Width(status), 1)) + status
+	}
+	return overlayCell(ansi.Truncate(name, nameWidth, "…"), nameWidth) +
 		overlayCell(modelContextLabel(capabilities, model), contextWidth) +
 		overlayRightCell(modelPriceLabel(model), priceWidth)
 }

@@ -537,9 +537,9 @@ func deviceCodeDeadline(expiresAt time.Time) string {
 func (m Model) connectPanelRow(provider providerconfig.ConnectableProvider, selected bool, width int) string {
 	prefix := "  "
 	if selected {
-		prefix = "> "
+		prefix = "❯ "
 	}
-	glyph := "○ "
+	glyph := "  "
 	status := "not connected"
 	if provider.Connected {
 		glyph = "● "

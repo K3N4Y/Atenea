@@ -700,9 +700,9 @@ func revealStep(remaining int) int {
 
 // permissionGatedTools returns the callID+sessionID keys of tools whose
 // permission is still pending. The ask-before-run gate emits Tool.Called
-// (running "●") immediately followed by Tool.Permission.Requested ("?") for the
+// (running "●") immediately followed by Tool.Permission.Requested ("!") for the
 // same call, so both would render on adjacent rows. While a key is present the
-// transcript hides the running header and shows only the "? <tool>" ask, so the
+// transcript hides the running header and shows only the "! <tool>" ask, so the
 // same call is not duplicated while the user decides. Returns nil when nothing
 // is pending, so the hot path allocates nothing.
 func (t Transcript) permissionGatedTools() map[string]struct{} {

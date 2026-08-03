@@ -23,8 +23,8 @@ const toolInputSummaryWidth = 48
 const (
 	activityRunMarker  = "●"
 	activityOKMarker   = "✓"
-	activityFailMarker = "✗"
-	activityAskMarker  = "?"
+	activityFailMarker = "×"
+	activityAskMarker  = "!"
 )
 
 const activityNameWidth = 8
@@ -171,7 +171,7 @@ func (e entry) render(width int, p tool.Presentation) string {
 		}
 		return dangerStyle.Render(line)
 	case entryRetry:
-		return permissionStyle.Render(activityHeader("↻", "retry", e.text))
+		return permissionStyle.Render(activityHeader(activityAskMarker, "retry", e.text))
 	case entryCompaction:
 		if e.err != "" {
 			return dangerStyle.Render("[error] " + sanitizeTerminalText(e.err))
@@ -196,13 +196,13 @@ const thinkingInset = "  "
 
 func (e entry) renderThinking(width int) string {
 	if !e.settled() {
-		lines := []string{thinkingLabelStyle.Render("◆ Thinking…")}
+		lines := []string{thinkingLabelStyle.Render("● Thinking…")}
 		for _, line := range lastNonEmptyLines(sanitizeTerminalText(e.revealedText()), thinkingPreviewLines) {
 			lines = append(lines, secondaryTextStyle.Render(line))
 		}
 		return insetThinking(strings.Join(lines, "\n"))
 	}
-	summary := thinkingLabelStyle.Render("◆ Thought") + metadataStyle.Render(" for "+formatThinkingDuration(e.duration))
+	summary := thinkingLabelStyle.Render("● Thought") + metadataStyle.Render(" for "+formatThinkingDuration(e.duration))
 	if !e.expanded {
 		return insetThinking(summary + metadataStyle.Render(" ⇧Tab"))
 	}
@@ -346,7 +346,7 @@ func (e entry) renderActivity(name, summary string, showDetail bool) string {
 		}
 		return out
 	case toolDenied:
-		return toolDeniedStyle.Render(activityHeader("–", name, "Denied by user"))
+		return toolDeniedStyle.Render(activityHeader(activityAskMarker, name, "Denied by user"))
 	default:
 		marker := activityRunMarker
 		if e.spin != "" {
@@ -362,7 +362,7 @@ func (m Model) renderVisibleBlock(ve visibleEntry, width int) string {
 		return block
 	}
 	if m.childDetached[ve.entry.callID] {
-		return block + "\n  ↳ background job; use task_status, task_wait, or task_cancel"
+		return block + "\n  └─ background job; use task_status, task_wait, or task_cancel"
 	}
 	if total, ok := m.childTotals[ve.entry.callID]; ok {
 		label := "tool calls"
@@ -376,12 +376,16 @@ func (m Model) renderVisibleBlock(ve visibleEntry, width int) string {
 				summary += " · " + usage.Workspace
 			}
 		}
-		return block + "\n  ↳ " + summary
+		return block + "\n  └─ " + summary
 	}
-	for _, child := range m.childBatches[ve.entry.callID] {
+	for index, child := range m.childBatches[ve.entry.callID] {
 		p := m.presentationOf(child)
 		childBlock := child.renderActivity(activityLabel(p, child), displaySubject(p.Subject), false)
-		childBlock = "  ↳ " + strings.ReplaceAll(childBlock, "\n", "\n    ")
+		connector := "├─"
+		if index == len(m.childBatches[ve.entry.callID])-1 {
+			connector = "└─"
+		}
+		childBlock = "  " + connector + " " + strings.ReplaceAll(childBlock, "\n", "\n    ")
 		block += "\n" + childBlock
 	}
 	return block

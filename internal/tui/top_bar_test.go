@@ -347,15 +347,15 @@ func TestModel_TopBarRowClickIsInertBodyRowClickHits(t *testing.T) {
 	}
 
 	// Part A (inert): a click on row 0 (the bar) must not expand the
-	// reasoning. The summary remains collapsed ("◆ Thought") and the body does NOT appear.
+	// reasoning. The summary remains collapsed ("● Thought") and the body does NOT appear.
 	mA := build(t)
-	if !strings.Contains(ansi.Strip(mA.View()), "◆ Thought") {
-		t.Fatalf("precondition: settled reasoning must collapse to %q", "◆ Thought")
+	if !strings.Contains(ansi.Strip(mA.View()), "● Thought") {
+		t.Fatalf("precondition: settled reasoning must collapse to %q", "● Thought")
 	}
 	mA = apply(t, mA, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 2, Y: 0})
 	viewA := ansi.Strip(mA.View())
-	if !strings.Contains(viewA, "◆ Thought") {
-		t.Fatalf("a click on the bar row (Y=0) must be inert: summary %q must remain; View = %q", "◆ Thought", viewA)
+	if !strings.Contains(viewA, "● Thought") {
+		t.Fatalf("a click on the bar row (Y=0) must be inert: summary %q must remain; View = %q", "● Thought", viewA)
 	}
 	for _, body := range []string{"reason-2", "reason-3"} {
 		if strings.Contains(viewA, body) {
@@ -365,7 +365,7 @@ func TestModel_TopBarRowClickIsInertBodyRowClickHits(t *testing.T) {
 
 	// Part B (impact): a click on the visible summary row expands it.
 	mB := build(t)
-	summaryY := lineIndexWith(t, ansi.Strip(mB.View()), "◆ Thought")
+	summaryY := lineIndexWith(t, ansi.Strip(mB.View()), "● Thought")
 	mB = apply(t, mB, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 2, Y: summaryY})
 	viewB := ansi.Strip(mB.View())
 	for _, want := range []string{"reason-1", "reason-2", "reason-3"} {

@@ -417,7 +417,7 @@ func (m Model) snackbarView() (string, snackbarRect, bool) {
 	if !m.snackbar.success {
 		railStyle = dangerStyle
 	}
-	rail := railStyle.Background(background).Render("│")
+	rail := railStyle.Background(background).Render("┃")
 	fill := lipgloss.NewStyle().Background(background)
 	rows := make([]string, height)
 	for i := range rows {

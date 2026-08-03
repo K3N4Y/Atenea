@@ -630,10 +630,10 @@ func TestTUI_ConnectCommandFullFlowUnderPTY(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForPTYText(t, output, "Connect Provider")
-	waitForPTYText(t, output, "○ OpenRouter")
-	waitForPTYText(t, output, "○ OpenAI")
-	waitForPTYText(t, output, "○ OpenCode Zen")
-	waitForPTYText(t, output, "○ OpenCode Go")
+	waitForPTYText(t, output, "❯   OpenRouter")
+	waitForPTYText(t, output, "    OpenAI")
+	waitForPTYText(t, output, "    OpenCode Zen")
+	waitForPTYText(t, output, "    OpenCode Go")
 	waitForPTYText(t, output, "not connected")
 
 	// Enter on the provider opens the masked key entry.
@@ -803,7 +803,7 @@ func TestTUI_ChatGPTSubscriptionLoginUnderPTY(t *testing.T) {
 	if _, err := terminal.Write([]byte("/connect\r")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYText(t, output, "○ OpenAI (ChatGPT subscription)")
+	waitForPTYText(t, output, "❯   OpenAI (ChatGPT subscription)")
 	if _, err := terminal.Write([]byte("\r")); err != nil {
 		t.Fatal(err)
 	}

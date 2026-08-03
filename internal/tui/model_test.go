@@ -695,7 +695,7 @@ func TestModel_ResumePickerCapturesMouseAndEscapePreservesChat(t *testing.T) {
 	m.viewport.SetYOffset(0)
 	summaryRow := -1
 	for row, line := range m.entryLines() {
-		if strings.Contains(line.line, "◆ Thought") {
+		if strings.Contains(line.line, "● Thought") {
 			summaryRow = row
 			break
 		}
@@ -1387,7 +1387,7 @@ func TestModel_ModelPickerShowsModelCountRightAligned(t *testing.T) {
 	m = typeRunes(t, m, "/model")
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
-	line := lineWith(t, ansi.Strip(m.View()), "> OpenRouter")
+	line := lineWith(t, ansi.Strip(m.View()), "❯ OpenR")
 	firstBorder := strings.Index(line, "│")
 	providerBorder := -1
 	if firstBorder >= 0 {
@@ -1397,6 +1397,33 @@ func TestModel_ModelPickerShowsModelCountRightAligned(t *testing.T) {
 	}
 	if firstBorder < 0 || providerBorder <= firstBorder || !strings.HasSuffix(line[firstBorder+1:providerBorder], "2 ") {
 		t.Fatalf("provider row does not end with model count: %q", line)
+	}
+}
+
+func TestModel_ModelPickerSeparatesSelectionAndActiveState(t *testing.T) {
+	agent := &fakeAgent{
+		models: []providerconfig.ProviderModels{{ID: "openrouter", Name: "OpenRouter", Models: []string{"model-a"}}},
+		active: providerconfig.Active{ProviderID: "openrouter", Model: "model-a"},
+	}
+	m := NewModel(agent, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 16})
+	m = typeRunes(t, m, "/model")
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := ansi.Strip(m.View())
+	providerLine := lineWith(t, view, "❯ OpenR")
+	if !strings.Contains(providerLine, "active") {
+		t.Fatalf("selected provider row = %q, want separate active state", providerLine)
+	}
+	if !strings.Contains(view, "● model-a") {
+		t.Fatalf("unfocused active model view = %q, want active marker", view)
+	}
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRight})
+	view = ansi.Strip(m.View())
+	modelLine := lineWith(t, view, "❯ model-a")
+	if !strings.Contains(modelLine, "active") {
+		t.Fatalf("selected model row = %q, want separate active state", modelLine)
 	}
 }
 
@@ -2096,7 +2123,7 @@ func TestModel_RendersToolCallLifecycle(t *testing.T) {
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "c2", ToolName: "edit", Error: "permission denied"})
 	got := m.View()
-	for _, want := range []string{"✗ Edit     a.go", "│ error: permission denied"} {
+	for _, want := range []string{"× Edit     a.go", "│ error: permission denied"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("View() = %q, Tool.Failed must show %q: the header with the Input summary and the Error as a rail line", got, want)
 		}
@@ -2178,14 +2205,14 @@ func TestModel_RendersSkillToolAsSkillLine(t *testing.T) {
 }
 
 func TestModel_SkillToolFailureShowsError(t *testing.T) {
-	// TRIANGULATE: a poor implementation of renderSkill only covers the running/ok states and leaves the ● marker forever before Tool.Failed. A skill failure (for example, a missing name) uses the same dedicated line with the ✗ marker and the error as a rail line, just like the other tools.
+	// TRIANGULATE: a poor implementation of renderSkill only covers the running/ok states and leaves the ● marker forever before Tool.Failed. A skill failure (for example, a missing name) uses the same dedicated line with the × marker and the error as a rail line, just like the other tools.
 	m := NewModel(&fakeAgent{}, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "skill", Input: json.RawMessage(`{"name":"missing"}`)})
 	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "c1", ToolName: "skill", Error: `skill "missing" not found`})
 
 	view := m.View()
-	for _, want := range []string{"✗ Skill    missing", `│ error: skill "missing" not found`} {
+	for _, want := range []string{"× Skill    missing", `│ error: skill "missing" not found`} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("View() = %q, the failed skill must settle as %q: the dedicated line also covers the error state, not only running/ok", view, want)
 		}
@@ -2410,10 +2437,10 @@ func TestModel_ShowsPendingPermissionAndClearsOnOutcome(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"rm -rf /tmp/x"}`)})
 
 	view := m.View()
-	permLine := lineWith(t, view, "? Bash")
-	for _, want := range []string{"? Bash", "rm -rf /tmp/x"} {
+	permLine := lineWith(t, view, "! Bash")
+	for _, want := range []string{"! Bash", "rm -rf /tmp/x"} {
 		if !strings.Contains(permLine, want) {
-			t.Fatalf("pending request = %q, must contain %q (marker ?, ToolName, and Input summary)", permLine, want)
+			t.Fatalf("pending request = %q, must contain %q (attention marker, ToolName, and Input summary)", permLine, want)
 		}
 	}
 	if view := ansi.Strip(view); !strings.Contains(view, "Permission required") || !strings.Contains(view, "Deny") || !strings.Contains(view, "Allow") {
@@ -2451,8 +2478,8 @@ func TestModel_ShowsPendingPermissionAndClearsOnOutcome(t *testing.T) {
 }
 
 // A tool that blocks on the ask-before-run gate emits Tool.Called (running "●")
-// immediately followed by Tool.Permission.Requested ("?") for the same call.
-// While the gate is open the transcript must show only the orange "? <tool>"
+// immediately followed by Tool.Permission.Requested ("!") for the same call.
+// While the gate is open the transcript must show only the orange "! <tool>"
 // ask, never a duplicate running header for that call. Approving keeps the tool
 // running, so its "●" header returns once the ask is gone.
 func TestModel_RunningToolHiddenWhilePermissionPending(t *testing.T) {
@@ -2466,13 +2493,13 @@ func TestModel_RunningToolHiddenWhilePermissionPending(t *testing.T) {
 	if strings.Contains(transcript, "● Bash") {
 		t.Fatalf("renderTranscript() = %q, the running header must be hidden while its permission is pending", transcript)
 	}
-	if !strings.Contains(transcript, "? Bash") {
+	if !strings.Contains(transcript, "! Bash") {
 		t.Fatalf("renderTranscript() = %q, the pending permission ask must stay visible", transcript)
 	}
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	transcript = ansi.Strip(m.renderTranscript())
-	if !strings.Contains(transcript, "● Bash") || strings.Contains(transcript, "? Bash") {
+	if !strings.Contains(transcript, "● Bash") || strings.Contains(transcript, "! Bash") {
 		t.Fatalf("renderTranscript() = %q, approving must reveal the running header and drop the ask", transcript)
 	}
 	if len(fake.resolved) != 1 || fake.resolved[0].callID != "c1" || !fake.resolved[0].approved() {
@@ -2504,12 +2531,12 @@ func TestModel_ShowsStepFailedError(t *testing.T) {
 
 	view := m.View()
 	errLine := lineWith(t, view, "context exhausted: token limit")
-	if !strings.Contains(errLine, "✗ error") {
-		t.Fatalf("failure line = %q, must carry marker %q to distinguish it from normal text", errLine, "✗ error")
+	if !strings.Contains(errLine, "× error") {
+		t.Fatalf("failure line = %q, must carry marker %q to distinguish it from normal text", errLine, "× error")
 	}
 }
 
-// Contract of the visual hierarchy of activity: the header of each tool carries a status marker with two columns of margin (`●` running, `✓` success, `✗` failure), the name of the tool aligned to 8 columns (`%-8s`) and the summary of the Input (` ● Bash ls`); The detail goes below as rail lines with the same margin (` │ 18 matches`, ` │ error: exit 1`). The old `[tool] ...` format disappears from the transcript.
+// Contract of the visual hierarchy of activity: the header of each tool carries a status marker with two columns of margin (`●` running, `✓` success, `×` failure), the name of the tool aligned to 8 columns (`%-8s`) and the summary of the Input (` ● Bash ls`); The detail goes below as rail lines with the same margin (` │ 18 matches`, ` │ error: exit 1`). The old `[tool] ...` format disappears from the transcript.
 func TestModel_RendersActivityMarkersThroughToolLifecycle(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil)
 
@@ -2539,8 +2566,8 @@ func TestModel_RendersActivityMarkersThroughToolLifecycle(t *testing.T) {
 	m.entries[len(m.entries)-1].expanded = true
 	m = m.syncViewport()
 	plain = ansi.Strip(m.View())
-	if want := "  ✗ Bash     false"; !strings.Contains(plain, want) {
-		t.Fatalf("View() without ANSI = %q, the failed tool must settle as %q: marker ✗ with the same name column", plain, want)
+	if want := "  × Bash     false"; !strings.Contains(plain, want) {
+		t.Fatalf("View() without ANSI = %q, the failed tool must settle as %q: marker × with the same name column", plain, want)
 	}
 	failLine := lineWith(t, plain, "error: exit 1")
 	if want := "  │ error: exit 1"; !strings.HasPrefix(failLine, want) {
@@ -2872,8 +2899,8 @@ func TestModel_PermissionAndErrorJoinActivityGroup(t *testing.T) {
 	m = drainReveal(t, m)
 
 	plain := ansi.Strip(m.View())
-	// The running "● Write" header is hidden while its permission is still pending: only the orange "? Write" line of the permission represents the gated call, without duplicating it in two contiguous rows.
-	want := "  ✓ Bash     ls\n  ? Write    b.go\n  ✗ error    boom"
+	// The running "● Write" header is hidden while its permission is still pending: only the orange "! Write" line of the permission represents the gated call, without duplicating it in two contiguous rows.
+	want := "  ✓ Bash     ls\n  ! Write    b.go\n  × error    boom"
 	if !strings.Contains(plain, want) {
 		t.Fatalf("View() without ANSI = %q, must contain %q: the successful tool, pending permission, and step error remain physically contiguous, without blank lines", plain, want)
 	}
@@ -2891,7 +2918,7 @@ func TestModel_PermissionAndErrorJoinActivityGroup(t *testing.T) {
 func TestModel_ToolInputDeltasAreNotTranscript(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
-	// Reasoning: the thought block is shown while it flows, but when closed it collapses to the summary "◆ Thought for...": once the reveal is drained, its text is NOT left as plain text of the transcript.
+	// Reasoning: the thought block is shown while it flows, but when closed it collapses to the summary "● Thought for...": once the reveal is drained, its text is NOT left as plain text of the transcript.
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: "pienso en secreto"})
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: "pienso en secreto"})
@@ -2917,7 +2944,7 @@ func TestModel_ToolInputDeltasAreNotTranscript(t *testing.T) {
 	}
 }
 
-// Parity with the desktop ThinkingBlock: reasoning is displayed as a collapsible block of the transcript. While flowing, the view carries the header "◆ Thinking..." and below ONLY the last 4 non-empty lines of the revealed text (sliding window); Reasoning.Ended, with the backlog already drained, collapses the block to a single summary line prefixed with "◆Thought" (readable duration), and the header and preview disappear.
+// Parity with the desktop ThinkingBlock: reasoning is displayed as a collapsible block of the transcript. While flowing, the view carries the header "● Thinking..." and below ONLY the last 4 non-empty lines of the revealed text (sliding window); Reasoning.Ended, with the backlog already drained, collapses the block to a single summary line prefixed with "● Thought" (readable duration), and the header and preview disappear.
 func TestModel_ShowsReasoningAsCollapsibleThinkingBlock(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 
@@ -2927,8 +2954,8 @@ func TestModel_ShowsReasoningAsCollapsibleThinkingBlock(t *testing.T) {
 	m = drainReveal(t, m)
 
 	view := m.View()
-	if !strings.Contains(view, "◆ Thinking…") {
-		t.Fatalf("View() = %q, active reasoning must show the header %q", view, "◆ Thinking…")
+	if !strings.Contains(view, "● Thinking…") {
+		t.Fatalf("View() = %q, active reasoning must show the header %q", view, "● Thinking…")
 	}
 	for _, want := range []string{"reason-3", "reason-4", "reason-5", "reason-6"} {
 		if !strings.Contains(view, want) {
@@ -2945,11 +2972,11 @@ func TestModel_ShowsReasoningAsCollapsibleThinkingBlock(t *testing.T) {
 	m = drainReveal(t, m)
 
 	view = m.View()
-	if !strings.Contains(view, "◆ Thought") {
-		t.Fatalf("View() = %q, completed reasoning must collapse to a summary line with prefix %q", view, "◆ Thought")
+	if !strings.Contains(view, "● Thought") {
+		t.Fatalf("View() = %q, completed reasoning must collapse to a summary line with prefix %q", view, "● Thought")
 	}
-	if strings.Contains(view, "◆ Thinking…") {
-		t.Fatalf("View() = %q, header %q must disappear when the block collapses", view, "◆ Thinking…")
+	if strings.Contains(view, "● Thinking…") {
+		t.Fatalf("View() = %q, header %q must disappear when the block collapses", view, "● Thinking…")
 	}
 	if strings.Contains(view, "reason-6") {
 		t.Fatalf("View() = %q, preview lines must disappear when the block collapses", view)
@@ -3001,8 +3028,8 @@ func TestModel_ThinkingPreviewSkipsBlankLines(t *testing.T) {
 		lines[i] = strings.TrimRight(line, " ")
 	}
 	view := strings.Join(lines, "\n")
-	if !strings.Contains(view, "  ◆ Thinking…\n  r2\n  r3\n  r4\n  r5") {
-		t.Fatalf("View() = %q, the preview must contain the last 4 NON-EMPTY lines with uniform inset (%q): no interspersed blanks or lost content lines", view, "  ◆ Thinking…\n  r2\n  r3\n  r4\n  r5")
+	if !strings.Contains(view, "  ● Thinking…\n  r2\n  r3\n  r4\n  r5") {
+		t.Fatalf("View() = %q, the preview must contain the last 4 NON-EMPTY lines with uniform inset (%q): no interspersed blanks or lost content lines", view, "  ● Thinking…\n  r2\n  r3\n  r4\n  r5")
 	}
 	if strings.Contains(view, "r1") {
 		t.Fatalf("View() = %q, %q has left the 4-line window", view, "r1")
@@ -3018,13 +3045,13 @@ func TestModel_ThinkingKeepsChatInsetWhileStreamingAndExpanded(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningDelta, Text: text})
 	m = drainReveal(t, m)
 
-	assertThinkingInset(t, m.View(), "◆ Thinking…", "streaming-inset-a", "streaming-inset-b")
+	assertThinkingInset(t, m.View(), "● Thinking…", "streaming-inset-a", "streaming-inset-b")
 
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: text})
 	m = drainReveal(t, m)
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
 
-	assertThinkingInset(t, m.View(), "◆ Thought", "streaming-inset-a", "streaming-inset-b")
+	assertThinkingInset(t, m.View(), "● Thought", "streaming-inset-a", "streaming-inset-b")
 }
 
 func TestEntry_RenderThinkingInsetsEveryWrappedLine(t *testing.T) {
@@ -3060,7 +3087,7 @@ func assertThinkingInset(t *testing.T, view string, needles ...string) {
 }
 
 func TestModel_TextStartedClosesLiveThinking(t *testing.T) {
-	// TRIANGULATE: if the runner never issues Reasoning.Ended, a naive fold leaves the "◆ Thinking..." header alive forever while the response streams below it. Starting the text implies that the thought is finished: Text.Started closes it defensively.
+	// TRIANGULATE: if the runner never issues Reasoning.Ended, a naive fold leaves the "● Thinking..." header alive forever while the response streams below it. Starting the text implies that the thought is finished: Text.Started closes it defensively.
 	m := NewModel(nil, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
@@ -3072,11 +3099,11 @@ func TestModel_TextStartedClosesLiveThinking(t *testing.T) {
 	m = drainReveal(t, m)
 
 	view := m.View()
-	if strings.Contains(view, "◆ Thinking…") {
-		t.Fatalf("View() = %q, Text.Started must close active thought: header %q cannot survive response start", view, "◆ Thinking…")
+	if strings.Contains(view, "● Thinking…") {
+		t.Fatalf("View() = %q, Text.Started must close active thought: header %q cannot survive response start", view, "● Thinking…")
 	}
-	if !strings.Contains(view, "◆ Thought") {
-		t.Fatalf("View() = %q, defensively closed thought must collapse to summary %q", view, "◆ Thought")
+	if !strings.Contains(view, "● Thought") {
+		t.Fatalf("View() = %q, defensively closed thought must collapse to summary %q", view, "● Thought")
 	}
 	if !strings.Contains(view, "response") {
 		t.Fatalf("View() = %q, response %q must appear after collapsed thought", view, "response")
@@ -3084,7 +3111,7 @@ func TestModel_TextStartedClosesLiveThinking(t *testing.T) {
 }
 
 func TestModel_StepEndedClosesLiveThinking(t *testing.T) {
-	// TRIANGULATE: a step can die thinking (cancellation, provider error) without Reasoning.Ended or Text.Started involved. Step.Ended closes the thought defensively just like Text.Started; Without that closure the header "◆ Thinking..." would remain alive forever.
+	// TRIANGULATE: a step can die thinking (cancellation, provider error) without Reasoning.Ended or Text.Started involved. Step.Ended closes the thought defensively just like Text.Started; Without that closure the header "● Thinking..." would remain alive forever.
 	m := NewModel(nil, "s1", nil)
 
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningStarted})
@@ -3094,11 +3121,11 @@ func TestModel_StepEndedClosesLiveThinking(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindStepEnded})
 
 	view := m.View()
-	if strings.Contains(view, "◆ Thinking…") {
-		t.Fatalf("View() = %q, Step.Ended must close active thought: header %q cannot survive step end", view, "◆ Thinking…")
+	if strings.Contains(view, "● Thinking…") {
+		t.Fatalf("View() = %q, Step.Ended must close active thought: header %q cannot survive step end", view, "● Thinking…")
 	}
-	if !strings.Contains(view, "◆ Thought") {
-		t.Fatalf("View() = %q, thought closed by step end must collapse to summary %q", view, "◆ Thought")
+	if !strings.Contains(view, "● Thought") {
+		t.Fatalf("View() = %q, thought closed by step end must collapse to summary %q", view, "● Thought")
 	}
 }
 
@@ -3110,11 +3137,11 @@ func TestModel_ReasoningEndedTextCollapsesWithoutAnimation(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: "final-filler-without-stream"})
 
 	view := m.View()
-	if !strings.Contains(view, "◆ Thought") {
-		t.Fatalf("View() = %q, Ended text with no prior deltas must immediately collapse to summary %q, without ticks", view, "◆ Thought")
+	if !strings.Contains(view, "● Thought") {
+		t.Fatalf("View() = %q, Ended text with no prior deltas must immediately collapse to summary %q, without ticks", view, "● Thought")
 	}
-	if strings.Contains(view, "◆ Thinking…") {
-		t.Fatalf("View() = %q, header %q must not appear after Ended: filler text is not animated", view, "◆ Thinking…")
+	if strings.Contains(view, "● Thinking…") {
+		t.Fatalf("View() = %q, header %q must not appear after Ended: filler text is not animated", view, "● Thinking…")
 	}
 	if strings.Contains(view, "final-filler-without-stream") {
 		t.Fatalf("View() = %q, Ended filler text must never appear flat, even before draining", view)
@@ -3152,8 +3179,8 @@ func TestModel_TwoThinkingBlocksInSameRunStaySeparate(t *testing.T) {
 	m = drainReveal(t, m)
 
 	view = m.View()
-	if count := strings.Count(view, "◆ Thought"); count < 2 {
-		t.Fatalf("View() = %q, two thoughts in one run must collapse to TWO summaries %q (count=%d)", view, "◆ Thought", count)
+	if count := strings.Count(view, "● Thought"); count < 2 {
+		t.Fatalf("View() = %q, two thoughts in one run must collapse to TWO summaries %q (count=%d)", view, "● Thought", count)
 	}
 }
 
@@ -3169,23 +3196,23 @@ func TestModel_ThinkingCollapseWaitsForRevealDrain(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: text})
 
 	view := m.View()
-	if !strings.Contains(view, "◆ Thinking…") {
-		t.Fatalf("View() = %q, Ended does NOT collapse while backlog remains: header %q must continue during draining", view, "◆ Thinking…")
+	if !strings.Contains(view, "● Thinking…") {
+		t.Fatalf("View() = %q, Ended does NOT collapse while backlog remains: header %q must continue during draining", view, "● Thinking…")
 	}
 	if !strings.Contains(view, "flowing-start") {
 		t.Fatalf("View() = %q, revealed prefix %q must remain visible while the thought finishes writing", view, "flowing-start")
 	}
-	if strings.Contains(view, "◆ Thought") {
-		t.Fatalf("View() = %q, summary %q must not appear until reveal backlog drains", view, "◆ Thought")
+	if strings.Contains(view, "● Thought") {
+		t.Fatalf("View() = %q, summary %q must not appear until reveal backlog drains", view, "● Thought")
 	}
 
 	m = drainReveal(t, m)
 	view = m.View()
-	if !strings.Contains(view, "◆ Thought") {
-		t.Fatalf("View() = %q, after backlog drains the closed thought must collapse to summary %q", view, "◆ Thought")
+	if !strings.Contains(view, "● Thought") {
+		t.Fatalf("View() = %q, after backlog drains the closed thought must collapse to summary %q", view, "● Thought")
 	}
-	if strings.Contains(view, "◆ Thinking…") {
-		t.Fatalf("View() = %q, header %q must disappear when collapsing", view, "◆ Thinking…")
+	if strings.Contains(view, "● Thinking…") {
+		t.Fatalf("View() = %q, header %q must disappear when collapsing", view, "● Thinking…")
 	}
 }
 
@@ -3506,7 +3533,7 @@ func TestModel_DeniedPermissionStaysNeutralAfterToolFailed(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "c1", ToolName: "bash", Error: "tool denied by the user"})
 
 	plain := ansi.Strip(m.View())
-	if !strings.Contains(plain, "– Bash") || !strings.Contains(plain, "Denied by user") || strings.Contains(plain, "error: tool denied") {
+	if !strings.Contains(plain, "! Bash") || !strings.Contains(plain, "Denied by user") || strings.Contains(plain, "error: tool denied") {
 		t.Fatalf("View() = %q, denied tool must remain neutral after durable Tool.Failed", plain)
 	}
 }
@@ -3847,7 +3874,7 @@ func TestModel_RunDoneStopsWorkingAndShowsError(t *testing.T) {
 	if m.Working() {
 		t.Fatalf("Working() = true, RunDoneMsg must turn off the working state")
 	}
-	if got := m.View(); strings.Contains(got, "✗ error") {
+	if got := m.View(); strings.Contains(got, "× error") {
 		t.Fatalf("View() = %q, a clean run must not show an error", got)
 	}
 
@@ -3861,8 +3888,8 @@ func TestModel_RunDoneStopsWorkingAndShowsError(t *testing.T) {
 		t.Fatalf("Working() = true, RunDoneMsg with an error must also turn off the working state")
 	}
 	errLine := lineWith(t, m2.View(), "boom")
-	if !strings.Contains(errLine, "✗ error") {
-		t.Fatalf("failure line = %q, it must carry marker %q", errLine, "✗ error")
+	if !strings.Contains(errLine, "× error") {
+		t.Fatalf("failure line = %q, it must carry marker %q", errLine, "× error")
 	}
 }
 
@@ -5269,7 +5296,7 @@ func TestModel_PresentPlanOffersAcceptAndYExecutes(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindToolSuccess, CallID: "p1"})
 
 	view := m.View()
-	planLine := lineWith(t, view, "? Plan")
+	planLine := lineWith(t, view, "! Plan")
 	if !strings.Contains(planLine, "(y run / n stay in plan)") {
 		t.Fatalf("approval offer = %q, must contain %q", planLine, "(y run / n stay in plan)")
 	}
@@ -5283,7 +5310,7 @@ func TestModel_PresentPlanOffersAcceptAndYExecutes(t *testing.T) {
 	if got := fake.accepted[0]; got != "s1" {
 		t.Fatalf("AcceptPlan(%q), expected AcceptPlan(%q)", got, "s1")
 	}
-	if got := m.View(); strings.Contains(got, "? Plan") {
+	if got := m.View(); strings.Contains(got, "! Plan") {
 		t.Fatalf("View() = %q, accepting the plan must withdraw the approval offer", got)
 	}
 	if len(fake.sent) != 0 {
@@ -5305,7 +5332,7 @@ func TestModel_PlanApprovalNRejectsAndStaysInPlanMode(t *testing.T) {
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
 
-	if got := m.View(); strings.Contains(got, "? Plan") {
+	if got := m.View(); strings.Contains(got, "! Plan") {
 		t.Fatalf("View() = %q, 'n' must withdraw the plan approval offer", got)
 	}
 	if len(fake.accepted) != 0 {
@@ -5372,7 +5399,7 @@ func TestModel_PresentPlanFailedDoesNotOfferApproval(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "p1", ToolName: "present_plan"})
 	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "p1", Error: "invalid plan"})
 
-	if got := m.View(); strings.Contains(got, "? Plan") {
+	if got := m.View(); strings.Contains(got, "! Plan") {
 		t.Fatalf("View() = %q, a failed present_plan must NOT offer plan approval", got)
 	}
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
@@ -6635,7 +6662,7 @@ func TestModel_RevealSurvivesRunDone(t *testing.T) {
 	}
 }
 
-// Thinking toggle contract (Shift+Tab key, see handleKey and toggleThinking): a settled thought (closed and with reveal drained) collapses to the summary line "◆ Thought for <dur>"; Shift+Tab expands it to the full text and a second Shift+Tab collapses it again. The hint " ⇧Tab" accompanies the collapsed summary to reveal the key.
+// Thinking toggle contract (Shift+Tab key, see handleKey and toggleThinking): a settled thought (closed and with reveal drained) collapses to the summary line "● Thought for <dur>"; Shift+Tab expands it to the full text and a second Shift+Tab collapses it again. The hint " ⇧Tab" accompanies the collapsed summary to reveal the key.
 func TestModel_ShiftTabExpandsAndCollapsesSettledThinking(t *testing.T) {
 	m := NewModel(nil, "s1", nil)
 	text := "reason-1\nreason-2\nreason-3"
@@ -6647,8 +6674,8 @@ func TestModel_ShiftTabExpandsAndCollapsesSettledThinking(t *testing.T) {
 
 	// Seated: Collapsed by default.
 	view := m.View()
-	if !strings.Contains(view, "◆ Thought") {
-		t.Fatalf("View() = %q, the settled thought must collapse to %q", view, "◆ Thought")
+	if !strings.Contains(view, "● Thought") {
+		t.Fatalf("View() = %q, the settled thought must collapse to %q", view, "● Thought")
 	}
 	if !strings.Contains(view, " ⇧Tab") {
 		t.Fatalf("View() = %q, the collapsed summary must include hint %q to discover the toggle", view, " ⇧Tab")
@@ -6660,7 +6687,7 @@ func TestModel_ShiftTabExpandsAndCollapsesSettledThinking(t *testing.T) {
 	// Shift+Tab expande.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
 	view = m.View()
-	for _, want := range []string{"◆ Thought", "reason-1", "reason-2", "reason-3"} {
+	for _, want := range []string{"● Thought", "reason-1", "reason-2", "reason-3"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("View() = %q, after Shift+Tab the expanded thought must show %q", view, want)
 		}
@@ -6669,8 +6696,8 @@ func TestModel_ShiftTabExpandsAndCollapsesSettledThinking(t *testing.T) {
 	// Shift+Tab colapsa de nuevo.
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
 	view = m.View()
-	if !strings.Contains(view, "◆ Thought") {
-		t.Fatalf("View() = %q, the second Shift+Tab must return to collapsed summary %q", view, "◆ Thought")
+	if !strings.Contains(view, "● Thought") {
+		t.Fatalf("View() = %q, the second Shift+Tab must return to collapsed summary %q", view, "● Thought")
 	}
 	if strings.Contains(view, "reason-2") {
 		t.Fatalf("View() = %q, the second Shift+Tab must collapse the text again", view)
@@ -6693,7 +6720,7 @@ func TestModel_SettledThinkingSummaryAlignsWithAssistantContent(t *testing.T) {
 	m = drainReveal(t, m)
 
 	assistantLine := ansi.Strip(lineWith(t, m.View(), "assistant-response"))
-	thinkingLine := ansi.Strip(lineWith(t, m.View(), "◆ Thought"))
+	thinkingLine := ansi.Strip(lineWith(t, m.View(), "● Thought"))
 	assistantIndent := assistantLine[:len(assistantLine)-len(strings.TrimLeft(assistantLine, " "))]
 
 	if got, want := assistantIndent, "  "; got != want {
@@ -6718,7 +6745,7 @@ func TestModel_LiveThinkingHeaderAlignsWithAssistantContent(t *testing.T) {
 	m = drainReveal(t, m)
 
 	assistantLine := ansi.Strip(lineWith(t, m.View(), "assistant-response"))
-	thinkingLine := ansi.Strip(lineWith(t, m.View(), "◆ Thinking…"))
+	thinkingLine := ansi.Strip(lineWith(t, m.View(), "● Thinking…"))
 	assistantIndent := assistantLine[:len(assistantLine)-len(strings.TrimLeft(assistantLine, " "))]
 
 	if got, want := assistantIndent, "  "; got != want {
@@ -6738,16 +6765,16 @@ func TestModel_ShiftTabIsInertWhileThinkingLive(t *testing.T) {
 
 	// The live preview shows the header and last lines, not the summary or the full expanded text.
 	view := m.View()
-	if !strings.Contains(view, "◆ Thinking…") {
-		t.Fatalf("View() = %q, live thinking must show %q", view, "◆ Thinking…")
+	if !strings.Contains(view, "● Thinking…") {
+		t.Fatalf("View() = %q, live thinking must show %q", view, "● Thinking…")
 	}
-	if strings.Contains(view, "◆ Thought") {
-		t.Fatalf("View() = %q, live thinking must NOT show collapsed summary %q", view, "◆ Thought")
+	if strings.Contains(view, "● Thought") {
+		t.Fatalf("View() = %q, live thinking must NOT show collapsed summary %q", view, "● Thought")
 	}
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
 	view = m.View()
-	if strings.Contains(view, "◆ Thought") {
+	if strings.Contains(view, "● Thought") {
 		t.Fatalf("View() = %q, Shift+Tab during live streaming must not collapse yet", view)
 	}
 	if strings.Contains(view, "vivo-1") {
@@ -6768,8 +6795,8 @@ func TestModel_ShiftTabTogglesAllSettledThinkingBlocks(t *testing.T) {
 
 	// Both collapsed by default: two summaries, no text.
 	view := m.View()
-	if n := strings.Count(view, "◆ Thought"); n != 2 {
-		t.Fatalf("View() = %q, two settled thoughts must collapse to two summaries %q (n=%d)", view, "◆ Thought", n)
+	if n := strings.Count(view, "● Thought"); n != 2 {
+		t.Fatalf("View() = %q, two settled thoughts must collapse to two summaries %q (n=%d)", view, "● Thought", n)
 	}
 	if strings.Contains(view, "primero-a") || strings.Contains(view, "segundo-a") {
 		t.Fatalf("View() = %q, neither collapsed thought must show text", view)
@@ -6781,7 +6808,7 @@ func TestModel_ShiftTabTogglesAllSettledThinkingBlocks(t *testing.T) {
 	if !strings.Contains(view, "primero-a") || !strings.Contains(view, "segundo-a") {
 		t.Fatalf("View() = %q, one Shift+Tab must expand BOTH thoughts", view)
 	}
-	if n := strings.Count(view, "◆ Thought"); n != 2 {
+	if n := strings.Count(view, "● Thought"); n != 2 {
 		t.Fatalf("View() = %q, after expanding there are still two header summaries (n=%d)", view, n)
 	}
 
@@ -6804,17 +6831,17 @@ func TestModel_ClickExpandsSettledThinking(t *testing.T) {
 	m = apply(t, m, EventMsg{Kind: session.KindReasoningEnded, Text: text})
 	m = drainReveal(t, m)
 
-	// Locate the "◆Thought" summary row in the viewport content.
+	// Locate the "● Thought" summary row in the viewport content.
 	lines := m.entryLines()
 	summaryRow := -1
 	for i, l := range lines {
-		if strings.Contains(l.line, "◆ Thought") {
+		if strings.Contains(l.line, "● Thought") {
 			summaryRow = i
 			break
 		}
 	}
 	if summaryRow < 0 {
-		t.Fatalf("entryLines() does not contain summary %q: %v", "◆ Thought", lines)
+		t.Fatalf("entryLines() does not contain summary %q: %v", "● Thought", lines)
 	}
 	// The row on the screen is the one with the content minus the visible scrolling, plus the row of the top bar that moves the body one row down.
 	clickY := topBarHeight + summaryRow - m.viewport.YOffset
@@ -6824,7 +6851,7 @@ func TestModel_ClickExpandsSettledThinking(t *testing.T) {
 
 	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, Y: clickY})
 	view := m.View()
-	for _, want := range []string{"◆ Thought", "reason-1", "reason-2", "reason-3"} {
+	for _, want := range []string{"● Thought", "reason-1", "reason-2", "reason-3"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("View() = %q, clicking the summary must expand the thought and show %q", view, want)
 		}
@@ -6860,7 +6887,7 @@ func TestModel_ClickTargetingStaysAlignedWithCompactGroups(t *testing.T) {
 	if m.viewport.YOffset != 0 {
 		t.Fatalf("viewport.YOffset = %d, want 0: the short transcript is shown from the top", m.viewport.YOffset)
 	}
-	summaryY := lineIndexWith(t, ansi.Strip(m.View()), "◆ Thought")
+	summaryY := lineIndexWith(t, ansi.Strip(m.View()), "● Thought")
 
 	m = apply(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 2, Y: summaryY})
 	if !m.entries[target].expanded {
@@ -6891,11 +6918,11 @@ func TestModel_ClickCollapsesExpandedThinking(t *testing.T) {
 		t.Fatalf("View() = %q, precondition: Shift+Tab must expand", got)
 	}
 
-	// Click on the first line of the expanded text (the "◆ Thought" header).
+	// Click on the first line of the expanded text (the "● Thought" header).
 	lines := m.entryLines()
 	headerRow := -1
 	for i, l := range lines {
-		if strings.Contains(l.line, "◆ Thought") {
+		if strings.Contains(l.line, "● Thought") {
 			headerRow = i
 			break
 		}
@@ -6906,8 +6933,8 @@ func TestModel_ClickCollapsesExpandedThinking(t *testing.T) {
 	if strings.Contains(view, "reason-1") {
 		t.Fatalf("View() = %q, clicking the expanded block must collapse it", view)
 	}
-	if !strings.Contains(view, "◆ Thought") {
-		t.Fatalf("View() = %q, after collapsing the summary %q must return", view, "◆ Thought")
+	if !strings.Contains(view, "● Thought") {
+		t.Fatalf("View() = %q, after collapsing the summary %q must return", view, "● Thought")
 	}
 }
 

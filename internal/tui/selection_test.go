@@ -400,7 +400,7 @@ func TestModel_CopySnackbarOverlaysTranscriptAboveComposer(t *testing.T) {
 		t.Fatalf("viewport.Height = %d, want unchanged %d: snackbar must overlay instead of reserve space", got, beforeHeight)
 	}
 	for _, row := range lines[messageRow-1 : messageRow+2] {
-		if !strings.Contains(row, "│") {
+		if !strings.Contains(row, "┃") {
 			t.Fatalf("snackbar row = %q, every padded row must carry the left rail", row)
 		}
 	}
@@ -421,7 +421,7 @@ func TestSnackbarPaintsRailCellAndPaddingBackground(t *testing.T) {
 		if !strings.Contains(row, backgroundParams) {
 			t.Fatalf("row %d = %q, snackbar rail cell and padding must share #303030 background", i, row)
 		}
-		beforeRail, _, found := strings.Cut(row, "│")
+		beforeRail, _, found := strings.Cut(row, "┃")
 		if !found || !strings.Contains(beforeRail, backgroundParams) {
 			t.Fatalf("row %d = %q, the cell containing the left rail must paint its background", i, row)
 		}
