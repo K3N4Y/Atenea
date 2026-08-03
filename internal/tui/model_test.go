@@ -73,7 +73,7 @@ type fakeAgent struct {
 
 func (f *fakeAgent) ReasoningEffort() llm.ReasoningEffort { return f.reasoning }
 func (f *fakeAgent) SetReasoningEffort(effort llm.ReasoningEffort) error {
-	if effort != "" && effort != llm.ReasoningEffortMinimal && effort != llm.ReasoningEffortLow && effort != llm.ReasoningEffortMedium && effort != llm.ReasoningEffortHigh {
+	if effort != "" && effort != llm.ReasoningEffortMinimal && effort != llm.ReasoningEffortLow && effort != llm.ReasoningEffortMedium && effort != llm.ReasoningEffortHigh && effort != llm.ReasoningEffortXHigh && effort != llm.ReasoningEffortMax {
 		return fmt.Errorf("unsupported reasoning effort %q", effort)
 	}
 	f.reasoning = effort

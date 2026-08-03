@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -643,15 +644,20 @@ func TestCodexProvider_AsksForReasoningAndVerbosityWhenTold(t *testing.T) {
 	}
 }
 func TestPosthogResponsesProvider_RequestReasoningOverride(t *testing.T) {
-	server := newCodexServer(t, codexTurn)
-	req := codexRequest()
-	req.Reasoning = &ReasoningPreference{Effort: ReasoningEffortHigh}
-	provider := NewPosthogResponsesProvider(&staticTokens{token: OAuthToken{AccessToken: "a"}}, server.server.URL, req.Model)
-	drainCodex(t, provider, req)
-	body, _, _ := server.request(t, 0)
-	got, _ := json.Marshal(body["reasoning"])
-	if string(got) != `{"effort":"high","summary":"auto"}` {
-		t.Fatalf("reasoning = %s, want per-call high effort with the provider summary", got)
+	for _, effort := range []ReasoningEffort{ReasoningEffortXHigh, ReasoningEffortMax} {
+		t.Run(string(effort), func(t *testing.T) {
+			server := newCodexServer(t, codexTurn)
+			req := codexRequest()
+			req.Reasoning = &ReasoningPreference{Effort: effort}
+			provider := NewPosthogResponsesProvider(&staticTokens{token: OAuthToken{AccessToken: "a"}}, server.server.URL, req.Model)
+			drainCodex(t, provider, req)
+			body, _, _ := server.request(t, 0)
+			got, _ := json.Marshal(body["reasoning"])
+			want := fmt.Sprintf(`{"effort":%q,"summary":"auto"}`, effort)
+			if string(got) != want {
+				t.Fatalf("reasoning = %s, want %s", got, want)
+			}
+		})
 	}
 }
 

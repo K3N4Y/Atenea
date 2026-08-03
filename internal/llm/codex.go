@@ -115,6 +115,8 @@ const (
 	CodexEffortLow     = "low"
 	CodexEffortMedium  = "medium"
 	CodexEffortHigh    = "high"
+	CodexEffortXHigh   = "xhigh"
+	CodexEffortMax     = "max"
 
 	CodexSummaryAuto     = "auto"
 	CodexSummaryConcise  = "concise"
@@ -237,10 +239,10 @@ func resolvePosthogEffort(req Request, profile responsesProfile, defaultEffort s
 	}
 	effort := string(req.Reasoning.Effort)
 	switch effort {
-	case CodexEffortMinimal, CodexEffortLow, CodexEffortMedium, CodexEffortHigh:
+	case CodexEffortMinimal, CodexEffortLow, CodexEffortMedium, CodexEffortHigh, CodexEffortXHigh, CodexEffortMax:
 		return shared.ReasoningEffort(effort), nil
 	default:
-		return "", fmt.Errorf("unsupported PostHog reasoning effort %q (supported: minimal, low, medium, high)", effort)
+		return "", fmt.Errorf("unsupported PostHog reasoning effort %q (supported: minimal, low, medium, high, xhigh, max)", effort)
 	}
 }
 

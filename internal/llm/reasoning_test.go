@@ -7,16 +7,18 @@ func TestReasoningSelectionValidatesAndPreservesPreference(t *testing.T) {
 	if got := selection.Get(); got != nil {
 		t.Fatalf("default preference = %#v, want nil", got)
 	}
-	if err := selection.Set(ReasoningEffortHigh); err != nil {
-		t.Fatal(err)
-	}
-	if got := selection.Get(); got == nil || got.Effort != ReasoningEffortHigh {
-		t.Fatalf("preference = %#v, want high", got)
+	for _, effort := range []ReasoningEffort{ReasoningEffortXHigh, ReasoningEffortMax} {
+		if err := selection.Set(effort); err != nil {
+			t.Fatalf("Set(%q): %v", effort, err)
+		}
+		if got := selection.Get(); got == nil || got.Effort != effort {
+			t.Fatalf("preference = %#v, want %q", got, effort)
+		}
 	}
 	if err := selection.Set(ReasoningEffort("turbo")); err == nil {
 		t.Fatal("unsupported effort was accepted")
 	}
-	if got := selection.Effort(); got != ReasoningEffortHigh {
+	if got := selection.Effort(); got != ReasoningEffortMax {
 		t.Fatalf("failed update changed effort to %q", got)
 	}
 	if err := selection.Set(""); err != nil {

@@ -68,4 +68,6 @@ const (
 	ReasoningEffortLow     = contract.ReasoningEffortLow
 	ReasoningEffortMedium  = contract.ReasoningEffortMedium
 	ReasoningEffortHigh    = contract.ReasoningEffortHigh
+	ReasoningEffortXHigh   = contract.ReasoningEffortXHigh
+	ReasoningEffortMax     = contract.ReasoningEffortMax
 )
