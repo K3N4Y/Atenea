@@ -71,16 +71,22 @@ func (m Model) composerBoxWithWidth(width int) string {
 }
 
 func (m Model) composerModelLabel() string {
+	label := m.model
+	if agent, ok := m.agent.(reasoningAgent); ok && label != "" {
+		if effort := agent.ReasoningEffort(); effort != "" {
+			label += "(" + string(effort) + ")"
+		}
+	}
 	if yolo, ok := m.agent.(yoloAgent); ok && yolo.YoloEnabled() {
-		if m.model == "" {
+		if label == "" {
 			return "YOLO"
 		}
-		return m.model + " · YOLO"
+		return label + " · YOLO"
 	}
-	if m.planMode && m.model != "" {
-		return m.model + " · plan"
+	if m.planMode && label != "" {
+		return label + " · plan"
 	}
-	return m.model
+	return label
 }
 
 func decorateComposerBorder(box string, lineIndex int, label, leftCorner, rightCorner string, alignLeft, truncate bool) string {
@@ -101,11 +107,14 @@ func decorateComposerBorder(box string, lineIndex int, label, leftCorner, rightC
 		if !truncate {
 			return box
 		}
-		const planSuffix = " · plan"
-		if strings.HasSuffix(label, planSuffix) && labelWidth > ansi.StringWidth(planSuffix)+1 {
-			model := strings.TrimSuffix(label, planSuffix)
-			label = ansi.Truncate(model, labelWidth-ansi.StringWidth(planSuffix), "…") + planSuffix
-		} else {
+		for _, suffix := range []string{" · plan", " · YOLO"} {
+			if strings.HasSuffix(label, suffix) && labelWidth >= ansi.StringWidth(suffix)+1 {
+				model := strings.TrimSuffix(label, suffix)
+				label = ansi.Truncate(model, labelWidth-ansi.StringWidth(suffix), "…") + suffix
+				break
+			}
+		}
+		if ansi.StringWidth(label) > labelWidth {
 			label = ansi.Truncate(label, labelWidth, "…")
 		}
 	}

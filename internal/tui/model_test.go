@@ -4637,6 +4637,91 @@ func TestModel_ComposerBottomBorderShowsModel(t *testing.T) {
 	assertBoxLinesExactWidth(t, m.View(), 60)
 }
 
+func TestModel_ComposerBottomBorderShowsNonDefaultReasoningEffort(t *testing.T) {
+	fake := &fakeAgent{reasoning: llm.ReasoningEffortHigh}
+	m := NewModel(fake, "s1", nil).WithStatus("build", "gpt-5.6-sol")
+	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 20})
+
+	bottomBorder := strings.Split(ansi.Strip(m.composerBox()), "\n")[2]
+	if !strings.Contains(bottomBorder, "gpt-5.6-sol(high)") {
+		t.Fatalf("composer bottom border = %q, want model and reasoning effort", bottomBorder)
+	}
+}
+
+func TestModel_ComposerBottomBorderOmitsDefaultReasoningEffort(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil).WithStatus("build", "fable-5")
+	m = apply(t, m, tea.WindowSizeMsg{Width: 60, Height: 20})
+
+	bottomBorder := strings.Split(ansi.Strip(m.composerBox()), "\n")[2]
+	if !strings.Contains(bottomBorder, "fable-5") || strings.Contains(bottomBorder, "default") || strings.Contains(bottomBorder, "()") {
+		t.Fatalf("composer bottom border = %q, default effort must show only the model", bottomBorder)
+	}
+}
+
+func TestModel_ComposerBottomBorderUpdatesAfterReasoningCommand(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil).WithStatus("build", "gpt-5.6-sol")
+	m = typeRunes(t, m, "/reasoning:high")
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatal("/reasoning:high returned an async command")
+	}
+	m = updated.(Model)
+
+	if label := m.composerModelLabel(); label != "gpt-5.6-sol(high)" {
+		t.Fatalf("composer model label = %q, want updated reasoning effort", label)
+	}
+}
+
+func TestModel_ComposerBottomBorderKeepsYoloVisibleWithReasoningEffort(t *testing.T) {
+	fake := &fakeAgent{reasoning: llm.ReasoningEffortHigh, yoloEnabled: true}
+	m := NewModel(fake, "s1", nil).WithStatus("build", "openrouter/free")
+	m = apply(t, m, tea.WindowSizeMsg{Width: 28, Height: 12})
+
+	bottomBorder := strings.Split(ansi.Strip(m.composerBox()), "\n")[2]
+	if !strings.Contains(bottomBorder, "… · YOLO") {
+		t.Fatalf("composer bottom border = %q, truncated model must keep YOLO visible", bottomBorder)
+	}
+	assertBoxLinesExactWidth(t, m.composerBox(), 28)
+}
+
+func TestModel_ComposerBottomBorderKeepsModeAtExactTruncationBoundary(t *testing.T) {
+	tests := []struct {
+		name string
+		make func() Model
+		want string
+	}{
+		{
+			name: "plan",
+			make: func() Model {
+				m := NewModel(nil, "s1", nil).WithStatus("build", "long-model")
+				return apply(t, m, tea.KeyMsg{Type: tea.KeyTab})
+			},
+			want: "… · plan",
+		},
+		{
+			name: "YOLO",
+			make: func() Model {
+				return NewModel(&fakeAgent{reasoning: llm.ReasoningEffortHigh, yoloEnabled: true}, "s1", nil).WithStatus("build", "long-model")
+			},
+			want: "… · YOLO",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := tt.make()
+			m = apply(t, m, tea.WindowSizeMsg{Width: 14, Height: 12})
+
+			bottomBorder := strings.Split(ansi.Strip(m.composerBox()), "\n")[2]
+			if !strings.Contains(bottomBorder, tt.want) {
+				t.Fatalf("composer bottom border = %q, want exact-fit suffix %q", bottomBorder, tt.want)
+			}
+			assertBoxLinesExactWidth(t, m.composerBox(), 14)
+		})
+	}
+}
+
 func TestModel_ComposerHasTwoCellOuterMargin(t *testing.T) {
 	m := NewModel(nil, "s1", nil).WithStatus("build", "model")
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 8})
