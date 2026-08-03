@@ -2109,9 +2109,8 @@ func TestModel_RendersToolCallLifecycle(t *testing.T) {
 }
 
 // Contract for the "task" tool render: the header reads `SubAgent <type>`
-// (the subagent_type field of the Input, never the raw JSON) and, while the
-// subagent runs, the spinner tick animates the run marker with the live
-// spinner frame instead of the static one. Success settles it as `✓`.
+// (the subagent_type field of the Input, never the raw JSON), the running
+// marker animates, and a completed report shows at most its first three lines.
 func TestModel_RendersTaskToolAsSubAgentWithSpinner(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil)
 
@@ -2136,15 +2135,17 @@ func TestModel_RendersTaskToolAsSubAgentWithSpinner(t *testing.T) {
 	}
 
 	m = apply(t, m, EventMsg{
-		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "task", Text: "scope: project\nagent: explorer\nsubagent report",
-		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "scope: project\nagent: explorer\nsubagent report", ToolCallID: "c1"},
+		Kind: session.KindToolSuccess, CallID: "c1", ToolName: "task", Text: "scope: project\nagent: explorer\nsummary: found loader\nfull subagent report",
+		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "scope: project\nagent: explorer\nsummary: found loader\nfull subagent report", ToolCallID: "c1"},
 	})
 	got := ansi.Strip(m.View())
-	if !strings.Contains(got, "✓ SubAgent explorer") {
-		t.Fatalf("View() = %q, a finished task must settle as %q", got, "✓ SubAgent explorer")
+	for _, want := range []string{"✓ SubAgent explorer", "scope: project", "agent: explorer", "summary: found loader"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("View() = %q, a finished task must show %q", got, want)
+		}
 	}
-	if strings.Contains(got, "scope: project") || strings.Contains(got, "agent: explorer") || strings.Contains(got, "subagent report") {
-		t.Fatalf("View() = %q, task output must not appear below the agent title", got)
+	if strings.Contains(got, "full subagent report") {
+		t.Fatalf("View() = %q, task output must stop after its first three lines", got)
 	}
 }
 

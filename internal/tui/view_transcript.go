@@ -64,6 +64,21 @@ func renderOutputPreview(output string) string {
 	})
 }
 
+func renderTaskReportPreview(output string) string {
+	output = sanitizeTerminalText(output)
+	if strings.TrimSpace(output) == "" {
+		return ""
+	}
+	lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
+	if len(lines) > 3 {
+		lines = lines[:3]
+	}
+	for i := range lines {
+		lines[i] = toolOutputStyle.Render(activityRailPrefix + lines[i])
+	}
+	return strings.Join(lines, "\n")
+}
+
 func summarizeToolInput(raw string) string {
 	if raw == "" {
 		return ""
@@ -239,7 +254,13 @@ func (e entry) renderTool(p tool.Presentation, width int) string {
 	}
 	showDetail := !p.HidesOutput
 	if e.tool == "task" {
-		showDetail = false
+		block := e.renderActivity(activityLabel(p, e), displaySubject(p.Subject), false)
+		if e.status == toolOK {
+			if report := renderTaskReportPreview(e.output); report != "" {
+				block += "\n" + report
+			}
+		}
+		return block
 	} else if e.tool == "bash" {
 		showDetail = e.expanded
 	} else if e.status == toolFailed {
