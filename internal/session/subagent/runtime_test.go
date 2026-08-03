@@ -48,12 +48,11 @@ func TestTaskOutputSchemaIsIncludedInChildPrompt(t *testing.T) {
 	}
 }
 
-func TestTaskRequestBudget(t *testing.T) {
-	provider := &scriptedProvider{turns: [][]llm.Event{{{Kind: llm.ToolCall, CallID: "c", ToolName: "echo", Input: json.RawMessage(`{"text":"x"}`)}, {Kind: llm.StepEnded}}, {{Kind: llm.StepEnded}}}}
-	_, err := runtimeTool(provider).Execute(context.Background(), json.RawMessage(`{"subagent_type":"worker","prompt":"x","request_budget":1}`))
-	var budget *BudgetError
-	if !errors.As(err, &budget) || budget.Kind != "request" {
-		t.Fatalf("request budget err=%v", err)
+func TestTaskAllowsMultipleRequestsWithoutRequestBudget(t *testing.T) {
+	provider := &scriptedProvider{turns: [][]llm.Event{{{Kind: llm.ToolCall, CallID: "c", ToolName: "echo", Input: json.RawMessage(`{"text":"x"}`)}, {Kind: llm.StepEnded}}, {{Kind: llm.TextStarted}, {Kind: llm.TextDelta, Text: "done"}, {Kind: llm.TextEnded}, {Kind: llm.StepEnded}}}}
+	result, err := runtimeTool(provider).Execute(context.Background(), json.RawMessage(`{"subagent_type":"worker","prompt":"x"}`))
+	if err != nil || result.Output != "done" {
+		t.Fatalf("result=%q err=%v, want a completed multi-request task", result.Output, err)
 	}
 }
 
@@ -80,6 +79,9 @@ func TestTaskSchemaDoesNotOfferTokenBudget(t *testing.T) {
 	schema := string(runtimeTool(llm.NewFakeProvider(llm.Event{Kind: llm.StepEnded})).Schema())
 	if strings.Contains(schema, "token_budget") {
 		t.Fatalf("task schema still offers token_budget: %s", schema)
+	}
+	if strings.Contains(schema, "request_budget") {
+		t.Fatalf("task schema still offers request_budget: %s", schema)
 	}
 }
 

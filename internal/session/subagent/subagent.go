@@ -65,34 +65,24 @@ type EnvironmentResolver func(context.Context, agent.Def) (ChildEnvironment, err
 type ProviderResolver func(context.Context, agent.Def) (llm.Provider, error)
 
 type taskInput struct {
-	SubagentType  string          `json:"subagent_type"`
-	Prompt        string          `json:"prompt"`
-	OutputSchema  json.RawMessage `json:"output_schema,omitempty"`
-	RequestBudget *int            `json:"request_budget,omitempty"`
-	TimeoutMS     *int            `json:"timeout_ms,omitempty"`
-	Detached      bool            `json:"detached,omitempty"`
-	Worktree      bool            `json:"worktree,omitempty"`
+	SubagentType string          `json:"subagent_type"`
+	Prompt       string          `json:"prompt"`
+	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
+	TimeoutMS    *int            `json:"timeout_ms,omitempty"`
+	Detached     bool            `json:"detached,omitempty"`
+	Worktree     bool            `json:"worktree,omitempty"`
 }
 type taskUsage struct {
 	requests atomic.Int64
 	tokens   atomic.Int64
 }
 type budgetProvider struct {
-	provider      llm.Provider
-	requestBudget int
-	usage         *taskUsage
-	cancel        context.CancelFunc
-	exhausted     atomic.Pointer[BudgetError]
-	onProgress    func()
+	provider   llm.Provider
+	usage      *taskUsage
+	onProgress func()
 }
 
 func (p *budgetProvider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Event, error) {
-	if p.requestBudget > 0 && int(p.usage.requests.Load()) >= p.requestBudget {
-		err := &BudgetError{Kind: "request", Limit: p.requestBudget}
-		p.exhausted.CompareAndSwap(nil, err)
-		p.cancel()
-		return nil, err
-	}
 	p.usage.requests.Add(1)
 	if p.onProgress != nil {
 		p.onProgress()
@@ -263,7 +253,7 @@ func (t *TaskTool) Description() string {
 }
 
 func (*TaskTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"subagent_type":{"type":"string"},"prompt":{"type":"string"},"output_schema":{"type":"object"},"request_budget":{"type":"integer","minimum":1},"timeout_ms":{"type":"integer","minimum":1},"detached":{"type":"boolean"},"worktree":{"type":"boolean"}},"required":["subagent_type","prompt"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"subagent_type":{"type":"string"},"prompt":{"type":"string"},"output_schema":{"type":"object"},"timeout_ms":{"type":"integer","minimum":1},"detached":{"type":"boolean"},"worktree":{"type":"boolean"}},"required":["subagent_type","prompt"]}`)
 }
 
 // Effects: none of its own. A task runs no command and writes no file itself —
@@ -297,7 +287,7 @@ func (t *TaskTool) Execute(ctx context.Context, input json.RawMessage) (tool.Res
 	if err := dec.Decode(&struct{}{}); err != io.EOF {
 		return tool.Result{}, errors.New("subagent: invalid input: trailing JSON value")
 	}
-	for name, value := range map[string]*int{"request_budget": in.RequestBudget, "timeout_ms": in.TimeoutMS} {
+	for name, value := range map[string]*int{"timeout_ms": in.TimeoutMS} {
 		if value != nil && *value <= 0 {
 			return tool.Result{}, fmt.Errorf("subagent: %s must be greater than zero", name)
 		}
@@ -378,7 +368,7 @@ func (t *TaskTool) run(ctx, metadataCtx context.Context, def agent.Def, in taskI
 		store = t.storeDecorator(tool.SessionIDFrom(metadataCtx), tool.CallIDFrom(metadataCtx), store)
 	}
 	usage := &taskUsage{}
-	bp := &budgetProvider{provider: provider, usage: usage, cancel: cancel}
+	bp := &budgetProvider{provider: provider, usage: usage}
 	updateProgress := func() {
 		if progress != nil {
 			progress.set(tool.TaskSettlement{Requests: int(usage.requests.Load()), Tokens: int(usage.tokens.Load()), Duration: time.Since(started), ToolCalls: counting.count()})
@@ -388,9 +378,6 @@ func (t *TaskTool) run(ctx, metadataCtx context.Context, def agent.Def, in taskI
 	bp.onProgress = updateProgress
 	if progress != nil {
 		progress.setWorkspace(env.Workspace)
-	}
-	if in.RequestBudget != nil {
-		bp.requestBudget = *in.RequestBudget
 	}
 	perms := tool.Permissions{}
 	for _, name := range def.Tools {
@@ -427,9 +414,6 @@ func (t *TaskTool) run(ctx, metadataCtx context.Context, def agent.Def, in taskI
 		return "", err
 	}
 	err = r.Run(withDepth(runCtx, childDepth), childID, false, def.Steps)
-	if exhausted := bp.exhausted.Load(); exhausted != nil {
-		return "", exhausted
-	}
 	if err != nil {
 		if in.TimeoutMS != nil && (errors.Is(err, context.DeadlineExceeded) || errors.Is(runCtx.Err(), context.DeadlineExceeded)) {
 			return "", &BudgetError{Kind: "timeout_ms", Limit: *in.TimeoutMS}
