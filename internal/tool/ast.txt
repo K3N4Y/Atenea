@@ -1,0 +1,7 @@
+Search or rewrite source code structurally with ast-grep.
+
+Operations:
+- search finds syntax-tree matches rather than text occurrences.
+- rewrite previews replacements by default; set apply=true to modify every proposed match.
+
+Patterns use ast-grep metavariables such as $X and $$$ARGS. Path must be a file or directory inside the workspace. Language is optional when ast-grep can infer it from file extensions. max_results limits displayed matches, not the replacements applied. Applying a rewrite requires file-write approval and validates every matched file before mutation. Requires ast-grep (or sg) on PATH.

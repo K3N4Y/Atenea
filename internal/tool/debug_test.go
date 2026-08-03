@@ -137,7 +137,10 @@ func TestDebugToolEffectsTraversalAndValidation(t *testing.T) {
 		t.Fatal("evaluate must run commands")
 	}
 	outside := filepath.Join(t.TempDir(), "main.go")
-	_, err := d.Execute(context.Background(), json.RawMessage(fmt.Sprintf(`{"operation":"launch","adapter_command":%q,"program":%q}`, os.Args[0], outside)))
+	// A nonexistent adapter keeps this from spawning anything if the
+	// traversal check ever regresses; the error asserted below fires first.
+	adapter := filepath.Join(t.TempDir(), "missing-adapter")
+	_, err := d.Execute(context.Background(), json.RawMessage(fmt.Sprintf(`{"operation":"launch","adapter_command":%q,"program":%q}`, adapter, outside)))
 	if err == nil || !strings.Contains(err.Error(), "fuera del workspace") {
 		t.Fatalf("traversal error = %v", err)
 	}

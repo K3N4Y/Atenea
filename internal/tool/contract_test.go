@@ -197,6 +197,29 @@ func TestBuiltins_Contract(t *testing.T) {
 			}
 		}},
 
+		{"ast", func(t *testing.T) tooltest.Subject {
+			root := workspaceWithFile(t, "main.go", "package main\n")
+			ast := NewASTTool(root)
+			// Stub with a real script, never os.Args[0]: the test binary ignores
+			// ast-grep's arguments and re-runs the whole suite, fork-bombing the host.
+			fake := filepath.Join(t.TempDir(), "fake-ast-grep")
+			if err := os.WriteFile(fake, []byte("#!/bin/sh\necho '[]'\n"), 0o755); err != nil {
+				t.Fatalf("seed fake ast-grep: %v", err)
+			}
+			ast.commandFor = func() (string, error) { return fake, nil }
+			return tooltest.Subject{
+				Tool:  ast,
+				Input: input(t, map[string]any{"operation": "search", "path": "main.go", "pattern": "package main", "language": "go"}),
+			}
+		}},
+
+		{"debug", func(t *testing.T) tooltest.Subject {
+			return tooltest.Subject{
+				Tool:  NewDebugTool(t.TempDir()),
+				Input: input(t, map[string]any{"operation": "sessions"}),
+			}
+		}},
+
 		{"web_fetch", func(t *testing.T) tooltest.Subject {
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
