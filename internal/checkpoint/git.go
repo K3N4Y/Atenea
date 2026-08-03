@@ -17,7 +17,10 @@ import (
 
 type Tree string
 
-var ErrWorkspaceMismatch = errors.New("checkpoint belongs to another workspace")
+var (
+	ErrWorkspaceMismatch = errors.New("checkpoint belongs to another workspace")
+	ErrGitWorkspace      = errors.New("checkpoint requires a Git workspace")
+)
 
 type Store interface {
 	Capture(ctx context.Context, workspace string) (Tree, error)
@@ -120,7 +123,7 @@ func (s *GitStore) prepare(ctx context.Context, workspace string) (string, strin
 	abs = filepath.Clean(abs)
 	cmd := exec.CommandContext(ctx, "git", "-C", abs, "rev-parse", "--is-inside-work-tree")
 	if out, err := cmd.Output(); err != nil || strings.TrimSpace(string(out)) != "true" {
-		return "", "", "", errors.New("checkpoint requires a Git workspace")
+		return "", "", "", ErrGitWorkspace
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(abs)))
 	private := filepath.Join(s.root, digest)

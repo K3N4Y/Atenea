@@ -188,6 +188,28 @@ func TestTUI_YoloLaunchShowsWarningIndicatorAndModeTransitionsUnderPTY(t *testin
 	waitForPTYTextAfter(t, output, before, "permission mode: yolo")
 }
 
+func TestTUI_YoloSendsPromptOutsideGitWorkspaceUnderPTY(t *testing.T) {
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "atenea")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, output)
+	}
+
+	cmd, terminal, output, _ := startTUIUnderPTY(t, binary, t.TempDir(), filepath.Join(t.TempDir(), "atenea.db"), "--yolo")
+	defer stopPTYProcess(cmd, terminal)
+	waitForPTYText(t, output, "YOLO mode is active")
+	before := output.String()
+	if _, err := terminal.Write([]byte("prompt outside Git\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYTextAfter(t, output, before, "Hello from atenea.")
+}
+
 // TestTUI_StartsFreshSessionOnLaunchUnderPTY pins the launch contract end to
 // end: a new run of the binary starts an empty conversation, without the
 // transcript or the plan mode of the previous run. Old sessions stay

@@ -764,7 +764,7 @@ func (e *Engine) turnHooks(sessionID, composerPrompt string, mode session.Mode) 
 			if composerPrompt != "" && e.checkpoints != nil {
 				var err error
 				before, err = e.checkpoints.Capture(context.Background(), e.root)
-				if err != nil {
+				if err != nil && !errors.Is(err, checkpoint.ErrGitWorkspace) {
 					return err
 				}
 			}
