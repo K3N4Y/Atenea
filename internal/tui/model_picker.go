@@ -381,6 +381,10 @@ func formatContextWindow(capabilities llm.Capabilities, model string) string {
 	if !ok {
 		return ""
 	}
+	return formatContextWindowTokens(window)
+}
+
+func formatContextWindowTokens(window int) string {
 	if window >= 1_000_000 {
 		value := strconv.FormatFloat(float64(window)/1_000_000, 'f', 2, 64)
 		return strings.TrimRight(strings.TrimRight(value, "0"), ".") + "M"

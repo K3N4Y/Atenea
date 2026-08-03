@@ -174,9 +174,9 @@ func TestModel_TopBarContextFormatsMillionTokenWindowAsM(t *testing.T) {
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 20})
 	m = apply(t, m, EventMsg{Kind: session.KindStepEnded, Usage: &session.Usage{InputTokens: 16_000}})
 
-	first := lineWith(t, ansi.Strip(m.View()), "1m")
-	if !strings.Contains(first, "16k / 1m") {
-		t.Fatalf("with a million-token window the bar must show %q; first line = %q", "16k / 1m", first)
+	first := lineWith(t, ansi.Strip(m.View()), "1M")
+	if !strings.Contains(first, "16k / 1M") {
+		t.Fatalf("with a million-token window the bar must show %q; first line = %q", "16k / 1M", first)
 	}
 	if strings.Contains(first, "1000k") {
 		t.Fatalf("the bar must not show one million as %q; first line = %q", "1000k", first)
@@ -358,5 +358,23 @@ func TestModel_TopBarRowClickIsInertBodyRowClickHits(t *testing.T) {
 		if !strings.Contains(viewB, want) {
 			t.Fatalf("a click on summary row %d must expand reasoning showing %q; View = %q", summaryY, want, viewB)
 		}
+	}
+}
+
+func TestModel_TopBarContextPreservesTwoDecimalMillionWindow(t *testing.T) {
+	const model = "openai/gpt-4.1"
+	m := NewModel(declaringAgent(model, 1_050_000), "s1", nil).
+		WithWorkspace("main", "~/x").
+		WithStatus("build", model)
+
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 20})
+	m = apply(t, m, EventMsg{Kind: session.KindStepEnded, Usage: &session.Usage{InputTokens: 16_000}})
+
+	first := lineWith(t, ansi.Strip(m.View()), "1.05M")
+	if !strings.Contains(first, "16k / 1.05M") {
+		t.Fatalf("the top bar must preserve precision for million-token windows; first line = %q", first)
+	}
+	if strings.Contains(first, "1.1M") {
+		t.Fatalf("the top bar must not round 1.05M to 1.1M; first line = %q", first)
 	}
 }

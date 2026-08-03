@@ -98,7 +98,7 @@ func (m Model) topBarContext() string {
 // ("256k"), or "" when its adapter does not declare one.
 func (m Model) contextWindowLabel() string {
 	if window, ok := m.contextWindow(m.model); ok {
-		return formatTokenCount(window)
+		return strings.ReplaceAll(formatContextWindowTokens(window), "K", "k")
 	}
 	return ""
 }
