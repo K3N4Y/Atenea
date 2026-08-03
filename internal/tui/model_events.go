@@ -118,8 +118,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if ev.Err != "" {
 			return m.appendError(ev.Err).syncViewport(), nil
 		}
-		m.Transcript = m.Transcript.appendNotice("checkpoint saved: " + ev.Result.ID)
-		return m.syncViewport(), nil
+		return m, nil
 	case RewindDoneMsg:
 		if ev.Err != "" {
 			return m.appendError(ev.Err).syncViewport(), nil

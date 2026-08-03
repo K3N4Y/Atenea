@@ -128,11 +128,17 @@ func (t Transcript) foldEvent(ev EventMsg, sessionID string) Transcript {
 			last.live = false
 		}
 	case session.KindToolCalled:
+		if ev.ToolName == "checkpoint" {
+			break
+		}
 		t.entries = append(t.entries, entry{
 			kind: entryTool, callID: ev.CallID, tool: ev.ToolName, status: toolRunning,
 			input: string(ev.Input), sessionID: ev.SessionID,
 		})
 	case session.KindToolSuccess:
+		if ev.ToolName == "checkpoint" {
+			break
+		}
 		t = t.settleTool(ev.CallID, ev.SessionID, toolOK, "", ev.Text, ev.Diff)
 		t = t.settleChildTotal(ev)
 	case session.KindToolFailed:

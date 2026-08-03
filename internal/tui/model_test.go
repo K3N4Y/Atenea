@@ -7139,3 +7139,25 @@ func TestModelSessionTransitionsResetDerivedState(t *testing.T) {
 		}
 	})
 }
+func TestModel_HidesCompletedCheckpointNotice(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	updated, cmd := m.update(CheckpointDoneMsg{Result: CheckpointResult{ID: "checkpoint-1"}})
+	if cmd != nil {
+		t.Fatal("checkpoint completion returned a command")
+	}
+	m = updated.(Model)
+	for _, entry := range m.entries {
+		if strings.Contains(entry.text, "checkpoint") {
+			t.Fatalf("entries = %+v, checkpoint completion should be silent", m.entries)
+		}
+	}
+}
+
+func TestTranscript_HidesCheckpointToolActivity(t *testing.T) {
+	var transcript Transcript
+	transcript = transcript.foldEvent(EventMsg{Kind: session.KindToolCalled, CallID: "checkpoint-1", ToolName: "checkpoint"}, "s1")
+	transcript = transcript.foldEvent(EventMsg{Kind: session.KindToolSuccess, CallID: "checkpoint-1", ToolName: "checkpoint"}, "s1")
+	if len(transcript.entries) != 0 {
+		t.Fatalf("entries = %+v, checkpoint tool activity should not be rendered", transcript.entries)
+	}
+}
