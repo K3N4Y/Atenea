@@ -23,6 +23,8 @@ func TestBuiltinDescriptions_WiredAndDistinct(t *testing.T) {
 		TodoWriteTool{},
 		Echo{},
 		NewLSPTool(t.TempDir()),
+		NewASTTool(t.TempDir()),
+		NewDebugTool(t.TempDir()),
 	}
 
 	seen := make(map[string]string, len(builtins))

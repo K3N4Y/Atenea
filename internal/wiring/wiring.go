@@ -101,8 +101,9 @@ type Config struct {
 	// PersistentGrants are approvals loaded from durable configuration. They are
 	// composed before session grants, and can only turn Ask into Allow.
 	PersistentGrants []permission.Rule
-	// LSP enables the native code-intelligence tool for hosts that own its
-	// process lifecycle. The standalone CLI and TUI enable it; false omits it.
+	// LSP enables native code intelligence for hosts that own the language-server,
+	// AST engine, and debugger-adapter process lifecycles. The standalone CLI and
+	// TUI enable it; false omits lsp, ast, and debug.
 	LSP bool
 	// RoleProvider resolves a subagent manifest's optional model without changing
 	// the parent's active provider selection. Nil inherits Provider.
@@ -393,9 +394,11 @@ func Build(cfg Config) Built {
 	}
 	registryTools = append(registryTools, taskTool.SupervisionTools()...)
 	var lsp *tool.LSPTool
+	var debug *tool.DebugTool
 	if cfg.LSP {
 		lsp = tool.NewLSPTool(root)
-		registryTools = append(registryTools, lsp)
+		debug = tool.NewDebugTool(root)
+		registryTools = append(registryTools, lsp, tool.NewASTTool(root), debug)
 	}
 	registryTools = append(registryTools, cfg.MCPTools...)
 	registry := tool.NewRegistry(tool.NewOutputStore(cfg.OutputLimit), registryTools...)
@@ -451,6 +454,9 @@ func Build(cfg Config) Built {
 	return Built{Runner: r, Glob: glob, Commands: commands, Tools: registry, Policy: policy, close: func() {
 		if lsp != nil {
 			_ = lsp.Close()
+		}
+		if debug != nil {
+			_ = debug.Close()
 		}
 		if ownedSupervisor {
 			taskTool.Close()

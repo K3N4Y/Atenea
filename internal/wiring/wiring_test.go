@@ -108,7 +108,7 @@ func buildWithHome(t *testing.T, cfg Config, home string) Built {
 	return Build(cfg)
 }
 
-func TestBuild_LSPIsOptIn(t *testing.T) {
+func TestBuild_CodeIntelligenceIsOptIn(t *testing.T) {
 	without := Build(Config{
 		Root: t.TempDir(), Provider: llm.NewFakeProvider(llm.Event{Kind: llm.StepEnded}),
 		Store: session.NewMemoryStore(), Inbox: session.NewMemoryInbox(),
@@ -116,13 +116,17 @@ func TestBuild_LSPIsOptIn(t *testing.T) {
 		Bus: event.NewBus(func(string, ...interface{}) {}), NextID: func() string { return "id" },
 	})
 	without.Close()
-	if _, ok := without.Tools.Lookup("lsp"); ok {
-		t.Fatal("zero config registered lsp")
+	for _, name := range []string{"lsp", "ast", "debug"} {
+		if _, ok := without.Tools.Lookup(name); ok {
+			t.Fatalf("zero config registered %s", name)
+		}
 	}
 	with := buildWith(t, Config{})
 	with.Close()
-	if _, ok := with.Tools.Lookup("lsp"); !ok {
-		t.Fatal("LSP-enabled host did not register lsp")
+	for _, name := range []string{"lsp", "ast", "debug"} {
+		if _, ok := with.Tools.Lookup(name); !ok {
+			t.Fatalf("code-intelligence host did not register %s", name)
+		}
 	}
 }
 
@@ -684,7 +688,7 @@ func TestBuild_ZeroPlanModeAnnouncesTheDefaultSurface(t *testing.T) {
 	if slices.Contains(normal, "present_plan") {
 		t.Errorf("normal mode announced present_plan; it is plan mode's alone. tools = %v", normal)
 	}
-	for _, name := range []string{"read", "write", "edit", "bash", "glob", "grep", "lsp", "skill", "task", "todo_write", "web_fetch"} {
+	for _, name := range []string{"read", "write", "edit", "bash", "glob", "grep", "lsp", "ast", "debug", "skill", "task", "todo_write", "web_fetch"} {
 		if !slices.Contains(normal, name) {
 			t.Errorf("normal mode did not announce %q; registration is what puts a tool there. tools = %v", name, normal)
 		}

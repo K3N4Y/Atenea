@@ -116,6 +116,9 @@ func (*DebugTool) Schema() json.RawMessage {
 }
 
 func (t *DebugTool) Execute(ctx context.Context, raw json.RawMessage) (Result, error) {
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
 	var in debugInput
 	if err := json.Unmarshal(raw, &in); err != nil {
 		return Result{}, fmt.Errorf("debug: invalid input: %w", err)
