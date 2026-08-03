@@ -203,7 +203,7 @@ func (m Model) modelPickerView() string {
 		}
 		row := modelPickerProviderRow(prefix, provider.Name, len(provider.Models), leftWidth)
 		if !m.modelPicker.modelsFocused && index == m.modelPicker.providerList.selected {
-			row = accentStyle.Render(row)
+			row = selectedRowStyle.Render(row)
 		}
 		providers = append(providers, row)
 	}
@@ -213,7 +213,7 @@ func (m Model) modelPickerView() string {
 
 	models := make([]string, 0, itemRows)
 	if m.modelPicker.err != "" {
-		models = append(models, errorStyle.Render(overlayCell(m.modelPicker.err, rightWidth)))
+		models = append(models, dangerStyle.Render(overlayCell(m.modelPicker.err, rightWidth)))
 	}
 	selectedProvider, hasProvider := m.modelPicker.selectedProvider()
 	if hasProvider {
@@ -228,7 +228,7 @@ func (m Model) modelPickerView() string {
 			}
 			row := modelPickerModelRow(prefix, model, selectedProvider.Capabilities, rightWidth)
 			if m.modelPicker.modelsFocused && index == m.modelPicker.modelList.selected {
-				row = accentStyle.Render(row)
+				row = selectedRowStyle.Render(row)
 			}
 			models = append(models, row)
 		}

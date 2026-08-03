@@ -7,9 +7,15 @@ import (
 )
 
 var (
-	accentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Accent))
-	errorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Error))
-	statusStyle = lipgloss.NewStyle().Faint(true)
+	primaryTextStyle   = lipgloss.NewStyle()
+	secondaryTextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Border))
+	metadataStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted))
+	focusStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Accent))
+	successStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Success))
+	warningStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Warning))
+	dangerStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Error))
+	surfaceStyle       = lipgloss.NewStyle().Background(lipgloss.Color(theme.UserMessage))
+	selectedRowStyle   = focusStyle
 )
 
 func (m Model) View() string {

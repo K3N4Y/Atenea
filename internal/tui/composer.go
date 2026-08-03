@@ -59,9 +59,9 @@ func newComposerInput() composerInput {
 	input.SetHeight(1)
 	input.Cursor.BlinkSpeed = 700 * time.Millisecond
 	input.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("ctrl+j"))
-	input.FocusedStyle.Prompt = accentStyle
+	input.FocusedStyle.Prompt = focusStyle
 	input.FocusedStyle.CursorLine = input.FocusedStyle.CursorLine.UnsetBackground()
-	input.BlurredStyle.Prompt = accentStyle
+	input.BlurredStyle.Prompt = secondaryTextStyle
 	input.Focus()
 	return composerInput{Model: input}
 }

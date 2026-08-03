@@ -24,7 +24,7 @@ func (m Model) workingStatusView() string {
 	if m.ready {
 		margin = m.baseLayout().chatMargin
 	}
-	return strings.Repeat(" ", margin) + m.spinner.View() + statusStyle.Render(" "+m.workingStatusLabel()) + "\n"
+	return strings.Repeat(" ", margin) + m.spinner.View() + secondaryTextStyle.Render(" "+m.workingStatusLabel()) + "\n"
 }
 
 func (m Model) workingStatusLabel() string {
@@ -85,7 +85,7 @@ func (m Model) gitSummaryLine(width, margin int) string {
 	innerWidth := max(width-2*margin, 0)
 	left := ""
 	if m.cancelPending {
-		left = ansi.Truncate(statusStyle.Render("Esc again to cancel"), innerWidth, "…")
+		left = ansi.Truncate(metadataStyle.Render("Esc again to cancel"), innerWidth, "…")
 	}
 	leftWidth := ansi.StringWidth(left)
 	separatorWidth := 0
@@ -121,7 +121,7 @@ func (m Model) gitSummaryLabel(width int) string {
 		if index == len(variants)-1 {
 			return styledStats
 		}
-		return statusStyle.Render(prefix) + styledStats
+		return metadataStyle.Render(prefix) + styledStats
 	}
 	return ""
 }

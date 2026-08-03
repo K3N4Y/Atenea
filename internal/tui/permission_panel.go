@@ -27,12 +27,11 @@ const (
 var (
 	permissionPanelStyle        = lipgloss.NewStyle().Background(lipgloss.Color(theme.PermissionPanel))
 	permissionCommandStyle      = lipgloss.NewStyle().Background(lipgloss.Color(theme.PermissionCommand))
-	permissionAccentStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(theme.Success))
-	permissionSelectionStyle    = lipgloss.NewStyle().Bold(true)
+	permissionAccentStyle       = warningStyle.Bold(true)
 	permissionTitleStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Canvas)).Background(lipgloss.Color(theme.PermissionActive))
 	permissionButtonStyle       = lipgloss.NewStyle().Background(lipgloss.Color(theme.PermissionCommand)).Padding(0, 1)
 	permissionActiveStyle       = permissionButtonStyle.Bold(true).Foreground(lipgloss.Color(theme.Canvas)).Background(lipgloss.Color(theme.PermissionActive))
-	permissionCompactLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted)).Background(lipgloss.Color(theme.PermissionCommand))
+	permissionCompactLabelStyle = metadataStyle.Background(lipgloss.Color(theme.PermissionCommand))
 )
 
 // permissionActionRange is the horizontal click target of one action of the
@@ -320,7 +319,7 @@ func (m Model) permissionPanelLines(permission entry, width, height int) ([]stri
 			if index == 0 {
 				line = permissionAccentStyle.Render(line)
 			} else {
-				line = statusStyle.Render(line)
+				line = metadataStyle.Render(line)
 			}
 			lines[index] = permissionPanelStyle.Width(width).Render(line)
 		}

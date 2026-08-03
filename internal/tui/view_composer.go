@@ -23,11 +23,11 @@ func (m Model) menuView() string {
 	m.composer.visitMenuItems(func(label, description string, selected bool) {
 		prefix := "  "
 		if selected {
-			prefix = accentStyle.Render("❯ ")
+			prefix = focusStyle.Render("❯ ")
 		}
 		line := prefix + sanitizeTerminalText(label)
 		if description != "" {
-			line += "  " + statusStyle.Render(sanitizeTerminalText(description))
+			line += "  " + metadataStyle.Render(sanitizeTerminalText(description))
 		}
 		if width := m.chatContentWidth(); m.ready && width > 0 {
 			line = ansi.Truncate(line, width, "…")
@@ -118,7 +118,7 @@ func decorateComposerBorder(box string, lineIndex int, label, leftCorner, rightC
 			label = ansi.Truncate(label, labelWidth, "…")
 		}
 	}
-	styledLabel := statusStyle.Render(label)
+	styledLabel := metadataStyle.Render(label)
 	remaining := width - ansi.StringWidth(styledLabel) - fixedBorderWidth
 	if remaining < 1 {
 		return box

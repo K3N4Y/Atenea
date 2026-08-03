@@ -26,17 +26,10 @@ const markdownRuleWidth = 40
 // the marker lines themselves are removed from the final render.
 const markdownCodeBlockMarker = "\x00code\x00"
 
-// markdownStyle is the TUI's own glamour theme for assistant markdown. The
-// stock dark theme clashes with the TUI identity (indigo H1 chip, literal
-// ##/### prefixes, "--------" rules, double-styled links, code blocks with
-// no background and an extra indent). This theme sticks to the ANSI palette
-// the rest of view.go already uses — accent 6, gray 8 — plus neutral gray
-// 236 for subtle backgrounds over the #141414 canvas. Heading hierarchy
-// comes from weight (H1 bold accent, H2 bold, H3-H6 bold gray; gray instead
-// of faint because glamour's renderText ignores the Faint field), never from
-// prefixes or background chips. The document color stays nil so text
-// inherits the terminal default. In the Ascii profile (tests, no TTY) all of
-// this degrades to plain contiguous text, keeping the content assertable.
+// markdownStyle is the TUI's own glamour theme for assistant markdown. It
+// keeps editorial hierarchy neutral: headings use weight, lower levels use
+// secondary gray, and links use underline. The document color stays nil so
+// body text inherits the terminal default.
 var markdownStyle = func() glamouransi.StyleConfig {
 	str := func(v string) *string { return &v }
 	yes := func() *bool { v := true; return &v }
@@ -68,7 +61,6 @@ var markdownStyle = func() glamouransi.StyleConfig {
 		Heading: glamouransi.StyleBlock{
 			StylePrimitive: glamouransi.StylePrimitive{BlockSuffix: "\n\n", Bold: yes()},
 		},
-		H1:            glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{Color: str(theme.Accent)}},
 		H3:            glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{Color: str(theme.Border)}},
 		H4:            glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{Color: str(theme.Border)}},
 		H5:            glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{Color: str(theme.Border)}},
@@ -83,11 +75,11 @@ var markdownStyle = func() glamouransi.StyleConfig {
 		Item:        glamouransi.StylePrimitive{BlockPrefix: "• "},
 		Enumeration: glamouransi.StylePrimitive{BlockPrefix: ". "},
 		Task:        glamouransi.StyleTask{Ticked: "[✓] ", Unticked: "[ ] "},
-		// One single quiet link style: text and URL both underlined accent,
-		// instead of the stock green-bold text next to a cyan URL.
-		Link:      glamouransi.StylePrimitive{Color: str(theme.Accent), Underline: yes()},
-		LinkText:  glamouransi.StylePrimitive{Color: str(theme.Accent), Underline: yes()},
-		Image:     glamouransi.StylePrimitive{Color: str(theme.Accent), Underline: yes()},
+		// Links stay discoverable through underline without borrowing the focus
+		// accent; editorial content remains neutral until it is selected.
+		Link:      glamouransi.StylePrimitive{Underline: yes()},
+		LinkText:  glamouransi.StylePrimitive{Underline: yes()},
+		Image:     glamouransi.StylePrimitive{Underline: yes()},
 		ImageText: glamouransi.StylePrimitive{Color: str(theme.Border), Format: "Image: {{.text}} →"},
 		Code: glamouransi.StyleBlock{
 			StylePrimitive: glamouransi.StylePrimitive{

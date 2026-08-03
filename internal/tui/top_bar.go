@@ -5,17 +5,11 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-
-	"github.com/K3N4Y/atenea/internal/tui/theme"
 )
 
 // branchGlyph is the powerline branch glyph that precedes the git branch name
 // in the top bar (nerd-font PUA, like the tree icons in tree.go).
 const branchGlyph = ""
-
-// branchStyle renders the git branch in green; the directory and context label
-// reuse statusStyle (dim, defined in view.go).
-var branchStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Success))
 
 // bodyHeight is the body's vertical space (chat/tree/viewer): the terminal
 // height minus the top-bar chrome. The layout module computes it
@@ -50,13 +44,13 @@ func (m Model) topBar() string {
 func (m Model) topBarLine() string {
 	left := ""
 	if m.branch != "" {
-		left = branchStyle.Render(branchGlyph + " " + sanitizeTerminalText(m.branch))
+		left = metadataStyle.Render(branchGlyph + " " + sanitizeTerminalText(m.branch))
 	}
 	if m.workDir != "" {
 		if left != "" {
-			left += "  " + statusStyle.Render(sanitizeTerminalText(m.workDir))
+			left += "  " + metadataStyle.Render(sanitizeTerminalText(m.workDir))
 		} else {
-			left = statusStyle.Render(sanitizeTerminalText(m.workDir))
+			left = metadataStyle.Render(sanitizeTerminalText(m.workDir))
 		}
 	}
 	right := m.topBarContext()
@@ -89,9 +83,9 @@ func (m Model) topBarContext() string {
 	}
 	used := formatTokenCount(m.usage.InputTokens)
 	if window := m.contextWindowLabel(); window != "" {
-		return statusStyle.Render(used + " / " + window)
+		return metadataStyle.Render(used + " / " + window)
 	}
-	return statusStyle.Render(used)
+	return metadataStyle.Render(used)
 }
 
 // contextWindowLabel returns the active model's context window as a label

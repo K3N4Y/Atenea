@@ -74,14 +74,14 @@ func (m Model) resumePickerBody(visibleRows, width int) []string {
 		return nil
 	}
 	if m.resumePicker.loading {
-		return []string{ansi.Truncate(statusStyle.Render("Loading sessions…"), width, "")}
+		return []string{ansi.Truncate(secondaryTextStyle.Render("Loading sessions…"), width, "")}
 	}
 	if m.resumePicker.err != nil {
 		message := sanitizeResumePickerLine(m.resumePicker.err.Error())
-		return []string{ansi.Truncate(errorStyle.Render(message), width, "")}
+		return []string{ansi.Truncate(dangerStyle.Render(message), width, "")}
 	}
 	if len(m.resumePicker.filtered) == 0 {
-		return []string{ansi.Truncate(statusStyle.Render("No sessions found"), width, "")}
+		return []string{ansi.Truncate(metadataStyle.Render("No sessions found"), width, "")}
 	}
 
 	start, end := m.resumePicker.window(visibleRows)
@@ -101,7 +101,7 @@ func (m Model) resumePickerRow(summary session.SessionSummary, selected bool, wi
 	styledPrefix := prefix
 	if selected {
 		prefix = "❯ "
-		styledPrefix = accentStyle.Render("❯") + " "
+		styledPrefix = focusStyle.Render("❯") + " "
 	}
 	prefixWidth := lipgloss.Width(prefix)
 	available := max(width-prefixWidth, 0)
@@ -135,7 +135,7 @@ func (m Model) resumePickerRow(summary session.SessionSummary, selected bool, wi
 	title = ansi.Truncate(title, titleWidth, "…")
 	styledTitle := title
 	if selected {
-		styledTitle = accentStyle.Render(title)
+		styledTitle = selectedRowStyle.Render(title)
 	}
 
 	row := styledPrefix + styledTitle
@@ -144,16 +144,16 @@ func (m Model) resumePickerRow(summary session.SessionSummary, selected bool, wi
 	}
 	row += strings.Repeat(" ", max(width-prefixWidth-lipgloss.Width(title)-metadataWidth, 1))
 	if current {
-		row += statusStyle.Render("current")
+		row += metadataStyle.Render("current")
 		if date != "" {
 			row += "  "
 		}
 	}
 	if date != "" {
 		if selected {
-			row += accentStyle.Render(date)
+			row += selectedRowStyle.Render(date)
 		} else {
-			row += statusStyle.Render(date)
+			row += metadataStyle.Render(date)
 		}
 	}
 	return ansi.Truncate(row, width, "")

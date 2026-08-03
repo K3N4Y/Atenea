@@ -193,7 +193,7 @@ func (m Model) mcpPickerView() string {
 
 	rows := make([]string, 0, itemRows)
 	if m.mcpPicker.err != "" {
-		rows = append(rows, errorStyle.Render(overlayCell(" "+sanitizeTerminalText(m.mcpPicker.err), innerWidth)))
+		rows = append(rows, dangerStyle.Render(overlayCell(" "+sanitizeTerminalText(m.mcpPicker.err), innerWidth)))
 	}
 	start, end := m.mcpPicker.window(itemRows - len(rows))
 	for index := start; index < end; index++ {
@@ -207,7 +207,7 @@ func (m Model) mcpPickerView() string {
 		}
 		rows = append(rows,
 			overlayCell("  No MCP servers configured", innerWidth),
-			statusStyle.Render(overlayCell(hint, innerWidth)),
+			metadataStyle.Render(overlayCell(hint, innerWidth)),
 		)
 	}
 	for len(rows) < itemRows {
@@ -270,11 +270,15 @@ func (m Model) mcpPickerRow(server mcpclient.ServerStatus, selected bool, nameWi
 	}
 	command = sanitizeTerminalText(command)
 
+	statusCell := overlayCell(status, statusWidth)
+	if m.mcpPicker.busy[server.Name] {
+		statusCell = secondaryTextStyle.Render(statusCell)
+	}
 	row := overlayCell(prefix+glyph+sanitizeTerminalText(server.Name), nameWidth) +
-		overlayCell(status, statusWidth) + overlayCell(tools, toolsWidth)
+		statusCell + overlayCell(tools, toolsWidth)
 	commandCell := overlayCell(command, commandWidth)
 	if selected {
-		return accentStyle.Render(row + commandCell)
+		return selectedRowStyle.Render(row + commandCell)
 	}
-	return row + statusStyle.Render(commandCell)
+	return row + metadataStyle.Render(commandCell)
 }

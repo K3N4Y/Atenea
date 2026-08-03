@@ -786,10 +786,10 @@ func TestModel_ResumePickerRendersFullScreenRows(t *testing.T) {
 	if !strings.Contains(selectedLine, "❯") || !strings.Contains(selectedLine, "Jul 13, 2026 17:45") {
 		t.Fatalf("selected row = %q", selectedLine)
 	}
-	if !strings.Contains(view, accentStyle.Render("❯")) {
+	if !strings.Contains(view, focusStyle.Render("❯")) {
 		t.Fatalf("View() does not accent selected indicator: %q", view)
 	}
-	if !strings.Contains(view, statusStyle.Render("current")) || !strings.Contains(view, statusStyle.Render("Jul 14, 2026 09:05")) {
+	if !strings.Contains(view, metadataStyle.Render("current")) || !strings.Contains(view, metadataStyle.Render("Jul 14, 2026 09:05")) {
 		t.Fatalf("View() does not mute current marker and unselected timestamp: %q", view)
 	}
 	if !strings.Contains(plain, "Untitled session") {
@@ -829,10 +829,10 @@ func TestModel_ResumePickerRendersLoadingErrorAndExactEmptyState(t *testing.T) {
 			if !strings.Contains(plain, tt.want) {
 				t.Fatalf("View() = %q, want %q", plain, tt.want)
 			}
-			if tt.name == "loading" && !strings.Contains(view, statusStyle.Render(tt.want)) {
-				t.Fatalf("loading state is not muted: %q", view)
+			if tt.name == "loading" && !strings.Contains(view, secondaryTextStyle.Render(tt.want)) {
+				t.Fatalf("loading state does not use secondary text: %q", view)
 			}
-			if tt.name == "error" && !strings.Contains(view, errorStyle.Render(tt.want)) {
+			if tt.name == "error" && !strings.Contains(view, dangerStyle.Render(tt.want)) {
 				t.Fatalf("error state does not use error style: %q", view)
 			}
 			if tt.name == "empty" && strings.TrimSpace(lineContaining(t, plain, tt.want)) != "No sessions found" {
@@ -2015,18 +2015,15 @@ func TestModel_ViewDarkCanvasWithoutWindowSizeDoesNotPad(t *testing.T) {
 	}
 }
 
-func TestModel_AssistantMarkdownKeepsOwnThemeAccents(t *testing.T) {
-	// TRIANGULATE: a poor implementation "themes" the markdown by falling back
-	// to the notty/ascii style or stripping ALL colors: the noise goes away
-	// but so do the accents. A settled markdown H1 must still render the TUI
-	// accent (color "6" + bold -> SGR 36;1 in ANSI256) while the stock
-	// dark-theme colors (document gray 252, heading blue 39) stay gone.
+func TestModel_AssistantMarkdownKeepsEditorialContentNeutral(t *testing.T) {
+	// Headings use weight and links use underline; neither borrows the focus
+	// accent because no Markdown content is actively selected here.
 	forceANSI256Profile(t)
 
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	text := "# Titulo\n\ntexto"
+	text := "# Titulo\n\n[docs](https://example.com)"
 	m = apply(t, m, EventMsg{Kind: session.KindTextStarted})
 	m = apply(t, m, EventMsg{Kind: session.KindTextDelta, Text: text})
 	m = apply(t, m, EventMsg{
@@ -2039,8 +2036,12 @@ func TestModel_AssistantMarkdownKeepsOwnThemeAccents(t *testing.T) {
 	if plain := ansi.Strip(view); !strings.Contains(plain, "Titulo") {
 		t.Fatalf("View() without ANSI = %q, must contain %q: theming must not lose the heading content", plain, "Titulo")
 	}
-	if !strings.Contains(view, "36;1") {
-		t.Fatalf("View() = %q, must contain the SGR sequence %q: a settled markdown H1 renders the TUI accent (bold color 6); stripping all colors is not a theme", view, "36;1")
+	markdown := renderMarkdown(text, 80)
+	if strings.Contains(markdown, "36") {
+		t.Fatalf("renderMarkdown() = %q, static Markdown content must not use the interactive accent", markdown)
+	}
+	if !strings.Contains(markdown, "\x1b[4m") {
+		t.Fatalf("renderMarkdown() = %q, links must remain discoverable through underline", markdown)
 	}
 	for _, stock := range []string{"38;5;252", "38;5;39"} {
 		if strings.Contains(view, stock) {

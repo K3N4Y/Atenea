@@ -16,11 +16,11 @@ const (
 	// UserMessage is the background of the user's message bubble.
 	UserMessage = "#242424"
 
-	// Accent is the interactive cyan: the user marker, the composer prompt, and
-	// markdown headings and links. ANSI 6.
+	// Accent is the interactive cyan for focus, cursors, and active selection.
+	// ANSI 6.
 	Accent = "6"
-	// Success is the green for healthy, positive signals: a clean tool call,
-	// added diff lines, and the current git branch. ANSI 2.
+	// Success is the green for completed successful operations and added diff
+	// lines. ANSI 2.
 	Success = "2"
 	// Error is the red for failures: a failed tool call, removed diff lines, and
 	// hard step errors. ANSI 1.
@@ -28,11 +28,10 @@ const (
 	// Warning is the yellow for attention-seeking, non-error states such as a
 	// pending permission request. ANSI 3.
 	Warning = "3"
-	// Border is the muted gray for borders and de-emphasized text: the composer
-	// and tree borders, markdown rules, and secondary headings. ANSI 8.
+	// Border is the secondary gray for borders, rules, and subordinate text.
+	// ANSI 8.
 	Border = "8"
-	// Muted is the dim gray for tertiary labels, such as the bash hint in the
-	// permission panel.
+	// Muted is the dim gray for persistent metadata.
 	Muted = "#999999"
 
 	// PermissionPanel, PermissionCommand, and PermissionActive are the permission
@@ -59,9 +58,7 @@ const (
 	DiffAddBg = "#12251A"
 	DiffDelBg = "#2C171A"
 
-	// WriteCardPath is the fill of the write card's file-name bar: the olive-green
-	// accent that echoes the current git branch in the top bar, so a freshly
-	// written file reads as a named, highlighted target rather than a diff. The
-	// name is printed in the near-black Canvas on top of it.
+	// WriteCardPath is the fill of the write card's file-name bar. The name is
+	// printed in the near-black Canvas on top of it.
 	WriteCardPath = "#a9b061"
 )

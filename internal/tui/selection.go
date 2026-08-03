@@ -413,11 +413,11 @@ func (m Model) snackbarView() (string, snackbarRect, bool) {
 	textWidth := max(width-1-2*horizontalPadding, 0)
 	message := ansi.Truncate(m.snackbar.message, textWidth, "…")
 	background := lipgloss.Color(theme.CodeBlockHex)
-	railColor := lipgloss.Color(theme.Success)
+	railStyle := successStyle
 	if !m.snackbar.success {
-		railColor = lipgloss.Color(theme.Error)
+		railStyle = dangerStyle
 	}
-	rail := lipgloss.NewStyle().Foreground(railColor).Background(background).Render("│")
+	rail := railStyle.Background(background).Render("│")
 	fill := lipgloss.NewStyle().Background(background)
 	rows := make([]string, height)
 	for i := range rows {

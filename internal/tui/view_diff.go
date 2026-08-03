@@ -23,14 +23,14 @@ var (
 	diffAddStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Success))
 	diffDelStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Error))
 	diffPathStyle    = lipgloss.NewStyle().Background(lipgloss.Color(theme.DiffHeaderBg))
-	diffHunkStyle    = lipgloss.NewStyle().Background(lipgloss.Color(theme.DiffHeaderBg)).Foreground(lipgloss.Color(theme.Muted))
-	diffDelBandStyle = lipgloss.NewStyle().Background(lipgloss.Color(theme.DiffDelBg)).Foreground(lipgloss.Color(theme.Error))
-	diffAddBandStyle = lipgloss.NewStyle().Background(lipgloss.Color(theme.DiffAddBg)).Foreground(lipgloss.Color(theme.Success))
-	diffDelRailStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Error))
-	diffAddRailStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Success))
-	diffCtxStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted))
-	writeBandStyle   = lipgloss.NewStyle().Background(lipgloss.Color(theme.CodeBlockHex)).Foreground(lipgloss.Color(theme.Muted))
-	writeRailStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted)).Background(lipgloss.Color(theme.CodeBlockHex))
+	diffHunkStyle    = metadataStyle.Background(lipgloss.Color(theme.DiffHeaderBg))
+	diffDelBandStyle = diffDelStyle.Background(lipgloss.Color(theme.DiffDelBg))
+	diffAddBandStyle = diffAddStyle.Background(lipgloss.Color(theme.DiffAddBg))
+	diffDelRailStyle = diffDelStyle
+	diffAddRailStyle = diffAddStyle
+	diffCtxStyle     = metadataStyle
+	writeBandStyle   = metadataStyle.Background(lipgloss.Color(theme.CodeBlockHex))
+	writeRailStyle   = metadataStyle.Background(lipgloss.Color(theme.CodeBlockHex))
 	writePathStyle   = lipgloss.NewStyle().Background(lipgloss.Color(theme.WriteCardPath)).Foreground(lipgloss.Color(theme.Canvas))
 )
 

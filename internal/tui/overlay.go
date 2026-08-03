@@ -150,8 +150,7 @@ func overlayPanelTitle(panel, title string) string {
 	}
 	width := ansi.StringWidth(lines[0])
 	remaining := max(width-ansi.StringWidth(title)-5, 0)
-	border := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Border))
-	lines[0] = border.Render("┌─ ") + accentStyle.Render(title) + border.Render(" "+strings.Repeat("─", remaining)+"┐")
+	lines[0] = secondaryTextStyle.Render("┌─ ") + primaryTextStyle.Bold(true).Render(title) + secondaryTextStyle.Render(" "+strings.Repeat("─", remaining)+"┐")
 	return strings.Join(lines, "\n")
 }
 

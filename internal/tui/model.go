@@ -87,7 +87,7 @@ type Model struct {
 
 func NewModel(agent Agent, sessionID string, events <-chan tea.Msg) Model {
 	input := newComposerInput()
-	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(statusStyle))
+	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(secondaryTextStyle))
 	return Model{agent: agent, sessionID: sessionID, events: events, composer: composer{input: input}, spinner: sp, followAgent: true, terminalFocused: true}
 }
 

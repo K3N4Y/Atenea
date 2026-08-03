@@ -436,7 +436,7 @@ func (m Model) connectPanelView() string {
 
 	rows := make([]string, 0, itemRows)
 	if m.connectPanel.err != "" {
-		rows = append(rows, errorStyle.Render(overlayCell(" "+sanitizeTerminalText(m.connectPanel.err), innerWidth)))
+		rows = append(rows, dangerStyle.Render(overlayCell(" "+sanitizeTerminalText(m.connectPanel.err), innerWidth)))
 	}
 	hint := " ↑↓ move · enter select · esc close"
 	if m.connectPanel.awaiting {
@@ -450,7 +450,7 @@ func (m Model) connectPanelView() string {
 		if login.UserCode != "" {
 			rows = append(rows,
 				linkCell(" 1. Open ", login.VerificationURI, innerWidth),
-				overlayCell(" 2. Enter the code "+accentStyle.Render(sanitizeTerminalText(login.UserCode)), innerWidth),
+				overlayCell(" 2. Enter the code "+warningStyle.Render(sanitizeTerminalText(login.UserCode)), innerWidth),
 			)
 		} else {
 			rows = append(rows,
@@ -460,7 +460,7 @@ func (m Model) connectPanelView() string {
 		}
 		rows = append(rows,
 			strings.Repeat(" ", max(innerWidth, 0)),
-			statusStyle.Render(overlayCell(" waiting for approval…"+deviceCodeDeadline(login.ExpiresAt), innerWidth)),
+			secondaryTextStyle.Render(overlayCell(" waiting for approval…"+deviceCodeDeadline(login.ExpiresAt), innerWidth)),
 		)
 		hint = " ctrl+click opens the link · esc cancel"
 	} else if m.connectPanel.entering {
@@ -469,13 +469,13 @@ func (m Model) connectPanelView() string {
 		masked := strings.Repeat("•", len(m.connectPanel.key))
 		switch {
 		case m.connectPanel.busy:
-			rows = append(rows, overlayCell(" API key: "+masked, innerWidth), strings.Repeat(" ", max(innerWidth, 0)), statusStyle.Render(overlayCell(" validating…", innerWidth)))
+			rows = append(rows, overlayCell(" API key: "+masked, innerWidth), strings.Repeat(" ", max(innerWidth, 0)), secondaryTextStyle.Render(overlayCell(" validating…", innerWidth)))
 			hint = " validating… · esc close"
 		case len(m.connectPanel.key) == 0:
-			rows = append(rows, overlayCell(" API key: ", innerWidth)+"", statusStyle.Render(overlayCell(" paste or type the key; it is stored privately, never shown", innerWidth)))
+			rows = append(rows, overlayCell(" API key: ", innerWidth)+"", metadataStyle.Render(overlayCell(" paste or type the key; it is stored privately, never shown", innerWidth)))
 			hint = " enter connect · ctrl+u clear · esc back"
 		default:
-			rows = append(rows, overlayCell(" API key: "+accentStyle.Render(masked+"▌"), innerWidth))
+			rows = append(rows, overlayCell(" API key: "+focusStyle.Render(masked+"▌"), innerWidth))
 			hint = " enter connect · ctrl+u clear · esc back"
 		}
 	} else {
@@ -524,7 +524,7 @@ func (m Model) connectPanelView() string {
 func linkCell(prefix, url string, width int) string {
 	url = sanitizeTerminalText(url)
 	display := ansi.Truncate(url, max(width-lipgloss.Width(prefix), 0), "…")
-	return overlayCell(prefix+ansi.SetHyperlink(url)+accentStyle.Render(display)+ansi.ResetHyperlink(), width)
+	return overlayCell(prefix+ansi.SetHyperlink(url)+secondaryTextStyle.Underline(true).Render(display)+ansi.ResetHyperlink(), width)
 }
 
 func deviceCodeDeadline(expiresAt time.Time) string {
@@ -550,7 +550,7 @@ func (m Model) connectPanelRow(provider providerconfig.ConnectableProvider, sele
 	row := overlayCell(prefix+glyph+sanitizeTerminalText(provider.Name), nameWidth)
 	statusCell := overlayCell(status, statusWidth)
 	if selected {
-		return accentStyle.Render(row + statusCell)
+		return selectedRowStyle.Render(row + statusCell)
 	}
-	return row + statusStyle.Render(statusCell)
+	return row + metadataStyle.Render(statusCell)
 }

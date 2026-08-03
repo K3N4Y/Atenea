@@ -12,7 +12,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/K3N4Y/atenea/internal/tool"
-	"github.com/K3N4Y/atenea/internal/tui/theme"
 )
 
 const inputPrompt = "❯ "
@@ -36,7 +35,7 @@ const activityRailPrefix = activityInset + "│ "
 
 const toolOutputPreviewLines = 4
 
-var toolOutputStyle = lipgloss.NewStyle().Faint(true)
+var toolOutputStyle = metadataStyle.Faint(true)
 
 func renderCappedLines(text string, maxLines int, renderLine func(line string) string) string {
 	text = sanitizeTerminalText(text)
@@ -103,15 +102,14 @@ func summarizeToolInput(raw string) string {
 }
 
 var (
-	userMessageStyle   = lipgloss.NewStyle().Background(lipgloss.Color(theme.UserMessage))
-	userRailStyle      = lipgloss.NewStyle().Faint(true).Background(lipgloss.Color(theme.UserMessage))
-	userTextStyle      = lipgloss.NewStyle().Background(lipgloss.Color(theme.UserMessage))
-	toolRunningStyle   = lipgloss.NewStyle().Faint(true)
-	toolOKStyle        = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color(theme.Success))
-	toolFailedStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Error))
-	toolDeniedStyle    = lipgloss.NewStyle().Faint(true)
-	permissionStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(theme.Warning))
-	thinkingLabelStyle = lipgloss.NewStyle().Bold(true)
+	userMessageStyle   = surfaceStyle
+	userRailStyle      = surfaceStyle.Inherit(metadataStyle).Faint(true)
+	userTextStyle      = surfaceStyle.Inherit(primaryTextStyle)
+	toolRunningStyle   = secondaryTextStyle
+	toolFailedStyle    = dangerStyle
+	toolDeniedStyle    = secondaryTextStyle
+	permissionStyle    = warningStyle.Bold(true)
+	thinkingLabelStyle = primaryTextStyle.Bold(true)
 )
 
 func activityHeader(marker, name, summary string) string {
@@ -164,26 +162,26 @@ func (e entry) render(width int, p tool.Presentation) string {
 		return permissionStyle.Render(activityHeader(activityAskMarker, "Plan", "presented") + " (y run / n stay in plan)")
 	case entryError:
 		if !isProviderError(e.text) {
-			return errorStyle.Render(activityHeader(activityFailMarker, "error", e.text))
+			return dangerStyle.Render(activityHeader(activityFailMarker, "error", e.text))
 		}
 		summary := friendlyProviderError(e.text)
 		line := activityHeader(activityFailMarker, "error", summary) + "  [r retry] [d details]"
 		if e.expanded {
-			line += "\n" + statusStyle.Render("  │ "+sanitizeProviderDetails(e.text))
+			line += "\n" + metadataStyle.Render("  │ "+sanitizeProviderDetails(e.text))
 		}
-		return errorStyle.Render(line)
+		return dangerStyle.Render(line)
 	case entryRetry:
 		return permissionStyle.Render(activityHeader("↻", "retry", e.text))
 	case entryCompaction:
 		if e.err != "" {
-			return errorStyle.Render("[error] " + sanitizeTerminalText(e.err))
+			return dangerStyle.Render("[error] " + sanitizeTerminalText(e.err))
 		}
-		return statusStyle.Render("[context] " + sanitizeTerminalText(e.text))
+		return metadataStyle.Render("[context] " + sanitizeTerminalText(e.text))
 	case entryNotice:
 		margin := min(composerOuterMargin, width/2)
-		return lipgloss.NewStyle().Margin(0, margin).Render(statusStyle.Render(sanitizeTerminalText(e.text)))
+		return lipgloss.NewStyle().Margin(0, margin).Render(metadataStyle.Render(sanitizeTerminalText(e.text)))
 	case entryEvent:
-		return statusStyle.Render("[" + sanitizeTerminalText(e.eventKind) + "] " + sanitizeTerminalText(e.text))
+		return metadataStyle.Render("[" + sanitizeTerminalText(e.eventKind) + "] " + sanitizeTerminalText(e.text))
 	default:
 		if e.settled() {
 			return renderMarkdown(e.text, width)
@@ -200,19 +198,19 @@ func (e entry) renderThinking(width int) string {
 	if !e.settled() {
 		lines := []string{thinkingLabelStyle.Render("◆ Thinking…")}
 		for _, line := range lastNonEmptyLines(sanitizeTerminalText(e.revealedText()), thinkingPreviewLines) {
-			lines = append(lines, statusStyle.Render(line))
+			lines = append(lines, secondaryTextStyle.Render(line))
 		}
 		return insetThinking(strings.Join(lines, "\n"))
 	}
-	summary := thinkingLabelStyle.Render("◆ Thought") + statusStyle.Render(" for "+formatThinkingDuration(e.duration))
+	summary := thinkingLabelStyle.Render("◆ Thought") + metadataStyle.Render(" for "+formatThinkingDuration(e.duration))
 	if !e.expanded {
-		return insetThinking(summary + statusStyle.Render(" ⇧Tab"))
+		return insetThinking(summary + metadataStyle.Render(" ⇧Tab"))
 	}
 	body := sanitizeTerminalText(e.revealedText())
 	if width > len(thinkingInset) {
 		body = ansi.Wrap(body, width-len(thinkingInset), "")
 	}
-	return insetThinking(strings.Join([]string{summary, statusStyle.Render(body)}, "\n"))
+	return insetThinking(strings.Join([]string{summary, metadataStyle.Render(body)}, "\n"))
 }
 
 func insetThinking(text string) string {
@@ -336,7 +334,7 @@ func (e entry) renderActivity(name, summary string, showDetail bool) string {
 				detail = renderOutputPreview(e.output)
 			}
 		}
-		out := toolOKStyle.Render(activityHeader(activityOKMarker, name, summary))
+		out := secondaryTextStyle.Render(activityInset) + successStyle.Render(activityOKMarker) + secondaryTextStyle.Render(" "+activityHeader("", name, summary)[len(activityInset)+1:])
 		if detail != "" {
 			out += "\n" + detail
 		}

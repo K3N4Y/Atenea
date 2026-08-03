@@ -106,6 +106,20 @@ func TestModel_TopBarShowsBranchDirectoryAndContextUsage(t *testing.T) {
 	}
 }
 
+func TestModel_TopBarTreatsBranchAsMetadataNotSuccess(t *testing.T) {
+	forceANSI256Profile(t)
+	m := NewModel(nil, "s1", nil).WithWorkspace("main", "~/dev/atenea")
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 20})
+
+	line := lineWith(t, m.View(), "main")
+	if strings.Contains(line, successStyle.Render("main")) {
+		t.Fatalf("top bar = %q, Git branch is metadata and must not use the success role", line)
+	}
+	if !strings.Contains(line, metadataStyle.Render(branchGlyph+" main")) {
+		t.Fatalf("top bar = %q, Git branch must use the metadata role", line)
+	}
+}
+
 // TestModel_TopBarBranchLeadsWithGlyph verifies that the branch name is
 // preceded by the branch glyph (branchGlyph): an empty glyph would leave the
 // branch bare, so this case anchors that the icon is emitted before the name.
