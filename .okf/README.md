@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-27
+updated_at: 2026-08-02
 summary: Navigation index for Atenea project documentation in the OKF convention.
 ---
 
@@ -82,6 +82,8 @@ The project-wide vocabulary lives in the root [domain glossary](../CONTEXT.md).
 - [OpenAI ChatGPT subscription: device-code OAuth and the codex backend](research/2026-07-27-openai-chatgpt-oauth-device-code.md)
 - [PostHog reasoning levels](research/2026-08-01-posthog-reasoning-levels.md)
 - [Atenea compared with oh-my-pi](research/2026-08-02-oh-my-pi-gap-analysis.md)
+- [Claude Code ultracode and Dynamic Workflows](research/2026-08-02-ultracode-dynamic-workflows.md)
+- [System prompt and competitor tool-contract review](research/2026-08-02-system-prompt-tools-competitor-review.md)
 
 ## Specifications
 
