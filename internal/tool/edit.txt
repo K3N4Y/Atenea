@@ -1,32 +1,40 @@
-Aplica un patch hashline a un archivo EXISTENTE del workspace. Para CREAR un archivo nuevo usa write; edit no crea archivos.
+Apply a hashline patch to an EXISTING workspace file after reading the exact lines to change. Use `write` to create a new file; edit never creates files.
 
-Estructura del patch:
-- Primera linea: el header [path#HASH] que te dio el ultimo read, write o edit. NUNCA inventes el HASH. Si hubo cambios externos, los edits con anclas solo se recuperan cuando cada region original sigue intacta, aparece una sola vez y todas se movieron igual; si no, falla y debes re-leer.
-- Debajo, uno o mas hunks. Cada hunk es una linea de operacion y, si la operacion agrega contenido, las lineas de payload que siguen (cada una con el prefijo "+").
-- Los numeros de linea son los del header que estas anclando (1-indexed, inclusive).
+## Input grammar
+- `patch` starts with the exact `[path#HASH]` header returned by the latest read, write, or edit. NEVER invent the hash.
+- Follow it with one or more operations using the 1-based inclusive line numbers from that snapshot:
+  - `SWAP a.=b:` replaces a range; `SWAP n:` replaces one line.
+  - `DEL a.=b` deletes a range; `DEL n` deletes one line. DEL has no colon or payload.
+  - `INS.PRE n:` / `INS.POST n:` insert before/after one line.
+  - `INS.HEAD:` / `INS.TAIL:` insert at the live start/end.
+- Every added payload line begins with `+`; a new blank line is `+` alone.
+- Ranges MUST use `.=`. SWAP and INS operations MUST end in `:`; DEL MUST NOT.
 
-Operaciones (escribe la linea de operacion EXACTAMENTE con esta forma):
-- SWAP a.=b:   reemplaza las lineas a..b por el payload. Una sola linea: "SWAP n:".
-- DEL a.=b     borra las lineas a..b. Una sola linea: "DEL n". DEL no lleva ":" ni payload.
-- INS.PRE n:   inserta el payload ANTES de la linea n.
-- INS.POST n:  inserta el payload DESPUES de la linea n.
-- INS.HEAD:    inserta el payload al principio del archivo.
-- INS.TAIL:    inserta el payload al final del archivo.
-- Con un HASH anterior reconocido, INS.HEAD/INS.TAIL siguen aplicandose al inicio/final vivo con aviso; un HASH desconocido siempre se rechaza.
-
-Reglas que el patch DEBE cumplir (si no, falla con "operacion malformada"):
-- Un rango se escribe con ".=" entre los dos numeros: "12.=14". No "12=14" ni "12-14".
-- INS.PRE e INS.POST anclan en UNA sola linea (un numero), nunca en un rango.
-- SWAP, INS.PRE, INS.POST, INS.HEAD e INS.TAIL terminan SIEMPRE en ":". Solo DEL no lo lleva.
-- Cada linea de contenido nuevo empieza con "+"; una linea nueva en blanco es un "+" solo.
-
-Tras aplicar los cambios devuelve el nuevo header [path#HASH] para encadenar otro edit sin re-leer, salvo que el snapshot nuevo no pueda retenerse de forma segura por limite o colision de hash. En ese caso confirma el cambio sin header: cambia o reduce el contenido, o inicia una sesion nueva, y despues usa read antes del siguiente edit.
-
-Ejemplo (reemplaza las lineas 12 a 14 y agrega una linea al final):
+## Examples
+- Replace lines 12-14 and append one line:
     [internal/foo.go#a1b2]
     SWAP 12.=14:
     +func Foo() error {
     +	return nil
     +}
     INS.TAIL:
-    +// fin
+    +// end
+
+- Delete one line: `[internal/foo.go#a1b2]\nDEL 7`.
+
+## Recoverable failures
+- Unknown/stale hash or ambiguous moved anchors: re-read the current file and rebuild the patch from the new header and line numbers.
+- Malformed operation: fix the exact grammar (`.=`, required/forbidden colon, single-line INS anchor, and `+` payload prefixes).
+- If a committed change returns sin header because of snapshot limit or colision, do not repeat it: change or reduce the content or start a sesion nueva, then use read before another edit.
+- A committed durability warning means the replacement is already visible: never retry that patch; continue from the returned header or re-read.
+
+## Anti-patterns
+- WRONG: guess a hash or line number from memory. RIGHT: copy them from the latest visible snapshot.
+- WRONG: write `SWAP 12-14` or `DEL 7:`. RIGHT: write `SWAP 12.=14:` or `DEL 7`.
+- WRONG: retry an edit reported as committed. RIGHT: continue from its header or re-read.
+
+<critical>
+- Read before edit and patch only lines actually shown to you.
+- Use the grammar exactly; every payload line starts with `+`.
+- On stale anchors re-read; on committed results never retry.
+</critical>

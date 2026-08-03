@@ -1,1 +1,29 @@
-Use Language Server Protocol (LSP) features through one persistent language server per workspace and language. Operations: diagnostics, definition, references, symbols, and rename. Every call requires a workspace file path. Definition, references, and rename use 1-based line and column; rename also requires new_name. Symbols with an empty query lists document symbols, while a nonempty query searches workspace symbols. Results use jumpable workspace-relative path:line:column locations. Rename validates and applies the server's workspace edit and returns a UI diff; it refuses edits outside the workspace and unsupported file operations. The appropriate installed server is selected from the file extension (gopls, rust-analyzer, typescript-language-server, pyright-langserver, or clangd).
+Use Language Server Protocol features when source semantics matter: diagnostics, symbol navigation, references, definitions, and safe project-aware renames. Prefer `grep` for plain text and `ast` for syntax-shaped matching.
+
+## Input grammar
+- Every call requires `operation` and a workspace source-file `path`; the file extension selects the installed language server.
+- `diagnostics` needs only the path.
+- `definition`, `references`, and `rename` require 1-based `line` and `column`; `rename` also requires nonempty `new_name`.
+- `symbols` with empty `query` lists document symbols; nonempty `query` searches workspace symbols.
+
+## Examples
+- `{"operation":"references","path":"internal/tool/lsp.go","line":76,"column":17}` finds semantic references at a known position.
+- `{"operation":"symbols","path":"internal/tool/lsp.go","query":"LSPTool"}` searches workspace symbols.
+- `{"operation":"rename","path":"internal/tool/lsp.go","line":76,"column":17,"new_name":"Describe"}` applies a server-validated rename and returns a UI diff.
+
+## Recoverable failures
+- Missing server executable: use another installed semantic tool or report the prerequisite; do not retry unchanged.
+- Invalid line/column or no symbol at the position: read the current file, choose the exact 1-based position, and retry.
+- Unsupported file operation or edit outside the workspace during rename: no change is applied; narrow the rename or edit affected files explicitly.
+- Empty results: confirm the path and position, then use grep or ast if the question is textual or structural rather than semantic.
+
+## Anti-patterns
+- WRONG: use `references` with a guessed position. RIGHT: read the file and target the symbol precisely.
+- WRONG: use rename as text replacement. RIGHT: use rename for a language symbol and ast/edit for structural or textual changes.
+- WRONG: workspace-search symbols with an empty query. RIGHT: empty means document symbols; provide a query for workspace search.
+
+<critical>
+- Choose LSP for semantic code questions, not generic text search.
+- Positions are 1-based and must identify real source symbols.
+- Rename mutates files only after server validation; inspect its returned diff.
+</critical>

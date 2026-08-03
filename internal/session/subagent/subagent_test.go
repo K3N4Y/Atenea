@@ -204,6 +204,23 @@ func TestTaskTool_DescriptionListsAvailable(t *testing.T) {
 	}
 }
 
+func TestTaskTool_DescriptionTeachesToolDecisions(t *testing.T) {
+	provider := llm.NewFakeProvider()
+	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	taskTool := NewTaskTool([]agent.Def{{Name: "explorer", Description: "Explores code."}}, provider, children, idCounter())
+
+	description := taskTool.Description()
+	for _, required := range []string{"## Input grammar", "## Examples", "## Recoverable failures", "WRONG:", "RIGHT:", "<critical>", "</critical>", "subagent_type", "self-contained", `{"result":...,"worktree":"..."}`, "narrow the assignment"} {
+		if !strings.Contains(description, required) {
+			t.Errorf("description does not teach %q", required)
+		}
+	}
+	examples := strings.SplitN(strings.SplitN(description, "## Examples\n", 2)[1], "\n## ", 2)[0]
+	if count := strings.Count(examples, "\n-"); count < 2 || count > 4 {
+		t.Errorf("description has %d canonical examples, want 2-4", count)
+	}
+}
+
 // TestTaskTool_ChildUsesToolThenReportsFinalText ejercita el LOOP real multi-turno
 // del hijo: turno 1 pide una echo (el loop continua por la tool local), turno 2 es
 // solo texto "informe final" y cierra. El reporte devuelto es el ULTIMO texto del

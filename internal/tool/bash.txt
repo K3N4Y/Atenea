@@ -1,10 +1,28 @@
-Ejecuta un comando de shell con bash -c y devuelve su salida combinada (stdout + stderr).
+Run real terminal programs through `bash -c` for builds, tests, package managers, git, and short fact-producing pipelines. Use dedicated workspace tools instead for reading, searching, or editing files.
 
-Uso:
-- command es el comando que corre bash -c. El estado (directorio actual, variables, alias) NO persiste entre llamadas: cada call es un proceso fresco. Encadena con && o usa rutas absolutas si necesitas varios pasos.
-- IMPORTANTE: es para operaciones de terminal (git, go, npm, builds, tests). NO lo uses para leer, buscar o editar archivos: usa las tools dedicadas (read, edit, write, glob, grep).
-- Evita find, grep, cat, sed, head, tail y echo para tareas de archivos; prefiere las tools dedicadas.
-- No uses comandos interactivos (editores, pagers, prompts de password): se cuelgan esperando input.
-- Cada comando requiere aprobacion del usuario antes de correr y puede ser denegado. Si lo deniegan, no reintentes el mismo comando: explica que ibas a hacer o propone otra via.
-- Marca slow_ok=true para comandos potencialmente lentos (builds, descargas, instalaciones, tests): usan un timeout extendido.
-- Un exit code distinto de cero no es un fallo de la tool: la salida llega con un marcador [exit N].
+## Input grammar
+- `command` is the complete non-interactive shell command. Each call starts a fresh process in the workspace; cwd, variables, aliases, and shell state do not persist.
+- Set `slow_ok=true` for builds, tests, downloads, and installations that may exceed the short timeout.
+- Chain dependent commands in one `command`; use separate parallel calls for independent commands.
+- Every command requires user approval before execution and may be denied.
+
+## Examples
+- `{"command":"go test ./internal/tool","slow_ok":true}` runs a focused test package.
+- `{"command":"git status --short"}` asks a real CLI for repository state.
+
+## Recoverable failures
+- `[exit N]` means the program exited nonzero, not that the tool malfunctioned: inspect stdout/stderr, correct the command or code, and rerun only when useful.
+- A timeout on legitimate long work: retry with `slow_ok=true`.
+- User denial: do not repeat the same call; explain its purpose or choose a dedicated safe tool.
+- Missing executable or invalid flags: correct the program/arguments from the output; do not conceal the failure.
+
+## Anti-patterns
+- WRONG: use `cat`, `grep`, `find`, `sed`, `head`, `tail`, or `echo` to inspect or mutate workspace files. RIGHT: use read, grep, glob, edit, or write.
+- WRONG: launch an editor, pager, password prompt, or other interactive process. RIGHT: pass non-interactive flags or use a dedicated tool.
+- WRONG: assume `cd` or `export` survives another call. RIGHT: combine dependent steps or use explicit paths.
+
+<critical>
+- Use bash for executing programs, not for file operations covered by dedicated tools.
+- Mark potentially slow commands with `slow_ok=true`.
+- Every command requires approval; treat nonzero exits as evidence to inspect, and never blindly retry a denied call.
+</critical>

@@ -1,7 +1,29 @@
-Search or rewrite source code structurally with ast-grep.
+Use ast-grep to search or rewrite source by syntax shape when text search would produce false matches or miss formatting variants. Use `grep` for literal/regex text and LSP for semantic symbols and references.
 
-Operations:
-- search finds syntax-tree matches rather than text occurrences.
-- rewrite previews replacements by default; set apply=true to modify every proposed match.
+## Input grammar
+- `operation` is `search` or `rewrite`; `path` is a workspace file or directory; `pattern` is ast-grep syntax with metavariables such as `$X` and `$$$ARGS`.
+- `language` is optional when the path extension identifies it.
+- `max_results` limits displayed matches only, not how many a rewrite applies.
+- `rewrite` requires `replacement`; it previews by default. Set `apply=true` only after the preview is correct; applying requires file-write approval.
 
-Patterns use ast-grep metavariables such as $X and $$$ARGS. Path must be a file or directory inside the workspace. Language is optional when ast-grep can infer it from file extensions. max_results limits displayed matches, not the replacements applied. Applying a rewrite requires file-write approval and validates every matched file before mutation. Requires ast-grep (or sg) on PATH.
+## Examples
+- `{"operation":"search","path":"internal","pattern":"fmt.Errorf($MSG, $$$ARGS)","language":"go"}` finds calls by syntax rather than formatting.
+- `{"operation":"rewrite","path":"internal/tool","pattern":"oldName($X)","replacement":"newName($X)","language":"go"}` previews all proposed replacements.
+- `{"operation":"rewrite","path":"internal/tool","pattern":"oldName($X)","replacement":"newName($X)","language":"go","apply":true}` applies the reviewed rewrite.
+
+## Recoverable failures
+- `ast-grep`/`sg` missing: report the prerequisite or use grep/LSP; do not retry unchanged.
+- Language cannot be inferred or pattern fails to parse: provide `language` and correct the pattern grammar.
+- Too many displayed matches: narrow `path` or `pattern`, or raise `max_results`; remember this does not bound applied replacements.
+- Validation or write failure: no proposed rewrite should be trusted; inspect the error, re-search, and preview again before applying.
+
+## Anti-patterns
+- WRONG: use ast for a literal filename or prose search. RIGHT: use glob or grep.
+- WRONG: set `apply=true` on the first broad rewrite. RIGHT: preview, inspect every match, narrow if needed, then apply.
+- WRONG: assume `max_results=10` changes only ten matches. RIGHT: it limits display; narrow the match set before applying.
+
+<critical>
+- Use ast only for structural source matching.
+- Preview every rewrite before `apply=true` and verify the complete match set.
+- `max_results` never limits replacements.
+</critical>

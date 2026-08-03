@@ -1,29 +1,31 @@
-Read a workspace file through `path` and return numbered lines for anchored edits.
+Read a workspace text file once you know the path and lines you need. Use `glob` to find files by name and `grep` to locate content; use `read` to inspect the resulting file. You SHOULD parallelize independent reads.
 
-<instruction>
-- You SHOULD parallelize independent reads.
-- Use glob to find files by name and grep to find content; use read once you know which file and range you need.
-- Prefer one broad range over many small reads.
-</instruction>
+## Input grammar
+- `path` is a workspace-relative file path.
+- Append `:N` for one line or `:N-M` for an inclusive 1-indexed range, for example `src/foo.go:50-200`.
+- With no selector, read returns at most 2,000 lines and about 30 KiB. A truncation notice names the next selector to use.
+- File names containing `:` are unsupported because the final colon starts the selector.
 
-<conditions>
-- `path` names a local text file inside the workspace.
-- Append a supported selector when only part of the file is needed.
-- File names containing `:` are not supported because the final colon starts the selector.
-</conditions>
+## Examples
+- `{"path":"internal/tool/read.go:50-90"}` reads the relevant implementation section.
+- `{"path":"go.mod"}` reads a known small file from the start.
 
-## Selectors — append `:<sel>` to `path` (for example `src/foo.go:50-200`)
-- `:50` reads line 50; `:50-200` reads an inclusive range. Lines are 1-indexed.
-- With no selector, read returns at most 2,000 lines and about 30 KiB from the start of the file.
-- A truncated result ends with `[N more lines in file. Use :M to continue]`; re-read using the named selector.
+## Recoverable failures
+- A missing or invalid path: correct it using `glob` or `grep`, then call `read` again.
+- A truncated result: continue with the selector named in the notice.
+- A snapshot rejected because of a limit or collision returns without a header: change or reduce the content or start a new session, then use read again before editing.
+- A binary, directory, URL, archive, database, document, image, or internal URI: use its dedicated tool; read only supports local workspace text files.
+
+## Anti-patterns
+- WRONG: read a guessed file or repeatedly read tiny adjacent ranges. RIGHT: locate it first, then request one broad relevant range.
+- WRONG: infer lines hidden by a selector or truncation. RIGHT: read the omitted range.
+- WRONG: fabricate a `[path#HASH]`. RIGHT: copy the exact header returned by read into `edit`.
 
 ## Output
-- Text output starts with a `[path#HASH]` snapshot header followed by `LINE:TEXT` lines.
-- Copy the exact `[path#HASH]` header into edit patches. The hash identifies the content you read; NEVER fabricate the hash.
-- If the snapshot cannot be retained safely because of a limit or collision, read returns a notice without a header. Change or reduce the content or start a new session, then use read again before editing.
-- Files containing NUL bytes are treated as binary and cannot be read or edited through this tool.
+Text output starts with a `[path#HASH]` snapshot header followed by `LINE:TEXT` lines. The hash identifies the content you read. Files containing NUL bytes are treated as binary and do not produce editable snapshots.
 
 <critical>
-- A selector exposes only the requested lines. NEVER guess omitted content; read another range when needed.
-- Read does not support directories, URLs, archives, databases, documents, images, or internal URIs; use the tool dedicated to that source when available.
+- Use glob/grep to locate, read to inspect, and edit to change.
+- A selector exposes only requested lines; NEVER guess omitted content.
+- NEVER fabricate the hash. Without a header, read again successfully before editing.
 </critical>
