@@ -239,6 +239,38 @@ func formatThinkingDuration(d time.Duration) string {
 	return d.Round(time.Second).String()
 }
 
+func searchToolSummary(e entry, pattern string) string {
+	if e.status != toolOK {
+		return pattern
+	}
+	if e.tool == "grep" {
+		var count int
+		if _, err := fmt.Sscanf(e.output, "Found %d matches", &count); err == nil && count > 0 {
+			if strings.Contains(e.output, "(more matches available)") {
+				return pattern + " (100+)"
+			}
+			return pattern + " (" + strconv.Itoa(count) + ")"
+		}
+		return pattern + " (no results)"
+	}
+	if strings.HasPrefix(strings.TrimSpace(e.output), "No files found") {
+		return pattern + " (no results)"
+	}
+	count := 0
+	for _, line := range strings.Split(strings.TrimSpace(e.output), "\n") {
+		if line != "" && !strings.HasPrefix(line, "[") {
+			count++
+		}
+	}
+	if count == 0 {
+		return pattern + " (no results)"
+	}
+	if count > 100 {
+		return pattern + " (100+)"
+	}
+	return pattern + " (" + strconv.Itoa(count) + ")"
+}
+
 func (e entry) renderTool(p tool.Presentation, width int) string {
 	if e.status == toolOK && e.diff != "" {
 		card := ""
@@ -253,6 +285,9 @@ func (e entry) renderTool(p tool.Presentation, width int) string {
 		}
 	}
 	showDetail := !p.HidesOutput
+	if e.tool == "grep" || e.tool == "glob" {
+		return e.renderActivity(activityLabel(p, e), searchToolSummary(e, p.Subject), false)
+	}
 	if e.tool == "task" {
 		block := e.renderActivity(activityLabel(p, e), displaySubject(p.Subject), false)
 		if e.status == toolOK {

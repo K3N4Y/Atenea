@@ -2550,6 +2550,30 @@ func TestModel_RendersActivityMarkersThroughToolLifecycle(t *testing.T) {
 	}
 }
 
+func TestModel_SearchToolsSummarizePatternAndResultCount(t *testing.T) {
+	tests := []struct {
+		name, tool, output, want string
+	}{
+		{name: "grep results", tool: "grep", output: "Found 3 matches\nresult", want: "  ✓ Grep     */*.md (3)"},
+		{name: "grep no results", tool: "grep", output: "No files found", want: "  ✓ Grep     */*.md (no results)"},
+		{name: "grep truncated", tool: "grep", output: "Found 100 matches (more matches available)\nresult", want: "  ✓ Grep     */*.md (100+)"},
+		{name: "glob results", tool: "glob", output: "a.md\nb.md", want: "  ✓ Glob     */*.md (2)"},
+		{name: "glob no results", tool: "glob", output: "No files found", want: "  ✓ Glob     */*.md (no results)"},
+		{name: "glob over 100 results", tool: "glob", output: strings.Repeat("file.md\n", 101), want: "  ✓ Glob     */*.md (100+)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewModel(&fakeAgent{}, "s1", nil)
+			m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: tt.tool, Input: json.RawMessage(`{"pattern":"*/*.md"}`)})
+			m = apply(t, m, EventMsg{Kind: session.KindToolSuccess, CallID: "c1", ToolName: tt.tool, Text: tt.output})
+			plain := ansi.Strip(m.View())
+			if !strings.Contains(plain, tt.want) {
+				t.Fatalf("View() = %q, want %q", plain, tt.want)
+			}
+		})
+	}
+}
+
 // Compact grouping contract: adjacent activity entries (tools, permissions, step errors) are joined WITHOUT a blank line between them (separator "\n"), while the assistant narrative retains its own paragraph ("\n\n") and breaks the group: two consecutive tools remain on physically contiguous lines and the narrative is surrounded by blank lines.
 func TestModel_GroupsAdjacentActivityEntriesWithoutBlankLine(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil)
