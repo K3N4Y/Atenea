@@ -48,7 +48,14 @@ type Capabilities struct {
 
 	// PromptCaching is how, if at all, the adapter gets its endpoint to cache the
 	// prompt — which is what decides whether Request.SessionKey buys anything.
+	// For catalogs serving multiple model families, use PromptCachingModels to
+	// avoid turning a per-model fact into an unsafe global claim.
 	PromptCaching PromptCaching
+
+	// PromptCachingModels records model-specific caching behavior when
+	// PromptCaching cannot honestly describe every model in the catalog. An
+	// absent model is unknown, not uncached.
+	PromptCachingModels map[string]PromptCaching
 
 	// RetryTelemetry: the adapter reports its transient retries as StepRetrying.
 	// False means a pause in the stream is a retry the host cannot see and must

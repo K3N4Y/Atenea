@@ -1,7 +1,6 @@
 package llm
 
 import contract "github.com/K3N4Y/atenea/agentcore/llm"
-import "strings"
 
 // What each adapter shipped here declares about itself, and the context windows
 // of the models it serves.
@@ -114,16 +113,25 @@ var anthropicCapabilities = Capabilities{
 	ContextWindows:         anthropicWindows,
 }
 
-// posthogCapabilities is the gateway's catalog-wide behavior. Reasoning is
-// intentionally represented per model: Claude uses the Anthropic adapter and
-// GPT uses Responses with a requested summary.
+// posthogCapabilities is the gateway's catalog-wide behavior. Reasoning and
+// prompt caching are intentionally represented per model: Claude uses the
+// Anthropic adapter (cache_control on every request, SessionKey buys nothing)
+// and GPT uses Responses (prompt_cache_key carries Request.SessionKey).
 var posthogCapabilities = Capabilities{
 	Streaming:              true,
 	Tools:                  true,
-	PromptCaching:          ImplicitPromptCaching,
 	RetryTelemetry:         false,
 	DefaultMaxOutputTokens: defaultAnthropicMaxOutputTokens,
 	ContextWindows:         posthogWindows,
+}
+
+// posthogClaudeCapabilities is what the gateway's anthropic-messages instance
+// declares. Serving one family makes the flat claim honest again: cache_control
+// goes on every request, so Request.SessionKey buys nothing here.
+func posthogClaudeCapabilities() Capabilities {
+	caps := posthogCapabilities
+	caps.PromptCaching = ImplicitPromptCaching
+	return caps
 }
 
 func posthogCapabilitiesFor(models ...string) Capabilities {
@@ -132,11 +140,14 @@ func posthogCapabilitiesFor(models ...string) Capabilities {
 		return caps
 	}
 	caps.ReasoningModels = make(map[string]bool, len(models))
+	caps.PromptCachingModels = make(map[string]PromptCaching, len(models))
 	for _, model := range models {
-		if strings.HasPrefix(model, "gpt-") {
+		if posthogResponsesModel(model) {
 			caps.ReasoningModels[model] = true
-		} else if strings.HasPrefix(model, "claude-") {
+			caps.PromptCachingModels[model] = KeyedPromptCaching
+		} else if posthogAnthropicModel(model) {
 			caps.ReasoningModels[model] = false
+			caps.PromptCachingModels[model] = ImplicitPromptCaching
 		}
 	}
 	return caps

@@ -254,5 +254,8 @@ func TestPosthogCapabilitiesMatchModelAwareDescription(t *testing.T) {
 		if built.Reasoning != described.ReasoningModels[model] {
 			t.Errorf("%s Reasoning = %v, want model-aware description %v", name, built.Reasoning, described.ReasoningModels[model])
 		}
+		if built.PromptCaching != described.PromptCachingModels[model] {
+			t.Errorf("%s PromptCaching = %v, want model-aware description %v", name, built.PromptCaching, described.PromptCachingModels[model])
+		}
 	}
 }

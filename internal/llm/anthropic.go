@@ -60,7 +60,7 @@ func NewAnthropicOAuthProvider(tokens OAuthTokenSource, baseURL, model string) *
 		client:       anthropic.NewClient(opts...),
 		model:        model,
 		tokens:       tokens,
-		capabilities: posthogCapabilities,
+		capabilities: posthogClaudeCapabilities(),
 		label:        "PostHog",
 		posthog:      true,
 	}
