@@ -2762,8 +2762,11 @@ func TestEngine_RequestCompactionDuringShutdownReleasesCompactingSlot(t *testing
 // selectionModelService is a ModelService whose selection the test moves, to
 // exercise what the engine asks it per turn rather than at assembly time.
 type selectionModelService struct {
-	mu     sync.Mutex
-	active providerconfig.Active
+	mu          sync.Mutex
+	active      providerconfig.Active
+	effort      llm.ReasoningEffort
+	prefError   error
+	selectError error
 }
 
 func (s *selectionModelService) Active() providerconfig.Active {
@@ -2781,7 +2784,69 @@ func (s *selectionModelService) Refresh(context.Context) ([]providerconfig.Provi
 	return nil, nil
 }
 func (s *selectionModelService) Select(_ context.Context, providerID, model string) (providerconfig.Active, error) {
+	if s.selectError != nil {
+		return s.Active(), s.selectError
+	}
 	return s.Active(), nil
+}
+func (s *selectionModelService) ReasoningEffort() llm.ReasoningEffort {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.effort
+}
+func (s *selectionModelService) SetReasoningEffort(effort llm.ReasoningEffort) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.prefError != nil {
+		return s.prefError
+	}
+	s.effort = effort
+	return nil
+}
+
+func TestEngine_ReasoningEffortLoadsPersistsAndResetsForSelectedModel(t *testing.T) {
+	service := &selectionModelService{effort: llm.ReasoningEffortHigh}
+	engine := New(Config{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore(), Models: service})
+	defer engine.Shutdown(context.Background())
+	if got := engine.ReasoningEffort(); got != llm.ReasoningEffortHigh {
+		t.Fatalf("initial reasoning effort = %q, want high", got)
+	}
+	if err := engine.SetReasoningEffort(llm.ReasoningEffortLow); err != nil {
+		t.Fatal(err)
+	}
+	if got := service.ReasoningEffort(); got != llm.ReasoningEffortLow {
+		t.Fatalf("persisted reasoning effort = %q, want low", got)
+	}
+	if _, err := engine.SelectModel("p", "m"); err != nil {
+		t.Fatal(err)
+	}
+	if got := engine.ReasoningEffort(); got != "" {
+		t.Fatalf("reasoning effort after selecting model = %q, want provider default", got)
+	}
+}
+
+func TestEngine_ReasoningPersistenceFailureKeepsActivePreference(t *testing.T) {
+	service := &selectionModelService{effort: llm.ReasoningEffortHigh, prefError: errors.New("disk full")}
+	engine := New(Config{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore(), Models: service})
+	defer engine.Shutdown(context.Background())
+	if err := engine.SetReasoningEffort(llm.ReasoningEffortLow); err == nil {
+		t.Fatal("expected persistence error")
+	}
+	if got := engine.ReasoningEffort(); got != llm.ReasoningEffortHigh {
+		t.Fatalf("reasoning effort = %q, want previous high", got)
+	}
+}
+
+func TestEngine_ModelSelectionFailureKeepsActiveReasoningPreference(t *testing.T) {
+	service := &selectionModelService{effort: llm.ReasoningEffortHigh, selectError: errors.New("disk full")}
+	engine := New(Config{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore(), Models: service})
+	defer engine.Shutdown(context.Background())
+	if _, err := engine.SelectModel("p", "m"); err == nil {
+		t.Fatal("expected selection error")
+	}
+	if got := engine.ReasoningEffort(); got != llm.ReasoningEffortHigh {
+		t.Fatalf("reasoning effort = %q, want previous high", got)
+	}
 }
 
 // systemRecordingProvider captures the system prompt of every turn it serves.

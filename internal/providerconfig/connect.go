@@ -151,10 +151,10 @@ func (s *Service) Connect(ctx context.Context, providerID, apiKey string) (Activ
 	// resolves the credential, and resolution is what must not happen under s.mu.
 	switch {
 	case selected.Provider == providerID:
-		return s.applySelection(ctx, providerID, selected.Model)
+		return s.applySelection(ctx, providerID, selected.Model, false)
 	case selected.Provider == "":
 		if len(provider.Models) > 0 {
-			return s.applySelection(ctx, providerID, provider.Models[0])
+			return s.applySelection(ctx, providerID, provider.Models[0], true)
 		}
 	}
 	return s.Active(), nil

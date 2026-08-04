@@ -289,7 +289,7 @@ func TestService_ConnectRejectsInvalidKeyWithoutPersisting(t *testing.T) {
 func TestService_ConnectRotatesKeyOfSelectedProviderLive(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "providers.json")
-	config := `{"providers":[{"id":"openrouter","name":"OpenRouter","type":"openai-compatible","base_url":"https://openrouter.ai/api/v1","api_key_env":"OPENROUTER_API_KEY","models":["m"]}],"selected":{"provider":"openrouter","model":"m"}}`
+	config := `{"providers":[{"id":"openrouter","name":"OpenRouter","type":"openai-compatible","base_url":"https://openrouter.ai/api/v1","api_key_env":"OPENROUTER_API_KEY","models":["m"]}],"selected":{"provider":"openrouter","model":"m","reasoning_effort":"high"}}`
 	if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -317,6 +317,9 @@ func TestService_ConnectRotatesKeyOfSelectedProviderLive(t *testing.T) {
 	}
 	if len(keys) != 2 || keys[1] != "sk-or-rotated" {
 		t.Fatalf("factory keys = %#v, want the live provider rebuilt with the rotated key", keys)
+	}
+	if got := s.ReasoningEffort(); got != llm.ReasoningEffortHigh {
+		t.Fatalf("reasoning effort after credential rotation = %q, want high", got)
 	}
 }
 
@@ -440,7 +443,7 @@ func TestService_ConnectRejectsUnsupportedProviderAndEmptyKey(t *testing.T) {
 
 func TestService_SelectSaveFailureKeepsPreviousSelection(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "providers.json")
-	if err := os.WriteFile(path, []byte(`{"providers":[{"id":"p","name":"Provider","type":"openai-compatible","base_url":"http://p","models":["one","two"]}],"selected":{"provider":"p","model":"one"}}`), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"providers":[{"id":"p","name":"Provider","type":"openai-compatible","base_url":"http://p","models":["one","two"]}],"selected":{"provider":"p","model":"one","reasoning_effort":"high"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	s, err := Open(context.Background(), path, "", fallbackSnapshot(), os.Getenv, inertRegistry(), func(string, Config) error { return errors.New("disk full") }, nil, nil)
@@ -455,6 +458,63 @@ func TestService_SelectSaveFailureKeepsPreviousSelection(t *testing.T) {
 	}
 	if got := s.Provider().Acquire().Model; got != "one" {
 		t.Fatalf("snapshot model = %q", got)
+	}
+	if got := s.ReasoningEffort(); got != llm.ReasoningEffortHigh {
+		t.Fatalf("reasoning effort = %q, want previous high", got)
+	}
+}
+
+func TestService_ReasoningEffortPersistsAndModelSelectionResetsIt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "providers.json")
+	if err := os.WriteFile(path, []byte(`{"providers":[{"id":"p","name":"Provider","type":"openai-compatible","base_url":"http://p","models":["one","two"]}],"selected":{"provider":"p","model":"one","reasoning_effort":"high"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(context.Background(), path, "", fallbackSnapshot(), os.Getenv, inertRegistry(), nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.ReasoningEffort(); got != llm.ReasoningEffortHigh {
+		t.Fatalf("reasoning effort = %q, want high", got)
+	}
+	if err := s.SetReasoningEffort(llm.ReasoningEffortLow); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(context.Background(), path, "", fallbackSnapshot(), os.Getenv, inertRegistry(), nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := reopened.ReasoningEffort(); got != llm.ReasoningEffortLow {
+		t.Fatalf("reopened reasoning effort = %q, want low", got)
+	}
+	if _, err := reopened.Select(context.Background(), "p", "two"); err != nil {
+		t.Fatal(err)
+	}
+	if got := reopened.ReasoningEffort(); got != "" {
+		t.Fatalf("reasoning effort after model selection = %q, want provider default", got)
+	}
+	persisted, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Selected.Model != "two" || persisted.Selected.ReasoningEffort != "" {
+		t.Fatalf("persisted selection = %#v, want model two with default reasoning", persisted.Selected)
+	}
+}
+
+func TestService_SetReasoningEffortSaveFailureKeepsPreviousPreference(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "providers.json")
+	if err := os.WriteFile(path, []byte(`{"providers":[{"id":"p","name":"Provider","type":"openai-compatible","base_url":"http://p","models":["one"]}],"selected":{"provider":"p","model":"one","reasoning_effort":"high"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(context.Background(), path, "", fallbackSnapshot(), os.Getenv, inertRegistry(), func(string, Config) error { return errors.New("disk full") }, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetReasoningEffort(llm.ReasoningEffortLow); err == nil {
+		t.Fatal("expected save error")
+	}
+	if got := s.ReasoningEffort(); got != llm.ReasoningEffortHigh {
+		t.Fatalf("reasoning effort = %q, want previous high", got)
 	}
 }
 

@@ -86,6 +86,11 @@ type RoleModelService interface {
 	ResolveModel(context.Context, string) (llm.Provider, error)
 }
 
+type SelectionPreferences interface {
+	ReasoningEffort() llm.ReasoningEffort
+	SetReasoningEffort(llm.ReasoningEffort) error
+}
+
 type ModelsRefreshedMsg struct {
 	Providers []providerconfig.ProviderModels
 	Err       string
@@ -212,6 +217,11 @@ func New(cfg Config) *Engine {
 	e.store = event.NewEmittingStore(cfg.Store, bus)
 	e.checkpoints = cfg.Checkpoints
 	e.models = cfg.Models
+	if preferences, ok := cfg.Models.(SelectionPreferences); ok {
+		if err := e.reasoning.Set(preferences.ReasoningEffort()); err != nil {
+			log.Printf("atenea: could not load reasoning effort: %v", err)
+		}
+	}
 	e.mcp = mcpclient.NewManagerWithRuntime(cfg.Root, cfg.Identity, cfg.Provider, func() string {
 		if cfg.Models == nil {
 			return ""
@@ -363,7 +373,14 @@ func (e *Engine) SelectModel(providerID, model string) (providerconfig.Active, e
 	if e.models == nil {
 		return providerconfig.Active{}, errors.New("model selection is unavailable")
 	}
-	return e.models.Select(context.Background(), providerID, model)
+	active, err := e.models.Select(context.Background(), providerID, model)
+	if err != nil {
+		return active, err
+	}
+	if err := e.reasoning.Set(""); err != nil {
+		return active, err
+	}
+	return active, nil
 }
 
 func (e *Engine) ReasoningEffort() llm.ReasoningEffort {
@@ -371,6 +388,11 @@ func (e *Engine) ReasoningEffort() llm.ReasoningEffort {
 }
 
 func (e *Engine) SetReasoningEffort(effort llm.ReasoningEffort) error {
+	if preferences, ok := e.models.(SelectionPreferences); ok {
+		if err := preferences.SetReasoningEffort(effort); err != nil {
+			return err
+		}
+	}
 	return e.reasoning.Set(effort)
 }
 

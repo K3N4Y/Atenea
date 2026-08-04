@@ -118,10 +118,11 @@ func TestLoad_KeepsProviderWhoseTypeThisBuildCannotSpeak(t *testing.T) {
 
 func TestLoad_RejectsInvalidConfigurations(t *testing.T) {
 	tests := map[string]string{
-		"duplicate provider": `{"providers":[{"id":"x","name":"X","type":"openai-compatible","base_url":"http://one"},{"id":"x","name":"Y","type":"openai-compatible","base_url":"http://two"}]}`,
-		"unknown selection":  `{"providers":[{"id":"x","name":"X","type":"openai-compatible","base_url":"http://one"}],"selected":{"provider":"missing","model":"m"}}`,
-		"missing type":       `{"providers":[{"id":"x","name":"X","base_url":"http://one"}]}`,
-		"secret value":       `{"providers":[{"id":"x","name":"X","type":"openai-compatible","base_url":"http://one","api_key":"secret"}]}`,
+		"duplicate provider":           `{"providers":[{"id":"x","name":"X","type":"openai-compatible","base_url":"http://one"},{"id":"x","name":"Y","type":"openai-compatible","base_url":"http://two"}]}`,
+		"unknown selection":            `{"providers":[{"id":"x","name":"X","type":"openai-compatible","base_url":"http://one"}],"selected":{"provider":"missing","model":"m"}}`,
+		"unsupported reasoning effort": `{"providers":[{"id":"x","name":"X","type":"openai-compatible","base_url":"http://one"}],"selected":{"provider":"x","model":"m","reasoning_effort":"turbo"}}`,
+		"missing type":                 `{"providers":[{"id":"x","name":"X","base_url":"http://one"}]}`,
+		"secret value":                 `{"providers":[{"id":"x","name":"X","type":"openai-compatible","base_url":"http://one","api_key":"secret"}]}`,
 	}
 	for name, body := range tests {
 		t.Run(name, func(t *testing.T) {

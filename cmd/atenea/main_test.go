@@ -344,17 +344,39 @@ func TestTUI_ModelSelectorPersistsSelectionUnderPTY(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command(binary)
-	cmd.Dir = t.TempDir()
-	cmd.Env = append(append(os.Environ(), blankProviderKeys()...), "XDG_CONFIG_HOME="+configRoot, "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
-	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 24})
-	if err != nil {
+	workdir := t.TempDir()
+	database := filepath.Join(t.TempDir(), "atenea.db")
+	checkpoints := filepath.Join(t.TempDir(), "checkpoints")
+	start := func() (*exec.Cmd, *os.File, *lockedBuffer) {
+		cmd := exec.Command(binary)
+		cmd.Dir = workdir
+		cmd.Env = append(append(os.Environ(), blankProviderKeys()...), "XDG_CONFIG_HOME="+configRoot, "ATENEA_DB="+database, "ATENEA_CHECKPOINTS="+checkpoints)
+		terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 24})
+		if err != nil {
+			t.Fatal(err)
+		}
+		output := &lockedBuffer{}
+		copyPTYAnsweringTerminalQueries(terminal, output)
+		return cmd, terminal, output
+	}
+
+	firstCmd, firstTerminal, firstOutput := start()
+	waitForPTYText(t, firstOutput, " old ─╯")
+	if _, err := firstTerminal.Write([]byte("/reasoning:high\r")); err != nil {
 		t.Fatal(err)
 	}
+	waitForPTYText(t, firstOutput, " old(high) ─╯")
+	if _, err := firstTerminal.Write([]byte("\x03")); err != nil {
+		t.Fatal(err)
+	}
+	if err := firstCmd.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	_ = firstTerminal.Close()
+
+	cmd, terminal, output := start()
 	defer stopPTYProcess(cmd, terminal)
-	output := &lockedBuffer{}
-	copyPTYAnsweringTerminalQueries(terminal, output)
-	waitForPTYText(t, output, " old ─╯")
+	waitForPTYText(t, output, " old(high) ─╯")
 	if _, err := terminal.Write([]byte("/")); err != nil {
 		t.Fatal(err)
 	}
@@ -372,8 +394,8 @@ func TestTUI_ModelSelectorPersistsSelectionUnderPTY(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(persisted), `"model": "new"`) {
-		t.Fatalf("selection was not persisted:\n%s", persisted)
+	if !strings.Contains(string(persisted), `"model": "new"`) || strings.Contains(string(persisted), "reasoning_effort") {
+		t.Fatalf("model selection and default effort were not persisted:\n%s", persisted)
 	}
 }
 

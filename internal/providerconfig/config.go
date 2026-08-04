@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/paths"
 )
 
@@ -44,8 +45,9 @@ type Provider struct {
 }
 
 type Selection struct {
-	Provider string `json:"provider"`
-	Model    string `json:"model"`
+	Provider        string              `json:"provider"`
+	Model           string              `json:"model"`
+	ReasoningEffort llm.ReasoningEffort `json:"reasoning_effort,omitempty"`
 }
 
 type Config struct {
@@ -155,6 +157,9 @@ func normalizeAndValidate(cfg *Config) error {
 	}
 	cfg.Selected.Provider = strings.TrimSpace(cfg.Selected.Provider)
 	cfg.Selected.Model = strings.TrimSpace(cfg.Selected.Model)
+	if err := validateReasoningEffort(cfg.Selected.ReasoningEffort); err != nil {
+		return err
+	}
 	if (cfg.Selected.Provider == "") != (cfg.Selected.Model == "") {
 		return errors.New("selected provider and model must both be set")
 	}
@@ -164,6 +169,15 @@ func normalizeAndValidate(cfg *Config) error {
 		}
 	}
 	return nil
+}
+
+func validateReasoningEffort(effort llm.ReasoningEffort) error {
+	switch effort {
+	case "", llm.ReasoningEffortMinimal, llm.ReasoningEffortLow, llm.ReasoningEffortMedium, llm.ReasoningEffortHigh, llm.ReasoningEffortXHigh, llm.ReasoningEffortMax:
+		return nil
+	default:
+		return fmt.Errorf("unsupported selected reasoning effort %q", effort)
+	}
 }
 
 // validateBaseURL rejects a base URL no adapter could reach. It runs when a user

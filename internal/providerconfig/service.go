@@ -126,6 +126,23 @@ func Open(ctx context.Context, path, cachePath string, fallback llm.ProviderSnap
 	s.switcher.Swap(snapshot(provider, cfg.Selected.Model, delegate))
 	return s, nil
 }
+func (s *Service) ReasoningEffort() llm.ReasoningEffort {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.config.Selected.ReasoningEffort
+}
+
+func (s *Service) SetReasoningEffort(effort llm.ReasoningEffort) error {
+	if err := validateReasoningEffort(effort); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := s.config
+	next.Providers = append([]Provider(nil), s.config.Providers...)
+	next.Selected.ReasoningEffort = effort
+	return s.publishLocked(next)
+}
 
 func mergeMissingProviders(cfg, defaults Config) Config {
 	seen := providerIDs(cfg.Providers)
@@ -237,7 +254,7 @@ func (s *Service) Select(ctx context.Context, providerID, model string) (Active,
 	if model == "" {
 		return s.Active(), errors.New("model is required")
 	}
-	return s.applySelection(ctx, providerID, model)
+	return s.applySelection(ctx, providerID, model, true)
 }
 
 // Declare adds or replaces a provider the user declared themselves — a local
@@ -329,7 +346,7 @@ func (s *Service) newCatalog(cfg Config) *Catalog {
 // runs a command, and holding the write lock for its timeout would freeze every
 // reader — the model picker, the composer footer, the running turn's view of
 // what it is talking to. Connect validates outside the lock for the same reason.
-func (s *Service) applySelection(ctx context.Context, providerID, model string) (Active, error) {
+func (s *Service) applySelection(ctx context.Context, providerID, model string, resetReasoning bool) (Active, error) {
 	s.mu.RLock()
 	provider, ok := findProvider(s.config, providerID)
 	s.mu.RUnlock()
@@ -342,13 +359,13 @@ func (s *Service) applySelection(ctx context.Context, providerID, model string) 
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.selectLocked(providerID, model, apiKey)
+	return s.selectLocked(providerID, model, apiKey, resetReasoning)
 }
 
 // selectLocked applies a provider/model selection with an already-resolved key;
 // the caller holds s.mu. It re-reads the provider under the lock because the
 // configuration may have changed while the credential was resolving.
-func (s *Service) selectLocked(providerID, model, apiKey string) (Active, error) {
+func (s *Service) selectLocked(providerID, model, apiKey string, resetReasoning bool) (Active, error) {
 	provider, ok := findProvider(s.config, providerID)
 	if !ok {
 		return s.activeLocked(), fmt.Errorf("provider %q is not configured", providerID)
@@ -359,7 +376,10 @@ func (s *Service) selectLocked(providerID, model, apiKey string) (Active, error)
 	}
 	next := s.config
 	next.Providers = append([]Provider(nil), s.config.Providers...)
-	next.Selected = Selection{Provider: providerID, Model: model}
+	next.Selected = Selection{Provider: providerID, Model: model, ReasoningEffort: s.config.Selected.ReasoningEffort}
+	if resetReasoning {
+		next.Selected.ReasoningEffort = ""
+	}
 	if err := s.publishLocked(next); err != nil {
 		return s.activeLocked(), err
 	}
