@@ -18,10 +18,10 @@ const (
 	DeliverySteer                 // direccionamiento aceptado durante la actividad
 )
 
-// Prompt es el texto que el usuario admite en el inbox. M6 lleva solo Text; las
-// partes ricas (adjuntos, referencias) llegan cuando la UI las necesite.
+// Prompt is user content admitted into the inbox.
 type Prompt struct {
-	Text string
+	Text   string
+	Images []Image
 }
 
 // Inbox es el input durable de la sesion. Admit no bloquea y es durable; el loop
@@ -58,9 +58,15 @@ func NewMemoryInbox() *MemoryInbox {
 // var _ Inbox = (*MemoryInbox)(nil) asegura en compilacion que cumple la interface.
 var _ Inbox = (*MemoryInbox)(nil)
 
+func clonePrompt(prompt Prompt) Prompt {
+	prompt.Images = cloneImages(prompt.Images)
+	return prompt
+}
+
 func (in *MemoryInbox) Admit(ctx context.Context, sessionID string, p Prompt, d Delivery) error {
 	in.mu.Lock()
 	defer in.mu.Unlock()
+	p = clonePrompt(p)
 	switch d {
 	case DeliveryQueue:
 		in.queue[sessionID] = append(in.queue[sessionID], p)
@@ -91,7 +97,7 @@ func (in *MemoryInbox) Promote(ctx context.Context, sessionID string, d Delivery
 		if len(q) == 0 {
 			return nil, nil
 		}
-		next := q[0]
+		next := clonePrompt(q[0])
 		in.queue[sessionID] = q[1:]
 		return []Prompt{next}, nil
 	case DeliverySteer:
@@ -100,7 +106,11 @@ func (in *MemoryInbox) Promote(ctx context.Context, sessionID string, d Delivery
 			return nil, nil
 		}
 		in.steer[sessionID] = nil
-		return s, nil
+		out := make([]Prompt, len(s))
+		for i := range s {
+			out[i] = clonePrompt(s[i])
+		}
+		return out, nil
 	}
 	return nil, nil
 }

@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -456,19 +457,22 @@ func reasoningText(delta openai.ChatCompletionChunkChoiceDelta) string {
 	return ""
 }
 
-// toOpenAIMessages projects the history into the SDK's format, by Role. An
-// assistant carries its optional text plus the tool_calls (id, function.name and
-// function.arguments as raw JSON) the API requires for the multi-step round trip;
-// role "tool" becomes a tool result with its tool_call_id, which has to match the
-// id of the assistant's call. An unknown Role is treated as user, defensively:
-// the model always receives something valid.
-//
-// This dialect carries text content only, so a message with a part of any other
-// kind fails the whole request rather than losing the part: an unspoken drop puts
-// a conversation with a hole in it in front of the model.
+// toOpenAIMessages projects history into the SDK format. User messages may
+// carry ordered text and image parts; images use data URLs because the shared
+// contract owns bytes rather than externally hosted URLs. Other roles remain
+// text-only, and every unknown part is rejected before a request is started.
 func toOpenAIMessages(msgs []Message) ([]openai.ChatCompletionMessageParamUnion, error) {
 	out := make([]openai.ChatCompletionMessageParamUnion, 0, len(msgs))
 	for _, m := range msgs {
+		if m.Role == "user" {
+			user, err := toOpenAIUserMessage(m)
+			if err != nil {
+				return nil, fmt.Errorf("openai: %w", err)
+			}
+			out = append(out, user)
+			continue
+		}
+
 		text, err := m.TextOnly()
 		if err != nil {
 			return nil, fmt.Errorf("openai: %w", err)
@@ -486,6 +490,35 @@ func toOpenAIMessages(msgs []Message) ([]openai.ChatCompletionMessageParamUnion,
 		}
 	}
 	return out, nil
+}
+
+func toOpenAIUserMessage(message Message) (openai.ChatCompletionMessageParamUnion, error) {
+	hasImage := false
+	for _, part := range message.Parts {
+		switch part.Kind {
+		case TextPart:
+		case ImagePart:
+			hasImage = true
+		default:
+			return openai.ChatCompletionMessageParamUnion{}, &UnsupportedPartError{Kind: part.Kind}
+		}
+	}
+	if !hasImage {
+		text, _ := message.TextOnly()
+		return openai.UserMessage(text), nil
+	}
+
+	content := make([]openai.ChatCompletionContentPartUnionParam, 0, len(message.Parts))
+	for _, part := range message.Parts {
+		switch part.Kind {
+		case TextPart:
+			content = append(content, openai.TextContentPart(part.Text))
+		case ImagePart:
+			dataURL := "data:" + part.MediaType + ";base64," + base64.StdEncoding.EncodeToString(part.Data)
+			content = append(content, openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{URL: dataURL}))
+		}
+	}
+	return openai.UserMessage(content), nil
 }
 
 // toAssistantMessage projects an assistant Message into the SDK's param: the

@@ -236,7 +236,7 @@ func execute(env Env, t turn) int {
 		turnMu  sync.Mutex
 		turnErr error
 	)
-	handle, err := h.Agent.Send(sessionID, t.prompt, agent.Hooks{
+	handle, err := h.Agent.Send(sessionID, session.Prompt{Text: t.prompt}, agent.Hooks{
 		BeforeAdmit: func() error { return recordWorkspace(ctx, store, sessionID, h.Root) },
 		AfterRun: func(r agent.RunResult) {
 			turnMu.Lock()

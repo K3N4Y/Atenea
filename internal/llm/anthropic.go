@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -313,14 +314,22 @@ func isAnthropicContextOverflow(err error) bool {
 	return strings.Contains(message, "prompt is too long") || strings.Contains(message, "context window")
 }
 
-// toAnthropicMessages projects the history into Anthropic's content blocks. This
-// adapter speaks text and tool blocks only, so a message carrying content of any
-// other kind fails the whole request here — before the turn opens and before a
-// token is spent. Skipping the part instead would put a conversation with a hole
-// in it in front of the model.
+// toAnthropicMessages projects history into Anthropic content blocks. User
+// text and image parts retain their order; images are encoded into native
+// base64 sources. Images on every other role and unknown parts are refused
+// before authorization or endpoint contact.
 func toAnthropicMessages(messages []Message) ([]anthropic.MessageParam, error) {
 	out := make([]anthropic.MessageParam, 0, len(messages))
 	for _, message := range messages {
+		if message.Role == "user" {
+			blocks, err := toAnthropicUserBlocks(message.Parts)
+			if err != nil {
+				return nil, fmt.Errorf("anthropic: %w", err)
+			}
+			out = append(out, anthropic.NewUserMessage(blocks...))
+			continue
+		}
+
 		text, err := message.TextOnly()
 		if err != nil {
 			return nil, fmt.Errorf("anthropic: %w", err)
@@ -330,8 +339,6 @@ func toAnthropicMessages(messages []Message) ([]anthropic.MessageParam, error) {
 			blocks = append(blocks, anthropic.NewTextBlock(text))
 		}
 		switch message.Role {
-		case "user":
-			out = append(out, anthropic.NewUserMessage(blocks...))
 		case "assistant":
 			for _, call := range message.ToolCalls {
 				var input any
@@ -348,6 +355,30 @@ func toAnthropicMessages(messages []Message) ([]anthropic.MessageParam, error) {
 		}
 	}
 	return out, nil
+}
+
+func toAnthropicUserBlocks(parts []Part) ([]anthropic.ContentBlockParamUnion, error) {
+	blocks := make([]anthropic.ContentBlockParamUnion, 0, len(parts))
+	var text strings.Builder
+	flushText := func() {
+		if text.Len() > 0 {
+			blocks = append(blocks, anthropic.NewTextBlock(text.String()))
+			text.Reset()
+		}
+	}
+	for _, part := range parts {
+		switch part.Kind {
+		case TextPart:
+			text.WriteString(part.Text)
+		case ImagePart:
+			flushText()
+			blocks = append(blocks, anthropic.NewImageBlockBase64(part.MediaType, base64.StdEncoding.EncodeToString(part.Data)))
+		default:
+			return nil, &UnsupportedPartError{Kind: part.Kind}
+		}
+	}
+	flushText()
+	return blocks, nil
 }
 
 func toAnthropicTools(tools []ToolDef) ([]anthropic.ToolUnionParam, error) {

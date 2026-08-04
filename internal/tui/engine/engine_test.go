@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -744,7 +745,7 @@ func TestEngine_ResumeOperationsRejectActiveRun(t *testing.T) {
 	appendSessionEvent(t, store, "tui-target", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
 	provider := &resumeBlockingProvider{started: make(chan struct{})}
 	engine := New(Config{Root: root, Provider: provider, Store: store})
-	if _, err := engine.SendPrompt("tui-current", "keep running"); err != nil {
+	if _, err := engine.SendPrompt("tui-current", session.Prompt{Text: "keep running"}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -773,7 +774,7 @@ func TestEngine_ResumeSessionByIDRejectsActiveTargetRun(t *testing.T) {
 	appendSessionEvent(t, store, "tui-target", session.SessionEvent{Kind: session.KindSessionCwd, Text: root})
 	provider := &resumeBlockingProvider{started: make(chan struct{})}
 	engine := New(Config{Root: root, Provider: provider, Store: store})
-	if _, err := engine.SendPrompt("tui-target", "keep target running"); err != nil {
+	if _, err := engine.SendPrompt("tui-target", session.Prompt{Text: "keep target running"}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -838,7 +839,7 @@ func TestEngine_ResumeSessionByIDSerializesTargetAdmission(t *testing.T) {
 	sendDone := make(chan error, 1)
 	go func() {
 		close(sendStarted)
-		_, err := engine.SendPrompt("tui-target", "wait for resume")
+		_, err := engine.SendPrompt("tui-target", session.Prompt{Text: "wait for resume"})
 		sendDone <- err
 	}()
 	<-sendStarted
@@ -882,7 +883,7 @@ func TestEngine_SlashNewStopsOldRunSoNewSessionStaysMostRecent(t *testing.T) {
 
 	provider := &releasableProvider{started: make(chan struct{}), release: make(chan struct{})}
 	engine := New(Config{Root: root, Provider: provider, Store: store})
-	oldRun, err := engine.SendPrompt("tui-old", "old conversation prompt")
+	oldRun, err := engine.SendPrompt("tui-old", session.Prompt{Text: "old conversation prompt"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -892,7 +893,7 @@ func TestEngine_SlashNewStopsOldRunSoNewSessionStaysMostRecent(t *testing.T) {
 		t.Fatal("old run did not start streaming")
 	}
 
-	newRun, err := engine.SendPrompt("tui-old", "/new")
+	newRun, err := engine.SendPrompt("tui-old", session.Prompt{Text: "/new"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -970,7 +971,7 @@ func TestEngine_SendPromptDoesNotStartCheckpointWhenModePersistenceFails(t *test
 		Checkpoints: fixedCheckpointStore{tree: checkpoint.Tree("before-tree")},
 	})
 
-	if _, err := engine.SendPrompt("tui-session", "hello"); !errors.Is(err, modeErr) {
+	if _, err := engine.SendPrompt("tui-session", session.Prompt{Text: "hello"}); !errors.Is(err, modeErr) {
 		t.Fatalf("SendPrompt error = %v, want %v", err, modeErr)
 	}
 	events, err := backend.Events(context.Background(), "tui-session", 0)
@@ -1073,7 +1074,7 @@ func TestEngine_SendPromptContinuesWhenHistoryPersistenceFails(t *testing.T) {
 	store := &promptHistoryStore{Store: session.NewMemoryStore(), failComposerPrompt: true}
 	engine := New(Config{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: store})
 
-	if _, err := engine.SendPrompt("tui-session", "hello"); err != nil {
+	if _, err := engine.SendPrompt("tui-session", session.Prompt{Text: "hello"}); err != nil {
 		t.Fatalf("SendPrompt() error = %v, accepted prompt must run even if history persistence fails", err)
 	}
 	_, done := collectUntilRunDone(t, engine.Events(), 3*time.Second, nil)
@@ -1181,7 +1182,7 @@ func TestEngine_CompactIdleSessionStartsImmediately(t *testing.T) {
 	close(provider.release)
 	e := New(Config{Root: t.TempDir(), Provider: provider, Store: store})
 
-	if _, err := e.SendPrompt("s1", "/compact"); err != nil {
+	if _, err := e.SendPrompt("s1", session.Prompt{Text: "/compact"}); err != nil {
 		t.Fatalf("SendPrompt(/compact) error = %v", err)
 	}
 	msg := nextMsg(t, e.Events(), time.Second)
@@ -1194,7 +1195,7 @@ func TestEngine_CompactIdleSessionStartsImmediately(t *testing.T) {
 func TestEngine_ShutdownCancelsAndWaitsForActiveRun(t *testing.T) {
 	provider := newDelayedCancellationProvider()
 	e := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
-	if _, err := e.SendPrompt("s1", "wait"); err != nil {
+	if _, err := e.SendPrompt("s1", session.Prompt{Text: "wait"}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -1238,7 +1239,7 @@ func TestEngine_ShutdownFinishesCheckpointBeforeSQLiteClose(t *testing.T) {
 	}
 	provider := &blockingAfterToolProvider{started: make(chan struct{}), canceled: make(chan struct{})}
 	e := New(Config{Root: root, Provider: provider, Store: store, Checkpoints: checkpoint.NewGitStore(t.TempDir())})
-	if _, err := e.SendPrompt("s1", "create file"); err != nil {
+	if _, err := e.SendPrompt("s1", session.Prompt{Text: "create file"}); err != nil {
 		t.Fatal(err)
 	}
 	// The write is gated: approve it in the background so the run reaches the
@@ -1275,7 +1276,7 @@ func TestEngine_ShutdownCancelsAndWaitsForCompaction(t *testing.T) {
 	seedCompactableEngineSession(t, store, "s1")
 	provider := newBlockingSummaryProvider()
 	e := New(Config{Root: t.TempDir(), Provider: provider, Store: store})
-	if _, err := e.SendPrompt("s1", "/compact"); err != nil {
+	if _, err := e.SendPrompt("s1", session.Prompt{Text: "/compact"}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -1297,7 +1298,7 @@ func TestEngine_CompactDuringRunQueuesOnceAndDrainsAfterCompletion(t *testing.T)
 	provider := newCompactQueueProvider()
 	e := New(Config{Root: t.TempDir(), Provider: provider, Store: store})
 
-	if _, err := e.SendPrompt("s1", "continue turn"); err != nil {
+	if _, err := e.SendPrompt("s1", session.Prompt{Text: "continue turn"}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -1306,7 +1307,7 @@ func TestEngine_CompactDuringRunQueuesOnceAndDrainsAfterCompletion(t *testing.T)
 		t.Fatal("turn did not start")
 	}
 	for range 2 {
-		if _, err := e.SendPrompt("s1", "/compact"); err != nil {
+		if _, err := e.SendPrompt("s1", session.Prompt{Text: "/compact"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1349,7 +1350,7 @@ func TestEngine_CompactWithArgumentsRemainsNormalPrompt(t *testing.T) {
 	store := session.NewMemoryStore()
 	provider := newTurnProvider([]llm.Event{{Kind: llm.StepEnded}})
 	e := New(Config{Root: t.TempDir(), Provider: provider, Store: store})
-	if _, err := e.SendPrompt("s1", "/compact later"); err != nil {
+	if _, err := e.SendPrompt("s1", session.Prompt{Text: "/compact later"}); err != nil {
 		t.Fatal(err)
 	}
 	_, done := collectUntilRunDone(t, e.Events(), time.Second, nil)
@@ -1370,11 +1371,11 @@ func TestEngine_QueuedCompactRunsAfterCancellation(t *testing.T) {
 	seedCompactableEngineSession(t, store, "s1")
 	provider := newCompactQueueProvider()
 	e := New(Config{Root: t.TempDir(), Provider: provider, Store: store})
-	if _, err := e.SendPrompt("s1", "continue turn"); err != nil {
+	if _, err := e.SendPrompt("s1", session.Prompt{Text: "continue turn"}); err != nil {
 		t.Fatal(err)
 	}
 	<-provider.started
-	if _, err := e.SendPrompt("s1", "/compact"); err != nil {
+	if _, err := e.SendPrompt("s1", session.Prompt{Text: "/compact"}); err != nil {
 		t.Fatal(err)
 	}
 	e.Stop("s1")
@@ -1397,14 +1398,14 @@ func TestEngine_QueuedCompactWaitsForReplacementRun(t *testing.T) {
 	provider := newReplacementRunCompactionProvider()
 	e := New(Config{Root: t.TempDir(), Provider: provider, Store: store})
 
-	if _, err := e.SendPrompt("s1", "first"); err != nil {
+	if _, err := e.SendPrompt("s1", session.Prompt{Text: "first"}); err != nil {
 		t.Fatal(err)
 	}
 	<-provider.started[0]
-	if _, err := e.SendPrompt("s1", "/compact"); err != nil {
+	if _, err := e.SendPrompt("s1", session.Prompt{Text: "/compact"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.SendPrompt("s1", "replacement"); err != nil {
+	if _, err := e.SendPrompt("s1", session.Prompt{Text: "replacement"}); err != nil {
 		t.Fatal(err)
 	}
 	<-provider.started[1]
@@ -1427,13 +1428,13 @@ func TestEngine_PromptAfterIdleCompactWaitsForCommittedContext(t *testing.T) {
 	seedCompactableEngineSession(t, store, "s1")
 	provider := newBlockingSummaryProvider()
 	e := New(Config{Root: t.TempDir(), Provider: provider, Store: store})
-	if _, err := e.SendPrompt("s1", "/compact"); err != nil {
+	if _, err := e.SendPrompt("s1", session.Prompt{Text: "/compact"}); err != nil {
 		t.Fatal(err)
 	}
 	<-provider.started
 	promptDone := make(chan error, 1)
 	go func() {
-		_, err := e.SendPrompt("s1", "next prompt")
+		_, err := e.SendPrompt("s1", session.Prompt{Text: "next prompt"})
 		promptDone <- err
 	}()
 	time.Sleep(30 * time.Millisecond)
@@ -1566,7 +1567,7 @@ func TestEngine_SendPromptExpandsSlashCommand(t *testing.T) {
 	// lastUserPrompt runs a full run and returns the last Message user promoted between its events.
 	lastUserPrompt := func(sessionID, text string) string {
 		t.Helper()
-		if _, err := e.SendPrompt(sessionID, text); err != nil {
+		if _, err := e.SendPrompt(sessionID, session.Prompt{Text: text}); err != nil {
 			t.Fatalf("SendPrompt(%s, %s) = %v, expected nil", sessionID, text, err)
 		}
 		events, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil)
@@ -1606,7 +1607,7 @@ func TestEngine_StreamsSessionEventsAndSignalsRunDone(t *testing.T) {
 
 	e := New(Config{Root: t.TempDir(), Provider: fake, Store: session.NewMemoryStore()})
 
-	if _, err := e.SendPrompt("s1", "hello"); err != nil {
+	if _, err := e.SendPrompt("s1", session.Prompt{Text: "hello"}); err != nil {
 		t.Fatalf("SendPrompt(s1, hello) = %v, expected nil", err)
 	}
 
@@ -1649,7 +1650,7 @@ func TestEngine_ReplacementRunWaitsForCanceledRunAndKeepsDistinctIdentity(t *tes
 	provider := newDelayedCancellationProvider()
 	e := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 
-	first, err := e.SendPrompt("s1", "first")
+	first, err := e.SendPrompt("s1", session.Prompt{Text: "first"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1659,7 +1660,7 @@ func TestEngine_ReplacementRunWaitsForCanceledRunAndKeepsDistinctIdentity(t *tes
 		t.Fatal("first run did not start")
 	}
 
-	second, err := e.SendPrompt("s1", "second")
+	second, err := e.SendPrompt("s1", session.Prompt{Text: "second"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1750,7 +1751,7 @@ func TestEngine_UndoRestoresDeletedAndRecreatedTrackedFile(t *testing.T) {
 		Checkpoints: checkpoint.NewGitStore(t.TempDir()),
 	})
 
-	if _, err := engine.SendPrompt("s1", "change the files"); err != nil {
+	if _, err := engine.SendPrompt("s1", session.Prompt{Text: "change the files [image#1]", Images: []session.Image{{MediaType: "image/png", Data: []byte("prompt-image")}}}); err != nil {
 		t.Fatal(err)
 	}
 	events, done := collectUntilRunDone(t, engine.Events(), 10*time.Second, approveAllPermissions(t, engine))
@@ -1769,8 +1770,8 @@ func TestEngine_UndoRestoresDeletedAndRecreatedTrackedFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Prompt != "change the files" {
-		t.Fatalf("Prompt = %q", result.Prompt)
+	if result.Prompt.Text != "change the files [image#1]" || len(result.Prompt.Images) != 1 || !bytes.Equal(result.Prompt.Images[0].Data, []byte("prompt-image")) {
+		t.Fatalf("Prompt = %+v", result.Prompt)
 	}
 	assertUndoFile(t, root, "tracked.txt", "preexisting-change\n")
 	assertUndoFile(t, root, "notes.txt", "preexisting-untracked\n")
@@ -1789,7 +1790,7 @@ func TestEngine_GatedBashApprovedRunsAndSettles(t *testing.T) {
 	provider := newTurnProvider(gatedBashTurns("echo hello-gate")...)
 	e := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 
-	if _, err := e.SendPrompt("s1", "run the command"); err != nil {
+	if _, err := e.SendPrompt("s1", session.Prompt{Text: "run the command"}); err != nil {
 		t.Fatalf("SendPrompt(s1, run the command) = %v, expected nil", err)
 	}
 
@@ -1818,7 +1819,7 @@ func TestEngine_GatedBashDeniedFailsWithoutRunning(t *testing.T) {
 	provider := newTurnProvider(gatedBashTurns("touch " + forbidden)...)
 	e := New(Config{Root: root, Provider: provider, Store: session.NewMemoryStore()})
 
-	if _, err := e.SendPrompt("s1", "run the command"); err != nil {
+	if _, err := e.SendPrompt("s1", session.Prompt{Text: "run the command"}); err != nil {
 		t.Fatalf("SendPrompt(s1, run the command) = %v, expected nil", err)
 	}
 
@@ -1857,7 +1858,7 @@ func TestEngine_AllowSessionStopsAskingForTheSameCommandPrefix(t *testing.T) {
 	provider := newTurnProvider(gatedBashPairTurns("echo -n uno", "echo -n dos")...)
 	e := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 
-	if _, err := e.SendPrompt("s1", "run the commands"); err != nil {
+	if _, err := e.SendPrompt("s1", session.Prompt{Text: "run the commands"}); err != nil {
 		t.Fatalf("SendPrompt = %v, want nil", err)
 	}
 	events, done := collectUntilRunDone(t, e.Events(), 10*time.Second, func(ev session.SessionEvent) {
@@ -1890,7 +1891,7 @@ func TestEngine_AllowSessionDoesNotCoverADifferentCommand(t *testing.T) {
 	provider := newTurnProvider(gatedBashPairTurns("echo -n uno", "printf dos")...)
 	e := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 
-	if _, err := e.SendPrompt("s1", "run the commands"); err != nil {
+	if _, err := e.SendPrompt("s1", session.Prompt{Text: "run the commands"}); err != nil {
 		t.Fatalf("SendPrompt = %v, want nil", err)
 	}
 	events, done := collectUntilRunDone(t, e.Events(), 10*time.Second, func(ev session.SessionEvent) {
@@ -1921,7 +1922,7 @@ func TestEngine_StopUnblocksPendingPermission(t *testing.T) {
 	})
 	e := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 
-	if _, err := e.SendPrompt("s1", "run the command"); err != nil {
+	if _, err := e.SendPrompt("s1", session.Prompt{Text: "run the command"}); err != nil {
 		t.Fatalf("SendPrompt(s1, run the command) = %v, expected nil", err)
 	}
 
@@ -1955,7 +1956,7 @@ func TestEngine_AcceptPlanRunsImplementationInNormalMode(t *testing.T) {
 	e := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 
 	// Previous plan run: leaves the session in plan-mode with the plan presented.
-	if _, err := e.SendPlanPrompt("s1", "plan"); err != nil {
+	if _, err := e.SendPlanPrompt("s1", session.Prompt{Text: "plan"}); err != nil {
 		t.Fatalf("SendPlanPrompt(s1, plan) = %v, expected nil", err)
 	}
 	if _, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil); done.Err != "" {
@@ -2011,7 +2012,7 @@ func TestEngine_SendPlanPromptRunsInPlanMode(t *testing.T) {
 	e := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 
 	// Sending in plan-mode: the shift must announce the planning tools.
-	if _, err := e.SendPlanPrompt("s1", "plan x"); err != nil {
+	if _, err := e.SendPlanPrompt("s1", session.Prompt{Text: "plan x"}); err != nil {
 		t.Fatalf("SendPlanPrompt(s1, plan x) = %v, expected nil", err)
 	}
 	if _, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil); done.Err != "" {
@@ -2032,7 +2033,7 @@ func TestEngine_SendPlanPromptRunsInPlanMode(t *testing.T) {
 	}
 
 	// Subsequent normal sending in the SAME session: the mode is by sending (mirror of the Wails app) and the turn announces the build tools again.
-	if _, err := e.SendPrompt("s1", "do it"); err != nil {
+	if _, err := e.SendPrompt("s1", session.Prompt{Text: "do it"}); err != nil {
 		t.Fatalf("SendPrompt(s1, do it) = %v, expected nil", err)
 	}
 	if _, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil); done.Err != "" {
@@ -2067,7 +2068,7 @@ func TestEngine_ToolResultNeverPrecedesAssistantMessageInHistory(t *testing.T) {
 	provider.delayStepEnded = 100 * time.Millisecond
 	e := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore()})
 
-	if _, err := e.SendPrompt("s1", "read that"); err != nil {
+	if _, err := e.SendPrompt("s1", session.Prompt{Text: "read that"}); err != nil {
 		t.Fatalf("SendPrompt(s1, read that) = %v, expected nil", err)
 	}
 	if _, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil); done.Err != "" {
@@ -2130,7 +2131,7 @@ func TestEngine_CapturesSessionCwdOnFirstPrompt(t *testing.T) {
 	)
 	e := New(Config{Root: root, Provider: fake, Store: store})
 
-	if _, err := e.SendPrompt("s1", "hello"); err != nil {
+	if _, err := e.SendPrompt("s1", session.Prompt{Text: "hello"}); err != nil {
 		t.Fatalf("SendPrompt(s1, hello) = %v, expected nil", err)
 	}
 	if _, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil); done.Err != "" {
@@ -2184,7 +2185,7 @@ func TestEngine_CapturesSessionCwdOnce(t *testing.T) {
 	e := New(Config{Root: root, Provider: fake, Store: store})
 
 	for i, prompt := range []string{"first prompt", "second prompt"} {
-		if _, err := e.SendPrompt("s1", prompt); err != nil {
+		if _, err := e.SendPrompt("s1", session.Prompt{Text: prompt}); err != nil {
 			t.Fatalf("SendPrompt #%d (s1, %q) = %v, expected nil", i+1, prompt, err)
 		}
 		if _, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil); done.Err != "" {
@@ -2229,7 +2230,7 @@ func TestEngine_SendPromptNewCreatesFreshDurableSession(t *testing.T) {
 		Store:    store,
 	})
 
-	if _, err := e.SendPrompt("s1", "/new"); err != nil {
+	if _, err := e.SendPrompt("s1", session.Prompt{Text: "/new"}); err != nil {
 		t.Fatalf("SendPrompt(s1, /new) = %v, expected nil", err)
 	}
 
@@ -2252,7 +2253,7 @@ func TestEngine_SendPromptNewWithArgumentsRemainsRegularPrompt(t *testing.T) {
 		Store:    store,
 	})
 
-	if _, err := e.SendPrompt("s1", "/new algo"); err != nil {
+	if _, err := e.SendPrompt("s1", session.Prompt{Text: "/new algo"}); err != nil {
 		t.Fatalf("SendPrompt(s1, /new algo) = %v, expected nil", err)
 	}
 	_, done := collectUntilRunDone(t, e.Events(), 10*time.Second, nil)
@@ -2305,7 +2306,7 @@ func TestEngine_UndoRestoresPrePromptWorkspaceAndEffectiveConversation(t *testin
 		Checkpoints: checkpoint.NewGitStore(t.TempDir()),
 	})
 
-	if _, err := engine.SendPrompt("s1", "change the files"); err != nil {
+	if _, err := engine.SendPrompt("s1", session.Prompt{Text: "change the files"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, done := collectUntilRunDone(t, engine.Events(), 10*time.Second, approveAllPermissions(t, engine)); done.Err != "" {
@@ -2316,8 +2317,8 @@ func TestEngine_UndoRestoresPrePromptWorkspaceAndEffectiveConversation(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Prompt != "change the files" {
-		t.Fatalf("Prompt = %q", result.Prompt)
+	if result.Prompt.Text != "change the files" {
+		t.Fatalf("Prompt = %q", result.Prompt.Text)
 	}
 	assertUndoFile(t, root, "tracked.txt", "preexisting-change\n")
 	assertUndoFile(t, root, "notes.txt", "preexisting-untracked\n")
@@ -2337,7 +2338,7 @@ func TestEngine_UndoFirstPromptPreservesSessionWorkspace(t *testing.T) {
 	store := session.NewMemoryStore()
 	engine := newWritingUndoEngine(t, root, store, t.TempDir())
 
-	if _, err := engine.SendPrompt("s1", "create file"); err != nil {
+	if _, err := engine.SendPrompt("s1", session.Prompt{Text: "create file"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, done := collectUntilRunDone(t, engine.Events(), 10*time.Second, approveAllPermissions(t, engine)); done.Err != "" {
@@ -2365,7 +2366,7 @@ func TestEngine_SendPromptSnapshotFailureDoesNotCreateSession(t *testing.T) {
 		Checkpoints: failingCheckpointStore{err: wantErr},
 	})
 
-	if _, err := engine.SendPrompt("s1", "hello"); !errors.Is(err, wantErr) {
+	if _, err := engine.SendPrompt("s1", session.Prompt{Text: "hello"}); !errors.Is(err, wantErr) {
 		t.Fatalf("SendPrompt error = %v, want %v", err, wantErr)
 	}
 	if sessions, err := store.Sessions(context.Background()); err != nil || len(sessions) != 0 {
@@ -2380,7 +2381,7 @@ func TestEngine_UndoRejectsCheckpointFromAnotherWorkspace(t *testing.T) {
 	checkpointRoot := t.TempDir()
 	firstEngine := newWritingUndoEngine(t, firstRoot, store, checkpointRoot)
 
-	if _, err := firstEngine.SendPrompt("s1", "create file"); err != nil {
+	if _, err := firstEngine.SendPrompt("s1", session.Prompt{Text: "create file"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, done := collectUntilRunDone(t, firstEngine.Events(), 10*time.Second, approveAllPermissions(t, firstEngine)); done.Err != "" {
@@ -2414,7 +2415,7 @@ func TestEngine_UndoTwiceRestoresEachPromptBoundary(t *testing.T) {
 	store := session.NewMemoryStore()
 	engine := New(Config{Root: root, Provider: provider, Store: store, Checkpoints: checkpoint.NewGitStore(t.TempDir())})
 	for _, prompt := range []string{"first prompt", "second prompt"} {
-		if _, err := engine.SendPrompt("s1", prompt); err != nil {
+		if _, err := engine.SendPrompt("s1", session.Prompt{Text: prompt}); err != nil {
 			t.Fatal(err)
 		}
 		if _, done := collectUntilRunDone(t, engine.Events(), 10*time.Second, approveAllPermissions(t, engine)); done.Err != "" {
@@ -2423,13 +2424,13 @@ func TestEngine_UndoTwiceRestoresEachPromptBoundary(t *testing.T) {
 	}
 
 	result, err := engine.Undo("s1")
-	if err != nil || result.Prompt != "second prompt" {
+	if err != nil || result.Prompt.Text != "second prompt" {
 		t.Fatalf("first undo = %+v, err = %v", result, err)
 	}
 	assertUndoFile(t, root, "first.txt", "first\n")
 	assertUndoMissing(t, root, "second.txt")
 	result, err = engine.Undo("s1")
-	if err != nil || result.Prompt != "first prompt" {
+	if err != nil || result.Prompt.Text != "first prompt" {
 		t.Fatalf("second undo = %+v, err = %v", result, err)
 	}
 	assertUndoMissing(t, root, "first.txt")
@@ -2441,7 +2442,7 @@ func TestEngine_UndoTwiceRestoresEachPromptBoundary(t *testing.T) {
 func TestEngine_UndoRejectsWorkspaceDivergence(t *testing.T) {
 	root := newUndoWorkspace(t)
 	engine := newWritingUndoEngine(t, root, session.NewMemoryStore(), t.TempDir())
-	if _, err := engine.SendPrompt("s1", "create file"); err != nil {
+	if _, err := engine.SendPrompt("s1", session.Prompt{Text: "create file"}); err != nil {
 		t.Fatal(err)
 	}
 	collectUntilRunDone(t, engine.Events(), 10*time.Second, approveAllPermissions(t, engine))
@@ -2463,7 +2464,7 @@ func TestEngine_UndoIgnoresIgnoredFileDivergence(t *testing.T) {
 	runUndoGit(t, root, "add", ".gitignore")
 	runUndoGit(t, root, "commit", "-m", "ignore")
 	engine := newWritingUndoEngine(t, root, session.NewMemoryStore(), t.TempDir())
-	if _, err := engine.SendPrompt("s1", "create file"); err != nil {
+	if _, err := engine.SendPrompt("s1", session.Prompt{Text: "create file"}); err != nil {
 		t.Fatal(err)
 	}
 	collectUntilRunDone(t, engine.Events(), 10*time.Second, approveAllPermissions(t, engine))
@@ -2481,7 +2482,7 @@ func TestEngine_UndoCancelsActiveRunBeforeRestore(t *testing.T) {
 	root := newUndoWorkspace(t)
 	provider := &blockingAfterToolProvider{started: make(chan struct{}), canceled: make(chan struct{})}
 	engine := New(Config{Root: root, Provider: provider, Store: session.NewMemoryStore(), Checkpoints: checkpoint.NewGitStore(t.TempDir())})
-	if _, err := engine.SendPrompt("s1", "create file"); err != nil {
+	if _, err := engine.SendPrompt("s1", session.Prompt{Text: "create file"}); err != nil {
 		t.Fatal(err)
 	}
 	// The write is gated: approve it in the background so the run reaches the
@@ -2512,7 +2513,7 @@ func TestEngine_UndoPersistsAcrossSQLiteReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	engine := newWritingUndoEngine(t, root, store, checkpointRoot)
-	if _, err := engine.SendPrompt("s1", "create file"); err != nil {
+	if _, err := engine.SendPrompt("s1", session.Prompt{Text: "create file"}); err != nil {
 		t.Fatal(err)
 	}
 	collectUntilRunDone(t, engine.Events(), 10*time.Second, approveAllPermissions(t, engine))
@@ -2820,7 +2821,7 @@ func TestEngine_LocalEndpointSelectionSwitchesTheSystemPrompt(t *testing.T) {
 	engine := New(Config{Root: t.TempDir(), Provider: provider, Store: session.NewMemoryStore(), Models: service})
 	defer engine.Shutdown(context.Background())
 
-	if _, err := engine.SendPrompt("s1", "hello"); err != nil {
+	if _, err := engine.SendPrompt("s1", session.Prompt{Text: "hello"}); err != nil {
 		t.Fatal(err)
 	}
 	collectUntilRunDone(t, engine.Events(), 10*time.Second, nil)
@@ -2834,7 +2835,7 @@ func TestEngine_LocalEndpointSelectionSwitchesTheSystemPrompt(t *testing.T) {
 	}
 
 	service.set(providerconfig.Active{ProviderID: "anthropic", ProviderName: "Anthropic", Model: "claude-opus-4-8"})
-	if _, err := engine.SendPrompt("s1", "otra"); err != nil {
+	if _, err := engine.SendPrompt("s1", session.Prompt{Text: "otra"}); err != nil {
 		t.Fatal(err)
 	}
 	collectUntilRunDone(t, engine.Events(), 10*time.Second, nil)
@@ -2857,7 +2858,7 @@ func TestEngine_CheckpointAndRewindRestoreWorkspaceAndPruneConversation(t *testi
 	if err != nil || checkpointResult.ID == "" {
 		t.Fatalf("Checkpoint = %+v, err = %v", checkpointResult, err)
 	}
-	if _, err := engine.SendPrompt("s1", "change after checkpoint"); err != nil {
+	if _, err := engine.SendPrompt("s1", session.Prompt{Text: "change after checkpoint"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, done := collectUntilRunDone(t, engine.Events(), 10*time.Second, approveAllPermissions(t, engine)); done.Err != "" {
@@ -2879,7 +2880,7 @@ func TestEngine_CheckpointAndRewindRestoreWorkspaceAndPruneConversation(t *testi
 	if len(messages) != 0 {
 		t.Fatalf("messages after rewind = %+v, want checkpoint context", messages)
 	}
-	if _, err := engine.SendPrompt("s1", "continue from checkpoint"); err != nil {
+	if _, err := engine.SendPrompt("s1", session.Prompt{Text: "continue from checkpoint"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, done := collectUntilRunDone(t, engine.Events(), 10*time.Second, approveAllPermissions(t, engine)); done.Err != "" {
@@ -2904,7 +2905,7 @@ func TestEngine_ModelToolsCheckpointThenRewindWithoutOrphanedToolCalls(t *testin
 	store := session.NewMemoryStore()
 	engine := New(Config{Root: root, Provider: provider, Store: store, Checkpoints: checkpoint.NewGitStore(t.TempDir())})
 	for _, prompt := range []string{"checkpoint before exploration", "do exploratory work", "rewind exploration"} {
-		if _, err := engine.SendPrompt("s1", prompt); err != nil {
+		if _, err := engine.SendPrompt("s1", session.Prompt{Text: prompt}); err != nil {
 			t.Fatal(err)
 		}
 		if _, done := collectUntilRunDone(t, engine.Events(), 10*time.Second, approveAllPermissions(t, engine)); done.Err != "" {

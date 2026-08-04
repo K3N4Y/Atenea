@@ -9,12 +9,13 @@ import (
 var ErrNothingToUndo = errors.New("nothing to undo")
 
 type EffectiveCheckpoint struct {
-	ID         string
-	Prompt     string
-	BeforeTree string
-	AfterTree  string
-	StartSeq   Seq
-	FinishSeq  Seq
+	ID           string
+	Prompt       string
+	PromptImages []Image
+	BeforeTree   string
+	AfterTree    string
+	StartSeq     Seq
+	FinishSeq    Seq
 }
 
 type UndoStore interface {
@@ -102,7 +103,7 @@ func latestEffectiveCheckpoint(events []SessionEvent, explicit bool) (EffectiveC
 		checkpoint := event.Checkpoint
 		switch event.Kind {
 		case KindPromptCheckpointStarted:
-			checkpoints[checkpoint.ID] = EffectiveCheckpoint{ID: checkpoint.ID, Prompt: checkpoint.Prompt, BeforeTree: checkpoint.BeforeTree, StartSeq: event.Seq}
+			checkpoints[checkpoint.ID] = EffectiveCheckpoint{ID: checkpoint.ID, Prompt: checkpoint.Prompt, PromptImages: cloneImages(checkpoint.PromptImages), BeforeTree: checkpoint.BeforeTree, StartSeq: event.Seq}
 			order = append(order, checkpoint.ID)
 		case KindPromptCheckpointFinished:
 			current := checkpoints[checkpoint.ID]

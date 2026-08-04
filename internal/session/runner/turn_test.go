@@ -690,3 +690,24 @@ func TestToLLMMessages_AMessageWithNoTextHasNoContent(t *testing.T) {
 		t.Errorf("got[0].ToolCalls = %+v, want the tool call to survive", got[0].ToolCalls)
 	}
 }
+
+func TestToLLMMessages_ProjectsTextThenImagesInOrder(t *testing.T) {
+	msgs := []session.Message{{
+		Role: session.RoleUser,
+		Text: "describe these",
+		Images: []session.Image{
+			{MediaType: "image/png", Data: []byte{1, 2}},
+			{MediaType: "image/jpeg", Data: []byte{3, 4}},
+		},
+	}}
+
+	got := toLLMMessages(msgs)
+	want := []llm.Part{
+		{Kind: llm.TextPart, Text: "describe these"},
+		{Kind: llm.ImagePart, MediaType: "image/png", Data: []byte{1, 2}},
+		{Kind: llm.ImagePart, MediaType: "image/jpeg", Data: []byte{3, 4}},
+	}
+	if len(got) != 1 || !reflect.DeepEqual(got[0].Parts, want) {
+		t.Fatalf("toLLMMessages parts = %+v, want %+v", got, want)
+	}
+}

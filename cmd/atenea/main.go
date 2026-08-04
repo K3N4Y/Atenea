@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	imageclipboard "golang.design/x/clipboard"
 	"golang.org/x/term"
 
 	"github.com/K3N4Y/atenea/internal/checkpoint"
@@ -109,7 +110,8 @@ func runInteractive(options cli.InteractiveOptions) error {
 		WithHistory(history).
 		WithStatus("build", active.Model).
 		WithWorkspaceRoot(gitBranch(h.Root), displayDir(h.Root), h.Root).
-		WithCompletions(eng.Commands(), eng.ProjectFiles)
+		WithCompletions(eng.Commands(), eng.ProjectFiles).
+		WithImageClipboard(readClipboardImage)
 	if options.Yolo {
 		m = m.WithNotice("YOLO mode is active: tool permission prompts are skipped. Only recursive deletion of / or your home directory is blocked; this is not a sandbox.")
 	}
@@ -155,6 +157,13 @@ func displayDir(root string) string {
 		return "~/" + root[len(home)+1:]
 	}
 	return root
+}
+
+func readClipboardImage() ([]byte, error) {
+	if err := imageclipboard.Init(); err != nil {
+		return nil, err
+	}
+	return imageclipboard.Read(imageclipboard.FmtImage), nil
 }
 
 // redirectLog sends the standard log to a file in the temporary directory so it

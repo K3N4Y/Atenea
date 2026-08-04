@@ -90,7 +90,7 @@ func TestManager_SetRootPublishesFilesCommandsAndRunnerTogether(t *testing.T) {
 	if !hasCommand(commands, "beta") || hasCommand(commands, "alpha") {
 		t.Fatalf("Commands() = %#v, want beta and no alpha", commands)
 	}
-	if _, err := service.Send("session", "/beta work", agent.Hooks{}); err != nil {
+	if _, err := service.Send("session", session.Prompt{Text: "/beta work"}, agent.Hooks{}); err != nil {
 		t.Fatal(err)
 	}
 	service.Wait()

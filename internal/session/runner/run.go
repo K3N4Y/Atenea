@@ -129,7 +129,7 @@ func (r *Runner) promote(ctx context.Context, sessionID string, d session.Delive
 	}
 	for _, p := range prompts {
 		if _, err := r.store.AppendEvent(ctx, sessionID, session.SessionEvent{
-			Message: &session.Message{ID: r.nextID(), Role: session.RoleUser, Text: p.Text},
+			Message: &session.Message{ID: r.nextID(), Role: session.RoleUser, Text: p.Text, Images: p.Images},
 		}); err != nil {
 			return err
 		}

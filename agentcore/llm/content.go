@@ -6,10 +6,8 @@ import (
 )
 
 // Part is one piece of a message's content. A message's content is the ordered
-// list of its parts, and text is the only kind today: the seam exists so that
-// carrying an image or a document later is a new PartKind plus the fields it
-// gives meaning to, rather than a change to Message that breaks every host and
-// adapter compiled against this package.
+// list of its parts. Kind determines whether Text or the image fields carry the
+// content.
 //
 // Kind decides which fields are relevant; the rest stay zero. That is the same
 // discriminated shape Event and tool.Presentation already use, and it is chosen
@@ -33,6 +31,9 @@ type Part struct {
 	Kind PartKind
 	// Text is what a TextPart contributes to the message.
 	Text string
+	// MediaType and Data carry an ImagePart's MIME type and raw file bytes.
+	MediaType string
+	Data      []byte
 }
 
 // PartKind is what a Part carries. It is an open set from an adapter's point of
@@ -45,6 +46,8 @@ const (
 	// filled in is an empty piece of text rather than content of an unknown kind
 	// that every adapter would then have to refuse.
 	TextPart PartKind = iota
+	// ImagePart carries image bytes in Part.Data, described by Part.MediaType.
+	ImagePart
 )
 
 // String renders the kind for an error or a test failure, with anything this
@@ -54,6 +57,8 @@ func (k PartKind) String() string {
 	switch k {
 	case TextPart:
 		return "text"
+	case ImagePart:
+		return "image"
 	}
 	return fmt.Sprintf("unknown(%d)", int(k))
 }

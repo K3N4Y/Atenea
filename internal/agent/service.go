@@ -120,18 +120,18 @@ func (s *Service) Mode(sessionID string) session.Mode {
 }
 
 // Send admits and runs a normal-mode user turn.
-func (s *Service) Send(sessionID, text string, hooks Hooks) (RunHandle, error) {
-	return s.send(sessionID, text, session.ModeNormal, hooks)
+func (s *Service) Send(sessionID string, prompt session.Prompt, hooks Hooks) (RunHandle, error) {
+	return s.send(sessionID, prompt, session.ModeNormal, hooks)
 }
 
 // SendPlan admits and runs a plan-mode user turn.
-func (s *Service) SendPlan(sessionID, text string, hooks Hooks) (RunHandle, error) {
-	return s.send(sessionID, text, session.ModePlan, hooks)
+func (s *Service) SendPlan(sessionID string, prompt session.Prompt, hooks Hooks) (RunHandle, error) {
+	return s.send(sessionID, prompt, session.ModePlan, hooks)
 }
 
 // AcceptPlan runs the fixed implementation prompt in normal mode.
 func (s *Service) AcceptPlan(sessionID string, hooks Hooks) (RunHandle, error) {
-	return s.send(sessionID, AcceptPlanPrompt, session.ModeNormal, hooks)
+	return s.send(sessionID, session.Prompt{Text: AcceptPlanPrompt}, session.ModeNormal, hooks)
 }
 
 // Retry reruns the current conversation state without admitting another user
@@ -153,7 +153,7 @@ func (s *Service) Retry(sessionID string, hooks Hooks) (RunHandle, error) {
 	return s.start(operation, runner, sessionID, true, hooks.AfterRun), nil
 }
 
-func (s *Service) send(sessionID, text string, mode session.Mode, hooks Hooks) (RunHandle, error) {
+func (s *Service) send(sessionID string, prompt session.Prompt, mode session.Mode, hooks Hooks) (RunHandle, error) {
 	operation := s.operationLock(sessionID)
 	operation.Lock()
 	defer operation.Unlock()
@@ -178,18 +178,18 @@ func (s *Service) send(sessionID, text string, mode session.Mode, hooks Hooks) (
 		}
 	}
 	if commands != nil {
-		if expanded, ok, err := commands.ResolveContext(context.Background(), text); err != nil {
+		if expanded, ok, err := commands.ResolveContext(context.Background(), prompt.Text); err != nil {
 			return RunHandle{}, err
 		} else if ok {
-			text = expanded
+			prompt.Text = expanded
 		}
 		var err error
-		text, err = commands.ExpandMentions(context.Background(), text)
+		prompt.Text, err = commands.ExpandMentions(context.Background(), prompt.Text)
 		if err != nil {
 			return RunHandle{}, err
 		}
 	}
-	if err := inbox.Admit(context.Background(), sessionID, session.Prompt{Text: text}, session.DeliveryQueue); err != nil {
+	if err := inbox.Admit(context.Background(), sessionID, prompt, session.DeliveryQueue); err != nil {
 		return RunHandle{}, err
 	}
 	if hooks.AfterAdmit != nil {

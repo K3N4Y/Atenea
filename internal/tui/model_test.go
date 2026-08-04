@@ -36,8 +36,14 @@ func renderEntry(e entry, width int) string {
 
 // fakeAgent implements Agent and logs calls to assert on them.
 type fakeAgent struct {
-	sent           []struct{ sessionID, text string }
-	planSent       []struct{ sessionID, text string }
+	sent []struct {
+		sessionID, text string
+		images          []session.Image
+	}
+	planSent []struct {
+		sessionID, text string
+		images          []session.Image
+	}
 	newSessionID   string
 	resolved       []resolvedPermission
 	stopped        []string
@@ -266,22 +272,28 @@ func (f *fakeAgent) nextRun(sessionID string) RunHandle {
 	return RunHandle{SessionID: sessionID, RunID: f.nextRunID}
 }
 
-func (f *fakeAgent) SendPrompt(sessionID, text string) (RunHandle, error) {
-	f.sent = append(f.sent, struct{ sessionID, text string }{sessionID, text})
+func (f *fakeAgent) SendPrompt(sessionID string, prompt session.Prompt) (RunHandle, error) {
+	f.sent = append(f.sent, struct {
+		sessionID, text string
+		images          []session.Image
+	}{sessionID, prompt.Text, prompt.Images})
 	if f.sendErr != nil {
 		return RunHandle{}, f.sendErr
 	}
-	if text == "/new" && f.newSessionID != "" {
+	if prompt.Text == "/new" && f.newSessionID != "" {
 		return RunHandle{SessionID: f.newSessionID}, nil
 	}
-	if text == "/compact" {
+	if prompt.Text == "/compact" {
 		return RunHandle{SessionID: sessionID}, nil
 	}
 	return f.nextRun(sessionID), nil
 }
 
-func (f *fakeAgent) SendPlanPrompt(sessionID, text string) (RunHandle, error) {
-	f.planSent = append(f.planSent, struct{ sessionID, text string }{sessionID, text})
+func (f *fakeAgent) SendPlanPrompt(sessionID string, prompt session.Prompt) (RunHandle, error) {
+	f.planSent = append(f.planSent, struct {
+		sessionID, text string
+		images          []session.Image
+	}{sessionID, prompt.Text, prompt.Images})
 	if f.planErr != nil {
 		return RunHandle{}, f.planErr
 	}
@@ -925,8 +937,9 @@ func TestModel_WithSessionRestoresTranscriptAndModeWithinBuilderChain(t *testing
 }
 
 func TestModel_UndoIsNativeCommandAndRestoresComposer(t *testing.T) {
+	images := []session.Image{{MediaType: "image/png", Data: []byte("first")}, {MediaType: "image/jpeg", Data: []byte("third")}}
 	fake := &fakeAgent{undoResult: UndoResult{
-		Prompt: "original prompt",
+		Prompt: session.Prompt{Text: "original [image#1] prompt [image#3]", Images: images},
 		Events: []session.SessionEvent{{Message: &session.Message{ID: "u0", Role: session.RoleUser, Text: "kept"}}},
 	}}
 	m := NewModel(fake, "s1", nil)
@@ -949,11 +962,28 @@ func TestModel_UndoIsNativeCommandAndRestoresComposer(t *testing.T) {
 	if len(m.entries) != 1 || m.entries[0].kind != entryUser || m.entries[0].text != "kept" {
 		t.Fatalf("entries = %+v", m.entries)
 	}
-	if m.composer.input.Value() != "original prompt" || m.composer.input.Position() != len([]rune("original prompt")) {
+	if m.composer.input.Value() != "original [image#1] prompt [image#3]" || m.composer.input.Position() != len([]rune("original [image#1] prompt [image#3]")) {
 		t.Fatalf("composer = %q cursor=%d", m.composer.input.Value(), m.composer.input.Position())
 	}
 	if len(m.composer.history) != 1 || m.composer.history[0] != "old prompt" {
 		t.Fatalf("history = %v", m.composer.history)
+	}
+	m.composer = m.composer.attachImage([]byte("next"))
+	if got := m.composer.value(); !strings.HasSuffix(got, "[image#4]") {
+		t.Fatalf("composer after paste = %q, want next non-conflicting marker", got)
+	}
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatal("restored prompt must resubmit")
+	}
+	if len(fake.sent) != 1 || fake.sent[0].text != "original [image#1] prompt [image#3][image#4]" || len(fake.sent[0].images) != 3 {
+		t.Fatalf("resubmitted prompt = %+v, want restored text and all images", fake.sent)
+	}
+	for i, want := range [][]byte{[]byte("first"), []byte("third"), []byte("next")} {
+		if !slices.Equal(fake.sent[0].images[i].Data, want) {
+			t.Fatalf("resubmitted image %d = %q, want %q", i, fake.sent[0].images[i].Data, want)
+		}
 	}
 }
 
@@ -5430,6 +5460,84 @@ func TestModel_EnterSendsTypedPromptViaAgent(t *testing.T) {
 	}
 }
 
+func TestModel_CtrlVPastesAndSubmitsImageInBuildAndPlanModes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		plan bool
+	}{
+		{name: "build"},
+		{name: "plan", plan: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeAgent{}
+			reads := 0
+			m := NewModel(fake, "s1", nil).WithImageClipboard(func() ([]byte, error) {
+				reads++
+				return []byte("png"), nil
+			})
+			m.planMode = tc.plan
+
+			updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+			m = updated.(Model)
+			if reads != 0 || cmd == nil {
+				t.Fatalf("reads=%d cmd=%v, clipboard read must be asynchronous", reads, cmd != nil)
+			}
+			m = apply(t, m, cmd())
+			if got := m.composer.value(); got != "[image#1]" {
+				t.Fatalf("composer = %q, want image marker", got)
+			}
+
+			m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+			sent := fake.sent
+			if tc.plan {
+				sent = fake.planSent
+			}
+			if len(sent) != 1 || sent[0].text != "[image#1]" || len(sent[0].images) != 1 {
+				t.Fatalf("sent = %+v, want one marker and one image", sent)
+			}
+			if got := sent[0].images[0]; got.MediaType != "image/png" || !slices.Equal(got.Data, []byte("png")) {
+				t.Fatalf("image = %+v, want pasted PNG", got)
+			}
+		})
+	}
+}
+
+func TestModel_DelayedImagePasteDoesNotCrossSuccessfulClear(t *testing.T) {
+	fake := &fakeAgent{}
+	m := typeRunes(t, NewModel(fake, "s1", nil).WithImageClipboard(func() ([]byte, error) {
+		return []byte("png"), nil
+	}), "send now")
+
+	updated, paste := m.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+	m = updated.(Model)
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = apply(t, m, paste())
+
+	if got := m.composer.value(); got != "" {
+		t.Fatalf("new draft = %q, delayed image from the submitted draft must be discarded", got)
+	}
+	if len(m.composer.images) != 0 {
+		t.Fatalf("new draft images = %+v, want none", m.composer.images)
+	}
+}
+
+func TestModel_ImageSendFailureRetainsAttachmentAndTextPasteRemainsText(t *testing.T) {
+	fake := &fakeAgent{sendErr: errors.New("send failed")}
+	m := NewModel(fake, "s1", nil)
+	m.composer = m.composer.attachImage([]byte("png"))
+
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if got := m.composer.prompt(); got.Text != "[image#1]" || len(got.Images) != 1 {
+		t.Fatalf("prompt after failure = %+v, want marker and attachment retained", got)
+	}
+
+	m = NewModel(&fakeAgent{}, "s1", nil)
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("pasted text"), Paste: true})
+	if got := m.composer.value(); got != "pasted text" {
+		t.Fatalf("text paste = %q, want unchanged text", got)
+	}
+}
+
 func TestModel_SendFailuresKeepPendingUserAction(t *testing.T) {
 	t.Run("build prompt", func(t *testing.T) {
 		fake := &fakeAgent{sendErr: errors.New("send failed")}
@@ -7270,7 +7378,7 @@ func TestModelSessionTransitionsResetDerivedState(t *testing.T) {
 		}
 	})
 	t.Run("undo", func(t *testing.T) {
-		m := seed().applyUndo(engine.UndoResult{Prompt: "retry", Events: []session.SessionEvent{{Message: &session.Message{Role: session.RoleUser, Text: "kept"}}}})
+		m := seed().applyUndo(engine.UndoResult{Prompt: session.Prompt{Text: "retry"}, Events: []session.SessionEvent{{Message: &session.Message{Role: session.RoleUser, Text: "kept"}}}})
 		assertClean(t, m)
 		if m.sessionID != "old" || len(m.entries) != 1 || m.composer.input.Value() != "retry" {
 			t.Fatalf("undo transition incorrect")

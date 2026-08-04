@@ -50,7 +50,7 @@ func TestService_SendOwnsSharedTurnLifecycle(t *testing.T) {
 		return nil
 	}), command.New([]command.Command{{Name: "foo", Template: "expanded $ARGUMENTS"}}))
 
-	handle, err := service.Send("s1", "/foo value", Hooks{
+	handle, err := service.Send("s1", session.Prompt{Text: "/foo value"}, Hooks{
 		BeforeAdmit: func() error {
 			record("before")
 			return nil
@@ -111,12 +111,12 @@ func TestService_ReplacementWaitsForPreviousRun(t *testing.T) {
 		return nil
 	}), command.New(nil))
 
-	first, err := service.Send("s1", "first", Hooks{})
+	first, err := service.Send("s1", session.Prompt{Text: "first"}, Hooks{})
 	if err != nil {
 		t.Fatalf("first Send: %v", err)
 	}
 	<-firstStarted
-	second, err := service.Send("s1", "second", Hooks{})
+	second, err := service.Send("s1", session.Prompt{Text: "second"}, Hooks{})
 	if err != nil {
 		t.Fatalf("second Send: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestService_AcceptPlanUsesNormalModeAndFixedPrompt(t *testing.T) {
 	service := NewService(inbox)
 	service.Configure(runnerFunc(func(context.Context, string, bool, int) error { return nil }), command.New(nil))
 
-	plan, err := service.SendPlan("s1", "plan", Hooks{})
+	plan, err := service.SendPlan("s1", session.Prompt{Text: "plan"}, Hooks{})
 	if err != nil {
 		t.Fatalf("SendPlan: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestService_RetryRunsWithoutAdmittingPromptAgain(t *testing.T) {
 		return nil
 	}), command.New(nil))
 
-	first, err := service.Send("s1", "hello", Hooks{})
+	first, err := service.Send("s1", session.Prompt{Text: "hello"}, Hooks{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestService_ConfigureWaitsForAdmissionAndCancelsOldRuntime(t *testing.T) {
 	releaseAdmission := make(chan struct{})
 	handles := make(chan RunHandle, 1)
 	go func() {
-		handle, err := service.Send("s1", "prompt", Hooks{BeforeAdmit: func() error {
+		handle, err := service.Send("s1", session.Prompt{Text: "prompt"}, Hooks{BeforeAdmit: func() error {
 			close(admissionStarted)
 			<-releaseAdmission
 			return nil

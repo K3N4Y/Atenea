@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -65,6 +66,41 @@ func newTestComposer() composer {
 	c.input.SetWidth(40)
 	c.histIdx = 0
 	return c
+}
+
+func TestComposer_AttachImageNumbersMarkersAndInsertsAtCursor(t *testing.T) {
+	c := newTestComposer().setValue("before after")
+	c.input.SetCursor(len([]rune("before ")))
+
+	for i := 1; i <= 4; i++ {
+		c = c.attachImage([]byte{byte(i)})
+	}
+
+	const want = "before [image#1][image#2][image#3][image#4]after"
+	if got := c.value(); got != want {
+		t.Fatalf("value() = %q, want %q", got, want)
+	}
+	if got := c.input.Position(); got != len([]rune("before [image#1][image#2][image#3][image#4]")) {
+		t.Fatalf("cursor = %d, want it after the fourth marker", got)
+	}
+	if got := c.prompt().Images; len(got) != 4 || got[3].MediaType != "image/png" || !slices.Equal(got[3].Data, []byte{4}) {
+		t.Fatalf("prompt images = %+v, want four PNG attachments in paste order", got)
+	}
+}
+
+func TestComposer_PromptOmitsDeletedImageMarkersAndClearRestartsNumbering(t *testing.T) {
+	c := newTestComposer().attachImage([]byte("one")).attachImage([]byte("two"))
+	c = c.setValue("[image#2]")
+
+	prompt := c.prompt()
+	if len(prompt.Images) != 1 || !slices.Equal(prompt.Images[0].Data, []byte("two")) {
+		t.Fatalf("prompt images = %+v, want only the image whose marker remains", prompt.Images)
+	}
+
+	c = c.clear().attachImage([]byte("new"))
+	if got := c.value(); got != "[image#1]" {
+		t.Fatalf("value() after clear and paste = %q, want numbering to restart", got)
+	}
 }
 
 func TestComposer_CtrlJInsertsNewlineAndGrowsWithoutSubmitting(t *testing.T) {

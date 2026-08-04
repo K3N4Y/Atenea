@@ -108,6 +108,22 @@ func testUndoStoreContract(t *testing.T, newStore func(*testing.T) UndoStore) {
 			t.Fatalf("error = %v", err)
 		}
 	})
+	t.Run("checkpoint images are mutation isolated", func(t *testing.T) {
+		store := newStore(t)
+		images := []Image{{MediaType: "image/png", Data: []byte{1, 2, 3}}}
+		appendEvent(t, store, SessionEvent{Kind: KindPromptCheckpointStarted, Checkpoint: &PromptCheckpoint{ID: "cp-1", Prompt: "look [image#1]", PromptImages: images, BeforeTree: "before"}})
+		images[0].Data[0] = 9
+		checkpoint, err := store.LatestPromptCheckpoint(context.Background(), "s1")
+		if err != nil || len(checkpoint.PromptImages) != 1 || checkpoint.PromptImages[0].Data[0] != 1 {
+			t.Fatalf("LatestPromptCheckpoint = %+v, err = %v", checkpoint, err)
+		}
+		checkpoint.PromptImages[0].Data[1] = 9
+		events, err := store.Events(context.Background(), "s1", 0)
+		if err != nil || len(events) != 1 || events[0].Checkpoint.PromptImages[0].Data[1] != 2 {
+			t.Fatalf("Events after returned checkpoint mutation = %+v, err = %v", events, err)
+		}
+	})
+
 }
 
 func TestUndoStoreContract_SQLiteCheckpointSurvivesReopen(t *testing.T) {
@@ -116,10 +132,12 @@ func TestUndoStoreContract_SQLiteCheckpointSurvivesReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = store.AppendEvent(context.Background(), "s1", SessionEvent{Kind: KindPromptCheckpointStarted, Checkpoint: &PromptCheckpoint{ID: "cp-1", Prompt: "first", BeforeTree: "before", OriginCallID: "call-1"}})
+	images := []Image{{MediaType: "image/png", Data: []byte{1, 2, 3}}}
+	_, err = store.AppendEvent(context.Background(), "s1", SessionEvent{Kind: KindPromptCheckpointStarted, Checkpoint: &PromptCheckpoint{ID: "cp-1", Prompt: "first [image#1]", PromptImages: images, BeforeTree: "before", OriginCallID: "call-1"}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	images[0].Data[0] = 9
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -129,12 +147,12 @@ func TestUndoStoreContract_SQLiteCheckpointSurvivesReopen(t *testing.T) {
 	}
 	defer store.Close()
 	got, err := store.LatestPromptCheckpoint(context.Background(), "s1")
-	if err != nil || got.ID != "cp-1" || got.Prompt != "first" || got.BeforeTree != "before" {
+	if err != nil || got.ID != "cp-1" || got.Prompt != "first [image#1]" || got.BeforeTree != "before" || len(got.PromptImages) != 1 || got.PromptImages[0].Data[0] != 1 {
 		t.Fatalf("checkpoint = %+v, err = %v", got, err)
 	}
 	events, err := store.Events(context.Background(), "s1", 0)
-	if err != nil || len(events) != 1 || events[0].Checkpoint == nil || events[0].Checkpoint.OriginCallID != "call-1" {
-		t.Fatalf("events after reopen = %+v, err = %v, want checkpoint origin call", events, err)
+	if err != nil || len(events) != 1 || events[0].Checkpoint == nil || events[0].Checkpoint.OriginCallID != "call-1" || len(events[0].Checkpoint.PromptImages) != 1 || events[0].Checkpoint.PromptImages[0].Data[0] != 1 {
+		t.Fatalf("events after reopen = %+v, err = %v, want checkpoint origin call and images", events, err)
 	}
 }
 

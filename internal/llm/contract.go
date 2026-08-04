@@ -35,7 +35,8 @@ type (
 var TextMessage = contract.TextMessage
 
 const (
-	TextPart = contract.TextPart
+	TextPart  = contract.TextPart
+	ImagePart = contract.ImagePart
 
 	NoPromptCaching       = contract.NoPromptCaching
 	ImplicitPromptCaching = contract.ImplicitPromptCaching

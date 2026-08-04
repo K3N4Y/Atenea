@@ -2,14 +2,13 @@ package llm
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
 
-// imagePart stands in for the kind this contract does not define yet. Every check
-// about content an adapter cannot express needs one, and using a value no build
-// defines is what keeps these tests true after images land.
-const imagePart = PartKind(1 << 30)
+// unknownPart stands in for a kind this build does not define.
+const unknownPart = PartKind(1 << 30)
 
 func TestTextMessage_CarriesTheTextAsItsOnlyPart(t *testing.T) {
 	message := TextMessage("user", "read foo.go")
@@ -20,7 +19,7 @@ func TestTextMessage_CarriesTheTextAsItsOnlyPart(t *testing.T) {
 	if len(message.Parts) != 1 {
 		t.Fatalf("Parts = %+v, want exactly one", message.Parts)
 	}
-	if message.Parts[0] != (Part{Kind: TextPart, Text: "read foo.go"}) {
+	if !reflect.DeepEqual(message.Parts[0], Part{Kind: TextPart, Text: "read foo.go"}) {
 		t.Errorf("Parts[0] = %+v, want a text part carrying the text", message.Parts[0])
 	}
 }
@@ -75,7 +74,7 @@ func TestMessageTextOnly_NoPartsIsEmptyTextNotAnError(t *testing.T) {
 func TestMessageTextOnly_RefusesAPartItCannotExpress(t *testing.T) {
 	message := Message{Role: "user", Parts: []Part{
 		{Kind: TextPart, Text: "what is in this?"},
-		{Kind: imagePart},
+		{Kind: ImagePart},
 	}}
 
 	text, err := message.TextOnly()
@@ -86,8 +85,8 @@ func TestMessageTextOnly_RefusesAPartItCannotExpress(t *testing.T) {
 	if !errors.As(err, &unsupported) {
 		t.Fatalf("TextOnly() error = %v, want an *UnsupportedPartError a host can classify", err)
 	}
-	if unsupported.Kind != imagePart {
-		t.Errorf("Kind = %s, want the part that could not be expressed (%s)", unsupported.Kind, imagePart)
+	if unsupported.Kind != ImagePart {
+		t.Errorf("Kind = %s, want the part that could not be expressed (%s)", unsupported.Kind, ImagePart)
 	}
 }
 
@@ -95,7 +94,7 @@ func TestMessageTextOnly_RefusesAPartItCannotExpress(t *testing.T) {
 // reader can go and look at rather than whichever came last.
 func TestMessageTextOnly_NamesTheFirstUnexpressiblePart(t *testing.T) {
 	message := Message{Role: "user", Parts: []Part{
-		{Kind: imagePart},
+		{Kind: ImagePart},
 		{Kind: PartKind(1 << 29)},
 	}}
 
@@ -104,30 +103,33 @@ func TestMessageTextOnly_NamesTheFirstUnexpressiblePart(t *testing.T) {
 	if !errors.As(err, &unsupported) {
 		t.Fatalf("TextOnly() error = %v, want an *UnsupportedPartError", err)
 	}
-	if unsupported.Kind != imagePart {
-		t.Errorf("Kind = %s, want the first unexpressible part (%s)", unsupported.Kind, imagePart)
+	if unsupported.Kind != ImagePart {
+		t.Errorf("Kind = %s, want the first unexpressible part (%s)", unsupported.Kind, ImagePart)
 	}
 }
 
 // A wrapped error still classifies: adapters prefix the failure with their own
 // name, and a host reads through that with errors.As.
 func TestUnsupportedPartError_SurvivesWrapping(t *testing.T) {
-	wrapped := errors.Join(errors.New("anthropic"), &UnsupportedPartError{Kind: imagePart})
+	wrapped := errors.Join(errors.New("anthropic"), &UnsupportedPartError{Kind: unknownPart})
 
 	var unsupported *UnsupportedPartError
 	if !errors.As(wrapped, &unsupported) {
 		t.Fatalf("errors.As did not find the cause in %v", wrapped)
 	}
-	if !strings.Contains(unsupported.Error(), imagePart.String()) {
-		t.Errorf("Error() = %q, want it to name the kind (%s)", unsupported.Error(), imagePart)
+	if !strings.Contains(unsupported.Error(), unknownPart.String()) {
+		t.Errorf("Error() = %q, want it to name the kind (%s)", unsupported.Error(), unknownPart)
 	}
 }
 
-func TestPartKindString_NamesTextAndShowsAnUnknownKindsValue(t *testing.T) {
+func TestPartKindString_NamesKnownKindsAndShowsAnUnknownKindsValue(t *testing.T) {
 	if got := TextPart.String(); got != "text" {
 		t.Errorf("TextPart.String() = %q, want %q", got, "text")
 	}
-	if got := imagePart.String(); !strings.Contains(got, "1073741824") {
+	if got := ImagePart.String(); got != "image" {
+		t.Errorf("ImagePart.String() = %q, want %q", got, "image")
+	}
+	if got := unknownPart.String(); !strings.Contains(got, "1073741824") {
 		t.Errorf("PartKind(1<<30).String() = %q, want the value itself so a failure names it", got)
 	}
 }

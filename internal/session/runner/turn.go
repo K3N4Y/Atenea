@@ -247,11 +247,8 @@ func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Ev
 // llm.ToolCallPart, with Arguments kept as raw JSON) and the tool_call_id its
 // result answers.
 //
-// A durable message is text, so it becomes a message whose content is one text
-// part — and one with nothing to say, an assistant turn that only called tools,
-// becomes a message with no content at all rather than an empty block. The day
-// the durable stream carries an image (audit R5), this is the one place that has
-// to learn to project it.
+// Text, when nonempty, is projected first, followed by images in their durable
+// order. Messages with neither remain content-free.
 func toLLMMessages(msgs []session.Message) []llm.Message {
 	out := make([]llm.Message, len(msgs))
 	for i, m := range msgs {
@@ -262,7 +259,13 @@ func toLLMMessages(msgs []session.Message) []llm.Message {
 				calls[j] = llm.ToolCallPart{ID: tc.ID, Name: tc.Name, Arguments: json.RawMessage(tc.Arguments)}
 			}
 		}
-		message := llm.TextMessage(string(m.Role), m.Text)
+		message := llm.Message{Role: string(m.Role)}
+		if m.Text != "" {
+			message.Parts = append(message.Parts, llm.Part{Kind: llm.TextPart, Text: m.Text})
+		}
+		for _, image := range m.Images {
+			message.Parts = append(message.Parts, llm.Part{Kind: llm.ImagePart, MediaType: image.MediaType, Data: image.Data})
+		}
 		message.ToolCalls = calls
 		message.ToolCallID = m.ToolCallID
 		message.IsError = m.IsError

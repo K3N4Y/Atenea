@@ -71,6 +71,18 @@ func waitForEvent(ch <-chan tea.Msg) tea.Cmd {
 
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch ev := msg.(type) {
+	case imageClipboardMsg:
+		if ev.generation != m.composer.generation {
+			return m, nil
+		}
+		if ev.err != nil {
+			return m.appendError(ev.err.Error()).syncViewport(), nil
+		}
+		if len(ev.data) == 0 {
+			return m, nil
+		}
+		m.composer = m.composer.attachImage(ev.data)
+		return m.resizeViewport(), nil
 	case EventMsg:
 		m = m.cancelSelection()
 		permissionHeight := m.permissionPanelHeight()

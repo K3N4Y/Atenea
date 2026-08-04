@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-26
+updated_at: 2026-08-03
 summary: The content-part seam on llm.Message — why the Text field was replaced rather than joined, why Part is a discriminated struct, and what an adapter owes content it cannot put on the wire.
 ---
 
@@ -26,17 +26,11 @@ type Message struct {
 }
 ```
 
-An image, a PDF, an audio clip had nowhere to live. That is not urgent today —
-nothing in atenea produces one — and that is precisely why it was worth doing
-now. `Message` is a **published contract**: a third party writes an adapter
-against it, and a host reads it. Adding a field to it later is a breaking change
-to code that is not in this repository, so the cheapest moment to have the seam
-is the moment before anyone needs it.
-
-`Capabilities.Vision` has been declaring `false` for every adapter since R3.2,
-with a doc comment naming this seam as the thing it was waiting for. That comment
-is now correct in a different way: the seam exists, and the flag is what an
-adapter flips when it can actually carry the content.
+Images now use this seam end to end. `ImagePart` carries MIME-typed bytes,
+durable session messages preserve them, and the standalone TUI can attach PNG
+clipboard content. OpenAI Chat Completions and Anthropic translate those parts
+to their native image blocks and declare `Capabilities.Vision`; adapters that
+cannot express a part still refuse it rather than dropping it.
 
 ## The shape
 
@@ -51,13 +45,18 @@ type Message struct {
 }
 
 type Part struct {
-	Kind PartKind
-	Text string // TextPart
+	Kind      PartKind
+	Text      string // TextPart
+	MediaType string // ImagePart
+	Data      []byte // ImagePart
 }
 
 type PartKind int
 
-const TextPart PartKind = iota
+const (
+	TextPart PartKind = iota
+	ImagePart
+)
 
 func TextMessage(role, text string) Message
 func (m Message) TextOnly() (string, error)
@@ -65,9 +64,9 @@ func (m Message) TextOnly() (string, error)
 type UnsupportedPartError struct{ Kind PartKind }
 ```
 
-Adding an image later is a constant and the fields it gives meaning to. Nothing
-existing changes shape, which is what "additive" has to mean for a type a third
-party both reads and writes.
+Images were added as one constant and the fields it gives meaning to. Existing
+text messages did not gain a second representation, which is what "additive"
+has to mean for a type a third party both reads and writes.
 
 ## Five decisions worth recording
 
@@ -211,19 +210,14 @@ against one that drops.
 render would hide this failure from every test written against it, which is the
 opposite of what a fake is for.
 
-## What this did not do
+## Image support added later
 
-- **No adapter gained vision.** `Capabilities.Vision` is still `false` for
-  Anthropic and for all three OpenAI dialects, and its doc comment now says what
-  is true: the seam is no longer what stands in the way, and the flag is what an
-  adapter flips when it can put an image on the wire.
-- **The seam stops at the provider boundary.** `session.Message`, the durable
-  event stream, the SQLite schema and both UIs are unchanged; the event contract
-  is R5's job. `runner.toLLMMessages` is the single place that projects durable
-  text into content parts, and the single place that has to learn to project an
-  image the day the stream carries one.
-- **The estimator walks parts** (`llm.EstimateRequestTokens`) and weighs the same
-  text identically however it is sliced. A part kind that carries bytes anywhere
-  other than `Text` has to be sized there too: what the estimate omits it
-  under-counts, and an under-count is preventive compaction not firing on the
-  request that then overflows.
+- `ImagePart` carries raw bytes and a MIME media type. OpenAI Chat Completions
+  emits a data-URL image content part; Anthropic emits a base64 image source.
+- `session.Message`, the durable event stream and SQLite preserve image bytes.
+  `runner.toLLMMessages` projects text first and then images in attachment order.
+- The standalone TUI reads PNG clipboard data asynchronously on Ctrl+V. The
+  composer inserts `[image#N]`, keeps the bytes outside editable text, and sends
+  only attachments whose marker remains in the draft.
+- The estimator still counts textual parts only. Provider image-token accounting
+  is model-specific, so no provider-neutral byte heuristic is recorded as fact.

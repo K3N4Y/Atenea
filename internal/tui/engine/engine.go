@@ -50,7 +50,7 @@ type Config struct {
 }
 
 type UndoResult struct {
-	Prompt string
+	Prompt session.Prompt
 	Events []session.SessionEvent
 }
 type CheckpointResult struct {
@@ -705,11 +705,11 @@ func modeFromEvents(events []session.SessionEvent) session.Mode {
 // durable session with no run; in every other case it keeps sessionID. It sets normal
 // mode first: a session that was in plan mode goes back to the normal tools on
 // send.
-func (e *Engine) SendPrompt(sessionID, text string) (RunHandle, error) {
+func (e *Engine) SendPrompt(sessionID string, prompt session.Prompt) (RunHandle, error) {
 	e.resumeMu.Lock()
 	defer e.resumeMu.Unlock()
 
-	if text == "/new" {
+	if prompt.Text == "/new" {
 		// A run still streaming into the old session would keep appending
 		// durable events after the new session is created, leaving the old
 		// session with the latest activity: on restart, ResumeSession would
@@ -726,11 +726,11 @@ func (e *Engine) SendPrompt(sessionID, text string) (RunHandle, error) {
 		}
 		return RunHandle{SessionID: newSessionID}, nil
 	}
-	if text == "/compact" {
+	if prompt.Text == "/compact" {
 		e.requestCompaction(sessionID)
 		return RunHandle{SessionID: sessionID}, nil
 	}
-	run, err := e.agent.Send(sessionID, text, e.turnHooks(sessionID, text, session.ModeNormal))
+	run, err := e.agent.Send(sessionID, prompt, e.turnHooks(sessionID, prompt, session.ModeNormal))
 	if err != nil {
 		return RunHandle{}, err
 	}
@@ -739,29 +739,29 @@ func (e *Engine) SendPrompt(sessionID, text string) (RunHandle, error) {
 
 // RetryPrompt reruns the failed turn without adding a duplicate user message.
 func (e *Engine) RetryPrompt(sessionID string) (RunHandle, error) {
-	run, err := e.agent.Retry(sessionID, e.turnHooks(sessionID, "", e.agent.Mode(sessionID)))
+	run, err := e.agent.Retry(sessionID, e.turnHooks(sessionID, session.Prompt{}, e.agent.Mode(sessionID)))
 	return RunHandle{SessionID: sessionID, RunID: run.ID}, err
 }
 
 // SendPlanPrompt queues the prompt in plan mode: read-only research plus
 // present_plan, with the plan-mode contract in the system prompt. It sets ModePlan
 // before starting (the mirror of App.SendPlanPrompt).
-func (e *Engine) SendPlanPrompt(sessionID, text string) (RunHandle, error) {
+func (e *Engine) SendPlanPrompt(sessionID string, prompt session.Prompt) (RunHandle, error) {
 	e.resumeMu.Lock()
 	defer e.resumeMu.Unlock()
 
-	run, err := e.agent.SendPlan(sessionID, text, e.turnHooks(sessionID, text, session.ModePlan))
+	run, err := e.agent.SendPlan(sessionID, prompt, e.turnHooks(sessionID, prompt, session.ModePlan))
 	return RunHandle{SessionID: sessionID, RunID: run.ID}, err
 }
 
 // turnHooks keeps the responsibilities that are the TUI's alone around the shared
 // lifecycle: CWD, checkpoints, the literal history, RunDoneMsg and compaction.
-func (e *Engine) turnHooks(sessionID, composerPrompt string, mode session.Mode) agent.Hooks {
+func (e *Engine) turnHooks(sessionID string, composerPrompt session.Prompt, mode session.Mode) agent.Hooks {
 	checkpointID := ""
 	return agent.Hooks{
 		BeforeAdmit: func() error {
 			var before checkpoint.Tree
-			if composerPrompt != "" && e.checkpoints != nil {
+			if composerPrompt.Text != "" && e.checkpoints != nil {
 				var err error
 				before, err = e.checkpoints.Capture(context.Background(), e.root)
 				if err != nil && !errors.Is(err, checkpoint.ErrGitWorkspace) {
@@ -782,7 +782,7 @@ func (e *Engine) turnHooks(sessionID, composerPrompt string, mode session.Mode) 
 				checkpointID = "checkpoint-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 				if _, err := e.store.AppendEvent(context.Background(), sessionID, session.SessionEvent{
 					Kind:       session.KindPromptCheckpointStarted,
-					Checkpoint: &session.PromptCheckpoint{ID: checkpointID, Prompt: composerPrompt, BeforeTree: string(before)},
+					Checkpoint: &session.PromptCheckpoint{ID: checkpointID, Prompt: composerPrompt.Text, PromptImages: composerPrompt.Images, BeforeTree: string(before)},
 				}); err != nil {
 					return err
 				}
@@ -790,11 +790,11 @@ func (e *Engine) turnHooks(sessionID, composerPrompt string, mode session.Mode) 
 			return nil
 		},
 		AfterAdmit: func() {
-			if composerPrompt == "" {
+			if composerPrompt.Text == "" {
 				return
 			}
 			if _, err := e.store.AppendEvent(context.Background(), sessionID,
-				session.SessionEvent{Kind: session.KindComposerPrompt, Text: composerPrompt}); err != nil {
+				session.SessionEvent{Kind: session.KindComposerPrompt, Text: composerPrompt.Text}); err != nil {
 				log.Printf("atenea: could not save the prompt in the history of %s: %v", sessionID, err)
 			}
 		},
@@ -983,7 +983,7 @@ func (e *Engine) Undo(sessionID string) (UndoResult, error) {
 		if err != nil {
 			return err
 		}
-		result = UndoResult{Prompt: boundary.Prompt, Events: events}
+		result = UndoResult{Prompt: session.Prompt{Text: boundary.Prompt, Images: boundary.PromptImages}, Events: events}
 		return nil
 	})
 	return result, err
@@ -996,7 +996,7 @@ func (e *Engine) AcceptPlan(sessionID string) (RunHandle, error) {
 	e.resumeMu.Lock()
 	defer e.resumeMu.Unlock()
 
-	run, err := e.agent.AcceptPlan(sessionID, e.turnHooks(sessionID, "", session.ModeNormal))
+	run, err := e.agent.AcceptPlan(sessionID, e.turnHooks(sessionID, session.Prompt{}, session.ModeNormal))
 	return RunHandle{SessionID: sessionID, RunID: run.ID}, err
 }
 

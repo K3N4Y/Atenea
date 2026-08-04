@@ -65,10 +65,11 @@ type CompactionCheckpoint struct {
 // prompt a turn started from and the workspace tree before and after it, which
 // is what makes undoing that turn's file changes possible.
 type PromptCheckpoint struct {
-	ID         string
-	Prompt     string
-	BeforeTree string
-	AfterTree  string
+	ID           string
+	Prompt       string
+	PromptImages []Image
+	BeforeTree   string
+	AfterTree    string
 	// OriginCallID identifies a model-created checkpoint. Rewind preserves that
 	// tool call and its settlement, then prunes subsequent conversation events.
 	OriginCallID string

@@ -12,6 +12,12 @@ const cancelConfirmationWindow = 2 * time.Second
 
 type cancelConfirmationExpiredMsg struct{ generation uint64 }
 
+type imageClipboardMsg struct {
+	data       []byte
+	err        error
+	generation uint64
+}
+
 func (m Model) modelSource() modelSource {
 	return modelSource{
 		catalog: func() ([]providerconfig.ProviderModels, bool) {
@@ -92,7 +98,22 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m.composerKey(msg, confirmCancel)
 }
 
+func (m Model) pasteImage() (tea.Model, tea.Cmd) {
+	if m.imageClipboard == nil {
+		return m, nil
+	}
+	read := m.imageClipboard
+	generation := m.composer.generation
+	return m, func() tea.Msg {
+		data, err := read()
+		return imageClipboardMsg{data: data, err: err, generation: generation}
+	}
+}
+
 func (m Model) composerKey(msg tea.KeyMsg, confirmCancel bool) (tea.Model, tea.Cmd) {
+	if msg.Type == tea.KeyCtrlV {
+		return m.pasteImage()
+	}
 	var (
 		intent composerIntent
 		cmd    tea.Cmd

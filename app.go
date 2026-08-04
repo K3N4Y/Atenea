@@ -358,7 +358,7 @@ func (a *App) startup(ctx context.Context) {
 func (a *App) SendPrompt(sessionID, text string) error {
 	turn := a.sessions.Turn(sessionID, text)
 	return a.workspace.Admit(func() error {
-		_, err := a.agent.Send(sessionID, text, a.turnHooks(sessionID, turn))
+		_, err := a.agent.Send(sessionID, session.Prompt{Text: text}, a.turnHooks(sessionID, turn))
 		return err
 	})
 }
@@ -479,7 +479,7 @@ func (a *App) SelectWorkspace() (string, error) {
 func (a *App) SendPlanPrompt(sessionID, text string) error {
 	turn := a.sessions.Turn(sessionID, text)
 	return a.workspace.Admit(func() error {
-		_, err := a.agent.SendPlan(sessionID, text, a.turnHooks(sessionID, turn))
+		_, err := a.agent.SendPlan(sessionID, session.Prompt{Text: text}, a.turnHooks(sessionID, turn))
 		return err
 	})
 }

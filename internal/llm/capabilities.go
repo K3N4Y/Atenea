@@ -100,6 +100,7 @@ var posthogWindows = map[string]int{
 var anthropicCapabilities = Capabilities{
 	Streaming: true,
 	Tools:     true,
+	Vision:    true,
 	// The adapter never sends Anthropic's `thinking` parameter, so it does not
 	// ask for reasoning; it forwards a ThinkingBlock if one arrives anyway.
 	Reasoning: false,
@@ -131,6 +132,7 @@ var posthogCapabilities = Capabilities{
 func posthogClaudeCapabilities() Capabilities {
 	caps := posthogCapabilities
 	caps.PromptCaching = ImplicitPromptCaching
+	caps.Vision = true
 	return caps
 }
 
@@ -141,15 +143,20 @@ func posthogCapabilitiesFor(models ...string) Capabilities {
 	}
 	caps.ReasoningModels = make(map[string]bool, len(models))
 	caps.PromptCachingModels = make(map[string]PromptCaching, len(models))
+	allVision := true
 	for _, model := range models {
 		if posthogResponsesModel(model) {
+			allVision = false
 			caps.ReasoningModels[model] = true
 			caps.PromptCachingModels[model] = KeyedPromptCaching
 		} else if posthogAnthropicModel(model) {
 			caps.ReasoningModels[model] = false
 			caps.PromptCachingModels[model] = ImplicitPromptCaching
+		} else {
+			allVision = false
 		}
 	}
+	caps.Vision = allVision
 	return caps
 }
 
@@ -164,6 +171,7 @@ func (c compatibilityProfile) capabilities() Capabilities {
 	caps := Capabilities{
 		Streaming:      true,
 		Tools:          true,
+		Vision:         true,
 		RetryTelemetry: true, // retryTiming reports every attempt as StepRetrying
 	}
 	switch c {

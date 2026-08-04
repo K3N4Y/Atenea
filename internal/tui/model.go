@@ -15,8 +15,8 @@ import (
 )
 
 type Agent interface {
-	SendPrompt(sessionID, text string) (RunHandle, error)
-	SendPlanPrompt(sessionID, text string) (RunHandle, error)
+	SendPrompt(sessionID string, prompt session.Prompt) (RunHandle, error)
+	SendPlanPrompt(sessionID string, prompt session.Prompt) (RunHandle, error)
 	AcceptPlan(sessionID string) (RunHandle, error)
 	Undo(sessionID string) (UndoResult, error)
 	ListResumeSessions(currentSessionID string) ([]session.SessionSummary, error)
@@ -83,12 +83,13 @@ type Model struct {
 
 	permissionChoice permissionChoice
 	permissionScroll int
+	imageClipboard   func() ([]byte, error)
 }
 
 func NewModel(agent Agent, sessionID string, events <-chan tea.Msg) Model {
 	input := newComposerInput()
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(secondaryTextStyle))
-	return Model{agent: agent, sessionID: sessionID, events: events, composer: composer{input: input}, spinner: sp, followAgent: true, terminalFocused: true}
+	return Model{agent: agent, sessionID: sessionID, events: events, composer: composer{input: input, nextImage: 1}, spinner: sp, followAgent: true, terminalFocused: true}
 }
 
 func refreshWorkspace(root string, generation uint64) tea.Cmd {
@@ -113,6 +114,12 @@ func (m Model) requestWorkspaceRefresh() (Model, tea.Cmd) {
 func (m Model) WithCompletions(commands []command.Command, listFiles func() ([]string, error)) Model {
 	m.commands = commands
 	m.listFiles = listFiles
+	return m
+}
+
+// WithImageClipboard injects the image reader used by Ctrl+V.
+func (m Model) WithImageClipboard(read func() ([]byte, error)) Model {
+	m.imageClipboard = read
 	return m
 }
 

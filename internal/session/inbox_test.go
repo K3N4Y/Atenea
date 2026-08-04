@@ -73,3 +73,31 @@ func TestMemoryInbox_AdmitHasPendingPromote(t *testing.T) {
 		t.Errorf("Promote(queue vacio) = %+v, quiero nil (len 0)", empty)
 	}
 }
+
+func TestMemoryInbox_DefensivelyCopiesImageData(t *testing.T) {
+	ctx := context.Background()
+	inbox := NewMemoryInbox()
+	data := []byte{1, 2, 3}
+	prompt := Prompt{Images: []Image{{MediaType: "image/png", Data: data}}}
+	if err := inbox.Admit(ctx, "s1", prompt, DeliveryQueue); err != nil {
+		t.Fatal(err)
+	}
+	if err := inbox.Admit(ctx, "s1", Prompt{Images: []Image{{MediaType: "image/png", Data: []byte{4, 5, 6}}}}, DeliveryQueue); err != nil {
+		t.Fatal(err)
+	}
+	data[0] = 9
+	prompt.Images[0].Data[1] = 9
+
+	got, err := inbox.Promote(ctx, "s1", DeliveryQueue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || string(got[0].Images[0].Data) != string([]byte{1, 2, 3}) {
+		t.Fatalf("Promote image = %+v, want original bytes", got)
+	}
+	got[0].Images[0].Data[2] = 9
+	next, err := inbox.Promote(ctx, "s1", DeliveryQueue)
+	if err != nil || len(next) != 1 || string(next[0].Images[0].Data) != string([]byte{4, 5, 6}) {
+		t.Fatalf("second Promote = (%+v, %v), want independent image bytes", next, err)
+	}
+}

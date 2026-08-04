@@ -251,6 +251,67 @@ func TestAnthropicProvider_StreamJoinsTextPartsAndOmitsEmptyContent(t *testing.T
 	}
 }
 
+func TestAnthropicProvider_StreamSerializesOrderedImageContent(t *testing.T) {
+	requestBodies := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		requestBodies <- body
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "event: message\ndata: {\"type\":\"message_stop\"}\n\n")
+	}))
+	defer server.Close()
+
+	out, err := NewAnthropicProvider("key", server.URL, "claude-test").Stream(context.Background(), Request{
+		Messages: []Message{{Role: "user", Parts: []Part{
+			{Kind: TextPart, Text: "before"},
+			{Kind: ImagePart, MediaType: "image/webp", Data: []byte{3, 4, 5}},
+			{Kind: TextPart, Text: "after"},
+		}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drain(out)
+
+	var body struct {
+		Messages []struct {
+			Content []map[string]any `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(<-requestBodies, &body); err != nil {
+		t.Fatal(err)
+	}
+	content := body.Messages[0].Content
+	if len(content) != 3 || content[0]["type"] != "text" || content[0]["text"] != "before" ||
+		content[1]["type"] != "image" || content[2]["type"] != "text" || content[2]["text"] != "after" {
+		t.Fatalf("content = %#v, want ordered text, image, text", content)
+	}
+	source := content[1]["source"].(map[string]any)
+	if source["type"] != "base64" || source["media_type"] != "image/webp" || source["data"] != "AwQF" {
+		t.Errorf("image source = %#v, want MIME type and original bytes", source)
+	}
+}
+
+func TestAnthropicProvider_StreamRefusesImageOnUnsupportedRole(t *testing.T) {
+	var called bool
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
+	defer server.Close()
+
+	out, err := NewAnthropicProvider("key", server.URL, "claude-test").Stream(context.Background(), Request{
+		Messages: []Message{{Role: "assistant", Parts: []Part{{Kind: ImagePart, MediaType: "image/png", Data: []byte{1}}}}},
+	})
+	if out != nil {
+		t.Error("Stream returned a channel")
+	}
+	var unsupported *UnsupportedPartError
+	if !errors.As(err, &unsupported) || unsupported.Kind != ImagePart {
+		t.Fatalf("Stream error = %v, want unsupported image part", err)
+	}
+	if called {
+		t.Error("request reached endpoint")
+	}
+}
+
 // This adapter cannot put anything but text on the wire, so a part it does not
 // understand fails the request outright — before a token is spent, and loudly
 // enough for a host to classify. Sending the rest would hand the model a

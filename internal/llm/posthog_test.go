@@ -144,8 +144,10 @@ func TestDescribePosthog_DeclaresTheGatewayCatalog(t *testing.T) {
 	// The instance must declare the same thing the description does, or the
 	// picker labels models one way and the turn behaves another.
 	provider := NewAnthropicOAuthProvider(&staticTokens{}, "https://gateway.test", "claude-opus-4-8")
-	if provider.Capabilities().ContextWindows["claude-opus-4-8"] != capabilities.ContextWindows["claude-opus-4-8"] {
-		t.Fatal("DescribePosthog drifted from what NewAnthropicOAuthProvider builds")
+	built := provider.Capabilities()
+	described := DescribePosthog("claude-opus-4-8")
+	if built.ContextWindows["claude-opus-4-8"] != described.ContextWindows["claude-opus-4-8"] || built.Vision != described.Vision {
+		t.Fatalf("DescribePosthog drifted from built Claude adapter: described=%+v built=%+v", described, built)
 	}
 }
 

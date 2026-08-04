@@ -21,6 +21,7 @@ type (
 
 	Role     = contract.Role
 	Message  = contract.Message
+	Image    = contract.Image
 	ToolCall = contract.ToolCall
 
 	ContextEpoch         = contract.ContextEpoch

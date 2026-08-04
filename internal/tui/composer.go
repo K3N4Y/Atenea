@@ -27,6 +27,10 @@ package tui
 //
 
 import (
+	"fmt"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,6 +41,7 @@ import (
 
 	"github.com/K3N4Y/atenea/internal/command"
 	"github.com/K3N4Y/atenea/internal/providerconfig"
+	"github.com/K3N4Y/atenea/internal/session"
 )
 
 const composerMaxLines = 5
@@ -144,6 +149,11 @@ func (input *composerInput) SetWidth(width int) {
 // live scattered on Model, plus the behavior over them. Value-in / value-out:
 // mutating methods take a value receiver and return the updated composer,
 // mirroring the package idiom.
+type composerImage struct {
+	marker string
+	image  session.Image
+}
+
 type composer struct {
 	// input is the editable textarea (draft, cursor, multi-row growth to
 	// composerMaxLines then scroll, literal newlines).
@@ -170,6 +180,9 @@ type composer struct {
 	filesLoading bool
 	filesError   string
 	filesGen     uint64
+	images       []composerImage
+	nextImage    int
+	generation   uint64
 }
 
 // composerIntent is what a key handler asks the root Model to do on the
@@ -204,6 +217,33 @@ type modelSource struct {
 // value returns the current draft text.
 func (c composer) value() string { return c.input.Value() }
 
+func (c composer) attachImage(data []byte) composer {
+	if len(data) == 0 {
+		return c
+	}
+	if c.nextImage == 0 {
+		c.nextImage = 1
+	}
+	marker := fmt.Sprintf("[image#%d]", c.nextImage)
+	c.nextImage++
+	position := min(c.input.Position(), len([]rune(c.input.Value())))
+	runes := []rune(c.input.Value())
+	c.input.SetValue(string(runes[:position]) + marker + string(runes[position:]))
+	c.input.SetCursor(position + len([]rune(marker)))
+	c.images = append(c.images, composerImage{marker: marker, image: session.Image{MediaType: "image/png", Data: append([]byte(nil), data...)}})
+	return c.closeMenu()
+}
+
+func (c composer) prompt() session.Prompt {
+	prompt := session.Prompt{Text: c.value()}
+	for _, attachment := range c.images {
+		if strings.Contains(prompt.Text, attachment.marker) {
+			prompt.Images = append(prompt.Images, attachment.image)
+		}
+	}
+	return prompt
+}
+
 // setValue replaces the draft text, re-growing the box to fit.
 func (c composer) setValue(value string) composer {
 	c.input.SetValue(value)
@@ -214,13 +254,45 @@ func (c composer) setValue(value string) composer {
 // prompt history.
 func (c composer) clear() composer {
 	c.input.SetValue("")
+	c.images = nil
+	c.nextImage = 1
+	c.generation++
 	return c.closeMenu()
 }
 
-// restoreDraft replaces the draft, places the cursor at its end, and closes
-// autocomplete. It is used when undo restores the submitted prompt.
-func (c composer) restoreDraft(value string) composer {
-	c.input.SetValue(value)
+var imageMarkerPattern = regexp.MustCompile(`\[image#([1-9][0-9]*)\]`)
+
+// restoreDraft replaces the draft and reconstructs attachment-to-marker
+// associations from the durable prompt. Prompt images are ordered by marker
+// number when submitted, so the same order deterministically restores them.
+func (c composer) restoreDraft(prompt session.Prompt) composer {
+	c = c.clear()
+	c.input.SetValue(prompt.Text)
+	markerNumbers := make([]int, 0)
+	seen := make(map[int]struct{})
+	for _, match := range imageMarkerPattern.FindAllStringSubmatch(prompt.Text, -1) {
+		number, err := strconv.Atoi(match[1])
+		if err != nil {
+			continue
+		}
+		if _, exists := seen[number]; exists {
+			continue
+		}
+		seen[number] = struct{}{}
+		markerNumbers = append(markerNumbers, number)
+	}
+	sort.Ints(markerNumbers)
+	for i, number := range markerNumbers {
+		if i >= len(prompt.Images) {
+			break
+		}
+		image := prompt.Images[i]
+		image.Data = append([]byte(nil), image.Data...)
+		c.images = append(c.images, composerImage{marker: fmt.Sprintf("[image#%d]", number), image: image})
+	}
+	if len(markerNumbers) > 0 {
+		c.nextImage = markerNumbers[len(markerNumbers)-1] + 1
+	}
 	c.input.CursorEnd()
 	return c.closeMenu()
 }
@@ -301,6 +373,7 @@ func (c composer) recallHistory(dir int) (composer, bool) {
 			return c, false
 		}
 		c.histIdx--
+		c = c.clear()
 		c.input.SetValue(c.history[c.histIdx])
 	} else {
 		if c.histIdx >= len(c.history) {
@@ -308,8 +381,9 @@ func (c composer) recallHistory(dir int) (composer, bool) {
 		}
 		c.histIdx++
 		if c.histIdx == len(c.history) {
-			c.input.SetValue("")
+			c = c.clear()
 		} else {
+			c = c.clear()
 			c.input.SetValue(c.history[c.histIdx])
 		}
 	}

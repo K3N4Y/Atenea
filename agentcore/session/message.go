@@ -10,18 +10,24 @@ const (
 	RoleTool      Role = "tool"
 )
 
-// Message is the projection of the conversation for one turn: the text plus the
-// Seq of the event that materialized it, which orders and filters it. For the
-// tool-call round trip it also carries ToolCalls (the calls the assistant asked
-// for, in order) and ToolCallID (on a tool result, the call it answers).
+// Message is the projection of the conversation for one turn: its ordered rich
+// content and the Seq of the event that materialized it. Text precedes Images
+// when projected to a provider.
 type Message struct {
 	ID         string
 	Role       Role
 	Text       string
+	Images     []Image
 	ToolCalls  []ToolCall // role=assistant: tool calls the model asked for
 	ToolCallID string     // role=tool: matches the assistant tool call this result answers
 	IsError    bool       // role=tool: the result represents an execution failure
 	Seq        Seq
+}
+
+// Image is raw image-file content and its MIME media type.
+type Image struct {
+	MediaType string
+	Data      []byte
 }
 
 // ToolCall is an assistant tool call in the projection: the id the result pairs

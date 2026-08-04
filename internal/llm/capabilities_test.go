@@ -65,6 +65,18 @@ func TestCapabilities_NeutralDialectDeclaresNoCatalogAndNoVendorCaching(t *testi
 	}
 }
 
+func TestCapabilities_DeclareVisionOnlyForChangedAdapters(t *testing.T) {
+	if !DescribeAnthropic().Vision {
+		t.Error("Anthropic must declare its native image serialization")
+	}
+	if !DescribeOpenAI(WithOpenAICompatibility()).Vision || !DescribeOpenAI(WithOpenRouterCompatibility()).Vision {
+		t.Error("OpenAI chat-completions dialects must declare image serialization")
+	}
+	if DescribeCodex().Vision {
+		t.Error("Codex vision support was not implemented")
+	}
+}
+
 func TestCapabilities_PromptCachingSaysWhoKeysIt(t *testing.T) {
 	for _, test := range []struct {
 		name string

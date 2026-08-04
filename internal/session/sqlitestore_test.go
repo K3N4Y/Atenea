@@ -95,6 +95,34 @@ func TestSQLiteStore_ReopenResumesLog(t *testing.T) {
 	}
 }
 
+func TestSQLiteStore_RoundTripsMessageImages(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewSQLiteStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	want := []Image{{MediaType: "image/png", Data: []byte{0, 1, 2}}, {MediaType: "image/jpeg", Data: []byte{3, 4}}}
+	if _, err := store.AppendEvent(ctx, "s1", SessionEvent{Message: &Message{ID: "u1", Role: RoleUser, Text: "look", Images: want}}); err != nil {
+		t.Fatal(err)
+	}
+
+	messages, err := store.Messages(ctx, "s1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := store.Events(ctx, "s1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 || !reflect.DeepEqual(messages[0].Images, want) {
+		t.Fatalf("Messages images = %+v, want %+v", messages, want)
+	}
+	if len(events) != 1 || events[0].Message == nil || !reflect.DeepEqual(events[0].Message.Images, want) {
+		t.Fatalf("Events images = %+v, want %+v", events, want)
+	}
+}
+
 // TestSQLiteStore_SessionsOrderSurvivesReopen verifica que el orden por recencia
 // de Sessions se apoya en el rowid persistido, no en estado en memoria: tras
 // cerrar y reabrir la base, la sesion con actividad mas reciente sigue primero.

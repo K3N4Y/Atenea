@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-27
+updated_at: 2026-08-03
 summary: What an adapter declares about itself beyond streaming a turn — the optional Capabilities interface that replaced the global model-to-context-window table, and why the registry describes a format without building it.
 ---
 
@@ -109,11 +109,11 @@ a declaration is how they stop being invisible:
   read that off the code without going looking.
 - `RetryTelemetry` is false for Anthropic and true for the OpenAI adapter. §3.2
   called this out as an observable asymmetry; now it is an observable *statement*.
-- `Vision` is false everywhere. It used to be false *because* `Message` had only
-  `Text`; since R3.6 gave messages [content parts](message-content.md) it is false
-  for the honest reason instead — no shipped adapter can put an image on the wire,
-  and this is the flag one flips when it can. Declaring it false rather than
-  leaving it out is what made the seam's arrival a change to one comment.
+- `Vision` is true for Anthropic and OpenAI Chat Completions because those
+  adapters serialize `ImagePart` into native image blocks. It remains false for
+  adapters such as Codex that still cannot put images on the wire. The flag
+  describes adapter support; model-specific acceptance remains the endpoint's
+  responsibility.
 - `PromptCaching` is the `compatibilityProfile` made explicit, which was R3.2's
   second stated goal. It answers the question a host actually has — *is
   `Request.SessionKey` worth anything here?* — rather than "does caching happen".

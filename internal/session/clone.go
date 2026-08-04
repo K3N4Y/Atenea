@@ -22,8 +22,21 @@ func cloneCompactionCheckpoint(checkpoint CompactionCheckpoint) CompactionCheckp
 	return checkpoint
 }
 
+func cloneImages(images []Image) []Image {
+	if images == nil {
+		return nil
+	}
+	cloned := make([]Image, len(images))
+	for i, image := range images {
+		cloned[i] = image
+		cloned[i].Data = slices.Clone(image.Data)
+	}
+	return cloned
+}
+
 func cloneMessage(message Message) Message {
 	message.ToolCalls = slices.Clone(message.ToolCalls)
+	message.Images = cloneImages(message.Images)
 	return message
 }
 
@@ -44,6 +57,7 @@ func cloneSessionEvent(event SessionEvent) SessionEvent {
 	}
 	if event.Checkpoint != nil {
 		checkpoint := *event.Checkpoint
+		checkpoint.PromptImages = cloneImages(checkpoint.PromptImages)
 		event.Checkpoint = &checkpoint
 	}
 	return event

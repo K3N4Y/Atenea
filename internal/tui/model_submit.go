@@ -7,6 +7,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/llm"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/tui/engine"
 )
 
@@ -296,7 +297,7 @@ func (m Model) submitModelCommand(command string) (Model, tea.Cmd) {
 }
 
 func (m Model) startNewSession() (Model, tea.Cmd) {
-	run, err := m.agent.SendPrompt(m.sessionID, "/new")
+	run, err := m.agent.SendPrompt(m.sessionID, session.Prompt{Text: "/new"})
 	if err != nil {
 		return m.appendError(err.Error()).syncViewport(), nil
 	}
@@ -305,7 +306,7 @@ func (m Model) startNewSession() (Model, tea.Cmd) {
 }
 
 func (m Model) submitCompactCommand() (Model, tea.Cmd) {
-	if _, err := m.agent.SendPrompt(m.sessionID, "/compact"); err != nil {
+	if _, err := m.agent.SendPrompt(m.sessionID, session.Prompt{Text: "/compact"}); err != nil {
 		return m.appendError(err.Error()).syncViewport(), nil
 	}
 	m.composer = m.composer.clear()
@@ -313,12 +314,14 @@ func (m Model) submitCompactCommand() (Model, tea.Cmd) {
 }
 
 func (m Model) submitAgentPrompt(text string) (Model, tea.Cmd) {
+	prompt := m.composer.prompt()
+	prompt.Text = text
 	var run RunHandle
 	var err error
 	if m.planMode {
-		run, err = m.agent.SendPlanPrompt(m.sessionID, text)
+		run, err = m.agent.SendPlanPrompt(m.sessionID, prompt)
 	} else {
-		run, err = m.agent.SendPrompt(m.sessionID, text)
+		run, err = m.agent.SendPrompt(m.sessionID, prompt)
 	}
 	if err != nil {
 		return m.appendError(err.Error()).syncViewport(), nil
