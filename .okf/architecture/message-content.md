@@ -213,7 +213,8 @@ opposite of what a fake is for.
 ## Image support added later
 
 - `ImagePart` carries raw bytes and a MIME media type. OpenAI Chat Completions
-  emits a data-URL image content part; Anthropic emits a base64 image source.
+  and Codex Responses emit data-URL image content; Anthropic emits a base64
+  image source.
 - `session.Message`, the durable event stream and SQLite preserve image bytes.
   `runner.toLLMMessages` projects text first and then images in attachment order.
 - The standalone TUI reads PNG clipboard data asynchronously on Ctrl+V. The

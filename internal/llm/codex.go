@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -615,18 +616,22 @@ func isCodexContextOverflow(status int, message string) bool {
 		strings.Contains(lower, "too long")
 }
 
-// toCodexInput projects the history into Responses items. The vocabulary is
-// different from chat completions in a way that matters: a tool call is an item of
-// its own (`function_call`) beside the assistant's message rather than a field
-// inside it, and its result is another item (`function_call_output`) rather than a
-// message with a role.
-//
-// This dialect carries text only, so a message with a part of any other kind fails
-// the whole request rather than losing the part: an unspoken drop puts a
-// conversation with a hole in it in front of the model.
+// toCodexInput projects history into Responses items. User messages may carry
+// ordered text and image content; other roles remain text-only. A tool call is
+// an item of its own (`function_call`) beside the assistant's message rather
+// than a field inside it, and its result is another item
+// (`function_call_output`) rather than a message with a role.
 func toCodexInput(messages []Message) (responses.ResponseInputParam, error) {
 	items := make(responses.ResponseInputParam, 0, len(messages))
 	for _, message := range messages {
+		if message.Role == "user" {
+			item, err := codexUserMessage(message.Parts)
+			if err != nil {
+				return nil, fmt.Errorf("codex: %w", err)
+			}
+			items = append(items, item)
+			continue
+		}
 		text, err := message.TextOnly()
 		if err != nil {
 			return nil, fmt.Errorf("codex: %w", err)
@@ -654,6 +659,41 @@ func toCodexInput(messages []Message) (responses.ResponseInputParam, error) {
 		}
 	}
 	return items, nil
+}
+
+func codexUserMessage(parts []Part) (responses.ResponseInputItemUnionParam, error) {
+	hasImage := false
+	for _, part := range parts {
+		switch part.Kind {
+		case TextPart:
+		case ImagePart:
+			hasImage = true
+		default:
+			return responses.ResponseInputItemUnionParam{}, &UnsupportedPartError{Kind: part.Kind}
+		}
+	}
+	if !hasImage {
+		message := Message{Parts: parts}
+		text, _ := message.TextOnly()
+		return codexMessage(text, responses.EasyInputMessageRoleUser), nil
+	}
+
+	content := make(responses.ResponseInputMessageContentListParam, 0, len(parts))
+	for _, part := range parts {
+		switch part.Kind {
+		case TextPart:
+			content = append(content, responses.ResponseInputContentParamOfInputText(part.Text))
+		case ImagePart:
+			image := responses.ResponseInputContentParamOfInputImage(responses.ResponseInputImageDetailAuto)
+			image.OfInputImage.ImageURL = openai.String("data:" + part.MediaType + ";base64," + base64.StdEncoding.EncodeToString(part.Data))
+			content = append(content, image)
+		}
+	}
+	return responses.ResponseInputItemUnionParam{OfMessage: &responses.EasyInputMessageParam{
+		Content: responses.EasyInputMessageContentUnionParam{OfInputItemContentList: content},
+		Role:    responses.EasyInputMessageRoleUser,
+		Type:    responses.EasyInputMessageTypeMessage,
+	}}, nil
 }
 
 // codexMessage is one history message as an input item. The type is stated rather

@@ -577,9 +577,57 @@ data: {"type":"response.function_call_arguments.delta","sequence_number":2,"item
 	}
 }
 
-// TestCodexProvider_RefusesContentItCannotExpress: this dialect carries text only,
-// and skipping a part it cannot express would put a conversation with a hole in it
-// in front of the model.
+func TestCodexProvider_SendsUserImagesAsResponsesContent(t *testing.T) {
+	server := newCodexServer(t, codexTurn)
+	req := codexRequest()
+	req.Messages = append(req.Messages, Message{Role: "user", Parts: []Part{
+		{Kind: TextPart, Text: "describe [image#1]"},
+		{Kind: ImagePart, MediaType: "image/png", Data: []byte("png")},
+	}})
+
+	drainCodex(t, NewCodexProvider(&staticTokens{token: OAuthToken{AccessToken: "a", AccountID: "b"}}, server.server.URL, "gpt-5.5"), req)
+	body, _, _ := server.request(t, 0)
+	input, ok := body["input"].([]any)
+	if !ok || len(input) == 0 {
+		t.Fatalf("input = %#v, want response input items", body["input"])
+	}
+	message, ok := input[len(input)-1].(map[string]any)
+	if !ok || message["role"] != "user" {
+		t.Fatalf("last input = %#v, want a user message", input[len(input)-1])
+	}
+	content, ok := message["content"].([]any)
+	if !ok || len(content) != 2 {
+		t.Fatalf("content = %#v, want ordered text and image parts", message["content"])
+	}
+	text, textOK := content[0].(map[string]any)
+	image, imageOK := content[1].(map[string]any)
+	if !textOK || text["type"] != "input_text" || text["text"] != "describe [image#1]" {
+		t.Fatalf("content[0] = %#v, want input_text first", content[0])
+	}
+	if !imageOK || image["type"] != "input_image" || image["detail"] != "auto" || image["image_url"] != "data:image/png;base64,cG5n" {
+		t.Fatalf("content[1] = %#v, want input_image second with exact data URL", content[1])
+	}
+}
+
+func TestCodexProvider_RefusesImagesOutsideUserMessages(t *testing.T) {
+	for _, role := range []string{"assistant", "system", "tool"} {
+		t.Run(role, func(t *testing.T) {
+			message := Message{Role: role, Parts: []Part{{Kind: ImagePart, MediaType: "image/png", Data: []byte("png")}}}
+			if role == "tool" {
+				message.ToolCallID = "call-1"
+			}
+			_, err := toCodexInput([]Message{message})
+			var unsupported *UnsupportedPartError
+			if !errors.As(err, &unsupported) || unsupported.Kind != ImagePart {
+				t.Fatalf("toCodexInput() error = %v, want ImagePart unsupported for %s", err, role)
+			}
+		})
+	}
+}
+
+// TestCodexProvider_RefusesContentItCannotExpress keeps unknown content strict:
+// skipping a part would put a conversation with a hole in it in front of the
+// model.
 func TestCodexProvider_RefusesContentItCannotExpress(t *testing.T) {
 	server := newCodexServer(t, codexTurn)
 	req := codexRequest()
@@ -596,8 +644,11 @@ func TestCodexProvider_DeclaresWhatTheDialectDoes(t *testing.T) {
 	declared := DescribeCodex(WithCodexReasoning(CodexEffortMedium, CodexSummaryAuto))
 	built := NewCodexProvider(&staticTokens{}, "https://chatgpt.com/backend-api/codex", "gpt-5.5",
 		WithCodexReasoning(CodexEffortMedium, CodexSummaryAuto)).Capabilities()
-	if declared.Reasoning != built.Reasoning || declared.PromptCaching != built.PromptCaching {
+	if declared.Reasoning != built.Reasoning || declared.PromptCaching != built.PromptCaching || declared.Vision != built.Vision {
 		t.Fatalf("DescribeCodex() = %#v but the built adapter declares %#v", declared, built)
+	}
+	if !declared.Vision {
+		t.Error("a Codex adapter that serializes input_image declares Vision false")
 	}
 	if !declared.Reasoning {
 		t.Error("an adapter that asks for a reasoning summary declares Reasoning false")

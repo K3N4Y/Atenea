@@ -72,8 +72,8 @@ func TestCapabilities_DeclareVisionOnlyForChangedAdapters(t *testing.T) {
 	if !DescribeOpenAI(WithOpenAICompatibility()).Vision || !DescribeOpenAI(WithOpenRouterCompatibility()).Vision {
 		t.Error("OpenAI chat-completions dialects must declare image serialization")
 	}
-	if DescribeCodex().Vision {
-		t.Error("Codex vision support was not implemented")
+	if !DescribeCodex().Vision {
+		t.Error("Codex Responses must declare image serialization")
 	}
 }
 

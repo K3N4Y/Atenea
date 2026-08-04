@@ -109,11 +109,10 @@ a declaration is how they stop being invisible:
   read that off the code without going looking.
 - `RetryTelemetry` is false for Anthropic and true for the OpenAI adapter. §3.2
   called this out as an observable asymmetry; now it is an observable *statement*.
-- `Vision` is true for Anthropic and OpenAI Chat Completions because those
-  adapters serialize `ImagePart` into native image blocks. It remains false for
-  adapters such as Codex that still cannot put images on the wire. The flag
-  describes adapter support; model-specific acceptance remains the endpoint's
-  responsibility.
+- `Vision` is true for Anthropic, OpenAI Chat Completions and Codex Responses
+  because those adapters serialize `ImagePart` into native image content. The
+  flag describes adapter support; model-specific acceptance remains the
+  endpoint's responsibility.
 - `PromptCaching` is the `compatibilityProfile` made explicit, which was R3.2's
   second stated goal. It answers the question a host actually has — *is
   `Request.SessionKey` worth anything here?* — rather than "does caching happen".

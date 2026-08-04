@@ -146,7 +146,6 @@ func posthogCapabilitiesFor(models ...string) Capabilities {
 	allVision := true
 	for _, model := range models {
 		if posthogResponsesModel(model) {
-			allVision = false
 			caps.ReasoningModels[model] = true
 			caps.PromptCachingModels[model] = KeyedPromptCaching
 		} else if posthogAnthropicModel(model) {
@@ -206,6 +205,7 @@ func (p *responsesProvider) Capabilities() Capabilities {
 	return Capabilities{
 		Streaming: true,
 		Tools:     true,
+		Vision:    true,
 		Reasoning: p.summary != "",
 		// prompt_cache_key carries Request.SessionKey.
 		PromptCaching:  KeyedPromptCaching,

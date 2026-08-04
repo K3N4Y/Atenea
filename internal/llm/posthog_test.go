@@ -252,6 +252,9 @@ func TestPosthogCapabilitiesMatchModelAwareDescription(t *testing.T) {
 		}
 		if got, ok := built.ContextWindow(model); !ok || got != described.ContextWindows[model] {
 			t.Errorf("%s ContextWindow(%q) = %d, %v; described %d", name, model, got, ok, described.ContextWindows[model])
+			if built.Vision != described.Vision {
+				t.Errorf("%s Vision = %v, want description %v", name, built.Vision, described.Vision)
+			}
 		}
 		if built.Reasoning != described.ReasoningModels[model] {
 			t.Errorf("%s Reasoning = %v, want model-aware description %v", name, built.Reasoning, described.ReasoningModels[model])
