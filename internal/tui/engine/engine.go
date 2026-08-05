@@ -379,11 +379,19 @@ func (e *Engine) SelectModel(providerID, model string) (providerconfig.Active, e
 	if e.models == nil {
 		return providerconfig.Active{}, errors.New("model selection is unavailable")
 	}
+	previous := e.models.Active()
 	active, err := e.models.Select(context.Background(), providerID, model)
 	if err != nil {
 		return active, err
 	}
-	if err := e.reasoning.Set(""); err != nil {
+	effort := llm.ReasoningEffort("")
+	if previous.ProviderID == providerID && previous.Model == model {
+		effort = e.reasoning.Effort()
+	}
+	if preferences, ok := e.models.(SelectionPreferences); ok {
+		effort = preferences.ReasoningEffort()
+	}
+	if err := e.reasoning.Set(effort); err != nil {
 		return active, err
 	}
 	return active, nil
@@ -398,6 +406,7 @@ func (e *Engine) SetReasoningEffort(effort llm.ReasoningEffort) error {
 		if err := preferences.SetReasoningEffort(effort); err != nil {
 			return err
 		}
+		effort = preferences.ReasoningEffort()
 	}
 	return e.reasoning.Set(effort)
 }

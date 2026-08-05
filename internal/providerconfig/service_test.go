@@ -529,6 +529,119 @@ func TestService_ReasoningEffortPersistsAndModelSelectionResetsIt(t *testing.T) 
 		t.Fatalf("persisted selection = %#v, want model two with default reasoning", persisted.Selected)
 	}
 }
+func TestService_SelectingSameSelectionPreservesReasoningWithoutSaving(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "providers.json")
+	if err := os.WriteFile(path, []byte(`{"providers":[{"id":"p","name":"Provider","type":"openai-compatible","base_url":"http://p","models":["one"]}],"selected":{"provider":"p","model":"one","reasoning_effort":"high"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	saves := 0
+	s, err := Open(context.Background(), path, "", fallbackSnapshot(), os.Getenv, inertRegistry(), func(string, Config) error {
+		saves++
+		return nil
+	}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.Select(context.Background(), "p", "one"); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.ReasoningEffort(); got != llm.ReasoningEffortHigh {
+		t.Fatalf("reasoning effort = %q, want high", got)
+	}
+	if saves != 0 {
+		t.Fatalf("save calls = %d, want no save for an unchanged selection", saves)
+	}
+}
+func TestService_ChangingProviderResetsReasoningEffort(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "providers.json")
+	if err := os.WriteFile(path, []byte(`{"providers":[{"id":"first","name":"First","type":"openai-compatible","base_url":"http://first","models":["model"]},{"id":"second","name":"Second","type":"openai-compatible","base_url":"http://second","models":["model"]}],"selected":{"provider":"first","model":"model","reasoning_effort":"high"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(context.Background(), path, "", fallbackSnapshot(), os.Getenv, inertRegistry(), nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.Select(context.Background(), "second", "model"); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.ReasoningEffort(); got != "" {
+		t.Fatalf("reasoning effort after changing provider = %q, want provider default", got)
+	}
+	persisted, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Selected.Provider != "second" || persisted.Selected.Model != "model" || persisted.Selected.ReasoningEffort != "" {
+		t.Fatalf("persisted selection = %#v, want the new provider with default reasoning", persisted.Selected)
+	}
+}
+
+func TestService_SettingSameReasoningEffortDoesNotSave(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "providers.json")
+	if err := os.WriteFile(path, []byte(`{"providers":[{"id":"p","name":"Provider","type":"openai-compatible","base_url":"http://p","models":["one"]}],"selected":{"provider":"p","model":"one","reasoning_effort":"high"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	saves := 0
+	s, err := Open(context.Background(), path, "", fallbackSnapshot(), os.Getenv, inertRegistry(), func(string, Config) error {
+		saves++
+		return nil
+	}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.SetReasoningEffort(llm.ReasoningEffortHigh); err != nil {
+		t.Fatal(err)
+	}
+	if saves != 0 {
+		t.Fatalf("save calls = %d, want no save for an unchanged reasoning effort", saves)
+	}
+}
+
+func TestService_IgnoresReasoningWithoutActiveSelection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "providers.json")
+	if err := os.WriteFile(path, []byte(`{"providers":[{"id":"p","name":"Provider","type":"openai-compatible","base_url":"http://p","models":["one"]}],"selected":{"reasoning_effort":"high"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(context.Background(), path, "", fallbackSnapshot(), os.Getenv, inertRegistry(), nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.ReasoningEffort(); got != "" {
+		t.Fatalf("reasoning effort without an active selection = %q, want default", got)
+	}
+	if err := s.SetReasoningEffort(llm.ReasoningEffortLow); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Declare(Provider{
+		ID: "p", Name: "Provider", Type: OpenAICompatible,
+		BaseURL: "http://p", Models: []string{"one"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Selected.ReasoningEffort != "" {
+		t.Fatalf("persisted reasoning effort after the next save = %q, want default", persisted.Selected.ReasoningEffort)
+	}
+	if _, err := s.Select(context.Background(), "p", "one"); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.ReasoningEffort(); got != "" {
+		t.Fatalf("reasoning effort after the first selection = %q, want default", got)
+	}
+	persisted, err = Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Selected.ReasoningEffort != "" {
+		t.Fatalf("persisted reasoning effort = %q, want default", persisted.Selected.ReasoningEffort)
+	}
+}
 
 func TestService_SetReasoningEffortSaveFailureKeepsPreviousPreference(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "providers.json")

@@ -260,10 +260,10 @@ func (s *Service) storeLogin(ctx context.Context, providerID string, credential 
 	}
 	switch {
 	case selected.Provider == providerID:
-		return s.applySelection(ctx, providerID, selected.Model, false)
+		return s.applySelection(ctx, providerID, selected.Model)
 	case selected.Provider == "":
 		if len(provider.Models) > 0 {
-			return s.applySelection(ctx, providerID, provider.Models[0], true)
+			return s.applySelection(ctx, providerID, provider.Models[0])
 		}
 	}
 	return s.Active(), nil

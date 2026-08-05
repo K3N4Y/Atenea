@@ -2784,14 +2784,23 @@ func (s *selectionModelService) Refresh(context.Context) ([]providerconfig.Provi
 	return nil, nil
 }
 func (s *selectionModelService) Select(_ context.Context, providerID, model string) (providerconfig.Active, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.selectError != nil {
-		return s.Active(), s.selectError
+		return s.active, s.selectError
 	}
-	return s.Active(), nil
+	if s.active.ProviderID != providerID || s.active.Model != model {
+		s.active = providerconfig.Active{ProviderID: providerID, Model: model}
+		s.effort = ""
+	}
+	return s.active, nil
 }
 func (s *selectionModelService) ReasoningEffort() llm.ReasoningEffort {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.active.ProviderID == "" || s.active.Model == "" {
+		return ""
+	}
 	return s.effort
 }
 func (s *selectionModelService) SetReasoningEffort(effort llm.ReasoningEffort) error {
@@ -2800,12 +2809,18 @@ func (s *selectionModelService) SetReasoningEffort(effort llm.ReasoningEffort) e
 	if s.prefError != nil {
 		return s.prefError
 	}
+	if s.active.ProviderID == "" || s.active.Model == "" {
+		return nil
+	}
 	s.effort = effort
 	return nil
 }
 
 func TestEngine_ReasoningEffortLoadsPersistsAndResetsForSelectedModel(t *testing.T) {
-	service := &selectionModelService{effort: llm.ReasoningEffortHigh}
+	service := &selectionModelService{
+		active: providerconfig.Active{ProviderID: "p", Model: "one"},
+		effort: llm.ReasoningEffortHigh,
+	}
 	engine := New(Config{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore(), Models: service})
 	defer engine.Shutdown(context.Background())
 	if got := engine.ReasoningEffort(); got != llm.ReasoningEffortHigh {
@@ -2825,8 +2840,44 @@ func TestEngine_ReasoningEffortLoadsPersistsAndResetsForSelectedModel(t *testing
 	}
 }
 
+func TestEngine_SameModelSelectionPreservesReasoning(t *testing.T) {
+	service := &selectionModelService{
+		active: providerconfig.Active{ProviderID: "p", Model: "m"},
+		effort: llm.ReasoningEffortHigh,
+	}
+	engine := New(Config{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore(), Models: service})
+	defer engine.Shutdown(context.Background())
+
+	if err := engine.SetReasoningEffort(llm.ReasoningEffortLow); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.SelectModel("p", "m"); err != nil {
+		t.Fatal(err)
+	}
+	if got := engine.ReasoningEffort(); got != llm.ReasoningEffortLow {
+		t.Fatalf("reasoning effort after selecting the same model = %q, want low", got)
+	}
+}
+
+func TestEngine_ReasoningEffortWithoutSelectionStaysAtDefault(t *testing.T) {
+	service := &selectionModelService{}
+	engine := New(Config{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore(), Models: service})
+	defer engine.Shutdown(context.Background())
+
+	if err := engine.SetReasoningEffort(llm.ReasoningEffortHigh); err != nil {
+		t.Fatal(err)
+	}
+	if got := engine.ReasoningEffort(); got != "" {
+		t.Fatalf("reasoning effort without a selection = %q, want provider default", got)
+	}
+}
+
 func TestEngine_ReasoningPersistenceFailureKeepsActivePreference(t *testing.T) {
-	service := &selectionModelService{effort: llm.ReasoningEffortHigh, prefError: errors.New("disk full")}
+	service := &selectionModelService{
+		active:    providerconfig.Active{ProviderID: "p", Model: "m"},
+		effort:    llm.ReasoningEffortHigh,
+		prefError: errors.New("disk full"),
+	}
 	engine := New(Config{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore(), Models: service})
 	defer engine.Shutdown(context.Background())
 	if err := engine.SetReasoningEffort(llm.ReasoningEffortLow); err == nil {
@@ -2838,7 +2889,11 @@ func TestEngine_ReasoningPersistenceFailureKeepsActivePreference(t *testing.T) {
 }
 
 func TestEngine_ModelSelectionFailureKeepsActiveReasoningPreference(t *testing.T) {
-	service := &selectionModelService{effort: llm.ReasoningEffortHigh, selectError: errors.New("disk full")}
+	service := &selectionModelService{
+		active:      providerconfig.Active{ProviderID: "p", Model: "m"},
+		effort:      llm.ReasoningEffortHigh,
+		selectError: errors.New("disk full"),
+	}
 	engine := New(Config{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore(), Models: service})
 	defer engine.Shutdown(context.Background())
 	if _, err := engine.SelectModel("p", "m"); err == nil {

@@ -112,6 +112,9 @@ func Open(ctx context.Context, path, cachePath string, fallback llm.ProviderSnap
 	}
 	s.config = cfg
 	s.catalog = s.newCatalog(cfg)
+	if cfg.Selected.Provider == "" && cfg.Selected.Model == "" {
+		return s, nil
+	}
 	provider, ok := findProvider(cfg, cfg.Selected.Provider)
 	if !ok || cfg.Selected.Model == "" {
 		return s, errors.New("provider config has no active selection")
@@ -130,6 +133,9 @@ func Open(ctx context.Context, path, cachePath string, fallback llm.ProviderSnap
 func (s *Service) ReasoningEffort() llm.ReasoningEffort {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.config.Selected.Provider == "" || s.config.Selected.Model == "" {
+		return ""
+	}
 	return s.config.Selected.ReasoningEffort
 }
 
@@ -157,6 +163,12 @@ func (s *Service) SetReasoningEffort(effort llm.ReasoningEffort) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.config.Selected.Provider == "" || s.config.Selected.Model == "" {
+		return nil
+	}
+	if s.config.Selected.ReasoningEffort == effort {
+		return nil
+	}
 	next := s.config
 	next.Providers = append([]Provider(nil), s.config.Providers...)
 	next.Selected.ReasoningEffort = effort
@@ -273,7 +285,7 @@ func (s *Service) Select(ctx context.Context, providerID, model string) (Active,
 	if model == "" {
 		return s.Active(), errors.New("model is required")
 	}
-	return s.applySelection(ctx, providerID, model, true)
+	return s.applySelection(ctx, providerID, model)
 }
 
 // Declare adds or replaces a provider the user declared themselves — a local
@@ -346,6 +358,9 @@ func (s *Service) Forget(providerID string) error {
 // over it. It writes first: a config that could not be saved must not become the
 // one this process answers from, or the two disagree until the next launch.
 func (s *Service) publishLocked(next Config) error {
+	if next.Selected.Provider == "" && next.Selected.Model == "" {
+		next.Selected.ReasoningEffort = ""
+	}
 	if err := s.save(s.path, next); err != nil {
 		return err
 	}
@@ -365,7 +380,7 @@ func (s *Service) newCatalog(cfg Config) *Catalog {
 // runs a command, and holding the write lock for its timeout would freeze every
 // reader — the model picker, the composer footer, the running turn's view of
 // what it is talking to. Connect validates outside the lock for the same reason.
-func (s *Service) applySelection(ctx context.Context, providerID, model string, resetReasoning bool) (Active, error) {
+func (s *Service) applySelection(ctx context.Context, providerID, model string) (Active, error) {
 	s.mu.RLock()
 	provider, ok := findProvider(s.config, providerID)
 	s.mu.RUnlock()
@@ -378,13 +393,10 @@ func (s *Service) applySelection(ctx context.Context, providerID, model string, 
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.selectLocked(providerID, model, apiKey, resetReasoning)
+	return s.selectLocked(providerID, model, apiKey)
 }
 
-// selectLocked applies a provider/model selection with an already-resolved key;
-// the caller holds s.mu. It re-reads the provider under the lock because the
-// configuration may have changed while the credential was resolving.
-func (s *Service) selectLocked(providerID, model, apiKey string, resetReasoning bool) (Active, error) {
+func (s *Service) selectLocked(providerID, model, apiKey string) (Active, error) {
 	provider, ok := findProvider(s.config, providerID)
 	if !ok {
 		return s.activeLocked(), fmt.Errorf("provider %q is not configured", providerID)
@@ -393,14 +405,14 @@ func (s *Service) selectLocked(providerID, model, apiKey string, resetReasoning 
 	if err != nil {
 		return s.activeLocked(), err
 	}
-	next := s.config
-	next.Providers = append([]Provider(nil), s.config.Providers...)
-	next.Selected = Selection{Provider: providerID, Model: model, ReasoningEffort: s.config.Selected.ReasoningEffort}
-	if resetReasoning {
-		next.Selected.ReasoningEffort = ""
-	}
-	if err := s.publishLocked(next); err != nil {
-		return s.activeLocked(), err
+	sameSelection := s.config.Selected.Provider == providerID && s.config.Selected.Model == model
+	if !sameSelection {
+		next := s.config
+		next.Providers = append([]Provider(nil), s.config.Providers...)
+		next.Selected = Selection{Provider: providerID, Model: model}
+		if err := s.publishLocked(next); err != nil {
+			return s.activeLocked(), err
+		}
 	}
 	s.switcher.Swap(snapshot(provider, model, delegate))
 	return s.activeLocked(), nil
