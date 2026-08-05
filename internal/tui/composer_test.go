@@ -200,6 +200,23 @@ func TestComposer_EmptyComposerSpaceInsertsSpace(t *testing.T) {
 	}
 }
 
+func TestComposer_ShiftDeleteRemovesWordForward(t *testing.T) {
+	commands, listFiles, models := noCompletions()
+	c := typeInto(newTestComposer(), "hello world", commands, listFiles, models)
+	c.input.SetCursor(len([]rune("hello ")))
+
+	next, intent, _ := c.handleKey(tea.KeyMsg{Type: tea.KeyInsert, Alt: true}, commands, listFiles, models)
+	if !intent.handled || intent.submit {
+		t.Fatalf("Shift+Delete intent = %+v, want handled text editing", intent)
+	}
+	if got, want := next.value(), "hello "; got != want {
+		t.Fatalf("value() after Shift+Delete = %q, want %q", got, want)
+	}
+	if got, want := next.input.Position(), len([]rune("hello ")); got != want {
+		t.Fatalf("cursor after Shift+Delete = %d, want %d", got, want)
+	}
+}
+
 func TestComposer_HistoryPrevNextAndPastNewestClears(t *testing.T) {
 	c := newTestComposer().seedHistory([]string{"older", "newer"})
 

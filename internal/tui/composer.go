@@ -65,6 +65,8 @@ func newComposerInput() composerInput {
 	input.SetHeight(1)
 	input.Cursor.BlinkSpeed = 700 * time.Millisecond
 	input.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("ctrl+j"))
+	input.KeyMap.DeleteWordForward.SetKeys("alt+delete", "alt+d", "alt+insert")
+	// Bubble Tea represents CSI 3;2~ (Shift+Delete) as alt+insert.
 	input.FocusedStyle.Prompt = focusStyle
 	input.FocusedStyle.CursorLine = input.FocusedStyle.CursorLine.UnsetBackground()
 	input.BlurredStyle.Prompt = secondaryTextStyle
