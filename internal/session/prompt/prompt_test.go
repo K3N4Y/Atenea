@@ -20,9 +20,9 @@ func TestSelect_PicksAnthropicForClaude(t *testing.T) {
 	}
 }
 
-// Build es puro: concatena el prompt base elegido por Select con el bloque de
-// entorno literal. Con IsGitRepo true el bloque dice "yes".
-func TestBuild_RendersEnvBlockAndBase(t *testing.T) {
+// Build termina con el directorio actual, como pi, sin un bloque de entorno
+// adicional.
+func TestBuild_RendersWorkingDirectoryAndBase(t *testing.T) {
 	env := Env{
 		WorkingDir:   "/home/u/dev/atenea",
 		WorktreeRoot: "/home/u/dev/atenea",
@@ -36,13 +36,7 @@ func TestBuild_RendersEnvBlockAndBase(t *testing.T) {
 		t.Fatalf("Build no contiene el anthropicPrompt base; got:\n%s", got)
 	}
 
-	wantBlock := "<env>\n" +
-		"  Working directory: /home/u/dev/atenea\n" +
-		"  Workspace root folder: /home/u/dev/atenea\n" +
-		"  Is directory a git repo: yes\n" +
-		"  Platform: linux\n" +
-		"  Today's date: Mon Jun 22 2026\n" +
-		"</env>"
+	wantBlock := "Current working directory: /home/u/dev/atenea"
 	if !strings.Contains(got, wantBlock) {
 		t.Fatalf("Build no contiene el bloque <env> literal esperado.\nquiero contener:\n%s\ngot:\n%s", wantBlock, got)
 	}
@@ -103,9 +97,8 @@ func TestBuild_PutsStableContentBeforeEnv(t *testing.T) {
 	}
 }
 
-// Cambiar unicamente la fecha modifica el entorno, no el prefijo estatico que
-// los proveedores pueden reutilizar entre solicitudes.
-func TestBuild_DateChangePreservesStablePrefix(t *testing.T) {
+// Los metadatos que pi no incluye no alteran el prompt.
+func TestBuild_OmitsNonPiEnvironmentMetadata(t *testing.T) {
 	env := Env{
 		WorkingDir:   "/r",
 		WorktreeRoot: "/r",
@@ -117,18 +110,11 @@ func TestBuild_DateChangePreservesStablePrefix(t *testing.T) {
 	skills := "<available_skills></available_skills>"
 	first := Build("claude-x", env, instructions, skills)
 	env.Date = "Tue Jun 23 2026"
+	env.Platform = "other"
+	env.IsGitRepo = false
 	second := Build("claude-x", env, instructions, skills)
-
-	firstPrefix, firstEnv, firstFound := strings.Cut(first, "\n\n<env>")
-	secondPrefix, secondEnv, secondFound := strings.Cut(second, "\n\n<env>")
-	if !firstFound || !secondFound {
-		t.Fatalf("Build debe contener un bloque <env> separado; firstFound=%t secondFound=%t", firstFound, secondFound)
-	}
-	if firstPrefix != secondPrefix {
-		t.Fatalf("cambiar Date altero el prefijo estatico.\nprimero:\n%s\nsegundo:\n%s", firstPrefix, secondPrefix)
-	}
-	if firstEnv == secondEnv {
-		t.Fatal("cambiar Date debe alterar el bloque <env>")
+	if first != second {
+		t.Fatalf("metadata ajena a pi altero el prompt.\nprimero:\n%s\nsegundo:\n%s", first, second)
 	}
 }
 
@@ -149,7 +135,7 @@ func TestLoadInstructions_FindsAgentsMd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadInstructions err = %v, quiero nil", err)
 	}
-	want := "Instructions from: " + agents + "\nrepo rules"
+	want := projectContext([2]string{agents, "repo rules"})
 	if got != want {
 		t.Fatalf("LoadInstructions = %q, quiero %q", got, want)
 	}
@@ -176,8 +162,7 @@ func TestSelect_FallsBackToDefaultForNonClaude(t *testing.T) {
 	}
 }
 
-// Con IsGitRepo false el bloque <env> debe decir "no", no un "yes" hardcodeado.
-func TestBuild_GitRepoNoWhenFalse(t *testing.T) {
+func TestBuild_EndsWithWorkingDirectory(t *testing.T) {
 	env := Env{
 		WorkingDir:   "/tmp/x",
 		WorktreeRoot: "/tmp/x",
@@ -186,8 +171,8 @@ func TestBuild_GitRepoNoWhenFalse(t *testing.T) {
 		Date:         "Mon Jun 22 2026",
 	}
 	got := Build("claude-opus-4-8", env, "", "")
-	if !strings.Contains(got, "Is directory a git repo: no") {
-		t.Fatalf("Build con IsGitRepo=false no contiene \"Is directory a git repo: no\"; got:\n%s", got)
+	if !strings.HasSuffix(got, "Current working directory: /tmp/x") {
+		t.Fatalf("Build no termina con el directorio actual; got:\n%s", got)
 	}
 }
 
@@ -241,14 +226,14 @@ func TestLoadInstructions_PrefersAgentsOverClaudeSameDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadInstructions err = %v, quiero nil", err)
 	}
-	want := "Instructions from: " + agents + "\nA"
+	want := projectContext([2]string{agents, "A"})
 	if got != want {
 		t.Fatalf("LoadInstructions = %q, quiero el de AGENTS.md %q", got, want)
 	}
 }
 
-// Gana el archivo mas cercano al dir, no el del ancestro root.
-func TestLoadInstructions_NearestDirWins(t *testing.T) {
+// Pi hereda todos los archivos de contexto, del root al directorio actual.
+func TestLoadInstructions_InheritsRootToCurrentDirectory(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("root"), 0o644); err != nil {
 		t.Fatalf("write root AGENTS.md: %v", err)
@@ -266,9 +251,12 @@ func TestLoadInstructions_NearestDirWins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadInstructions err = %v, quiero nil", err)
 	}
-	want := "Instructions from: " + nearAgents + "\nnear"
+	want := projectContext(
+		[2]string{filepath.Join(root, "AGENTS.md"), "root"},
+		[2]string{nearAgents, "near"},
+	)
 	if got != want {
-		t.Fatalf("LoadInstructions = %q, quiero el mas cercano %q", got, want)
+		t.Fatalf("LoadInstructions = %q, quiero contexto heredado %q", got, want)
 	}
 }
 
@@ -386,9 +374,23 @@ func TestBuildLocal_UsesToolCallingPromptNotCodeGenPattern(t *testing.T) {
 	if !strings.Contains(strings.ToLower(got), "tool") {
 		t.Fatalf("el prompt local debe instruir el uso de tools (function-calling)")
 	}
-	if !strings.Contains(got, "<env>") {
-		t.Fatalf("BuildLocal debe incluir el bloque <env>")
+	if !strings.Contains(got, "Current working directory: ") {
+		t.Fatalf("BuildLocal debe incluir el directorio actual")
 	}
+}
+
+func projectContext(files ...[2]string) string {
+	var b strings.Builder
+	b.WriteString("<project_context>\n\nProject-specific instructions and guidelines:\n")
+	for _, file := range files {
+		b.WriteString("\n<project_instructions path=\"")
+		b.WriteString(file[0])
+		b.WriteString("\">\n")
+		b.WriteString(file[1])
+		b.WriteString("\n</project_instructions>\n")
+	}
+	b.WriteString("\n</project_context>")
+	return b.String()
 }
 
 // BuildLocal comparte el orden cache-friendly y omite instrucciones vacias sin

@@ -182,8 +182,9 @@ func Format(list []Info) string {
 	sort.Slice(described, func(i, j int) bool { return described[i].Name < described[j].Name })
 
 	var b strings.Builder
-	b.WriteString("Skills provide specialized instructions and workflows for specific tasks.\n")
+	b.WriteString("The following skills provide specialized instructions for specific tasks.\n")
 	b.WriteString("Use the skill tool to load a skill when a task matches its description.\n")
+	b.WriteString("When a skill file references a relative path, resolve it against the skill directory and use that absolute path in tool commands.\n\n")
 	b.WriteString("<available_skills>\n")
 	for _, s := range described {
 		b.WriteString("  <skill>\n")

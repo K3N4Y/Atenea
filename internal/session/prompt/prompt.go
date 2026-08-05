@@ -21,7 +21,7 @@ var localPrompt string
 //go:embed plan.txt
 var planInstructions string
 
-// Env contains the runtime data rendered in the <env> section.
+// Env contains runtime data available to prompt renderers.
 type Env struct {
 	WorkingDir   string
 	WorktreeRoot string
@@ -123,49 +123,49 @@ func BuildLocalPlan(env Env, instructions, skills string) string {
 }
 
 func renderEnv(env Env) string {
-	return fmt.Sprintf("<env>\n"+
-		"  Working directory: %s\n"+
-		"  Workspace root folder: %s\n"+
-		"  Is directory a git repo: %s\n"+
-		"  Platform: %s\n"+
-		"  Today's date: %s\n"+
-		"</env>",
-		env.WorkingDir,
-		env.WorktreeRoot,
-		yesNo(env.IsGitRepo),
-		env.Platform,
-		env.Date,
-	)
+	return fmt.Sprintf("Current working directory: %s", env.WorkingDir)
 }
 
-func yesNo(b bool) string {
-	if b {
-		return "yes"
-	}
-	return "no"
-}
-
-// LoadInstructions searches from dir through root and returns the nearest
-// AGENTS.md or CLAUDE.md, formatted with its absolute path.
+// LoadInstructions loads project instructions from root through dir and formats
+// them as pi-compatible project context. One file is loaded per directory, with
+// AGENTS.md taking precedence over CLAUDE.md.
 func LoadInstructions(dir, root string) (string, error) {
-	candidates := []string{"AGENTS.md", "CLAUDE.md"}
+	candidates := []string{"AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"}
 	current := dir
+	var files []string
 	for {
 		for _, name := range candidates {
 			path := filepath.Join(current, name)
 			if _, err := os.Stat(path); err == nil {
-				content, err := os.ReadFile(path)
-				if err != nil {
-					return "", err
-				}
-				return "Instructions from: " + path + "\n" + string(content), nil
+				files = append(files, path)
+				break
 			}
 		}
-		// Stop after processing root itself.
 		if current == root {
 			break
 		}
 		current = filepath.Dir(current)
 	}
-	return "", nil
+	if len(files) == 0 {
+		return "", nil
+	}
+
+	var b strings.Builder
+	b.WriteString("<project_context>\n\nProject-specific instructions and guidelines:\n")
+	for i := len(files) - 1; i >= 0; i-- {
+		content, err := os.ReadFile(files[i])
+		if err != nil {
+			return "", err
+		}
+		b.WriteString("\n<project_instructions path=\"")
+		b.WriteString(files[i])
+		b.WriteString("\">\n")
+		b.Write(content)
+		if len(content) == 0 || content[len(content)-1] != '\n' {
+			b.WriteByte('\n')
+		}
+		b.WriteString("</project_instructions>\n")
+	}
+	b.WriteString("\n</project_context>")
+	return b.String(), nil
 }
