@@ -52,6 +52,7 @@ type composerInput struct {
 
 func newComposerInput() composerInput {
 	input := textarea.New()
+	input.Placeholder = "Ask Atenea anything..."
 	input.SetPromptFunc(ansi.StringWidth(inputPrompt), func(line int) string {
 		if line == 0 {
 			return inputPrompt

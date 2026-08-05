@@ -47,6 +47,13 @@ func TestNewComposerInput_UsesCalmCursorBlinkSpeed(t *testing.T) {
 	}
 }
 
+func TestNewComposerInput_InvitesAQuestionWhenEmpty(t *testing.T) {
+	input := newComposerInput()
+	if got, want := input.Placeholder, "Ask Atenea anything..."; got != want {
+		t.Fatalf("Placeholder = %q, want %q", got, want)
+	}
+}
+
 func TestNewComposerInput_CursorLineIsTransparent(t *testing.T) {
 	input := newComposerInput()
 	for name, style := range map[string]lipgloss.Style{
