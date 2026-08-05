@@ -268,7 +268,7 @@ func TestBuiltins_HasOnlyPackagedAgentDefinitions(t *testing.T) {
 		names[def.Name] = true
 	}
 
-	for _, want := range []string{"coder", "explorer", "general", "reviewer", "tester"} {
+	for _, want := range []string{"coder", "explorer", "general", "repair-n", "reviewer", "tester", "verify-n"} {
 		if !names[want] {
 			t.Errorf("Builtins does not include packaged agent %q; got %v", want, names)
 		}
@@ -276,8 +276,8 @@ func TestBuiltins_HasOnlyPackagedAgentDefinitions(t *testing.T) {
 	if names["explore"] {
 		t.Errorf("Builtins still includes removed legacy agent explore; got %v", names)
 	}
-	if len(defs) != 5 {
-		t.Errorf("len(Builtins()) = %d, want 5 packaged manifests", len(defs))
+	if len(defs) != 7 {
+		t.Errorf("len(Builtins()) = %d, want 7 packaged manifests", len(defs))
 	}
 }
 
@@ -288,9 +288,36 @@ func TestBuiltins_IncludesPackagedAgentDefinitions(t *testing.T) {
 		names[def.Name] = true
 	}
 
-	for _, want := range []string{"coder", "explorer", "reviewer", "tester"} {
+	for _, want := range []string{"coder", "explorer", "repair-n", "reviewer", "tester", "verify-n"} {
 		if !names[want] {
 			t.Errorf("Builtins does not include packaged agent %q; got %v", want, names)
+		}
+	}
+}
+
+func TestBuiltins_RepairAndVerifyAgentsHaveLeastPrivilege(t *testing.T) {
+	defs := Builtins()
+	byName := make(map[string]Def, len(defs))
+	for _, def := range defs {
+		byName[def.Name] = def
+	}
+
+	repair := byName["repair-n"]
+	for _, want := range []string{"read", "grep", "glob", "edit", "write", "bash"} {
+		if !slices.Contains(repair.Tools, want) {
+			t.Errorf("repair-n.Tools = %v, want %q", repair.Tools, want)
+		}
+	}
+
+	verify := byName["verify-n"]
+	for _, want := range []string{"read", "grep", "glob", "bash"} {
+		if !slices.Contains(verify.Tools, want) {
+			t.Errorf("verify-n.Tools = %v, want %q", verify.Tools, want)
+		}
+	}
+	for _, denied := range []string{"edit", "write"} {
+		if slices.Contains(verify.Tools, denied) {
+			t.Errorf("verify-n must not receive mutating tool %q", denied)
 		}
 	}
 }

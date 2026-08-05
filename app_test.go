@@ -524,7 +524,7 @@ func TestApp_TaskToolDescriptionListsBuiltinSubagents(t *testing.T) {
 	if taskDef == nil {
 		t.Fatalf("el modelo no recibe la tool 'task'; tools = %+v", req.Tools)
 	}
-	for _, name := range []string{"coder", "explorer", "general", "reviewer", "tester"} {
+	for _, name := range []string{"coder", "explorer", "general", "repair-n", "reviewer", "tester", "verify-n"} {
 		if !strings.Contains(taskDef.Description, name) {
 			t.Errorf("task description does not list built-in %q; description = %q", name, taskDef.Description)
 		}
