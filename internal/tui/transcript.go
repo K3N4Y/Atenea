@@ -58,7 +58,13 @@ type Transcript struct {
 	childSummaries  map[string]tool.TaskSettlement
 	childDetached   map[string]bool
 	childCandidates map[string]childCandidate
+	pendingPreviews map[previewKey]tool.Preview
 }
+type previewKey struct {
+	callID    string
+	sessionID string
+}
+
 type childCandidate struct {
 	parentCallID string
 	open         bool
@@ -74,6 +80,7 @@ func (t Transcript) foldEvent(ev EventMsg, sessionID string) Transcript {
 	}
 	switch ev.Kind {
 	case session.KindStepStarted:
+		t.pendingPreviews = nil
 		if ev.Usage != nil {
 			usage := *ev.Usage
 			t.usage = &usage
@@ -117,6 +124,7 @@ func (t Transcript) foldEvent(ev EventMsg, sessionID string) Transcript {
 			t.usage = &usage
 		}
 		t.liveUsage = false
+		t.pendingPreviews = nil
 		// The end of the step also closes a thought still live (defensive close:
 		// the step may die thinking, from cancellation or a provider error,
 		// without a Reasoning.Ended in between).
@@ -132,16 +140,28 @@ func (t Transcript) foldEvent(ev EventMsg, sessionID string) Transcript {
 		if ev.ToolName == "checkpoint" {
 			break
 		}
-		merged := false
+		index := -1
 		for i := len(t.entries) - 1; i >= 0; i-- {
-			if t.entries[i].kind == entryTool && t.entries[i].callID == ev.CallID && t.entries[i].status == toolRunning {
-				t.entries[i].tool, t.entries[i].input, t.entries[i].sessionID = ev.ToolName, string(ev.Input), ev.SessionID
-				merged = true
+			if t.entries[i].kind == entryTool && t.entries[i].callID == ev.CallID && t.entries[i].status == toolRunning &&
+				(ev.SessionID == "" || t.entries[i].sessionID == "" || t.entries[i].sessionID == ev.SessionID) {
+				index = i
 				break
 			}
 		}
-		if !merged {
+		if index < 0 {
 			t.entries = append(t.entries, entry{kind: entryTool, callID: ev.CallID, tool: ev.ToolName, status: toolRunning, input: string(ev.Input), sessionID: ev.SessionID})
+			index = len(t.entries) - 1
+		} else {
+			t.entries[index].tool, t.entries[index].input, t.entries[index].sessionID = ev.ToolName, string(ev.Input), ev.SessionID
+		}
+		previewSessionID := ev.SessionID
+		if previewSessionID == "" {
+			previewSessionID = sessionID
+		}
+		if preview, ok := t.takePendingPreview(ev.CallID, previewSessionID); ok {
+			t.entries[index].files = append([]tool.FileResult(nil), preview.Files...)
+			t.entries[index].digest = preview.Digest
+			t.entries[index].err = preview.Error
 		}
 	case session.KindToolSuccess:
 		if ev.ToolName == "checkpoint" {
@@ -173,6 +193,7 @@ func (t Transcript) foldEvent(ev EventMsg, sessionID string) Transcript {
 		t.liveUsage = false
 		t = t.removeRetryStatus()
 		t = t.appendError(ev.Error)
+		t.pendingPreviews = nil
 	case session.KindStepRetrying:
 		t = t.setRetryStatus(ev.Text)
 	case session.KindToolInputDelta:
@@ -353,8 +374,9 @@ func (t Transcript) replaceEvents(events []session.SessionEvent, sessionID strin
 	t.childBatches = nil
 	t.childTotals = nil
 	t.childSummaries = nil
-	t.childDetached = nil
 	t.childCandidates = nil
+	t.childDetached = nil
+	t.pendingPreviews = nil
 	t.revealing = false
 	t.usage = nil
 	t.liveUsage = false
@@ -419,26 +441,60 @@ func estimatedTokens(bytes int) int {
 	return (bytes + 2) / 3
 }
 
-// foldPreview updates only the matching in-flight call. Duplicate digests are
-// stable, and final settlement below clears this ephemeral metadata.
+// foldPreview buffers previews until the durable Tool.Called event establishes
+// the entry that may render them. If Tool.Called arrives first, the entry takes
+// its first preview. Later transient frames are ignored so the transcript does
+// not reflow on every input fragment.
 func (t Transcript) foldPreview(ev tool.PreviewEvent) Transcript {
-	hasMatchingCall := false
 	for i := len(t.entries) - 1; i >= 0; i-- {
 		e := &t.entries[i]
 		if e.kind != entryTool || e.callID != ev.CallID || (ev.SessionID != "" && e.sessionID != "" && e.sessionID != ev.SessionID) {
 			continue
 		}
-		hasMatchingCall = true
-		if e.status != toolRunning || e.digest == ev.Preview.Digest {
-			return t
+		if e.status == toolRunning && e.digest == "" {
+			e.files = append([]tool.FileResult(nil), ev.Preview.Files...)
+			e.digest = ev.Preview.Digest
+			e.err = ev.Preview.Error
 		}
-		e.files = append([]tool.FileResult(nil), ev.Preview.Files...)
-		e.digest = ev.Preview.Digest
-		e.err = ev.Preview.Error
 		return t
 	}
-	if !hasMatchingCall {
-		t.entries = append(t.entries, entry{kind: entryTool, callID: ev.CallID, status: toolRunning, sessionID: ev.SessionID, files: append([]tool.FileResult(nil), ev.Preview.Files...), digest: ev.Preview.Digest, err: ev.Preview.Error})
+	if t.pendingPreviews == nil {
+		t.pendingPreviews = make(map[previewKey]tool.Preview)
+	}
+	key := previewKey{callID: ev.CallID, sessionID: ev.SessionID}
+	if previous, ok := t.pendingPreviews[key]; ok && previous.Digest == ev.Preview.Digest {
+		return t
+	}
+	t.pendingPreviews[key] = ev.Preview
+	return t
+}
+
+func (t Transcript) takePendingPreview(callID, sessionID string) (tool.Preview, bool) {
+	if len(t.pendingPreviews) == 0 {
+		return tool.Preview{}, false
+	}
+	keys := []previewKey{{callID: callID, sessionID: sessionID}}
+	if sessionID != "" {
+		keys = append(keys, previewKey{callID: callID})
+	}
+	for _, key := range keys {
+		if preview, ok := t.pendingPreviews[key]; ok {
+			delete(t.pendingPreviews, key)
+			return preview, true
+		}
+	}
+	return tool.Preview{}, false
+}
+
+func (t Transcript) dropPendingPreview(callID, sessionID string) Transcript {
+	for key := range t.pendingPreviews {
+		if key.callID != callID {
+			continue
+		}
+		if sessionID != "" && key.sessionID != "" && key.sessionID != sessionID {
+			continue
+		}
+		delete(t.pendingPreviews, key)
 	}
 	return t
 }
@@ -453,6 +509,7 @@ func (t Transcript) foldPreview(ev tool.PreviewEvent) Transcript {
 // settled with success appends, at the end, the plan approval offer (y execute
 // / n stay in plan).
 func (t Transcript) settleTool(callID, sessionID string, status toolStatus, errMsg, output, diff string, files []tool.FileResult) Transcript {
+	t = t.dropPendingPreview(callID, sessionID)
 	planPresented := false
 	kept := make([]entry, 0, len(t.entries))
 	for _, e := range t.entries {

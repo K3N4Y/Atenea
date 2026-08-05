@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -2393,6 +2394,65 @@ func TestModel_EditFourModesPreviewSettlementResizeAndNoDuplicates(t *testing.T)
 				t.Fatalf("stale/duplicate preview survived final settlement: %s", plain)
 			}
 		})
+	}
+}
+func TestModel_EditPreviewDoesNotReflowBeforeToolCall(t *testing.T) {
+	m := NewModel(&fakeAgent{}, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	diffs := []string{
+		"--- a/a.go\n+++ b/a.go\n@@ -1 +1 @@\n-old\n+new",
+		"--- a/a.go\n+++ b/a.go\n@@ -1,4 +1,4 @@\n-old1\n-old2\n-old3\n-old4\n+new1\n+new2\n+new3\n+new4",
+	}
+	var rows []int
+	for i, diff := range diffs {
+		m = apply(t, m, PreviewMsg(tool.PreviewEvent{
+			SessionID: "s1",
+			CallID:    "c1",
+			Preview: tool.Preview{
+				Digest:  "preview-" + strconv.Itoa(i),
+				Pending: true,
+				Files: []tool.FileResult{{
+					Path:      "a.go",
+					Operation: contract.FileUpdated,
+					Diff:      diff,
+				}},
+			},
+		}))
+		rows = append(rows, strings.Count(m.renderTranscript(), "\n")+1)
+	}
+	if rows[0] != rows[1] {
+		t.Fatalf("partial edit previews changed transcript height from %d to %d rows; the live tool must not reflow on every input fragment", rows[0], rows[1])
+	}
+	if transcript := m.renderTranscript(); transcript != "" {
+		t.Fatalf("partial edit previews rendered before Tool.Called: %q", transcript)
+	}
+
+	m = apply(t, m, EventMsg{
+		Kind:     session.KindToolCalled,
+		CallID:   "c1",
+		ToolName: "edit",
+		Input:    json.RawMessage(`{"input":"[a.go#ABCD]\nPUT 1.=1:\n+new"}`),
+	})
+	stable := m.renderTranscript()
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "a.go") || !strings.Contains(view, "1 + new") {
+		t.Fatalf("View() = %q, the final preview must render once Tool.Called supplies the stable tool identity", view)
+	}
+	m = apply(t, m, PreviewMsg(tool.PreviewEvent{
+		SessionID: "s1",
+		CallID:    "c1",
+		Preview: tool.Preview{
+			Digest:  "late",
+			Pending: true,
+			Files: []tool.FileResult{{
+				Path:      "a.go",
+				Operation: contract.FileUpdated,
+				Diff:      "--- a/a.go\n+++ b/a.go\n@@ -1,20 +1,20 @@\n-old\n+late",
+			}},
+		},
+	}))
+	if got := m.renderTranscript(); got != stable {
+		t.Fatalf("later edit preview reflowed the stable running card:\n%s\n!=\n%s", got, stable)
 	}
 }
 
