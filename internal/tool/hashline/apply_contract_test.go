@@ -29,3 +29,16 @@ func TestApplyBoundaryAndLandingPorts(t *testing.T) {
 		t.Fatalf("%q", r.Text)
 	}
 }
+
+func TestApplyShortReplacementPreservesNestedStructuralClosers(t *testing.T) {
+	lines := []string{"func f() {", "\tif ok {", "\t\told()", "\t}", "}"}
+	edits := []Edit{{Kind: Replace, Range: Range{Start: 3, End: 5}, Text: "\t\tnew()"}}
+
+	result, err := ApplyEdits(lines, edits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Text != "func f() {\n\tif ok {\n\t\tnew()\n\t}\n}" {
+		t.Fatalf("text = %q", result.Text)
+	}
+}

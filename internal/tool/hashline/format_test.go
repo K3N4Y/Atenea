@@ -34,12 +34,60 @@ func TestApplyFormattingOrderAndNewlineContracts(t *testing.T) {
 	}
 	p, _ := ParsePatch("CUT 2-3")
 	r, e = ApplyEdits([]string{"a", "b", ""}, p.Sections[0].Edits)
-	if e != nil || r.Text != "a\n" {
+	if e != nil || r.Text != "a" {
 		t.Fatalf("%q %v", r.Text, e)
 	}
 	p, _ = ParsePatch("PUT 2-3:\n+B")
 	r, e = ApplyEdits([]string{"a", "b", ""}, p.Sections[0].Edits)
-	if e != nil || r.Text != "a\nB\n" {
+	if e != nil || r.Text != "a\nB" {
 		t.Fatalf("%q %v", r.Text, e)
+	}
+}
+
+// SplitLines already drops the newline sentinel, so a trailing empty row is a
+// real blank line and edits landing on it apply literally.
+func TestApplyEditsTreatTrailingBlankLineAsRealLine(t *testing.T) {
+	lines := SplitLines("a\nb\n\n")
+	for _, tc := range []struct{ name, patch, want string }{
+		{"replace blank line", "PUT 3:\n+c", "a\nb\nc"},
+		{"cut blank line", "CUT 3", "a\nb"},
+		{"span ending on blank line", "PUT 2-3:\n+B", "a\nB"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := ParsePatch(tc.patch)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r, err := ApplyEdits(lines, p.Sections[0].Edits)
+			if err != nil || r.Text != tc.want {
+				t.Fatalf("text = %q, err = %v", r.Text, err)
+			}
+		})
+	}
+}
+
+func TestPatcherKeepsFinalNewlineWhenEditingATrailingBlankLine(t *testing.T) {
+	const path, text = "/w/f", "a\nb\n\n"
+	fs := &transactionFS{files: map[string][]byte{path: []byte(text)}}
+	store := NewMemSnapshotStore()
+	hash, _ := store.Record(path, text)
+	p, err := ParsePatch("PUT 3:\n+c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	section := p.Sections[0]
+	section.Path, section.Hash = path, hash
+	if _, err := NewPatcher(fs, store).Apply(Patch{Sections: []Section{section}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(fs.files[path]); got != "a\nb\nc\n" {
+		t.Fatalf("file = %q", got)
+	}
+}
+
+func TestApplyEditsRejectARangelessReplace(t *testing.T) {
+	_, err := ApplyEdits([]string{"a"}, []Edit{{Kind: Replace, Text: "x"}})
+	if err == nil {
+		t.Fatal("a Replace without a range must be rejected, not applied")
 	}
 }

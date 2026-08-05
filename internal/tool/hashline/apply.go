@@ -39,7 +39,9 @@ func ApplyEditsWithClipboard(lines []string, edits []Edit, cb *Clipboard) (Apply
 		if e.Block || e.AfterBlock {
 			return ApplyResult{}, errors.New("hashline: unresolved block edit reached applier")
 		}
-		if e.Range.Start > 0 && (e.Range.Start < 1 || e.Range.End < e.Range.Start || e.Range.End > len(lines)) {
+		// Insert and anchored Paste carry no range; every other kind must name one.
+		ranged := e.Kind == Replace || e.Kind == Delete || e.Kind == Cut || e.Range.Start > 0
+		if ranged && (e.Range.Start < 1 || e.Range.End < e.Range.Start || e.Range.End > len(lines)) {
 			return ApplyResult{}, fmt.Errorf("hashline: line range %d-%d is outside file (%d lines)", e.Range.Start, e.Range.End, len(lines))
 		}
 		if (e.Kind == Insert || e.Kind == Paste && e.Range.Start == 0) && (e.Anchor < 0 || e.Anchor > len(lines) || (e.Anchor == 0 && (e.Cursor == BeforeAnchor || e.Cursor == AfterAnchor))) {
@@ -84,17 +86,6 @@ func ApplyEditsWithClipboard(lines []string, edits []Edit, cb *Clipboard) (Apply
 			concrete = append(concrete, resolved{edit: e, text: strings.Split(e.Text, "\n")})
 		case Delete:
 			concrete = append(concrete, resolved{edit: e})
-		}
-	}
-	// Newline-terminated text has a trailing empty sentinel. Deleting it is a
-	// no-op; ranges ending there stop at the last real line.
-	for i := range concrete {
-		e := &concrete[i].edit
-		if len(lines) > 0 && lines[len(lines)-1] == "" && e.Range.End == len(lines) && (e.Kind == Delete || e.Kind == Replace || e.Kind == Paste) {
-			e.Range.End--
-			if e.Range.Start > e.Range.End {
-				e.Range = Range{}
-			}
 		}
 	}
 	warnings := []string{}
@@ -291,12 +282,10 @@ func repairMissingClosers(edits []resolved, lines []string, warnings *[]string) 
 		}
 		suffix := lines[start-1 : end]
 		restated := 0
-		for restated < len(suffix) && restated < len(r.text) && r.text[len(r.text)-len(suffix)+restated] == suffix[restated] {
-			// Only compare when the payload actually has the whole candidate tail.
-			restated++
-		}
-		if len(r.text) < len(suffix) {
-			restated = 0
+		if len(r.text) >= len(suffix) {
+			for restated < len(suffix) && r.text[len(r.text)-len(suffix)+restated] == suffix[restated] {
+				restated++
+			}
 		}
 		keep := suffix[restated:]
 		for len(keep) > 0 && end < len(lines) && lines[end] == keep[len(keep)-1] {
