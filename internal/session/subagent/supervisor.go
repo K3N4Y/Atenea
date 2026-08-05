@@ -2,6 +2,7 @@ package subagent
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -145,13 +146,33 @@ func (s *Supervisor) tools() []tool.Tool {
 	return []tool.Tool{&supervisorTool{name: "task_status", supervisor: s}, &supervisorTool{name: "task_wait", supervisor: s}, &supervisorTool{name: "task_cancel", supervisor: s}}
 }
 
+//go:embed task_status.txt
+var taskStatusDescription string
+
+//go:embed task_wait.txt
+var taskWaitDescription string
+
+//go:embed task_cancel.txt
+var taskCancelDescription string
+
 type supervisorTool struct {
 	name       string
 	supervisor *Supervisor
 }
 
-func (t *supervisorTool) Name() string        { return t.name }
-func (t *supervisorTool) Description() string { return "Inspect or control a detached delegated task." }
+func (t *supervisorTool) Name() string { return t.name }
+func (t *supervisorTool) Description() string {
+	switch t.name {
+	case "task_status":
+		return taskStatusDescription
+	case "task_wait":
+		return taskWaitDescription
+	case "task_cancel":
+		return taskCancelDescription
+	default:
+		return ""
+	}
+}
 func (t *supervisorTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"job_id":{"type":"string"}},"required":["job_id"]}`)
 }

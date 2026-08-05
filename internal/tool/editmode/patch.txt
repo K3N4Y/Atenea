@@ -1,57 +1,30 @@
-Patches files given diff hunks. Primary tool for existing-file edits.
+Patch existing files with anchored diff hunks, or explicitly create, delete, or rename a file. Use the smallest operation that completely expresses the intended change.
 
-<instruction>
-**Hunk Headers:**
-- `@@` — bare header when context lines unique
-- `@@ $ANCHOR` — anchor copied verbatim from file (full line or unique substring)
-**Anchor Selection:**
-1. Prefer bare `@@` when context lines alone are unique; otherwise choose highly specific anchor copied from file:
-   - full function signature
-   - class declaration
-   - unique string literal/error message
-   - config key with uncommon name
-2. On "Found multiple matches": add context lines, use multiple hunks with separate anchors, or use longer anchor substring
-**Context Lines:**
-Use enough ` `-prefixed lines to make match unique (usually 2–8)
-When editing structured blocks (nested braces, tags, indented regions), include opening and closing lines so edit stays inside block
-</instruction>
+## Input grammar
+- `path` is required and applies to every entry in `edits`.
+- Each entry uses `op: "update"`, `op: "create"`, or `op: "delete"`, plus optional `rename` and `diff`.
+- An update `diff` contains one or more hunks beginning with `@@` or `@@ $ANCHOR`; hunk lines begin with space, `+`, or `-`.
+- A create `diff` is the complete new file content without prefixes. A delete has no `diff`.
+- For update plus move, set `rename` to the new workspace-relative path.
 
-<parameters>
-```ts
-// Input is { path: string, edits: Entry[] }. `path` is required and applies to every entry.
-type Entry =
-   // Diff is one or more hunks for the top-level path.
-   // - Each hunk begins with "@@" (anchor optional).
-   // - Each hunk body only has lines starting with ' ' | '+' | '-'.
-   // - Each hunk includes at least one change (+ or -).
-   | { op: "update", diff: string }
-   // Diff is full file content, no prefixes.
-   | { op: "create", diff: string }
-   // No diff for delete.
-   | { op: "delete" }
-   // New path for update+move from the top-level path.
-   | { op: "update", rename: string, diff: string }
-```
-</parameters>
+## Examples
+- `{"path":"x.txt","edits":[{"op":"update","diff":"@@\n-old\n+new"}]}` replaces a unique line.
+- `{"path":"src/old.go","edits":[{"op":"update","rename":"src/new.go","diff":"@@ func Name()\n-func Old() {\n+func Name() {"}]}` updates and moves a file.
+- `{"path":"notes.txt","edits":[{"op":"create","diff":"first line\n"}]}` creates a file explicitly.
 
-<output>
-Returns success/failure; on failure, error message indicates:
-- "Found multiple matches" — anchor/context not unique enough
-- "No match found" — context lines don't exist in file (wrong content or stale read)
-- Syntax errors in diff format
-</output>
+## Recoverable failures
+- `Found multiple matches`: add copied context, use a more specific `@@ $ANCHOR`, or split the change into separate hunks.
+- `No match found`: re-read the file; the context may be wrong or stale.
+- Invalid diff syntax: ensure every hunk starts with `@@` and every hunk row has a valid prefix.
+- Failed or structurally broken edit: re-read current content and build a new patch; never retry the same diff unchanged.
+
+## Anti-patterns
+- WRONG: use generic anchors such as `import`, `function`, or `const`. RIGHT: copy a unique signature or literal from the file.
+- WRONG: overwrite a whole file for a small change. RIGHT: patch the minimal unique region.
+- WRONG: patch whitespace line by line. RIGHT: run the project formatter once after semantic edits.
 
 <critical>
-- You MUST read the target file before editing
-- You MUST copy anchors and context lines verbatim (including whitespace)
-- You NEVER use anchors as comments (no line numbers, location labels, placeholders like `@@ @@`)
-- You NEVER place new lines outside the intended block
-- If edit fails or breaks structure, you MUST re-read the file and produce a new patch from current content — you NEVER retry the same diff
-- NEVER use edit to fix indentation, whitespace, or reformat code. Formatting is a single command run once at the end (`bun fmt`, `cargo fmt`, `prettier --write`, etc.) — not N individual edits. If you see inconsistent indentation after an edit, leave it; the formatter will fix all of it in one pass.
+- Read the target file before editing.
+- Copy anchors and context verbatim, including whitespace.
+- Keep every addition inside the intended structural block.
 </critical>
-
-<avoid>
-- Generic anchors: `import`, `export`, `describe`, `function`, `const`
-- Repeating same addition in multiple hunks (duplicate blocks)
-- Full-file overwrites for minor changes (acceptable for major restructures or short files)
-</avoid>

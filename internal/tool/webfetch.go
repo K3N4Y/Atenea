@@ -94,7 +94,7 @@ func (*WebFetchTool) Description() string { return webFetchDescription }
 func (*WebFetchTool) Effects() Effects { return ReachesNetwork }
 
 func (*WebFetchTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"url":{"type":"string","description":"URL http(s) a traer."},"prompt":{"type":"string","description":"Que extraer o responder a partir del contenido de la pagina."}},"required":["url","prompt"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"url":{"type":"string","description":"Public HTTP(S) URL to fetch."},"prompt":{"type":"string","description":"Focused instruction describing what to extract or answer from the page."}},"required":["url","prompt"]}`)
 }
 
 // Execute parsea {url, prompt}, normaliza y valida la URL (upgrade http->https),

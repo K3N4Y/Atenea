@@ -1,65 +1,31 @@
-Use the `apply_patch` shell command to edit files.
-Your patch language is a stripped‑down, file‑oriented diff format designed to be easy to parse and safe to apply. You can think of it as a high‑level envelope:
+Apply a file-oriented patch containing one or more add, delete, update, or move operations. Paths must be workspace-relative.
 
-*** Begin Patch
-[ one or more file sections ]
-*** End Patch
+## Input grammar
+- Wrap the complete patch in `*** Begin Patch` and `*** End Patch`.
+- Start each operation with `*** Add File: <path>`, `*** Delete File: <path>`, or `*** Update File: <path>`.
+- An update may be followed by `*** Move to: <new path>` and contains one or more `@@` hunks.
+- Hunk rows start with space for context, `-` for removal, or `+` for addition. Every added-file line starts with `+`.
+- Use about three context lines around a change; add a copied `@@` class or function anchor when context alone is not unique.
 
-Within that envelope, you get a sequence of file operations.
-You MUST include a header to specify the action you are taking.
-Each operation starts with one of three headers:
+## Examples
+- `{"input":"*** Begin Patch\n*** Update File: x.txt\n@@\n-old\n+new\n*** End Patch\n"}` updates one file.
+- `{"input":"*** Begin Patch\n*** Add File: notes.txt\n+hello\n*** Delete File: obsolete.txt\n*** End Patch\n"}` creates one file and then deletes another.
+- `{"input":"*** Begin Patch\n*** Update File: old.go\n*** Move to: new.go\n@@\n-package old\n+package new\n*** End Patch\n"}` updates and moves a file.
 
-*** Add File: <path> - create a new file. Every following line is a + line (the initial contents).
-*** Delete File: <path> - remove an existing file. Nothing follows.
-*** Update File: <path> - patch an existing file in place (optionally with a rename).
+## Recoverable failures
+- Missing envelope or operation header: rebuild the patch with the required markers.
+- Context not found or ambiguous: re-read the target and use current, more specific context.
+- Invalid path: use a workspace-relative path; absolute and escaping paths are rejected.
+- Any operation failure: inspect current files before constructing a new patch; do not assume partial intent succeeded.
+- Multi-operation patches are applied in authored order; earlier operations may remain committed when a later operation fails.
 
-May be immediately followed by *** Move to: <new path> if you want to rename the file.
-Then one or more "hunks", each introduced by @@ (optionally followed by a hunk header).
-Within a hunk each line starts with:
+## Anti-patterns
+- WRONG: omit `+` prefixes in an added file. RIGHT: prefix every new-file line.
+- WRONG: use absolute paths. RIGHT: use workspace-relative paths.
+- WRONG: reuse stale context after a failed patch. RIGHT: re-read and construct a fresh patch.
 
-For instructions on [context_before] and [context_after]:
-- By default, show 3 lines of code immediately above and 3 lines immediately below each change. If a change is within 3 lines of a previous change, do NOT duplicate the first change's [context_after] lines in the second change's [context_before] lines.
-- If 3 lines of context is insufficient to uniquely identify the snippet of code within the file, use the @@ operator to indicate the class or function to which the snippet belongs. For instance, we might have:
-@@ class BaseClass
-[3 lines of pre-context]
-- [old_code]
-+ [new_code]
-[3 lines of post-context]
-- If a code block is repeated so many times in a class or function such that even a single `@@` statement and 3 lines of context cannot uniquely identify the snippet of code, you can use multiple `@@` statements to jump to the right context. For instance:
-
-@@ class BaseClass
-@@ 	 def method():
-[3 lines of pre-context]
-- [old_code]
-+ [new_code]
-[3 lines of post-context]
-
-The full grammar definition is below:
-Patch := Begin { FileOp } End
-Begin := "*** Begin Patch" NEWLINE
-End := "*** End Patch" NEWLINE
-FileOp := AddFile | DeleteFile | UpdateFile
-AddFile := "*** Add File: " path NEWLINE { "+" line NEWLINE }
-DeleteFile := "*** Delete File: " path NEWLINE
-UpdateFile := "*** Update File: " path NEWLINE [ MoveTo ] { Hunk }
-MoveTo := "*** Move to: " newPath NEWLINE
-Hunk := "@@" [ header ] NEWLINE { HunkLine } [ "*** End of File" NEWLINE ]
-HunkLine := (" " | "-" | "+") text NEWLINE
-
-A full patch can combine several operations:
-
-*** Begin Patch
-*** Add File: hello.txt
-+Hello world
-*** Update File: src/app.py
-*** Move to: src/main.py
-@@ def greet():
--print("Hi")
-+print("Hello, world!")
-*** Delete File: obsolete.txt
-*** End Patch
-
-It is important to remember:
-- You must include a header with your intended action (Add/Delete/Update)
-- You must prefix new lines with `+` even when creating a new file
-- File references can only be relative, NEVER ABSOLUTE.
+<critical>
+- Include the complete `*** Begin Patch` / `*** End Patch` envelope.
+- Give every file operation an explicit action header.
+- Never target a path outside the workspace.
+</critical>

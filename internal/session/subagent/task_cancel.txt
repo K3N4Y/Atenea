@@ -1,0 +1,23 @@
+Request cancellation of a detached delegated task and return its latest status. Cancellation is idempotent for jobs that already finished.
+
+## Input grammar
+- `job_id` is required and must come from a detached `task` result.
+- A running job moves toward cancellation; an already completed job keeps its terminal status.
+
+## Examples
+- `{"job_id":"job-123"}` cancels work that is no longer needed.
+- `{"job_id":"job-123"}` safely repeats a cancellation request after an uncertain response.
+
+## Recoverable failures
+- Unknown job ID: verify the ID returned by `task`; completed jobs may eventually be evicted.
+- Invalid input: provide a non-empty `job_id` string.
+- Cancellation still pending: use `task_wait` when terminal confirmation is required.
+
+## Anti-patterns
+- WRONG: cancel a task merely because it has not finished immediately. RIGHT: inspect status and cancel only when its work is no longer useful.
+- WRONG: assume a cancellation request instantly produced a terminal state. RIGHT: wait when confirmation matters.
+
+<critical>
+- Use only job IDs returned by detached task calls.
+- Cancellation may be asynchronous; inspect or wait for terminal status when needed.
+</critical>

@@ -1,7 +1,29 @@
-Control one persistent Debug Adapter Protocol (DAP) session over stdio.
+Control one persistent Debug Adapter Protocol (DAP) session over stdio. Use it to inspect runtime behavior when tests and static inspection do not explain the problem.
 
-Start with `launch` or `attach`, supplying `adapter_command` and optional `adapter_args` (the adapter is executed directly, never through a shell). Launch accepts a workspace-rooted `program`, `args`, and `cwd`; attach accepts `pid` and/or `host` and `port. All target paths and source files must remain inside the workspace.
+## Input grammar
+- Start with `launch` or `attach`. `launch` requires `adapter_command` and a workspace-rooted `program`; `attach` uses `pid` and/or `host` plus `port`.
+- Supported operations are `launch`, `attach`, `set_breakpoint`, `remove_breakpoint`, `continue`, `next`, `step_in`, `step_out`, `pause`, `threads`, `stack_trace`, `scopes`, `variables`, `evaluate`, `output`, `sessions`, and `terminate`.
+- Use thread, frame, scope, and variable IDs returned by earlier operations. Omitted `thread_id` and `frame_id` use the most recently stopped thread and frame when available.
+- `timeout_seconds` optionally bounds an operation. All target paths and source files must remain inside the workspace.
 
-Operations: `launch`, `attach`, `set_breakpoint`, `remove_breakpoint`, `continue`, `next`, `step_in`, `step_out`, `pause`, `threads`, `stack_trace`, `scopes`, `variables`, `evaluate`, `output`, `sessions`, and `terminate`. Use the IDs returned by threads, stack traces, and scopes. If omitted, thread_id and frame_id use the most recently stopped thread/frame when available. `timeout_seconds` bounds the call.
+## Examples
+- `{"operation":"launch","adapter_command":"dlv","adapter_args":["dap"],"program":"./cmd/atenea","cwd":"."}` launches a Go debug target through Delve.
+- `{"operation":"set_breakpoint","file":"internal/tool/debug.go","line":118}` replaces the breakpoint set for that source file.
+- `{"operation":"stack_trace","thread_id":1}` inspects frames for a stopped thread.
 
-Only one session can be active. Breakpoints are synchronized as complete per-file or function breakpoint sets. `output` returns bounded adapter output and recent events. `terminate` ends and reaps the adapter; closing the tool does the same.
+## Recoverable failures
+- No active session: launch or attach before issuing session operations.
+- Missing adapter executable or invalid adapter arguments: correct the adapter configuration from the returned error.
+- Invalid thread, frame, or variable ID: refresh `threads`, `stack_trace`, or `scopes` and use a returned ID.
+- Timeout: inspect `output`, then retry only if the target is still making useful progress.
+
+## Anti-patterns
+- WRONG: guess thread or frame IDs. RIGHT: obtain them from prior debug responses.
+- WRONG: start a second session while one is active. RIGHT: terminate the current session first.
+- WRONG: use evaluate as a substitute for ordinary source inspection. RIGHT: use it for runtime state tied to a stopped frame.
+
+<critical>
+- Only one debug session can be active.
+- Breakpoint calls synchronize complete per-file or per-function sets.
+- Always terminate a session when debugging is complete.
+</critical>

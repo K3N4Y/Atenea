@@ -1,19 +1,28 @@
-Creates a new file at the specified workspace path with the complete content provided, normalized as described below.
+Creates a new file in the workspace with complete content. Use `edit` for existing files; `write` never overwrites a file.
 
-<instruction>
-- `path` is the file path relative to the workspace; `content` is the complete file content.
-- After writing, the tool returns a `[path#HASH]` snapshot header so edit can modify the file without another read.
-- If the snapshot cannot be retained safely because of a limit or collision, the file is still created but the result is returned without a header. Change or reduce the content or start a new session, then use read before editing.
-</instruction>
-
-<conditions>
-- Creating a new file is explicitly required by the task.
+## Input grammar
+- `path` is the workspace-relative path for the new file.
+- `content` is the complete file content.
 - Missing parent directories are created automatically.
 - An initial UTF-8 BOM is removed and line endings are normalized to LF.
-</conditions>
+
+## Examples
+- `{"path":"docs/notes.md","content":"# Notes\n"}` creates a Markdown file and its missing parent directory.
+- `{"path":"internal/example/testdata/input.txt","content":"alpha\nbeta\n"}` creates a text fixture.
+
+## Recoverable failures
+- File already exists: use `edit`; do not retry `write` against the same path.
+- Invalid or outside-workspace path: choose a workspace-relative destination.
+- A snapshot collision or retention limit may return success without a header. Change or reduce the content or start a new session, then use `read` before editing.
+- Write failure: inspect the returned filesystem error and correct the path or environment.
+
+## Anti-patterns
+- WRONG: use write to replace an existing file. RIGHT: use `edit`.
+- WRONG: create a second file when an existing module is the proper home. RIGHT: modify the existing file.
+- WRONG: assume success without checking an error result. RIGHT: treat the tool result as authoritative.
 
 <critical>
 - You SHOULD use the edit tool for modifying existing files.
-- NEVER overwrite an existing file with write; write fails if the path already exists.
-- Prefer modifying an existing file over creating a new one. Create a file only when it is genuinely necessary.
+- NEVER overwrite an existing file with write; the call fails if the path exists.
+- Create a file only when the task genuinely requires a new file.
 </critical>

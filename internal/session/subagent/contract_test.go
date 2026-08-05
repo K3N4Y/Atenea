@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -62,6 +63,27 @@ func TestSupervisionTools_Contract(t *testing.T) {
 				t.Fatalf("supervision tool %q missing", name)
 				return tooltest.Subject{}
 			})
+		})
+	}
+}
+
+func TestSupervisionDescriptionsFollowStandardFormat(t *testing.T) {
+	supervisor := NewSupervisor(func() string { return "job" })
+	for _, candidate := range supervisor.tools() {
+		t.Run(candidate.Name(), func(t *testing.T) {
+			description := candidate.Description()
+			previous := -1
+			for _, heading := range []string{"## Input grammar", "## Examples", "## Recoverable failures", "## Anti-patterns", "<critical>", "</critical>"} {
+				at := strings.Index(description, heading)
+				if at < 0 {
+					t.Errorf("description is missing %q", heading)
+					continue
+				}
+				if at <= previous {
+					t.Errorf("%q is out of order", heading)
+				}
+				previous = at
+			}
 		})
 	}
 }

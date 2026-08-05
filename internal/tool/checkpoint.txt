@@ -1,0 +1,22 @@
+Create an explicit durable checkpoint of the current conversation and workspace before risky or exploratory work. Use `rewind` to return to the latest checkpoint later.
+
+## Input grammar
+- The input is an empty object; the host derives the current session and call identifiers.
+- A checkpoint captures both conversation state and workspace state.
+
+## Examples
+- `{}` creates a checkpoint before a risky refactor.
+- `{}` creates a checkpoint before an exploratory change that may be discarded.
+
+## Recoverable failures
+- Checkpoint service unavailable: report that the host does not provide checkpointing; do not retry unchanged.
+- Persistence failure: preserve the current work and report the returned host error.
+
+## Anti-patterns
+- WRONG: create checkpoints after every routine read. RIGHT: use them before risky or exploratory work.
+- WRONG: assume a checkpoint succeeded after an error. RIGHT: treat only a successful result as durable.
+
+<critical>
+- Create the checkpoint before the work it is meant to protect.
+- Do not claim a recovery point exists unless the tool succeeds.
+</critical>

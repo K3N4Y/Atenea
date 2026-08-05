@@ -44,7 +44,7 @@ func (*SkillTool) Description() string { return skillDescription }
 func (*SkillTool) Effects() Effects { return NoEffects }
 
 func (*SkillTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"El nombre de una skill listada en el system prompt."}},"required":["name"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"Exact name of a skill listed in the system prompt."}},"required":["name"]}`)
 }
 
 // Execute parsea {name}, busca la skill en el catalogo y devuelve su cuerpo

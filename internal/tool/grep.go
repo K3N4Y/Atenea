@@ -47,7 +47,7 @@ func (*GrepTool) Description() string { return grepDescription }
 func (*GrepTool) Effects() Effects { return NoEffects }
 
 func (*GrepTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"pattern":{"type":"string","description":"Patron regex para buscar en el contenido de archivos."},"path":{"type":"string","description":"Archivo o directorio relativo al workspace donde buscar. Default: '.'."},"include":{"type":"string","description":"Glob de archivos a incluir, por ejemplo '*.go' o '*.{ts,tsx}'."}},"required":["pattern"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"pattern":{"type":"string","description":"Ripgrep regular expression to search in file contents."},"path":{"type":"string","description":"Workspace-relative file or directory to search; defaults to \".\"."},"include":{"type":"string","description":"Optional file-name glob, for example \"*.go\" or \"*.{ts,tsx}\"."}},"required":["pattern"]}`)
 }
 
 func (gt *GrepTool) Execute(ctx context.Context, input json.RawMessage) (Result, error) {

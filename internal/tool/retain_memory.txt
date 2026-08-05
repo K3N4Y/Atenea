@@ -1,0 +1,26 @@
+Retain a concise project-scoped fact with its provenance for future sessions. Memory is not automatically added to prompts; use `recall_memory` when it becomes relevant.
+
+## Input grammar
+- `text` is the concise fact worth retaining.
+- `source` records where the fact came from, such as a file path, command result, user statement, or decision.
+- Retain only durable project knowledge that is likely to matter in a later session.
+
+## Examples
+- `{"text":"The CLI entry point is cmd/atenea.","source":"AGENTS.md"}` retains a documented project fact.
+- `{"text":"Use SQLite for the session store.","source":"user decision in session chat-123"}` retains a user decision with provenance.
+
+## Recoverable failures
+- Memory service unavailable: continue without retention and report the limitation.
+- Invalid input: provide non-empty `text` and `source` fields.
+- Store failure: report the returned error; do not claim the fact was retained.
+
+## Anti-patterns
+- WRONG: retain transient progress or guesses. RIGHT: retain durable, verified project facts.
+- WRONG: omit provenance. RIGHT: name the file, command, statement, or decision source.
+- WRONG: use memory as hidden prompt instructions. RIGHT: store concise evidence that can be verified later.
+
+<critical>
+- Retain only facts that will matter in future sessions.
+- Always include specific provenance.
+- Never treat an unsuccessful call as retained memory.
+</critical>

@@ -1,30 +1,27 @@
-Performs a single string replacement in a file with fuzzy whitespace matching.
+Perform one content-addressed string replacement in a file with fuzzy whitespace matching. Use it when the old text itself uniquely identifies the edit.
 
-<instruction>
-- You MUST use the smallest `old_string` that uniquely identifies the change
-- If `old_string` is not unique, you MUST expand it with more context or use `replace_all: true` to replace all occurrences
-- Use `replace_all: true` when renaming a string across the file
-- You SHOULD prefer editing existing files over creating new ones
-</instruction>
+## Input grammar
+- `path`, `old_string`, and `new_string` are required.
+- `old_string` must be the smallest text that uniquely identifies the target.
+- Set `replace_all=true` only when every occurrence in the file must change.
 
-<output>
-Returns success/failure status. On success, file modified in place with replacement applied. On failure (e.g., `old_string` not found or matches multiple locations without `replace_all: true`), returns error describing issue.
-</output>
+## Examples
+- `{"path":"config.go","old_string":"const retries = 2","new_string":"const retries = 3"}` replaces one unique occurrence.
+- `{"path":"README.md","old_string":"OldName","new_string":"NewName","replace_all":true}` replaces every occurrence in one file.
+
+## Recoverable failures
+- `old_string` not found: re-read the file and copy current text.
+- Multiple matches: add surrounding context or deliberately set `replace_all=true`.
+- File not read in this conversation: read it, then retry with current content.
+- No-op replacement: provide a `new_string` that differs from the matched text.
+
+## Anti-patterns
+- WRONG: use a broad `old_string` that happens to match today. RIGHT: use the smallest unique text.
+- WRONG: set `replace_all=true` to avoid understanding multiple matches. RIGHT: use it only when all occurrences should change.
+- WRONG: use string replacement for a structure-aware codemod. RIGHT: use `ast`.
 
 <critical>
-- You MUST read the file at least once in the conversation before editing. Tool errors if you attempt edit without reading file first.
+- Read the file before editing.
+- Ensure the intended match set is unambiguous.
+- Prefer editing an existing file over creating a duplicate.
 </critical>
-
-<bash-alternatives>
-Replace is content-addressed — you identify *what* to change by its text.
-
-For pattern-addressed bulk changes, bash is more efficient:
-
-|Operation|Command|
-|---|---|
-|Regex replace|`sd 'pattern' 'replacement' file`|
-|Bulk replace across files|`sd 'pattern' 'replacement' **/*.ts`|
-
-Use Replace when _content itself_ identifies location; use `ast_edit` for structure-aware codemods.
-For in-place edits prefer this tool or `write` — you get a diff preview and fuzzy matching.
-</bash-alternatives>

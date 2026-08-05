@@ -1,10 +1,28 @@
-Encuentra archivos por patron de nombre en el workspace, usando ripgrep. Funciona en repos de cualquier tamano.
+Find files by name pattern in the workspace using ripgrep. Use `grep` to search file contents and `read` once you know the path to inspect.
 
-Uso:
-- pattern es un glob con semantica de ripgrep (eg. "*.go", "**/*.go", "internal/**/*.ts").
-- path acota el directorio donde buscar, relativo al workspace (default: ".").
-- limit acota cuantos resultados devolver (default 200, maximo 5000).
-- Devuelve rutas relativas al workspace, una por linea; si llega al limite lo indica para que afines el patron o subas el limit.
-- Ignora el contenido de .git.
-- Usalo para localizar archivos por NOMBRE. Para buscar por CONTENIDO usa grep; para leer un archivo usa read.
-- Puedes lanzar varias busquedas (glob/grep) en paralelo en una sola respuesta cuando son utiles a la vez.
+## Input grammar
+- `pattern` is a ripgrep-style glob such as `*.go`, `**/*.go`, or `internal/**/*.ts`.
+- `path` optionally narrows the search to a workspace-relative directory; it defaults to `.`.
+- `limit` optionally caps displayed paths; it defaults to 200 and cannot exceed 5,000.
+- Results are workspace-relative paths, one per line. Hidden files are included, while `.git` and ignored dependency directories are excluded.
+
+## Examples
+- `{"pattern":"**/*.go","path":"internal/tool"}` lists Go files below `internal/tool`.
+- `{"pattern":"*.md","limit":50}` lists up to 50 Markdown files across the workspace.
+
+## Recoverable failures
+- No matches: broaden `path` or `pattern`; do not invent a path.
+- Limit reached: narrow the pattern or raise `limit` within the allowed maximum.
+- Invalid path or workspace escape: choose a workspace-relative directory.
+- Missing ripgrep executable: report the prerequisite; do not retry unchanged.
+
+## Anti-patterns
+- WRONG: use glob to search for source text. RIGHT: use `grep`.
+- WRONG: guess a path and call `read`. RIGHT: use glob to locate files by name first.
+- WRONG: request thousands of paths when a directory can narrow the search. RIGHT: set `path`.
+
+<critical>
+- Use glob only for file-name discovery.
+- Treat returned paths as workspace-relative.
+- Use separate parallel glob or grep calls for genuinely independent searches.
+</critical>

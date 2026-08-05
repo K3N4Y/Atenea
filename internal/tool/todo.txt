@@ -1,13 +1,27 @@
-Lleva una lista de tareas en vivo para trabajos de varios pasos. Usala para planear y mostrar tu avance en tareas no triviales (mas o menos 3+ pasos, o cuando el usuario pide una lista); omitela en pedidos triviales o de un solo paso.
+Maintain a live checklist for non-trivial multi-step work. Use it for roughly three or more steps, or whenever the user requests a task list; omit it for simple one-step work.
 
-Cada call REEMPLAZA la lista entera, asi que manda siempre todos los items. Cada item es {content, status} donde status es uno de:
-- pending: aun no empezada
-- in_progress: en curso ahora mismo
-- completed: terminada
+## Input grammar
+- `todos` is the complete replacement list, not a partial update.
+- Every item has short imperative `content` and a `status` of `pending`, `in_progress`, or `completed`.
+- Keep exactly one item `in_progress` while work remains.
 
-Reglas:
-- Manten exactamente un item in_progress a la vez.
-- Marca un item como completed apenas termine, y pasa el siguiente a in_progress, en la misma call o en la siguiente.
-- content es corto y en imperativo ("Escribir el test que falla"), no una frase.
+## Examples
+- `{"todos":[{"content":"Reproduce the bug","status":"in_progress"},{"content":"Implement the fix","status":"pending"},{"content":"Run focused tests","status":"pending"}]}` starts a three-step task.
+- `{"todos":[{"content":"Reproduce the bug","status":"completed"},{"content":"Implement the fix","status":"in_progress"},{"content":"Run focused tests","status":"pending"}]}` advances the checklist.
 
-Actualizar la lista no te detiene: sigue trabajando despues de la call.
+## Recoverable failures
+- Invalid status: replace it with one of the three supported values.
+- Missing item content: provide a short imperative action.
+- Multiple items in progress: submit the full list again with exactly one current item.
+- Stale checklist: replace the entire list with current state.
+
+## Anti-patterns
+- WRONG: send only the changed item. RIGHT: send the complete list every time.
+- WRONG: use sentence-length progress narration as item content. RIGHT: use a short imperative action.
+- WRONG: stop working after updating the list. RIGHT: continue with the active task.
+
+<critical>
+- Every call REPLACES the entire checklist.
+- Keep exactly one item `in_progress` until all work is complete.
+- Mark completed work promptly and advance the next item in the same or following call.
+</critical>

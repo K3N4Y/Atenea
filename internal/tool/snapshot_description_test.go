@@ -13,7 +13,7 @@ func TestSnapshotProducingDescriptionsAccountForNonEditableOutput(t *testing.T) 
 	}{
 		{name: "read", description: (&ReadTool{}).Description(), wants: []string{"without a header", "collision", "new session", "read"}},
 		{name: "write", description: (&WriteTool{}).Description(), wants: []string{"without a header", "collision", "new session", "read"}},
-		{name: "grep", description: (&GrepTool{}).Description(), wants: []string{"sin header", "colision", "sesion nueva", "read"}},
+		{name: "grep", description: (&GrepTool{}).Description(), wants: []string{"without a header", "collision", "new session", "read"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, want := range tc.wants {

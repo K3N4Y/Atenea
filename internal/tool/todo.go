@@ -27,7 +27,7 @@ func (TodoWriteTool) Description() string { return todoDescription }
 func (TodoWriteTool) Effects() Effects { return NoEffects }
 
 func (TodoWriteTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"todos":{"type":"array","items":{"type":"object","properties":{"content":{"type":"string","description":"Tarea, en imperativo y corta."},"status":{"type":"string","enum":["pending","in_progress","completed"]}},"required":["content","status"]}}},"required":["todos"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"todos":{"type":"array","items":{"type":"object","properties":{"content":{"type":"string","description":"Short imperative task description."},"status":{"type":"string","enum":["pending","in_progress","completed"]}},"required":["content","status"]}}},"required":["todos"]}`)
 }
 
 // Execute parsea {todos}, valida que cada status este en el enum (un status

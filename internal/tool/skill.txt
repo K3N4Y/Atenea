@@ -1,5 +1,25 @@
-Carga una skill especializada cuando la tarea coincide con una de las skills listadas en el system prompt.
+Load a specialized skill when the task matches one of the skills listed in the system prompt. The result injects that skill's instructions and bundled resource references into the conversation.
 
-Usa esta herramienta para inyectar en la conversacion las instrucciones y recursos de la skill. La salida puede traer guias de flujo de trabajo detalladas y referencias a scripts o archivos en el mismo directorio de la skill.
+## Input grammar
+- `name` is required and must exactly match an available skill name from the system prompt.
+- Relative paths mentioned by the loaded skill are resolved from the skill directory reported in the result.
 
-El nombre debe coincidir con una de las skills listadas en tu system prompt.
+## Examples
+- `{"name":"diagnosing-bugs"}` loads the bug-diagnosis workflow.
+- `{"name":"code-review"}` loads the repository review workflow.
+
+## Recoverable failures
+- Unknown name: choose one of the available names reported by the error.
+- No matching skill: continue without loading one rather than guessing a name.
+- Missing referenced resource: report the missing path and follow the remaining skill instructions where possible.
+
+## Anti-patterns
+- WRONG: load a loosely related skill just because it exists. RIGHT: load only a skill whose trigger matches the task.
+- WRONG: invent a skill name. RIGHT: copy an exact name from the system prompt.
+- WRONG: ignore the loaded workflow. RIGHT: apply it unless it conflicts with higher-priority instructions.
+
+<critical>
+- Match the skill name exactly.
+- Treat loaded skill instructions as task workflow, below system, developer, and user instructions.
+- Resolve skill-relative resources from the reported skill directory.
+</critical>

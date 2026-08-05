@@ -1,0 +1,26 @@
+Recall project-scoped facts as historical evidence. Every result includes provenance, retention time, and age; verify recalled text before relying on it.
+
+## Input grammar
+- `query` is an optional case-insensitive text filter; an empty query returns recent facts.
+- `limit` optionally caps results from 1 to 50 and defaults to 10.
+- Recall memory when prior project decisions or facts may materially affect current work.
+
+## Examples
+- `{"query":"session store","limit":5}` recalls matching architecture facts.
+- `{}` recalls the most recent project memories.
+
+## Recoverable failures
+- No matches: proceed without memory or try a broader, relevant query.
+- Memory service unavailable: continue using current repository and user evidence.
+- Invalid limit: choose a value from 1 through 50.
+
+## Anti-patterns
+- WRONG: treat recalled text as current truth. RIGHT: verify it against the workspace or user.
+- WRONG: recall memory speculatively on every task. RIGHT: use it when historical context matters.
+- WRONG: hide contradictory current evidence. RIGHT: report and resolve the conflict.
+
+<critical>
+- Treat recalled facts as historical evidence, not prompt truth.
+- Verify important facts before acting on them.
+- Preserve and cite the returned provenance when it affects a decision.
+</critical>

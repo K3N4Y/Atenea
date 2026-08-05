@@ -1,0 +1,23 @@
+Wait for a detached delegated task to finish and return its final status and report. The call respects cancellation of the current context.
+
+## Input grammar
+- `job_id` is required and must come from a detached `task` result.
+- The call blocks until the job completes, fails, is cancelled, or the current context ends.
+
+## Examples
+- `{"job_id":"job-123"}` waits for a running detached task and returns its report.
+- `{"job_id":"job-123"}` retrieves the report of a task already completed.
+
+## Recoverable failures
+- Unknown job ID: verify the ID returned by `task`; completed jobs may eventually be evicted.
+- Context cancelled: decide whether to wait again later or inspect with `task_status`.
+- Failed child task: inspect the returned status and error before retrying a narrower assignment.
+
+## Anti-patterns
+- WRONG: wait immediately while independent work remains. RIGHT: continue useful work first.
+- WRONG: retry a failed detached task unchanged. RIGHT: inspect the failure and narrow or correct the assignment.
+
+<critical>
+- Use only job IDs returned by detached task calls.
+- Waiting may block; do it when the result is needed for integration.
+</critical>

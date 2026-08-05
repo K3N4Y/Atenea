@@ -1,0 +1,22 @@
+Inspect the current state and resource usage of a detached delegated task without waiting for completion.
+
+## Input grammar
+- `job_id` is required and must come from a detached `task` result.
+- The result reports status, request count, tokens, tool calls, elapsed time, and an isolated worktree path when present.
+
+## Examples
+- `{"job_id":"job-123"}` checks whether a detached task is still running.
+- `{"job_id":"job-123"}` refreshes progress before deciding whether to wait or cancel.
+
+## Recoverable failures
+- Unknown job ID: verify the ID returned by `task`; completed jobs may eventually be evicted.
+- Invalid input: provide a non-empty `job_id` string.
+
+## Anti-patterns
+- WRONG: poll continuously without doing other work. RIGHT: check status only when the result affects the next decision.
+- WRONG: expect the final report from status. RIGHT: use `task_wait` to retrieve a completed result.
+
+<critical>
+- Use only job IDs returned by detached task calls.
+- Status inspection does not wait for completion or return the final report.
+</critical>

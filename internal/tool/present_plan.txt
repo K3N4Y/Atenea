@@ -1,7 +1,26 @@
-Presenta tu plan final al usuario para que lo apruebe antes de ejecutarlo.
+Present a final Markdown plan for user approval before execution. The plan is saved in the workspace and displayed by the interface.
 
-Uso:
-- plan es el plan completo en Markdown (requerido): pasa el plan entero, no un resumen. title es un titulo corto y opcional.
-- El plan se guarda en el workspace y se muestra al usuario en la interfaz.
-- Llama esta herramienta UNA sola vez cuando el plan este listo, no para pasos intermedios.
-- Tras llamarla DETENTE: no llames mas herramientas y espera la decision del usuario (Aceptar o Solicitar cambio).
+## Input grammar
+- `plan` is required and contains the complete final plan in Markdown, not a summary.
+- `title` is an optional short title.
+- Call this tool once, only after the plan is ready for review.
+
+## Examples
+- `{"title":"Refactor tool descriptions","plan":"# Plan\n1. Update descriptions.\n2. Run tests.\n"}` presents a titled plan.
+- `{"plan":"# Plan\n- Implement the focused change.\n- Verify behavior.\n"}` presents a plan without a title.
+
+## Recoverable failures
+- Empty or missing plan: provide the complete non-empty Markdown plan.
+- Invalid input: correct the JSON and call again only when the final plan is ready.
+- User requests changes: revise the plan before presenting it again.
+
+## Anti-patterns
+- WRONG: call present_plan for intermediate notes. RIGHT: use it only for the final approval checkpoint.
+- WRONG: continue invoking tools after presenting the plan. RIGHT: stop and wait for the user's decision.
+- WRONG: send a summary while keeping important steps elsewhere. RIGHT: include the entire plan.
+
+<critical>
+- Call present_plan only when the final plan is ready.
+- After a successful call, STOP: do not call more tools.
+- Wait for the user to accept the plan or request changes.
+</critical>

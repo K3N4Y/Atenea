@@ -137,7 +137,7 @@ func bashCommand(input []byte) string {
 }
 
 func (*BashTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"command":{"type":"string","description":"Comando de shell a ejecutar con bash -c."},"slow_ok":{"type":"boolean","description":"true para comandos potencialmente lentos (builds, instalaciones, tests): usa el timeout extendido."}},"required":["command"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"command":{"type":"string","description":"Shell command to execute through bash -c."},"slow_ok":{"type":"boolean","description":"Set true for potentially slow commands such as builds, installations, or tests to use the extended timeout."}},"required":["command"]}`)
 }
 
 // fastTimeout devuelve el tier rapido, o su default si no se inyecto uno.

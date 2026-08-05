@@ -205,6 +205,100 @@ func TestBuild_EveryShippedToolDeclaresItsEffects(t *testing.T) {
 	}
 }
 
+func TestBuild_BuiltinToolDefinitionsUseEnglishStandardFormat(t *testing.T) {
+	built := buildWith(t, Config{
+		Checkpoint: func(string, string) (string, error) { return "checkpoint", nil },
+		Rewind:     func(string) (string, error) { return "checkpoint", nil },
+	})
+	t.Cleanup(built.Close)
+
+	wantNames := []string{
+		"ast", "bash", "checkpoint", "debug", "edit", "glob", "grep", "lsp",
+		"present_plan", "read", "recall_memory", "retain_memory", "rewind",
+		"skill", "task", "task_cancel", "task_status", "task_wait", "todo_write",
+		"web_fetch", "write",
+	}
+	if got := built.Tools.Names(); !slices.Equal(got, wantNames) {
+		t.Fatalf("registered tools = %v, want %v", got, wantNames)
+	}
+
+	for _, name := range wantNames {
+		registered, ok := built.Tools.Lookup(name)
+		if !ok {
+			t.Fatalf("tool %q is registered but cannot be looked up", name)
+		}
+		t.Run(name, func(t *testing.T) {
+			assertStandardEnglishToolText(t, "description", registered.Description())
+
+			var schema any
+			if err := json.Unmarshal(registered.Schema(), &schema); err != nil {
+				t.Fatalf("invalid schema: %v", err)
+			}
+			assertEnglishSchemaDescriptions(t, schema)
+		})
+	}
+}
+
+func assertStandardEnglishToolText(t *testing.T, subject, text string) {
+	t.Helper()
+	previous := -1
+	for _, heading := range []string{"## Input grammar", "## Examples", "## Recoverable failures", "## Anti-patterns", "<critical>", "</critical>"} {
+		at := strings.Index(text, heading)
+		if at < 0 {
+			t.Errorf("%s is missing %q", subject, heading)
+			continue
+		}
+		if at <= previous {
+			t.Errorf("%s has %q out of order", subject, heading)
+		}
+		previous = at
+	}
+	assertEnglishModelText(t, subject, text)
+}
+
+func assertEnglishSchemaDescriptions(t *testing.T, value any) {
+	t.Helper()
+	switch value := value.(type) {
+	case map[string]any:
+		for key, child := range value {
+			if key == "description" {
+				description, ok := child.(string)
+				if !ok {
+					t.Errorf("schema description has type %T, want string", child)
+					continue
+				}
+				assertEnglishModelText(t, "schema description", description)
+			}
+			assertEnglishSchemaDescriptions(t, child)
+		}
+	case []any:
+		for _, child := range value {
+			assertEnglishSchemaDescriptions(t, child)
+		}
+	}
+}
+
+func assertEnglishModelText(t *testing.T, subject, text string) {
+	t.Helper()
+	lower := strings.ToLower(text)
+	for _, marker := range []string{
+		"\nuso:", "\nnotas:", " archivo", " directorio", " comando", " tarea",
+		" patrón", " patron ", " página", " pagina", " sesión", " sesion",
+		" requerido", " requerida", " máximo", " maximo", " buscar ",
+		" encuentra ", " carga ", " devuelve ", " presenta ", " relativo al ",
+		" por ejemplo",
+	} {
+		if strings.Contains(lower, marker) {
+			t.Errorf("%s contains Spanish marker %q", subject, marker)
+		}
+	}
+	for _, marker := range []rune("áéíóúñ¿¡") {
+		if strings.ContainsRune(lower, marker) {
+			t.Errorf("%s contains Spanish rune %q", subject, marker)
+		}
+	}
+}
+
 // TestBuild_PolicyGatesShellFSAndNetwork pins the classification a caller that
 // leaves Config.Policy nil runs with. It is derived from what each tool declares
 // rather than from a list kept in this package, so the assertion is over the real

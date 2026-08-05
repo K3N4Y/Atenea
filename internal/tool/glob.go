@@ -65,7 +65,7 @@ func (*GlobTool) Description() string { return globDescription }
 func (*GlobTool) Effects() Effects { return NoEffects }
 
 func (*GlobTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"pattern":{"type":"string","description":"Patron glob para encontrar archivos, con semantica de ripgrep (por ejemplo \"*.go\", \"**/*.go\" o \"internal/**/*.go\")."},"path":{"type":"string","description":"Directorio relativo al workspace donde buscar. Default: \".\"."},"limit":{"type":"integer","minimum":1,"description":"Maximo de resultados a devolver."}},"required":["pattern"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"pattern":{"type":"string","description":"Ripgrep-style glob for finding files, for example \"*.go\", \"**/*.go\", or \"internal/**/*.go\"."},"path":{"type":"string","description":"Workspace-relative directory to search; defaults to \".\"."},"limit":{"type":"integer","minimum":1,"description":"Maximum number of paths to return."}},"required":["pattern"]}`)
 }
 
 func (gt *GlobTool) Execute(ctx context.Context, input json.RawMessage) (Result, error) {

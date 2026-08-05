@@ -2,6 +2,7 @@ package tool
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 )
@@ -18,9 +19,11 @@ func NewCheckpointTool(checkpoint CheckpointFunc) *CheckpointTool {
 func NewRewindTool(rewind RewindFunc) *RewindTool { return &RewindTool{rewind: rewind} }
 
 func (*CheckpointTool) Name() string { return "checkpoint" }
-func (*CheckpointTool) Description() string {
-	return "Create an explicit durable checkpoint of the current conversation and workspace before risky or exploratory work."
-}
+
+//go:embed checkpoint.txt
+var checkpointDescription string
+
+func (*CheckpointTool) Description() string     { return checkpointDescription }
 func (*CheckpointTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
 func (*CheckpointTool) Effects() Effects        { return NoEffects }
 func (t *CheckpointTool) Execute(ctx context.Context, _ json.RawMessage) (Result, error) {
@@ -35,9 +38,11 @@ func (t *CheckpointTool) Execute(ctx context.Context, _ json.RawMessage) (Result
 }
 
 func (*RewindTool) Name() string { return "rewind" }
-func (*RewindTool) Description() string {
-	return "Schedule a rewind of conversation and workspace to the latest explicit checkpoint. The host applies it safely when the current run closes, discarding work performed after that checkpoint."
-}
+
+//go:embed rewind.txt
+var rewindDescription string
+
+func (*RewindTool) Description() string     { return rewindDescription }
 func (*RewindTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
 func (*RewindTool) Effects() Effects        { return WritesFiles }
 func (t *RewindTool) Execute(ctx context.Context, _ json.RawMessage) (Result, error) {

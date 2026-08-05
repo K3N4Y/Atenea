@@ -1,0 +1,22 @@
+Schedule restoration of the conversation and workspace to the latest explicit checkpoint. The host applies the rewind safely when the current run closes.
+
+## Input grammar
+- The input is an empty object; the host resolves the current session and its latest explicit checkpoint.
+- A successful call schedules restoration and discards work performed after that checkpoint.
+
+## Examples
+- `{}` schedules a rewind after an exploratory approach fails.
+- `{}` schedules a rewind when the user asks to discard all work since the checkpoint.
+
+## Recoverable failures
+- No checkpoint or rewind service: explain that restoration is unavailable; do not retry unchanged.
+- Scheduling failure: report the returned host error and leave current work untouched.
+
+## Anti-patterns
+- WRONG: call rewind without intending to discard later work. RIGHT: use it only for explicit restoration.
+- WRONG: continue making changes after rewind succeeds. RIGHT: let the current run close so the host can restore state.
+
+<critical>
+- Rewind discards conversation and workspace work after the latest checkpoint.
+- After a successful call, stop mutating the workspace.
+</critical>

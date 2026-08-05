@@ -1,5 +1,7 @@
 Line-anchored patch language: name original lines/gaps to replace, insert, cut, or paste, then list new content. A header ending in `:` takes `+` body rows; colonless `PUT` (paste), `CUT`, `REM`, `MV` take none.
 
+## Input grammar
+
 <headers>
 Every file section starts `[PATH#TAG]`. `TAG` = 4-hex snapshot tag from your latest `read`/`search` — REQUIRED on every section. Create new files with `write`; hashline only edits existing files.
 </headers>
@@ -35,7 +37,11 @@ Only under a `:` header. Every row is `+TEXT`, verbatim (leading whitespace kept
 - NEVER format/restyle code with this tool; run the project formatter.
 </rules>
 
-<example>
+## Examples
+- Replace an exact line range with `PUT N.=M:` and `+` body rows.
+- Move content with a named `CUT` register and a bodyless `PUT`.
+
+Detailed examples:
 `read` output shape:
 ```
 [greet.py#A1B2]
@@ -86,9 +92,14 @@ PUT 1*:
 +def load(key):
 +    return store[key]
 ```
-</example>
 
-<anti-patterns>
+## Recoverable failures
+- Stale snapshot tag: re-read the file and use the newly issued `[PATH#TAG]`.
+- Rejected unseen range: read the omitted lines before constructing a new patch.
+- Invalid block anchor: target the opening line of the complete multi-line construct.
+- Validation or write failure: inspect current content and build a new patch; do not retry unchanged.
+
+## Anti-patterns
 # WRONG — empty `PUT` to delete. RIGHT: `CUT 4.=4`
 PUT 4.=4:
 
@@ -124,21 +135,10 @@ PUT >3:
 # WRONG — body rows under register PUT; register pastes take no body. RIGHT: bodyless `PUT >20 @fn`.
 PUT >20 @fn:
 +function f() {}
-</anti-patterns>
 
 <critical>
 1. RE-GROUND AFTER EVERY EDIT — applied edits renumber the file and change the `#TAG`; take next numbers from the edit response or a fresh `read`. Stale tag or surprise? STOP, re-`read`.
 2. RANGES ARE TIGHT — cover only lines that change. Whole construct → `PUT N*:`.
 3. BODY = FINAL CONTENT — every body row starts with `+`; Markdown bullets use `+- item`, not `- item`.
+4. VALIDATE THE RESULT — inspect the edit response and re-read before any follow-up change.
 </critical>
-
-
-## Input grammar
-See `<headers>`, `<ops>`, and `<body-rows>` above.
-
-## Examples
-- Replace an original range with `PUT N.=M:` and `+` body rows.
-- Move content with a named `CUT` register and bodyless `PUT`.
-
-## Recoverable failures
-On a stale snapshot, re-read the file and use the newly issued header.

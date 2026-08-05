@@ -37,7 +37,7 @@ func (*PresentPlanTool) Description() string { return presentPlanDescription }
 func (*PresentPlanTool) Effects() Effects { return NoEffects }
 
 func (*PresentPlanTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"title":{"type":"string","description":"Titulo corto del plan."},"plan":{"type":"string","description":"El plan final completo en Markdown."}},"required":["plan"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"title":{"type":"string","description":"Optional short plan title."},"plan":{"type":"string","description":"Complete final plan in Markdown."}},"required":["plan"]}`)
 }
 
 // Execute parsea {title, plan}, exige un plan no vacio, resuelve la sesion del

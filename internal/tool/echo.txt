@@ -1,5 +1,21 @@
-Devuelve tal cual el texto recibido en el campo text, sin tocar el filesystem.
+Return the `text` input unchanged without touching the filesystem. This deterministic built-in is primarily useful for exercising tool-call plumbing.
 
-Uso:
-- text es la cadena a devolver; la salida es exactamente ese texto.
-- No tiene efectos laterales: sirve como builtin determinista para probar el flujo de tools de punta a punta.
+## Input grammar
+- `text` is required and is returned exactly as provided.
+
+## Examples
+- `{"text":"hello"}` returns `hello`.
+- `{"text":"line one\nline two"}` preserves the newline.
+
+## Recoverable failures
+- Invalid JSON: send an object with a string `text` field.
+- Missing `text`: provide the required field.
+
+## Anti-patterns
+- WRONG: use echo to create or inspect a file. RIGHT: use `write` or `read`.
+- WRONG: expect formatting or interpolation. RIGHT: expect the exact input text.
+
+<critical>
+- Echo has no side effects.
+- The output is exactly the provided `text`.
+</critical>

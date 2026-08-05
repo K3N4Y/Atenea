@@ -3,6 +3,8 @@ package tool
 import (
 	"strings"
 	"testing"
+
+	"github.com/K3N4Y/atenea/internal/tool/editmode"
 )
 
 // TestBuiltinDescriptions_WiredAndDistinct protege el cableado de las
@@ -38,6 +40,79 @@ func TestBuiltinDescriptions_WiredAndDistinct(t *testing.T) {
 			t.Errorf("%s y %s comparten la misma descripcion (embed mal cableado)", other, b.Name())
 		}
 		seen[desc] = b.Name()
+	}
+}
+
+func TestBuiltinDescriptionsFollowStandardEnglishFormat(t *testing.T) {
+	for _, builtin := range builtinDescriptionTools(t) {
+		t.Run(builtin.Name(), func(t *testing.T) {
+			assertStandardDescriptionFormat(t, builtin.Description())
+		})
+	}
+}
+
+func builtinDescriptionTools(t *testing.T) []Tool {
+	t.Helper()
+	return []Tool{
+		&ReadTool{},
+		&WriteTool{},
+		&EditTool{},
+		&GrepTool{},
+		&GlobTool{},
+		&BashTool{},
+		&PresentPlanTool{},
+		&SkillTool{},
+		TodoWriteTool{},
+		Echo{},
+		NewWebFetchTool(nil),
+		NewRetainMemoryTool("", nil),
+		NewRecallMemoryTool("", nil),
+		NewCheckpointTool(nil),
+		NewRewindTool(nil),
+		NewLSPTool(t.TempDir()),
+		NewASTTool(t.TempDir()),
+		NewDebugTool(t.TempDir()),
+	}
+}
+
+func assertStandardDescriptionFormat(t *testing.T, description string) {
+	t.Helper()
+	previous := -1
+	for _, heading := range []string{"## Input grammar", "## Examples", "## Recoverable failures", "## Anti-patterns", "<critical>", "</critical>"} {
+		at := strings.Index(description, heading)
+		if at < 0 {
+			t.Errorf("description is missing %q", heading)
+			continue
+		}
+		if at <= previous {
+			t.Errorf("%q is out of order", heading)
+		}
+		previous = at
+	}
+	for _, marker := range []string{
+		"\nuso:", "\nnotas:", " archivo", " directorio", " comando", " tarea",
+		" patrón", " patron ", " página", " pagina", " sesión", " sesion",
+		" requerido", " requerida", " máximo", " maximo", " buscar ",
+		" encuentra ", " carga ", " devuelve ", " presenta ", " relativo al ",
+		" por ejemplo",
+	} {
+		if strings.Contains(strings.ToLower(description), marker) {
+			t.Errorf("description contains Spanish marker %q", marker)
+		}
+	}
+	for _, marker := range []rune("áéíóúñ¿¡") {
+		if strings.ContainsRune(strings.ToLower(description), marker) {
+			t.Errorf("description contains Spanish rune %q", marker)
+		}
+	}
+}
+
+func TestEditModeDescriptionsFollowStandardFormat(t *testing.T) {
+	for _, mode := range []editmode.Mode{editmode.Hashline, editmode.Patch, editmode.Replace, editmode.ApplyPatch} {
+		t.Run(string(mode), func(t *testing.T) {
+			edit := &EditTool{Mode: mode}
+			assertStandardDescriptionFormat(t, edit.Description())
+		})
 	}
 }
 

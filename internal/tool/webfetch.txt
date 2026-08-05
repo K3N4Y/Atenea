@@ -1,11 +1,27 @@
-- Trae el contenido de una URL y responde una instruccion sobre el.
-- Entrada: una URL (http o https) y un prompt con lo que queres extraer.
-- Baja la pagina, la convierte a markdown y responde el prompt usando SOLO ese contenido.
-- Devuelve una respuesta concisa, no el HTML crudo: evita inundar el contexto.
+Fetch a public HTTP(S) page, convert HTML to Markdown, and answer a focused instruction using only that page. The tool is read-only but reaches the network.
 
-Notas:
-  - Es de solo lectura: no modifica archivos ni hace pedidos que cambien estado.
-  - http se actualiza a https automaticamente.
-  - Las URLs deben ser publicas: se bloquea el acceso a hosts locales/privados (SSRF).
-  - Limite de tamano de respuesta: 5MB.
-  - Si hay otra herramienta mas especifica o con menos restricciones, preferila.
+## Input grammar
+- `url` is a public `http` or `https` URL; plain HTTP is upgraded to HTTPS.
+- `prompt` states exactly what to extract or answer from the page.
+- Responses are limited to 5 MiB. Private, loopback, link-local, and other local targets are blocked.
+
+## Examples
+- `{"url":"https://go.dev/doc/","prompt":"List the documentation sections shown on this page."}` extracts a concise list.
+- `{"url":"https://pkg.go.dev/net/http","prompt":"What does Client.CheckRedirect control?"}` asks a focused API question.
+
+## Recoverable failures
+- Blocked host: use a public source; never work around the SSRF restriction.
+- Non-2xx response or redirect failure: verify the canonical public URL before retrying.
+- Oversized page: choose a smaller, more specific source.
+- Answer absent from the page: report that it is absent rather than inventing it.
+
+## Anti-patterns
+- WRONG: fetch a local or private service. RIGHT: use a public URL.
+- WRONG: ask a broad research question over one page. RIGHT: provide a focused extraction prompt.
+- WRONG: fetch when a more specific workspace or documentation tool is available. RIGHT: prefer the narrower tool.
+
+<critical>
+- Use only the fetched page as evidence for the answer.
+- Do not expose raw HTML when a concise answer is sufficient.
+- Never attempt to bypass public-host validation.
+</critical>

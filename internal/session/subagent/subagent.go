@@ -2,6 +2,7 @@ package subagent
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -235,43 +236,15 @@ func (t *TaskTool) release() {
 
 func (*TaskTool) Name() string { return "task" }
 
+//go:embed task.txt
+var taskDescription string
+
 // Description combines a stable operating contract with the live subagent
 // catalog so the model can choose both whether and where to delegate.
 func (t *TaskTool) Description() string {
 	var b strings.Builder
-	b.WriteString(`Delegate a well-scoped task when an independent agent can investigate or execute it without owning the top-level plan. Use parallel task calls only for genuinely independent slices; work inline when delegation would merely add handoff latency.
-
-## Input grammar
-- subagent_type and a self-contained prompt are required. The type must be from the live catalog below.
-- output_schema optionally validates the child result as JSON matching that schema; with worktree=true, the tool returns that result inside a {"result":...,"worktree":"..."} envelope.
-- timeout_ms is an optional positive execution deadline.
-- detached=true starts background work and returns a job ID for task_status/task_wait/task_cancel.
-- worktree=true requests an isolated workspace when the selected runtime supports it.
-
-## Examples
-- {"subagent_type":"explorer","prompt":"Find every caller of Foo and report path:line evidence."}
-- {"subagent_type":"tester","prompt":"Run the focused behavior checks and report exact commands and failures.","timeout_ms":120000}
-- Start two independent investigations as two task calls in the same turn, not one agent after another.
-
-## Recoverable failures
-- Unknown subagent_type: choose one from the catalog below and retry with the same complete prompt.
-- Timeout or exhausted budget: narrow the assignment before retrying; do not blindly raise limits.
-- Invalid structured report: clarify the prompt or output_schema and retry only the failed slice.
-- Worktree unavailable: run without isolation only when shared-workspace execution is safe; otherwise report the prerequisite.
-
-## Anti-patterns
-- WRONG: ask a subagent to interpret the user's entire request or create the top-level plan. RIGHT: pass one scoped slice with all requirements and expected evidence.
-- WRONG: delegate one task and wait while doing nothing. RIGHT: work inline or continue an independent slice yourself.
-- WRONG: serialize independent tasks. RIGHT: dispatch them together.
-
-<critical>
-- Delegate scoped, independent work; retain ownership of intent, decomposition, and integration.
-- Prompts must be self-contained because subagents do not see the parent conversation.
-- Parallelize only real independence, and verify subagent claims before integration.
-</critical>
-
-## Available subagents
-`)
+	b.WriteString(taskDescription)
+	b.WriteString("\n## Available subagents\n")
 	names := make([]string, 0, len(t.catalog))
 	for name := range t.catalog {
 		names = append(names, name)
