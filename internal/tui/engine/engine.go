@@ -28,18 +28,20 @@ import (
 	"github.com/K3N4Y/atenea/internal/session/runner"
 	"github.com/K3N4Y/atenea/internal/session/subagent"
 	"github.com/K3N4Y/atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/tool/editmode"
 	"github.com/K3N4Y/atenea/internal/wiring"
 )
 
 // Config describes the headless agent assembly: the workspace root, the LLM
 // provider and the durable store.
 type Config struct {
-	Identity    paths.Identity
-	Root        string
-	Provider    llm.Provider
-	Store       session.Store
-	Models      ModelService
-	Checkpoints checkpoint.Store
+	Identity     paths.Identity
+	Root         string
+	Provider     llm.Provider
+	Store        session.Store
+	Models       ModelService
+	Checkpoints  checkpoint.Store
+	EditSettings func(model, sessionID string) (editmode.Config, error)
 	// Sitting is the per-process agent state the engine rewires into every build
 	// instead of rebuilding — the permission gate and grants, the prompt inbox, the
 	// turn lifecycle and the read snapshots. It belongs to whoever owns the sitting,
@@ -210,6 +212,9 @@ func New(cfg Config) *Engine {
 		if ev, ok := data[0].(session.SessionEvent); ok {
 			e.sendEvent(EventMsg(ev))
 		}
+		if ev, ok := data[0].(tool.PreviewEvent); ok {
+			e.sendEvent(PreviewMsg(ev))
+		}
 	}
 	bus := event.NewBus(emit)
 	e.root = cfg.Root
@@ -260,6 +265,7 @@ func New(cfg Config) *Engine {
 		LSP:            true,
 		RoleProvider:   roleProvider,
 		TaskSupervisor: e.taskSupervisor,
+		EditSettings:   cfg.EditSettings,
 	}
 	e.rewire()
 	if configs, err := mcpclient.LoadConfig(cfg.Root); err == nil {

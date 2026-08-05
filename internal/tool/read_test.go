@@ -387,7 +387,7 @@ func TestReadTool_OversizedSnapshotPreservesPriorEditableSnapshot(t *testing.T) 
 	}
 
 	editFS := &fakeEditFS{files: map[string][]byte{oldPath: []byte(oldText)}, writes: map[string][]byte{}}
-	input, _ := json.Marshal(map[string]string{"patch": oldHeader + "\nSWAP 1:\n+still editable"})
+	input, _ := json.Marshal(map[string]string{"input": oldHeader + "\nPUT 1.=1:\n+still editable"})
 	if _, err := NewEditTool("/work", editFS, snaps).Execute(context.Background(), input); err != nil {
 		t.Fatalf("old header no longer editable: %v", err)
 	}

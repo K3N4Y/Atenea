@@ -18,6 +18,7 @@ package tui
 // Model's own — the same idiom the overlay pickers use with overlayList.
 
 import (
+	"encoding/json"
 	"log/slog"
 	"time"
 	"unicode/utf8"
@@ -131,18 +132,33 @@ func (t Transcript) foldEvent(ev EventMsg, sessionID string) Transcript {
 		if ev.ToolName == "checkpoint" {
 			break
 		}
-		t.entries = append(t.entries, entry{
-			kind: entryTool, callID: ev.CallID, tool: ev.ToolName, status: toolRunning,
-			input: string(ev.Input), sessionID: ev.SessionID,
-		})
+		merged := false
+		for i := len(t.entries) - 1; i >= 0; i-- {
+			if t.entries[i].kind == entryTool && t.entries[i].callID == ev.CallID && t.entries[i].status == toolRunning {
+				t.entries[i].tool, t.entries[i].input, t.entries[i].sessionID = ev.ToolName, string(ev.Input), ev.SessionID
+				merged = true
+				break
+			}
+		}
+		if !merged {
+			t.entries = append(t.entries, entry{kind: entryTool, callID: ev.CallID, tool: ev.ToolName, status: toolRunning, input: string(ev.Input), sessionID: ev.SessionID})
+		}
 	case session.KindToolSuccess:
 		if ev.ToolName == "checkpoint" {
 			break
 		}
-		t = t.settleTool(ev.CallID, ev.SessionID, toolOK, "", ev.Text, ev.Diff)
+		var files []tool.FileResult
+		if encoded := ev.Attrs["tool.files"]; encoded != "" {
+			_ = json.Unmarshal([]byte(encoded), &files)
+		}
+		t = t.settleTool(ev.CallID, ev.SessionID, toolOK, "", ev.Text, ev.Diff, files)
 		t = t.settleChildTotal(ev)
 	case session.KindToolFailed:
-		t = t.settleTool(ev.CallID, ev.SessionID, toolFailed, ev.Error, "", "")
+		var files []tool.FileResult
+		if encoded := ev.Attrs["tool.files"]; encoded != "" {
+			_ = json.Unmarshal([]byte(encoded), &files)
+		}
+		t = t.settleTool(ev.CallID, ev.SessionID, toolFailed, ev.Error, ev.Text, ev.Diff, files)
 		t = t.settleChildTotal(ev)
 	case session.KindToolPermissionRequested:
 		input := string(ev.Input)
@@ -403,6 +419,30 @@ func estimatedTokens(bytes int) int {
 	return (bytes + 2) / 3
 }
 
+// foldPreview updates only the matching in-flight call. Duplicate digests are
+// stable, and final settlement below clears this ephemeral metadata.
+func (t Transcript) foldPreview(ev tool.PreviewEvent) Transcript {
+	hasMatchingCall := false
+	for i := len(t.entries) - 1; i >= 0; i-- {
+		e := &t.entries[i]
+		if e.kind != entryTool || e.callID != ev.CallID || (ev.SessionID != "" && e.sessionID != "" && e.sessionID != ev.SessionID) {
+			continue
+		}
+		hasMatchingCall = true
+		if e.status != toolRunning || e.digest == ev.Preview.Digest {
+			return t
+		}
+		e.files = append([]tool.FileResult(nil), ev.Preview.Files...)
+		e.digest = ev.Preview.Digest
+		e.err = ev.Preview.Error
+		return t
+	}
+	if !hasMatchingCall {
+		t.entries = append(t.entries, entry{kind: entryTool, callID: ev.CallID, status: toolRunning, sessionID: ev.SessionID, files: append([]tool.FileResult(nil), ev.Preview.Files...), digest: ev.Preview.Digest, err: ev.Preview.Error})
+	}
+	return t
+}
+
 // settleTool settles the outcome of the tool call with that callID (ok or
 // failure) and drops its pending permission request: the contract carries no
 // resolution event of its own, the Tool.Success/Tool.Failed of the same CallID
@@ -412,7 +452,7 @@ func estimatedTokens(bytes int) int {
 // when non-empty the view shows it instead of the output preview. A present_plan
 // settled with success appends, at the end, the plan approval offer (y execute
 // / n stay in plan).
-func (t Transcript) settleTool(callID, sessionID string, status toolStatus, errMsg, output, diff string) Transcript {
+func (t Transcript) settleTool(callID, sessionID string, status toolStatus, errMsg, output, diff string, files []tool.FileResult) Transcript {
 	planPresented := false
 	kept := make([]entry, 0, len(t.entries))
 	for _, e := range t.entries {
@@ -426,6 +466,8 @@ func (t Transcript) settleTool(callID, sessionID string, status toolStatus, errM
 			}
 			e.output = output
 			e.diff = diff
+			e.files = append([]tool.FileResult(nil), files...)
+			e.digest = ""
 			if e.tool == "present_plan" && status == toolOK {
 				planPresented = true
 			}

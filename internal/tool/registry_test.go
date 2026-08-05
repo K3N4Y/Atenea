@@ -301,7 +301,7 @@ func TestRegistry_SettleExecutesAllowedTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Settle: error inesperado: %v", err)
 	}
-	if want := (Result{Output: "hola"}); res != want {
+	if want := (Result{Output: "hola"}); res.Output != want.Output || res.Truncated != want.Truncated || res.Diff != want.Diff || len(res.Files) != 0 {
 		t.Fatalf("Settle: se esperaba %+v, se obtuvo %+v", want, res)
 	}
 }

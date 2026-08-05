@@ -2294,7 +2294,7 @@ func TestEngine_UndoRestoresPrePromptWorkspaceAndEffectiveConversation(t *testin
 	hash := hashline.ComputeFileHash("preexisting-change\n")
 	provider := newTurnProvider(
 		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.ToolCall, CallID: "read-1", ToolName: "read", Input: json.RawMessage(`{"path":"tracked.txt"}`)}, {Kind: llm.StepEnded}},
-		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.ToolCall, CallID: "edit-1", ToolName: "edit", Input: json.RawMessage(`{"patch":"[tracked.txt#` + hash + `]\nSWAP 1.=1:\n+agent-change"}`)}, {Kind: llm.StepEnded}},
+		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.ToolCall, CallID: "edit-1", ToolName: "edit", Input: json.RawMessage(`{"input":"[tracked.txt#` + hash + `]\nPUT 1.=1:\n+agent-change"}`)}, {Kind: llm.StepEnded}},
 		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.ToolCall, CallID: "write-1", ToolName: "write", Input: json.RawMessage(`{"path":"created.txt","content":"created by agent\n"}`)}, {Kind: llm.StepEnded}},
 		[]llm.Event{{Kind: llm.StepStarted}, {Kind: llm.StepEnded}},
 	)

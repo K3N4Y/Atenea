@@ -99,7 +99,7 @@ func TestBuiltins_Contract(t *testing.T) {
 			snaps.RecordSeenLines(abs, hash, []int{1, 2, 3, 4})
 			return tooltest.Subject{
 				Tool:  NewEditTool(root, hashline.OSFilesystem{}, snaps),
-				Input: input(t, map[string]any{"patch": "[foo.go#" + hash + "]\nSWAP 2.=3:\n+X"}),
+				Input: input(t, map[string]any{"input": "[foo.go#" + hash + "]\nPUT 2.=3:\n+X"}),
 			}
 		}},
 

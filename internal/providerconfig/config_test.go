@@ -116,6 +116,21 @@ func TestLoad_KeepsProviderWhoseTypeThisBuildCannotSpeak(t *testing.T) {
 	}
 }
 
+func TestLoad_ParsesTypedEditSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "providers.json")
+	body := `{"providers":[],"edit":{"mode":"patch","model_variants":{"gpt-5":"apply_patch"},"fuzzy":true,"fuzzy_threshold":0.9,"enforce_seen_lines":true}}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Edit.Mode != "patch" || cfg.Edit.ModelVariants["gpt-5"] != "apply_patch" || !cfg.Edit.Fuzzy || cfg.Edit.FuzzyThreshold != 0.9 || !cfg.Edit.EnforceSeenLines {
+		t.Fatalf("edit = %#v", cfg.Edit)
+	}
+}
+
 func TestLoad_RejectsInvalidConfigurations(t *testing.T) {
 	tests := map[string]string{
 		"duplicate provider":           `{"providers":[{"id":"x","name":"X","type":"openai-compatible","base_url":"http://one"},{"id":"x","name":"Y","type":"openai-compatible","base_url":"http://two"}]}`,

@@ -16,6 +16,14 @@ import (
 // allowed tools and safe to call concurrently.
 type SettleFunc func(ctx context.Context, call Call) (Result, error)
 
+// PreviewFunc projects partial input through the frozen turn strategy selected
+// during materialization. Unknown or non-previewable routes return false.
+type PreviewFunc func(ctx context.Context, call Call) (Preview, bool)
+
+// MatcherEntriesFunc exposes path/content matcher metadata from that same
+// frozen strategy, without requiring a local matcher consumer.
+type MatcherEntriesFunc func(call Call) []MatcherEntry
+
 // Middleware decorates tool settlement. Registry.Materialize repairs input,
 // applies the permission gate to exactly what will execute, caps output, then
 // applies extensions in registration order.
@@ -57,8 +65,11 @@ type Permissions map[string]bool
 // Materialized contains the definitions announced to the model and a settlement
 // function closed over exactly that set.
 type Materialized struct {
-	Definitions []llm.ToolDef
-	Settle      SettleFunc
+	Definitions    []llm.ToolDef
+	Settle         SettleFunc
+	Preview        PreviewFunc
+	MatcherEntries MatcherEntriesFunc
+	Err            error
 }
 
 // UnknownToolError is returned when a call names a tool outside the materialized
@@ -73,12 +84,13 @@ func (e *UnknownToolError) Error() string {
 // protected by mu and snapshotted by Materialize; OutputStore protects its own
 // mutable state.
 type Registry struct {
-	tools       map[string]Tool
-	outputs     *OutputStore
-	middlewares []Middleware
-	mu          sync.RWMutex
-	gate        permission.Gate
-	policy      permission.Policy
+	tools               map[string]Tool
+	presentationAliases map[string]Tool
+	outputs             *OutputStore
+	middlewares         []Middleware
+	mu                  sync.RWMutex
+	gate                permission.Gate
+	policy              permission.Policy
 }
 
 // SetPermissionGate configures the built-in permission middleware. Configuration
@@ -98,14 +110,28 @@ func (r *Registry) Use(middlewares ...Middleware) {
 	r.middlewares = append(r.middlewares, middlewares...)
 }
 
-// NewRegistry indexes tools by name. If names collide, the final tool wins;
-// registration is host configuration rather than model input.
+// NewRegistry indexes tools by name and records immutable presentation aliases.
+// If canonical names collide, the final tool wins; registration is host
+// configuration rather than model input. Presentation aliases never participate
+// in execution routing: Materialize builds that routing afresh for each turn.
 func NewRegistry(outputs *OutputStore, tools ...Tool) *Registry {
 	m := make(map[string]Tool, len(tools))
 	for _, t := range tools {
 		m[t.Name()] = t
 	}
-	return &Registry{tools: m, outputs: outputs}
+	presentationAliases := make(map[string]Tool)
+	for _, t := range m {
+		aliaser, ok := t.(PresentationAliaser)
+		if !ok {
+			continue
+		}
+		for alias, presenter := range aliaser.PresentationAliases() {
+			if alias != "" && alias != t.Name() && presenter != nil {
+				presentationAliases[alias] = presenter
+			}
+		}
+	}
+	return &Registry{tools: m, presentationAliases: presentationAliases, outputs: outputs}
 }
 
 // Permissions returns a permission set containing every registered tool.
@@ -121,27 +147,72 @@ func (r *Registry) Permissions() Permissions {
 	return permissions
 }
 
+type turnFreezer interface {
+	FreezeFor(model, sessionID string) (Tool, error)
+}
+
 // Materialize filters the catalog by permissions and returns definitions plus a
 // SettleFunc closed over the allowed tools. Definitions are sorted by name for
 // deterministic requests. A call outside the set returns UnknownToolError before
 // execution, so denied and unknown tools cannot produce side effects.
-func (r *Registry) Materialize(perms Permissions) Materialized {
+func (r *Registry) Materialize(perms Permissions) Materialized { return r.materialize(perms, "", "") }
+
+func (r *Registry) MaterializeFor(perms Permissions, model, sessionID string) Materialized {
+	return r.materialize(perms, model, sessionID)
+}
+
+func (r *Registry) materialize(perms Permissions, model, sessionID string) Materialized {
 	r.mu.RLock()
 	gate, policy := r.gate, r.policy
 	extensions := append([]Middleware(nil), r.middlewares...)
 	r.mu.RUnlock()
 	allowed := make(map[string]Tool, len(r.tools))
+	routes := make(map[string]string, len(r.tools))
 	defs := make([]llm.ToolDef, 0, len(r.tools))
-	for name, t := range r.tools {
+	names := make([]string, 0, len(r.tools))
+	for name := range r.tools {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		registered := r.tools[name]
 		if !perms[name] {
 			continue
 		}
+		t := registered
+		if freezer, ok := registered.(turnFreezer); ok {
+			var err error
+			t, err = freezer.FreezeFor(model, sessionID)
+			if err != nil {
+				return Materialized{Err: fmt.Errorf("materialize tool %q: %w", name, err)}
+			}
+		} else if freezer, ok := registered.(Freezer); ok {
+			t = freezer.Freeze()
+		}
+		if previous, exists := routes[name]; exists && previous != name {
+			return Materialized{Err: fmt.Errorf("tool route %q collides between %q and %q", name, previous, name)}
+		}
 		allowed[name] = t
-		defs = append(defs, llm.ToolDef{
-			Name:        t.Name(),
-			Description: t.Description(),
-			Schema:      t.Schema(),
-		})
+		routes[name] = name
+		def := llm.ToolDef{Name: t.Name(), Description: t.Description(), Schema: t.Schema()}
+		if custom, ok := t.(Definer); ok {
+			published := custom.Definition()
+			def.Name, def.Description, def.Schema, def.WireName = published.Name, published.Description, published.Schema, published.WireName
+			if published.Name != "" && published.Name != name {
+				return Materialized{Err: fmt.Errorf("tool %q published conflicting stable name %q", name, published.Name)}
+			}
+			if published.CustomFormat != nil {
+				def.CustomFormat = &llm.ToolCustomFormat{Syntax: published.CustomFormat.Syntax, Definition: published.CustomFormat.Definition}
+			}
+			if published.WireName != "" && published.WireName != name {
+				if previous, exists := routes[published.WireName]; exists && previous != name {
+					return Materialized{Err: fmt.Errorf("tool wire alias %q collides with %q", published.WireName, previous)}
+				}
+				allowed[published.WireName] = t
+				routes[published.WireName] = name
+			}
+		}
+		defs = append(defs, def)
 	}
 	sort.Slice(defs, func(i, j int) bool { return defs[i].Name < defs[j].Name })
 
@@ -150,6 +221,7 @@ func (r *Registry) Materialize(perms Permissions) Materialized {
 		if !ok {
 			return Result{}, &UnknownToolError{Name: call.Name}
 		}
+		call.Name = t.Name()
 		return t.Execute(ctx, call.Input)
 	}
 	middlewares := []Middleware{
@@ -162,7 +234,47 @@ func (r *Registry) Materialize(perms Permissions) Materialized {
 	for i := len(middlewares) - 1; i >= 0; i-- {
 		settle = middlewares[i](settle)
 	}
-	return Materialized{Definitions: defs, Settle: settle}
+	settleWithCanonicalRoute := settle
+	settle = func(ctx context.Context, call Call) (Result, error) {
+		if canonical, ok := routes[call.Name]; ok {
+			call.Name = canonical
+		}
+		return settleWithCanonicalRoute(ctx, call)
+	}
+	previewers := make([]Previewer, 0, 1)
+	seenPreviewer := make(map[Tool]bool)
+	for _, candidate := range allowed {
+		if capability, ok := candidate.(Previewer); ok && !seenPreviewer[candidate] {
+			seenPreviewer[candidate] = true
+			previewers = append(previewers, capability)
+		}
+	}
+	preview := func(ctx context.Context, call Call) (Preview, bool) {
+		t, ok := allowed[call.Name]
+		if !ok && call.Name == "" && len(previewers) == 1 {
+			return previewers[0].Preview(ctx, call.Input), true
+		}
+		if !ok {
+			return Preview{}, false
+		}
+		capability, ok := t.(Previewer)
+		if !ok {
+			return Preview{}, false
+		}
+		return capability.Preview(ctx, call.Input), true
+	}
+	matcherEntries := func(call Call) []MatcherEntry {
+		t, ok := allowed[call.Name]
+		if !ok {
+			return nil
+		}
+		capability, ok := t.(Previewer)
+		if !ok {
+			return nil
+		}
+		return capability.MatcherEntries(call.Input)
+	}
+	return Materialized{Definitions: defs, Settle: settle, Preview: preview, MatcherEntries: matcherEntries}
 }
 
 func permissionMiddleware(gate permission.Gate, policy permission.Policy) Middleware {
@@ -218,15 +330,12 @@ func outputMiddleware(outputs *OutputStore) Middleware {
 	return func(next SettleFunc) SettleFunc {
 		return func(ctx context.Context, call Call) (Result, error) {
 			res, err := next(ctx, call)
-			if err != nil {
-				return Result{}, err
-			}
-			if state, ok := ctx.Value(executionStateKey{}).(*executionState); ok {
+			if state, ok := ctx.Value(executionStateKey{}).(*executionState); ok && res.Output != "" {
 				res.Output = repair.WithNotes(state.repairNotes, res.Output)
 			}
-			capped := outputs.Cap(call.ID, res.Output)
-			capped.Diff = res.Diff
-			return capped, nil
+			// Structured partial results are settlement evidence even when execution
+			// fails (for example, an earlier file was already committed).
+			return outputs.CapResult(call.ID, res), err
 		}
 	}
 }

@@ -53,6 +53,7 @@ type Runner struct {
 	// to log.Printf; tests replace it to capture output without touching stderr.
 	logf      func(format string, args ...any)
 	reasoning func() *llm.ReasoningPreference
+	preview   func(tool.PreviewEvent)
 }
 
 // Compactor decides whether a Request exceeds the model context and compacts
@@ -99,6 +100,12 @@ func (r *Runner) SetSystemPrompt(build func(model string) string) {
 // provider defaults, and the callback is evaluated when each request is built.
 func (r *Runner) SetReasoning(reasoning func() *llm.ReasoningPreference) {
 	r.reasoning = reasoning
+}
+
+// SetPreviewSink receives ephemeral edit projections. The sink must return
+// promptly; nil disables previews without changing durable stream behavior.
+func (r *Runner) SetPreviewSink(sink func(tool.PreviewEvent)) {
+	r.preview = sink
 }
 
 // SetPermissionGate wires ask-before-run: policy classifies each tool call

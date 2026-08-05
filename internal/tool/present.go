@@ -58,12 +58,19 @@ func (*WriteTool) Present(call Call, result Result) Presentation {
 // — its [path#HASH] header names the file and its hunks carry the new lines — so
 // it serves as the body unmodified. The subject comes out of that same header,
 // since the file being edited is not a field of the input.
-func (*EditTool) Present(call Call, result Result) Presentation {
-	var in struct {
-		Patch string `json:"patch"`
+func (et *EditTool) Present(call Call, result Result) Presentation {
+	paths, _ := et.targetPaths(call.Input, false)
+	subject := ""
+	if len(paths) == 1 {
+		subject = fileName(paths[0])
+	} else if len(paths) > 1 {
+		subject = strconv.Itoa(len(paths)) + " files"
 	}
-	json.Unmarshal(call.Input, &in)
-	p := Presentation{Label: "Edit", Subject: fileName(patchPath(in.Patch)), Body: in.Patch, HidesOutput: true}
+	body := field(call.Input, "input")
+	if body == "" {
+		body = string(call.Input)
+	}
+	p := Presentation{Label: "Edit", Subject: subject, Body: body, HidesOutput: true}
 	if result.Diff != "" {
 		p.Kind = FileChange
 	}

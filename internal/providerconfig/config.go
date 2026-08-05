@@ -12,6 +12,7 @@ import (
 
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/paths"
+	"github.com/K3N4Y/atenea/internal/tool/editmode"
 )
 
 type Provider struct {
@@ -50,9 +51,20 @@ type Selection struct {
 	ReasoningEffort llm.ReasoningEffort `json:"reasoning_effort,omitempty"`
 }
 
+// EditConfig is the persisted, user-local edit strategy configuration. The
+// PI_EDIT_* environment variables remain turn-time overrides in editmode.
+type EditConfig struct {
+	Mode             editmode.Mode            `json:"mode,omitempty"`
+	ModelVariants    map[string]editmode.Mode `json:"model_variants,omitempty"`
+	Fuzzy            bool                     `json:"fuzzy,omitempty"`
+	FuzzyThreshold   float64                  `json:"fuzzy_threshold,omitempty"`
+	EnforceSeenLines bool                     `json:"enforce_seen_lines,omitempty"`
+}
+
 type Config struct {
 	Providers []Provider `json:"providers"`
 	Selected  Selection  `json:"selected,omitempty"`
+	Edit      EditConfig `json:"edit,omitempty"`
 }
 
 func DefaultPath() string {
@@ -166,6 +178,22 @@ func normalizeAndValidate(cfg *Config) error {
 	if cfg.Selected.Provider != "" {
 		if _, ok := seen[cfg.Selected.Provider]; !ok {
 			return fmt.Errorf("selected provider %q is not configured", cfg.Selected.Provider)
+		}
+	}
+	if cfg.Edit.Mode != "" {
+		if _, ok := editmode.Normalize(string(cfg.Edit.Mode)); !ok {
+			return fmt.Errorf("unsupported edit mode %q", cfg.Edit.Mode)
+		}
+	}
+	if cfg.Edit.FuzzyThreshold < 0 || cfg.Edit.FuzzyThreshold > 1 {
+		return errors.New("edit fuzzy threshold must be between 0 and 1")
+	}
+	for model, mode := range cfg.Edit.ModelVariants {
+		if strings.TrimSpace(model) == "" {
+			return errors.New("edit model variant requires a model name")
+		}
+		if _, ok := editmode.Normalize(string(mode)); !ok {
+			return fmt.Errorf("unsupported edit mode %q for model %q", mode, model)
 		}
 	}
 	return nil

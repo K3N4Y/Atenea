@@ -162,6 +162,8 @@ type entry struct {
 	spin      string
 	output    string
 	diff      string
+	files     []tool.FileResult
+	digest    string
 	sessionID string
 }
 

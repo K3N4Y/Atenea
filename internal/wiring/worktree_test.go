@@ -23,7 +23,7 @@ func TestWorktreeResolverCreatesRetainedIsolatedWorkspace(t *testing.T) {
 	runGit(t, root, "add", "base.txt")
 	runGit(t, root, "commit", "-m", "base")
 
-	env, err := worktreeResolver(root, 0)(context.Background(), agent.Def{Name: "coder"})
+	env, err := worktreeResolver(root, 0, nil)(context.Background(), agent.Def{Name: "coder"})
 	if err != nil {
 		t.Fatal(err)
 	}

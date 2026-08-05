@@ -1,6 +1,6 @@
 ---
-updated_at: 2026-08-02
-summary: Navigation index for Atenea project documentation in the OKF convention.
+updated_at: 2026-08-03
+summary: Navigation index for current Atenea architecture, specifications, research, and implementation provenance.
 ---
 
 # Atenea Documentation
@@ -44,6 +44,7 @@ The project-wide vocabulary lives in the root [domain glossary](../CONTEXT.md).
 - [Provider registry](architecture/provider-registry.md)
 - [Published contracts (`agentcore/`)](architecture/public-contracts.md)
 - [Read and edit tools](architecture/read-edit-tools.md)
+- [Edit implementation parity and upstream provenance](../docs/agents/oh-my-pi-edit-parity.md)
 - [Session module](architecture/session.md)
 - [Terminal UI](architecture/tui.md)
 - [Tool capabilities](architecture/tool-capabilities.md)
@@ -75,6 +76,7 @@ The project-wide vocabulary lives in the root [domain glossary](../CONTEXT.md).
 - [Harness and SkillOpt](research/harness2-skillopt.md)
 - [Harness subagents](research/harness-subagents.md)
 - [SLM tool-calling reliability](research/slm-tool-calling-reliability.md)
+- [oh-my-pi edit tool source analysis](../docs/research/oh-my-pi-edit-tool.md)
 - [OpenCode Zen and Go provider integration](research/2026-07-22-opencode-zen-go-provider-integration.md)
 - [Anthropic Go SDK provider integration](research/2026-07-22-anthropic-go-sdk-provider-integration.md)
 - [LLM prompt-cache hit research and provider audit](research/2026-07-23-llm-prompt-cache-hit.md)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	contract "github.com/K3N4Y/atenea/agentcore/tool"
 	"github.com/K3N4Y/atenea/internal/tool/hashline"
 )
 
@@ -18,18 +19,38 @@ func LSPDiagnosticsMiddleware(lsp *LSPTool) Middleware {
 			if err != nil || lsp == nil {
 				return result, err
 			}
-			path := mutatedPath(call)
-			if path == "" {
-				return result, nil
+			paths := make([]string, 0, len(result.Files)+1)
+			seen := make(map[string]struct{}, len(result.Files)+1)
+			for i := range result.Files {
+				file := &result.Files[i]
+				if file.Path == "" || !file.Committed || file.Operation == "delete" {
+					continue
+				}
+				if _, exists := seen[file.Path]; !exists {
+					seen[file.Path] = struct{}{}
+					paths = append(paths, file.Path)
+				}
 			}
-			diagnostics, diagnosticErr := lsp.DiagnosticsForPath(ctx, path)
-			if diagnosticErr != nil || diagnostics == "" || diagnostics == "No diagnostics." {
-				return result, nil
+			if len(paths) == 0 {
+				if path := mutatedPath(call); path != "" {
+					paths = append(paths, path)
+				}
 			}
-			if result.Output != "" && !strings.HasSuffix(result.Output, "\n") {
-				result.Output += "\n"
+			for _, path := range paths {
+				diagnostics, diagnosticErr := lsp.DiagnosticsForPath(ctx, path)
+				if diagnosticErr != nil || diagnostics == "" || diagnostics == "No diagnostics." {
+					continue
+				}
+				for i := range result.Files {
+					if result.Files[i].Path == path {
+						result.Files[i].Diagnostics = append(result.Files[i].Diagnostics, contract.Diagnostic{Message: diagnostics})
+					}
+				}
+				if result.Output != "" && !strings.HasSuffix(result.Output, "\n") {
+					result.Output += "\n"
+				}
+				result.Output += "\nLSP diagnostics:\n" + diagnostics
 			}
-			result.Output += "\nLSP diagnostics:\n" + diagnostics
 			return result, nil
 		}
 	}
@@ -46,12 +67,12 @@ func mutatedPath(call Call) string {
 		}
 	case "edit":
 		var input struct {
-			Patch string `json:"patch"`
+			Input string `json:"input"`
 		}
 		if json.Unmarshal(call.Input, &input) != nil {
 			return ""
 		}
-		patch, err := hashline.ParsePatch(input.Patch)
+		patch, err := hashline.ParsePatch(input.Input)
 		if err == nil && len(patch.Sections) == 1 {
 			return patch.Sections[0].Path
 		}

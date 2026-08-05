@@ -20,17 +20,22 @@ func NewOutputStore(limit int) *OutputStore {
 	return &OutputStore{limit: limit, full: make(map[string]string)}
 }
 
-// Cap guarda el output completo bajo callID y devuelve el Result que vera el
-// modelo: el output entero si cabe, o los primeros limit bytes con Truncated =
-// true. El completo siempre queda en el store, recuperable con Full.
-func (s *OutputStore) Cap(callID, output string) Result {
+// CapResult stores complete model output and caps only that output. Structured
+// settlement metadata, diffs, and ordered file results are preserved.
+func (s *OutputStore) CapResult(callID string, result Result) Result {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.full[callID] = output
-	if s.limit > 0 && len(output) > s.limit {
-		return Result{Output: output[:s.limit], Truncated: true}
+	s.full[callID] = result.Output
+	result.PruneSnapshotText()
+	if s.limit > 0 && len(result.Output) > s.limit {
+		result.Output = result.Output[:s.limit]
+		result.Truncated = true
 	}
-	return Result{Output: output}
+	return result
+}
+
+func (s *OutputStore) Cap(callID, output string) Result {
+	return s.CapResult(callID, Result{Output: output})
 }
 
 // Full devuelve el output completo guardado para un callID.

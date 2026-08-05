@@ -47,7 +47,7 @@ func TestHighLeverageDescriptionsTeachToolDecisions(t *testing.T) {
 		wants []string
 	}{
 		{tool: &ReadTool{}, wants: []string{"path", ":N-M", "without a header"}},
-		{tool: &EditTool{}, wants: []string{"[path#HASH]", "SWAP a.=b:", "re-read"}},
+		{tool: &EditTool{}, wants: []string{"[PATH#TAG]", "PUT N.=M:", "re-read"}},
 		{tool: &BashTool{}, wants: []string{"command", "slow_ok", "requires user approval"}},
 		{tool: NewLSPTool(t.TempDir()), wants: []string{"1-based", "new_name", "no symbol"}},
 		{tool: NewASTTool(t.TempDir()), wants: []string{"pattern", "apply=true", "does not bound applied replacements"}},
@@ -56,7 +56,7 @@ func TestHighLeverageDescriptionsTeachToolDecisions(t *testing.T) {
 	for _, subject := range highLeverage {
 		t.Run(subject.tool.Name(), func(t *testing.T) {
 			description := subject.tool.Description()
-			for _, required := range append([]string{"## Input grammar", "## Examples", "## Recoverable failures", "WRONG:", "RIGHT:", "<critical>", "</critical>"}, subject.wants...) {
+			for _, required := range append([]string{"## Input grammar", "## Examples", "## Recoverable failures", "WRONG", "RIGHT", "<critical>", "</critical>"}, subject.wants...) {
 				if !strings.Contains(description, required) {
 					t.Errorf("description does not teach %q", required)
 				}

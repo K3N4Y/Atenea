@@ -100,15 +100,16 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string, final boo
 			perms = r.planPerms
 		}
 	}
-	// Materialization snapshots execution policy along with the allowed tools.
-	// Tests may configure the runner fields directly, while production uses the
-	// setter; synchronizing here keeps both paths on the same registry seam.
-	r.registry.SetPermissionGate(r.gate, r.policy)
-	mat := r.registry.Materialize(perms)
+	// Acquire first so model-dependent definitions and execution freeze together.
 	providerSnapshot := llm.Acquire(r.provider)
 	model := before.Model
 	if providerSnapshot.Model != "" {
 		model = providerSnapshot.Model
+	}
+	r.registry.SetPermissionGate(r.gate, r.policy)
+	mat := r.registry.MaterializeFor(perms, model, sessionID)
+	if mat.Err != nil {
+		return false, mat.Err
 	}
 	req := llm.Request{Model: model, SessionKey: sessionKey(sessionID), Messages: toLLMMessages(msgs), Tools: mat.Definitions}
 	if r.reasoning != nil {
@@ -154,7 +155,7 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string, final boo
 	usageRequest := req
 	usageRequest.MaxOutputTokens = 0
 	pub := NewPublisher(r.store, sessionID, r.nextID(), llm.EstimateRequestTokens(usageRequest))
-	return r.consume(ctx, sessionID, in, pub, mat.Settle, final)
+	return r.consume(ctx, sessionID, in, pub, mat.Settle, mat.Preview, final)
 }
 
 func sessionKey(sessionID string) string {
@@ -167,14 +168,41 @@ func sessionKey(sessionID string) string {
 // the assistant message that declared it. Tool failures become Tool.Failed and
 // do not abort the turn; durable-store failures do.
 func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Event,
-	pub *Publisher, settle tool.SettleFunc, rejectLocalTools bool) (bool, error) {
+	pub *Publisher, settle tool.SettleFunc, preview tool.PreviewFunc, rejectLocalTools bool) (bool, error) {
 
 	g, gctx := errgroup.WithContext(ctx)
 	cleanupCtx := context.WithoutCancel(ctx)
 	needsContinuation := false
 	var streamErr *ProviderError
 	var calls []llm.Event
+	partialInputs := make(map[string][]byte)
+	partialNames := make(map[string]string)
+	latestDigest := make(map[string]string)
+	emitPreview := func(callID string) {
+		if r.preview == nil || preview == nil {
+			return
+		}
+		projected, ok := preview(ctx, tool.Call{ID: callID, Name: partialNames[callID], Input: partialInputs[callID]})
+		if !ok || projected.Digest == latestDigest[callID] {
+			return
+		}
+		latestDigest[callID] = projected.Digest
+		r.preview(tool.PreviewEvent{SessionID: sessionID, CallID: callID, Preview: projected})
+	}
 	for ev := range in {
+		switch ev.Kind {
+		case llm.ToolInputStarted:
+			partialInputs[ev.CallID] = nil
+			partialNames[ev.CallID] = ev.ToolName
+		case llm.ToolInputDelta:
+			partialInputs[ev.CallID] = append(partialInputs[ev.CallID], ev.Input...)
+			if ev.ToolName != "" {
+				partialNames[ev.CallID] = ev.ToolName
+			}
+			emitPreview(ev.CallID)
+		case llm.ToolInputEnded:
+			emitPreview(ev.CallID)
+		}
 		if ev.Kind == llm.StepFailed {
 			streamErr = &ProviderError{Message: ev.Text}
 			continue
@@ -216,9 +244,9 @@ func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Ev
 					return nil
 				}
 				r.logf("atenea: tool %q (call %s) failed: %v", ev.ToolName, ev.CallID, err)
-				return pub.ToolFailed(cleanupCtx, ev.CallID, err)
+				return pub.ToolFailedResult(cleanupCtx, ev.CallID, res, err)
 			}
-			return pub.ToolSuccess(cleanupCtx, ev.CallID, res.Output, res.Diff)
+			return pub.ToolSuccessResult(cleanupCtx, ev.CallID, res)
 		})
 	}
 	if err := g.Wait(); err != nil {

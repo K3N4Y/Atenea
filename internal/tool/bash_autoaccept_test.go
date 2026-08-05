@@ -83,7 +83,7 @@ func TestAutoAcceptRejectsHardLinkedMutableTargets(t *testing.T) {
 		}
 	}
 	edit := NewEditTool(root, hashline.OSFilesystem{}, hashline.NewMemSnapshotStore())
-	call := Call{Name: "edit", Input: json.RawMessage(`{"patch":"[victim.txt#XXXX]\\nSWAP 1.=1:\\n+changed"}`)}
+	call := Call{Name: "edit", Input: json.RawMessage(`{"input":"[victim.txt#XXXX]\\nPUT 1.=1:\\n+changed"}`)}
 	if edit.AutoAcceptSafe(call) {
 		t.Error("edit auto-accepted a hard-linked inode")
 	}

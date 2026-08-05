@@ -277,7 +277,6 @@ var aliasesByCanonical = map[string][]string{
 	"content": {"text", "body", "data", "contents", "fileContent"},
 	"url":     {"uri", "link", "href"},
 	"prompt":  {"question", "instruction"},
-	"patch":   {"diff", "edits", "changes"},
 	"text":    {"message"},
 	"name":    {"skill_name", "skill"},
 	"todos":   {"items", "tasks"},

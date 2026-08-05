@@ -2,41 +2,44 @@ package hashline
 
 import "testing"
 
-// TestFormatHeader_WrapsPathAndHash afirma que el header es "[path#HASH]": el
-// edit lo re-parsea para sacar path y hash esperado.
-func TestFormatHeader_WrapsPathAndHash(t *testing.T) {
-	got := FormatHeader("internal/foo.go", "1A2B")
-	if want := "[internal/foo.go#1A2B]"; got != want {
-		t.Fatalf("FormatHeader: se esperaba %q, se obtuvo %q", want, got)
+// Provenance: oh-my-pi format-v2.test.ts canonical format contracts @ 5af71dc.
+func TestCanonicalFormattingContracts(t *testing.T) {
+	if got := FormatHeader("dir/a b.ts", "1A2B"); got != "[dir/a b.ts#1A2B]" {
+		t.Fatal(got)
+	}
+	for _, tc := range []struct {
+		in   string
+		want []string
+	}{{"", nil}, {"a", []string{"a"}}, {"a\nb\n", []string{"a", "b"}}, {"a\nb", []string{"a", "b"}}, {"a\n\n", []string{"a", ""}}} {
+		got := SplitLines(tc.in)
+		if len(got) != len(tc.want) {
+			t.Fatalf("SplitLines(%q)=%#v", tc.in, got)
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Fatalf("SplitLines(%q)=%#v", tc.in, got)
+			}
+		}
+	}
+	if got := NumberLines([]string{"a", "b", "c"}, 2, 3); got != "2:b\n3:c" {
+		t.Fatal(got)
 	}
 }
 
-// TestSplitLines_DropsTrailingNewlineSegment afirma que el segmento vacio final
-// de un texto terminado en "\n" NO cuenta como linea: "a\nb\n" y "a\nb" tienen
-// ambos 2 lineas, ["a","b"].
-func TestSplitLines_DropsTrailingNewlineSegment(t *testing.T) {
-	for _, text := range []string{"a\nb\n", "a\nb"} {
-		got := SplitLines(text)
-		if len(got) != 2 {
-			t.Fatalf("SplitLines(%q): se esperaba longitud 2, se obtuvo %d (%v)", text, len(got), got)
-		}
-		if got[0] != "a" || got[1] != "b" {
-			t.Fatalf("SplitLines(%q): se esperaba [a b], se obtuvo %v", text, got)
-		}
+func TestApplyFormattingOrderAndNewlineContracts(t *testing.T) {
+	edits := []Edit{{Kind: Insert, Cursor: BeforeAnchor, Anchor: 2, Text: "before"}, {Kind: Replace, Range: Range{2, 2}, Text: "B1\nB2"}, {Kind: Insert, Cursor: AfterAnchor, Anchor: 2, Text: "after"}}
+	r, e := ApplyEdits([]string{"a", "b", "c"}, edits)
+	if e != nil || r.Text != "a\nbefore\nB1\nB2\nafter\nc" || r.FirstChangedLine != 2 {
+		t.Fatalf("%q %v %#v", r.Text, e, r)
 	}
-}
-
-// TestNumberLines_UsesRealPositions afirma que NumberLines usa los numeros reales
-// 1-indexed sobre el slice completo, separador ":", lineas unidas por "\n" y sin
-// "\n" final.
-func TestNumberLines_UsesRealPositions(t *testing.T) {
-	lines := []string{"package main", "", "func main(){}"}
-
-	if got, want := NumberLines(lines, 2, 3), "2:\n3:func main(){}"; got != want {
-		t.Fatalf("NumberLines(lines, 2, 3): se esperaba %q, se obtuvo %q", want, got)
+	p, _ := ParsePatch("CUT 2-3")
+	r, e = ApplyEdits([]string{"a", "b", ""}, p.Sections[0].Edits)
+	if e != nil || r.Text != "a\n" {
+		t.Fatalf("%q %v", r.Text, e)
 	}
-
-	if got, want := NumberLines(lines, 1, 3), "1:package main\n2:\n3:func main(){}"; got != want {
-		t.Fatalf("NumberLines(lines, 1, 3): se esperaba %q, se obtuvo %q", want, got)
+	p, _ = ParsePatch("PUT 2-3:\n+B")
+	r, e = ApplyEdits([]string{"a", "b", ""}, p.Sections[0].Edits)
+	if e != nil || r.Text != "a\nB\n" {
+		t.Fatalf("%q %v", r.Text, e)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/tool/editmode"
 )
 
 type Active struct {
@@ -130,6 +131,24 @@ func (s *Service) ReasoningEffort() llm.ReasoningEffort {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.config.Selected.ReasoningEffort
+}
+
+// EditSettings returns a detached turn configuration from the same persisted
+// local file as provider selection. Environment overrides are resolved later by
+// editmode when the turn materializes.
+func (s *Service) EditSettings(model, _ string) (editmode.Config, error) {
+	s.mu.RLock()
+	edit := s.config.Edit
+	s.mu.RUnlock()
+	variants := make(map[string]editmode.Mode, len(edit.ModelVariants))
+	for name, mode := range edit.ModelVariants {
+		variants[name] = mode
+	}
+	return editmode.Config{
+		Model: model, ModelVariants: variants, Setting: string(edit.Mode),
+		Fuzzy: edit.Fuzzy, Threshold: edit.FuzzyThreshold,
+		EnforceSeenLines: edit.EnforceSeenLines,
+	}, nil
 }
 
 func (s *Service) SetReasoningEffort(effort llm.ReasoningEffort) error {

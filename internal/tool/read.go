@@ -165,7 +165,7 @@ func (rt *ReadTool) Execute(ctx context.Context, input json.RawMessage) (Result,
 	for i := from; i <= to; i++ {
 		seen = append(seen, i)
 	}
-	snaps.RecordSeenLines(abs, tag, seen)
+	snaps.RecordSeenContent(abs, norm, seen)
 
 	return Result{Output: output}, nil
 }

@@ -15,6 +15,15 @@ type (
 	Tool             = contract.Tool
 	Call             = contract.Call
 	Result           = contract.Result
+	Definer          = contract.Definer
+	Freezer          = contract.Freezer
+	ToolDefinition   = contract.ToolDefinition
+	CustomFormat     = contract.CustomFormat
+	FileResult       = contract.FileResult
+	Preview          = contract.Preview
+	Previewer        = contract.Previewer
+	MatcherEntry     = contract.MatcherEntry
+	PreviewEvent     = contract.PreviewEvent
 	Effects          = contract.Effects
 	Declaring        = contract.Declaring
 	CallDeclaring    = contract.CallDeclaring
@@ -22,6 +31,13 @@ type (
 	PresentationKind = contract.PresentationKind
 	Presenter        = contract.Presenter
 )
+
+// PresentationAliaser publishes durable names that historical events may carry.
+// These aliases are presentation-only; execution aliases belong exclusively to
+// the Materialized turn that advertised them.
+type PresentationAliaser interface {
+	PresentationAliases() map[string]Tool
+}
 
 const (
 	NoEffects      = contract.NoEffects

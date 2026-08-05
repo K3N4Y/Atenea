@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 	"github.com/creack/pty"
 
 	"github.com/K3N4Y/atenea/internal/providerconfig"
+	"github.com/K3N4Y/atenea/internal/tool/hashline"
 )
 
 // providerKeyEnvNames is every API-key variable the built-in catalog reads.
@@ -595,6 +597,118 @@ func fakeOpenRouter(goodKey string) *httptest.Server {
 	return httptest.NewServer(mux)
 }
 
+// TestTUI_ProductionEditApprovalUnderPTY drives the shipped binary through a
+// local OpenAI-compatible provider, read provenance, the real permission panel,
+// and hashline settlement without bypassing the terminal UI.
+func TestTUI_ProductionEditApprovalUnderPTY(t *testing.T) {
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "atenea")
+	build := exec.Command("go", "build", "-tags", "production", "-o", binary, "./cmd/atenea")
+	build.Dir = repoRoot
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("production build: %v\n%s", err, output)
+	}
+
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "note.txt")
+	const oldText, newText = "old value\n", "new value\n"
+	if err := os.WriteFile(path, []byte(oldText), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var requests []map[string]any
+	turn := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		mu.Lock()
+		requests = append(requests, request)
+		turn++
+		current := turn
+		mu.Unlock()
+		name, arguments := "read", `{"path":"note.txt"}`
+		if current > 1 {
+			name = "edit"
+			patch := "[note.txt#" + hashline.ComputeFileHash(oldText) + "]\nPUT 1.=1:\n+new value"
+			encoded, _ := json.Marshal(map[string]string{"input": patch})
+			arguments = string(encoded)
+		}
+		chunk, _ := json.Marshal(map[string]any{"id": fmt.Sprintf("turn-%d", current), "object": "chat.completion.chunk", "choices": []any{map[string]any{"index": 0, "delta": map[string]any{"tool_calls": []any{map[string]any{"index": 0, "id": fmt.Sprintf("call-%d", current), "type": "function", "function": map[string]any{"name": name, "arguments": arguments}}}}, "finish_reason": nil}}})
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintf(w, "data: %s\n\n", chunk)
+		fmt.Fprint(w, `data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`+"\n\ndata: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	configRoot := t.TempDir()
+	configDir := filepath.Join(configRoot, "atenea")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	config := fmt.Sprintf(`{"providers":[{"id":"local","name":"Local","type":"openai-compatible","base_url":%q,"models":["e2e"]}],"selected":{"provider":"local","model":"e2e"},"edit":{"mode":"hashline"}}`, server.URL+"/v1")
+	if err := os.WriteFile(filepath.Join(configDir, "providers.json"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(binary)
+	cmd.Dir = workspace
+	cmd.Env = append(append(os.Environ(), blankProviderKeys()...), "HOME="+t.TempDir(), "XDG_CONFIG_HOME="+configRoot, "ATENEA_DB="+filepath.Join(t.TempDir(), "atenea.db"), "ATENEA_CHECKPOINTS="+filepath.Join(t.TempDir(), "checkpoints"))
+	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 110, Rows: 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stopPTYProcess(cmd, terminal)
+	output := &lockedBuffer{}
+	copyPTYAnsweringTerminalQueries(terminal, output)
+	waitForPTYText(t, output, " e2e ─╯")
+	if _, err := terminal.Write([]byte("update note\r")); err != nil {
+		t.Fatal(err)
+	}
+	// Wait for the complete first approval card, not merely its title. The PTY
+	// reader can receive the title before Bubble Tea finishes the frame.
+	waitForPTYText(t, output, "Permission required")
+	waitForPTYText(t, output, "Allow edit this session")
+	beforeEditReview := output.String()
+	if _, err := terminal.Write([]byte("\x1b[C\r")); err != nil {
+		t.Fatal(err)
+	}
+	// The review is a redraw of the same permission panel. Bubble Tea's
+	// line-diff renderer need not emit the unchanged "Permission required"
+	// title again, so use the newly visible diff to identify this state.
+	waitForPTYTextAfter(t, output, beforeEditReview, "1 + new value")
+	if _, err := terminal.Write([]byte("\x1b[C\r")); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(8 * time.Second)
+	for {
+		got, readErr := os.ReadFile(path)
+		if readErr == nil && string(got) == newText {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("workspace bytes=%q err=%v, want %q; PTY:\n%s", got, readErr, newText, ansi.Strip(output.String()))
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	waitForPTYTextAfter(t, output, beforeEditReview, "1 + new value")
+	mu.Lock()
+	defer mu.Unlock()
+	if len(requests) < 2 {
+		t.Fatalf("provider requests=%d, want read and edit turns", len(requests))
+	}
+	for i, name := range []string{"read", "edit"} {
+		encoded, _ := json.Marshal(requests[i]["tools"])
+		if !strings.Contains(string(encoded), `"name":"`+name+`"`) {
+			t.Fatalf("request %d tools do not advertise %s: %s", i+1, name, encoded)
+		}
+	}
+}
+
 // TestTUI_ConnectCommandFullFlowUnderPTY pins the /connect journey end to end
 // through the real binary, exactly as a user drives it: launch with no key
 // anywhere (demo mode with the /connect notice), open the panel, fail with a
@@ -1068,7 +1182,7 @@ func waitForPTYTextAfter(t *testing.T, output *lockedBuffer, previous, want stri
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("PTY output after restart did not contain %q:\n%s", want, ansi.Strip(output.String()))
+	t.Fatalf("PTY output after interaction did not contain %q:\n%s", want, ansi.Strip(output.String()))
 }
 
 func waitForPTYRawAfter(t *testing.T, output *lockedBuffer, previous, want string) {

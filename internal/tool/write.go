@@ -163,7 +163,7 @@ func (wt *WriteTool) Execute(ctx context.Context, input json.RawMessage) (Result
 		seen = append(seen, i)
 	}
 	if recorded {
-		snaps.RecordSeenLines(abs, tag, seen)
+		snaps.RecordSeenContent(abs, norm, seen)
 	}
 
 	// Diff ONLY for the UI: a new file is entirely additions (empty old content),

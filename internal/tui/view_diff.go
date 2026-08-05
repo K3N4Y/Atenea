@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/K3N4Y/atenea/internal/tool"
 	"github.com/K3N4Y/atenea/internal/tui/theme"
 )
 
@@ -138,6 +139,29 @@ func parseHunkSide(field string, sign byte) (int, bool) {
 		return 0, false
 	}
 	return start, true
+}
+
+func renderPreviewFile(file tool.FileResult, width int) string {
+	if file.Diff != "" {
+		if card := renderEditDiff(file.Diff, width); card != "" {
+			return card
+		}
+	}
+	path := file.Path
+	if file.Destination != "" {
+		path += " → " + file.Destination
+	}
+	status := string(file.Operation)
+	if file.Error != "" {
+		status += ": " + file.Error
+	}
+	if len(file.Warnings) > 0 {
+		status += " · " + strings.Join(file.Warnings, "; ")
+	}
+	if path == "" && status == "" {
+		return ""
+	}
+	return metadataStyle.Render(activityRailPrefix + sanitizeTerminalText(path+" ["+status+"]"))
 }
 
 func renderEditDiff(diff string, width int) string {

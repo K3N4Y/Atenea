@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -83,13 +84,40 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.composer = m.composer.attachImage(ev.data)
 		return m.resizeViewport(), nil
+	case PreviewMsg:
+		preview := tool.PreviewEvent(ev)
+		if preview.SessionID != "" && preview.SessionID != m.sessionID {
+			return m, waitForEvent(m.events)
+		}
+		m.Transcript = m.Transcript.foldPreview(preview)
+		return m.syncViewportActivity(), waitForEvent(m.events)
 	case EventMsg:
+		// Durable events queued by a prior session must not mutate the newly
+		// activated model. Decorated child activity intentionally carries the
+		// child's ID and is routed through its parent task attribution.
+		durable := session.SessionEvent(ev)
+		if ev.Seq != 0 && ev.SessionID != "" && m.sessionID != "" && ev.SessionID != m.sessionID && session.ParentTaskCallID(durable) == "" {
+			return m, waitForEvent(m.events)
+		}
 		m = m.cancelSelection()
 		permissionHeight := m.permissionPanelHeight()
 		m = m.foldEvent(ev)
 		permissionLayoutChanged := permissionHeight != m.permissionPanelHeight()
 		var workspaceCmd tea.Cmd
-		if ev.Kind == session.KindToolSuccess && tool.MayChangeFiles(m.tools(), ev.ToolName) {
+		shouldRefresh := ev.Kind == session.KindToolSuccess && tool.MayChangeFiles(m.tools(), ev.ToolName)
+		if ev.Kind == session.KindToolFailed {
+			var files []tool.FileResult
+			if encoded := ev.Attrs["tool.files"]; encoded != "" {
+				_ = json.Unmarshal([]byte(encoded), &files)
+			}
+			for _, file := range files {
+				if file.Committed {
+					shouldRefresh = true
+					break
+				}
+			}
+		}
+		if shouldRefresh {
 			m, workspaceCmd = m.requestWorkspaceRefresh()
 		}
 		pump := waitForEvent(m.events)

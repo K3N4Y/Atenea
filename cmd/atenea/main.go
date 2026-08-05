@@ -87,13 +87,14 @@ func runInteractive(options cli.InteractiveOptions) error {
 	active := h.Providers.Active()
 
 	eng := engine.New(engine.Config{
-		Identity:    h.Identity,
-		Root:        h.Root,
-		Provider:    h.Providers.Provider(),
-		Store:       h.Store,
-		Models:      h.Providers,
-		Checkpoints: checkpoint.NewGitStore(session.DefaultCheckpointPath()),
-		Sitting:     h.Sitting,
+		Identity:     h.Identity,
+		Root:         h.Root,
+		Provider:     h.Providers.Provider(),
+		Store:        h.Store,
+		Models:       h.Providers,
+		Checkpoints:  checkpoint.NewGitStore(session.DefaultCheckpointPath()),
+		Sitting:      h.Sitting,
+		EditSettings: h.Providers.EditSettings,
 	})
 	history, err := eng.PromptHistory()
 	if err != nil {

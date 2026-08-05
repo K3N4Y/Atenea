@@ -12,10 +12,11 @@ import (
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/session/subagent"
 	"github.com/K3N4Y/atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/tool/editmode"
 	"github.com/K3N4Y/atenea/internal/tool/hashline"
 )
 
-func worktreeResolver(root string, outputLimit int) subagent.EnvironmentResolver {
+func worktreeResolver(root string, outputLimit int, settings func(model, sessionID string) (editmode.Config, error)) subagent.EnvironmentResolver {
 	return func(ctx context.Context, _ agent.Def) (subagent.ChildEnvironment, error) {
 		path, err := os.MkdirTemp("", "atenea-worktree-")
 		if err != nil {
@@ -39,10 +40,12 @@ func worktreeResolver(root string, outputLimit int) subagent.EnvironmentResolver
 			return errors.Join(removeErr, filesystemErr)
 		}
 		snapshots := tool.NewSessionSnapshots()
+		edit := tool.NewEditToolWithSnapshotProvider(path, hashline.OSFilesystem{}, snapshots)
+		edit.TurnConfig = settings
 		registry := tool.NewRegistry(tool.NewOutputStore(outputLimit),
 			tool.NewReadToolWithSnapshotProvider(path, snapshots),
 			tool.NewWriteToolWithSnapshotProvider(path, snapshots),
-			tool.NewEditToolWithSnapshotProvider(path, hashline.OSFilesystem{}, snapshots),
+			edit,
 			tool.NewGlobTool(path), tool.NewGrepToolWithSnapshotProvider(path, snapshots),
 			tool.NewBashTool(path),
 		)

@@ -215,6 +215,7 @@ func execute(env Env, t turn) int {
 		MCPTools:         mcp.Tools(),
 		PersistentGrants: mcp.PermissionRules(),
 		LSP:              true,
+		EditSettings:     h.Providers.EditSettings,
 	})
 	defer built.Close()
 	commands := append(built.Commands.List(), mcp.Commands()...)

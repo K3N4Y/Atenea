@@ -22,6 +22,7 @@ type (
 	UnsupportedPartError = contract.UnsupportedPartError
 	ToolCallPart         = contract.ToolCallPart
 	ToolDef              = contract.ToolDef
+	ToolCustomFormat     = contract.ToolCustomFormat
 	Event                = contract.Event
 	EventKind            = contract.EventKind
 	Usage                = contract.Usage

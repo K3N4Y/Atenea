@@ -72,6 +72,39 @@ func rejectMutableAlias(root, abs, rel, toolName string) error {
 	return nil
 }
 
+// rejectCreateAlias rejects symlink components for a creation path and
+// hardlinked regular files at the final component. Creation must not follow a
+// mutable in-workspace alias.
+func rejectCreateAlias(root, abs, rel, toolName string) error {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+	relFromRoot, err := filepath.Rel(rootAbs, abs)
+	if err != nil || relFromRoot == "." || strings.HasPrefix(relFromRoot, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("%s: ruta mutable invalida: %s", toolName, rel)
+	}
+	current := rootAbs
+	parts := strings.Split(relFromRoot, string(filepath.Separator))
+	for i, part := range parts {
+		current = filepath.Join(current, part)
+		info, statErr := os.Lstat(current)
+		if os.IsNotExist(statErr) {
+			return nil
+		}
+		if statErr != nil {
+			return statErr
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%s: se rechaza alias symlink: %s", toolName, rel)
+		}
+		if i == len(parts)-1 && info.Mode().IsRegular() && !hasSingleLink(info) {
+			return fmt.Errorf("%s: se rechazan hardlinks: %s", toolName, rel)
+		}
+	}
+	return nil
+}
+
 func rejectRealParentOutside(root, abs, rel, toolName string) error {
 	rootReal, err := filepath.EvalSymlinks(root)
 	if err != nil {

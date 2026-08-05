@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 
+	contract "github.com/K3N4Y/atenea/agentcore/tool"
 	"github.com/K3N4Y/atenea/internal/command"
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/permission"
@@ -24,6 +25,8 @@ import (
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/session/subagent"
 	"github.com/K3N4Y/atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/tool/editmode"
+	"github.com/K3N4Y/atenea/internal/tool/hashline"
 	"github.com/K3N4Y/atenea/internal/tui/engine"
 )
 
@@ -2146,7 +2149,7 @@ func TestModel_RendersToolCallLifecycle(t *testing.T) {
 		t.Fatalf("View() = %q, the settled tool must not still appear as running", got)
 	}
 
-	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "edit", Input: json.RawMessage(`{"patch":"[a.go#ab12]\n"}`)})
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c2", ToolName: "edit", Input: json.RawMessage(`{"input":"[a.go#ab12]\n"}`)})
 	if got := m.View(); !strings.Contains(got, "● Edit     a.go") {
 		t.Fatalf("View() = %q, the second tool call must appear as running with the patch file %q", got, "● Edit     a.go")
 	}
@@ -2357,6 +2360,39 @@ func TestModel_ToolSuccessShowsEditDiff(t *testing.T) {
 		if strings.Contains(plain, banned) {
 			t.Fatalf("View() without ANSI = %q, must not contain %q: the card replaces the unified and output previews", plain, banned)
 		}
+	}
+}
+
+func TestModel_EditFourModesPreviewSettlementResizeAndNoDuplicates(t *testing.T) {
+	tests := []struct{ name, input, operation string }{
+		{"hashline", `{"input":"[a.go#ABCD]\\nPUT 1.=1:\\n+new"}`, "update"},
+		{"apply_patch", `{"input":"*** Begin Patch\\n*** Update File: a.go\\n@@\\n-old\\n+new\\n*** End Patch"}`, "update"},
+		{"patch", `{"path":"a.go","edits":[{"op":"update","diff":"@@\\n-old\\n+new"}]}`, "update"},
+		{"replace", `{"path":"a.go","old_string":"old","new_string":"new"}`, "edit"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewModel(&fakeAgent{}, "s1", nil)
+			m = apply(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+			m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "edit", Input: json.RawMessage(tc.input)})
+			previewFiles := []tool.FileResult{{Path: "a.go", Operation: contract.FileOperation(tc.operation), OldText: "old\n", NewText: "preview\n", Diff: "--- a/a.go\n+++ b/a.go\n@@ -1 +1 @@\n-old\n+preview"}}
+			m = apply(t, m, PreviewMsg(tool.PreviewEvent{SessionID: "s1", CallID: "c1", Preview: tool.Preview{Digest: "p1", Pending: true, Files: previewFiles}}))
+			finalFiles := []tool.FileResult{{Path: "a.go", Operation: contract.FileOperation(tc.operation), OldText: "old\n", NewText: "new\n", Diff: "--- a/a.go\n+++ b/a.go\n@@ -1 +1 @@\n-old\n+new", Warnings: []string{"settled warning"}, Committed: true}}
+			encodedFiles, _ := json.Marshal(finalFiles)
+			m = apply(t, m, EventMsg{Kind: session.KindToolSuccess, CallID: "c1", ToolName: "edit", Text: "Updated a.go", Diff: finalFiles[0].Diff, Attrs: map[string]string{"tool.files": string(encodedFiles)}})
+			// A stale asynchronous projection must not revive or overwrite settlement.
+			m = apply(t, m, PreviewMsg(tool.PreviewEvent{SessionID: "s1", CallID: "c1", Preview: tool.Preview{Digest: "late", Pending: true, Files: previewFiles}}))
+			m = apply(t, m, tea.WindowSizeMsg{Width: 62, Height: 20})
+			plain := ansi.Strip(m.View())
+			for _, want := range []string{"a.go", "1 - old", "1 + new"} {
+				if !strings.Contains(plain, want) {
+					t.Fatalf("view lacks %q: %s", want, plain)
+				}
+			}
+			if strings.Contains(plain, "preview") || strings.Count(plain, "1 + new") != 1 {
+				t.Fatalf("stale/duplicate preview survived final settlement: %s", plain)
+			}
+		})
 	}
 }
 
@@ -4366,7 +4402,7 @@ func TestModel_WorkingIndicatorUsesConcreteMicrocopy(t *testing.T) {
 	}
 
 	m = apply(t, m, EventMsg{Kind: session.KindToolSuccess, CallID: "read-1", ToolName: "read"})
-	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "edit-1", ToolName: "edit", Input: json.RawMessage(`{"patch":"[internal/tui/view.go#ABCD]\n- old\n+ new"}`)})
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "edit-1", ToolName: "edit", Input: json.RawMessage(`{"input":"[internal/tui/view.go#ABCD]\n- old\n+ new"}`)})
 	if got := m.View(); !strings.Contains(got, "Reviewing changes") || strings.Contains(got, " working") {
 		t.Fatalf("View() = %q, changing files must render concrete UX microcopy and not generic working", got)
 	}
@@ -7278,7 +7314,7 @@ func TestModel_PermissionPanelEditShowsPatch(t *testing.T) {
 	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = apply(t, m, EventMsg{
 		Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "edit",
-		Input: json.RawMessage(`{"patch":"[tracked.txt#abc123]\nSWAP 1.=1:\n+new line"}`),
+		Input: json.RawMessage(`{"input":"[tracked.txt#abc123]\nPUT 1.=1:\n+new line"}`),
 	})
 
 	view := ansi.Strip(m.View())
@@ -7289,8 +7325,56 @@ func TestModel_PermissionPanelEditShowsPatch(t *testing.T) {
 			t.Fatalf("View() = %q, want %q", view, want)
 		}
 	}
-	if panel := ansi.Strip(m.permissionPanelView()); strings.Contains(panel, `"patch"`) {
+	if panel := ansi.Strip(m.permissionPanelView()); strings.Contains(panel, `"input"`) {
 		t.Fatalf("permissionPanelView() = %q, edit permission panel must not dump raw JSON", panel)
+	}
+}
+
+func TestModelApplyPatchAliasUsesStableEditPresentationAcrossMaterializations(t *testing.T) {
+	edit := tool.NewEditTool(t.TempDir(), hashline.OSFilesystem{}, hashline.NewMemSnapshotStore())
+	edit.Mode = editmode.Hashline
+	registry := tool.NewRegistry(tool.NewOutputStore(1024), edit)
+	agent := &fakeAgent{tools: registry}
+	m := NewModel(agent, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 90, Height: 40})
+	input := json.RawMessage(`{"input":"*** Begin Patch\n*** Update File: src/a.go\n@@\n-old\n+new\n*** End Patch"}`)
+	// A historical event must render before any current turn is materialized.
+	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "perm", ToolName: "apply_patch", Input: input})
+	// Alternating current turns must not change presentation of that durable name.
+	for _, mode := range []editmode.Mode{editmode.ApplyPatch, editmode.Hashline, editmode.Replace} {
+		edit.Mode = mode
+		if materialized := registry.Materialize(tool.Permissions{"edit": true}); materialized.Err != nil {
+			t.Fatal(materialized.Err)
+		}
+	}
+	permissionView := ansi.Strip(m.View())
+	for _, want := range []string{"Permission required", "Edit", "a.go", "*** Update File: src/a.go", "-old"} {
+		if !strings.Contains(permissionView, want) {
+			t.Fatalf("permission view lacks %q: %s", want, permissionView)
+		}
+	}
+	if strings.Contains(permissionView, `{"input"`) {
+		t.Fatalf("permission used raw generic input: %s", permissionView)
+	}
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "run", ToolName: "apply_patch", Input: input})
+	previewFiles := []tool.FileResult{{Path: "src/a.go", Operation: contract.FileUpdated, OldText: "old\n", NewText: "new\n", Diff: "--- a/src/a.go\n+++ b/src/a.go\n@@ -1 +1 @@\n-old\n+new"}}
+	m = apply(t, m, PreviewMsg(tool.PreviewEvent{SessionID: "s1", CallID: "run", Preview: tool.Preview{Digest: "p", Pending: true, Files: previewFiles}}))
+	runningView := ansi.Strip(m.View())
+	if !strings.Contains(runningView, "src/a.go") || !strings.Contains(runningView, "1 + new") {
+		t.Fatalf("running alias did not render edit card: %s", runningView)
+	}
+	encoded, _ := json.Marshal(previewFiles)
+	m = apply(t, m, EventMsg{Kind: session.KindToolSuccess, CallID: "run", ToolName: "apply_patch", Diff: previewFiles[0].Diff, Attrs: map[string]string{"tool.files": string(encoded)}})
+	finalView := ansi.Strip(m.View())
+	if !strings.Contains(finalView, "src/a.go") || !strings.Contains(finalView, "1 + new") {
+		t.Fatalf("settled alias did not render per-file edit card: %s", finalView)
+	}
+
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "fail", ToolName: "apply_patch", Input: input})
+	m = apply(t, m, EventMsg{Kind: session.KindToolFailed, CallID: "fail", ToolName: "apply_patch", Error: "hunk failed"})
+	if failureView := ansi.Strip(m.View()); !strings.Contains(failureView, "Edit") || !strings.Contains(failureView, "a.go") || !strings.Contains(failureView, "hunk failed") {
+		t.Fatalf("failed alias lost edit presentation/error: %s", failureView)
 	}
 }
 

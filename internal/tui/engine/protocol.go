@@ -1,6 +1,9 @@
 package engine
 
-import "github.com/K3N4Y/atenea/internal/session"
+import (
+	"github.com/K3N4Y/atenea/agentcore/tool"
+	"github.com/K3N4Y/atenea/internal/session"
+)
 
 // This file defines the protocol between the Engine (producer) and the Bubble
 // Tea Model (consumer): the durable events and lifecycle messages that flow
@@ -16,6 +19,10 @@ const HistoryLimit = 100
 // Model. It is a distinct tea.Msg type so the Model's Update loop can switch on
 // it without confusing it with the lifecycle messages below.
 type EventMsg session.SessionEvent
+
+// PreviewMsg is transient tool presentation metadata. Unlike EventMsg it is
+// never loaded from or written to durable session history.
+type PreviewMsg tool.PreviewEvent
 
 // RunHandle identifies a concrete run within a session. RunID == 0 means the
 // operation did not start a run (/new, /compact).

@@ -270,6 +270,32 @@ func searchToolSummary(e entry, pattern string) string {
 }
 
 func (e entry) renderTool(p tool.Presentation, width int) string {
+	if (e.status == toolOK || e.status == toolFailed) && len(e.files) > 0 {
+		cards := make([]string, 0, len(e.files))
+		for _, file := range e.files {
+			if card := renderPreviewFile(file, width); card != "" {
+				cards = append(cards, card)
+			}
+		}
+		if len(cards) > 0 {
+			out := strings.Join(cards, "\n")
+			if e.status == toolFailed {
+				out += "\n" + toolFailedStyle.Render(activityRailPrefix+"error: "+sanitizeTerminalText(e.err))
+			}
+			return out
+		}
+	}
+	if e.status == toolRunning && len(e.files) > 0 {
+		cards := make([]string, 0, len(e.files))
+		for _, file := range e.files {
+			if card := renderPreviewFile(file, width); card != "" {
+				cards = append(cards, card)
+			}
+		}
+		if len(cards) > 0 {
+			return strings.Join(cards, "\n")
+		}
+	}
 	if e.status == toolOK && e.diff != "" {
 		card := ""
 		switch p.Kind {

@@ -323,9 +323,11 @@ func (p *responsesProvider) Stream(ctx context.Context, req Request) (<-chan Eve
 // argument deltas by ITEM id and the tool result pairs by CALL id, so both have to
 // be remembered together.
 type codexCall struct {
-	callID string
-	name   string
-	args   strings.Builder
+	callID     string
+	name       string
+	custom     bool
+	jsonOpened bool
+	args       strings.Builder
 }
 
 func (p *responsesProvider) runStream(ctx context.Context, out chan Event, params responses.ResponseNewParams, model, sessionKey string, credential []option.RequestOption) {
@@ -370,24 +372,33 @@ func (p *responsesProvider) runStream(ctx context.Context, out chan Event, param
 		event := stream.Current()
 		switch event.Type {
 		case "response.output_item.added":
-			if event.Item.Type != "function_call" {
+			if event.Item.Type != "function_call" && event.Item.Type != "custom_tool_call" {
 				continue
 			}
 			if !closeBlocks() {
 				return
 			}
-			call := &codexCall{callID: event.Item.CallID, name: event.Item.Name}
+			call := &codexCall{callID: event.Item.CallID, name: event.Item.Name, custom: event.Item.Type == "custom_tool_call"}
 			calls[event.Item.ID] = call
-			if !emit(ctx, out, Event{Kind: ToolInputStarted, CallID: call.callID}) {
+			if !emit(ctx, out, Event{Kind: ToolInputStarted, CallID: call.callID, ToolName: call.name}) {
 				return
 			}
-		case "response.function_call_arguments.delta":
+		case "response.function_call_arguments.delta", "response.custom_tool_call_input.delta":
 			call := calls[event.ItemID]
 			if call == nil || event.Delta == "" {
 				continue
 			}
 			call.args.WriteString(event.Delta)
-			if !emit(ctx, out, Event{Kind: ToolInputDelta, CallID: call.callID, Input: json.RawMessage(event.Delta)}) {
+			delta := event.Delta
+			if call.custom {
+				escaped, _ := json.Marshal(event.Delta)
+				delta = string(escaped[1 : len(escaped)-1])
+				if !call.jsonOpened {
+					delta = `{"input":"` + delta
+					call.jsonOpened = true
+				}
+			}
+			if !emit(ctx, out, Event{Kind: ToolInputDelta, CallID: call.callID, ToolName: call.name, Input: json.RawMessage(delta)}) {
 				return
 			}
 		case "response.output_item.done":
@@ -396,14 +407,31 @@ func (p *responsesProvider) runStream(ctx context.Context, out chan Event, param
 				continue
 			}
 			delete(calls, event.Item.ID)
-			if !emit(ctx, out, Event{Kind: ToolInputEnded, CallID: call.callID}) {
+			if call.custom {
+				closing := `"}`
+				if !call.jsonOpened {
+					closing = `{"input":""}`
+				}
+				if !emit(ctx, out, Event{Kind: ToolInputDelta, CallID: call.callID, ToolName: call.name, Input: json.RawMessage(closing)}) {
+					return
+				}
+			}
+			if !emit(ctx, out, Event{Kind: ToolInputEnded, CallID: call.callID, ToolName: call.name}) {
 				return
 			}
-			// The done item carries the whole argument string, which is what a host
-			// hands the tool; the accumulated deltas are the fallback for a backend
-			// that streams them and does not repeat them.
+			// Custom tools return freeform input; normalize it into the JSON fallback
+			// shape before crossing the provider-neutral dispatch contract.
 			arguments := event.Item.Arguments
-			if arguments == "" {
+			if event.Item.Type == "custom_tool_call" {
+				input := event.Item.Input
+				if input == "" {
+					input = call.args.String()
+				}
+				encoded, _ := json.Marshal(struct {
+					Input string `json:"input"`
+				}{Input: input})
+				arguments = string(encoded)
+			} else if arguments == "" {
 				arguments = call.args.String()
 			}
 			if !json.Valid([]byte(arguments)) {
@@ -708,16 +736,27 @@ func codexMessage(text string, role responses.EasyInputMessageRole) responses.Re
 	}}
 }
 
-// toCodexTools materializes each ToolDef as a function tool. Strict mode is off:
-// it is what the Codex CLI sends, and a strict schema turns a tool whose
-// parameters the model got slightly wrong into a refused turn instead of a
-// repairable call.
+// toCodexTools uses Responses custom tools when a definition supplies a native
+// freeform grammar. Every other definition remains a JSON function tool.
 func toCodexTools(tools []ToolDef) []responses.ToolUnionParam {
 	if len(tools) == 0 {
 		return nil
 	}
 	out := make([]responses.ToolUnionParam, 0, len(tools))
 	for _, tool := range tools {
+		if tool.CustomFormat != nil {
+			name := tool.WireName
+			if name == "" {
+				name = tool.Name
+			}
+			definition := responses.ToolParamOfCustom(name)
+			definition.OfCustom.Format = shared.CustomToolInputFormatParamOfGrammar(tool.CustomFormat.Definition, tool.CustomFormat.Syntax)
+			if tool.Description != "" {
+				definition.OfCustom.Description = openai.String(tool.Description)
+			}
+			out = append(out, definition)
+			continue
+		}
 		parameters := map[string]any{"type": "object", "properties": map[string]any{}}
 		if len(tool.Schema) > 0 {
 			var decoded map[string]any

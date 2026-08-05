@@ -1,6 +1,9 @@
 package event
 
-import "github.com/K3N4Y/atenea/internal/session"
+import (
+	"github.com/K3N4Y/atenea/agentcore/tool"
+	"github.com/K3N4Y/atenea/internal/session"
+)
 
 // EmitFunc es la frontera con Wails. En produccion envuelve runtime.EventsEmit;
 // en tests es un fake que registra. Su forma copia la de runtime.EventsEmit
@@ -24,6 +27,15 @@ func (b *Bus) Publish(ev session.SessionEvent) {
 		return
 	}
 	b.emit("session:"+ev.SessionID, ev)
+}
+
+// PublishPreview emits transient presentation metadata without touching the
+// session store. It intentionally has no sequence number or durable projection.
+func (b *Bus) PublishPreview(ev tool.PreviewEvent) {
+	if b.emit == nil {
+		return
+	}
+	b.emit("session:"+ev.SessionID+":preview", ev)
 }
 
 // PublishOn reenvia el evento a un canal de sesion explicito (session:<channel>),

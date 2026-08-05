@@ -2,78 +2,104 @@ package hashline
 
 import "fmt"
 
-// EditKind distingue las operaciones de un Edit: reemplazo de rango (SWAP),
-// borrado (DEL) e insercion (INS.*).
+// ParseWarning describes a safe, typed recovery from common model-authored syntax.
+type ParseWarning struct {
+	Code    string
+	Message string
+	Line    int
+}
+
 type EditKind int
 
+const MaxExpandedLines = 100000
 const (
-	Replace EditKind = iota // SWAP: reemplaza [Range.Start, Range.End]
-	Delete                  // DEL: borra [Range.Start, Range.End]
-	Insert                  // INS.*: inserta respecto a un ancla
+	Replace EditKind = iota
+	Delete
+	Insert
+	Cut
+	Paste
 )
 
-// Cursor indica donde inserta un Edit de tipo Insert: antes o despues del ancla,
-// al inicio (BOF) o al final (EOF) del archivo.
 type Cursor int
 
 const (
-	BeforeAnchor Cursor = iota // INS.PRE
-	AfterAnchor                // INS.POST
-	BOF                        // INS.HEAD
-	EOF                        // INS.TAIL
+	BeforeAnchor Cursor = iota
+	AfterAnchor
+	BOF
+	EOF
 )
 
-// Range es un rango de lineas 1-indexed inclusive [Start, End].
-type Range struct {
-	Start, End int
-}
-
-// Edit es una operacion sobre un archivo. Kind elige la semantica: Replace y
-// Delete usan Range; Insert usa Cursor y Anchor. Text es el payload (lineas
-// unidas por "\n") para Replace e Insert.
+type Range struct{ Start, End int }
 type Edit struct {
-	Kind   EditKind
-	Range  Range
-	Cursor Cursor
-	Anchor int
-	Text   string
+	Kind       EditKind
+	Range      Range
+	Cursor     Cursor
+	Anchor     int
+	Text       string
+	Register   string
+	Block      bool
+	AfterBlock bool
+	// BlockStart identifies the authored opener after an after-block edit is lowered.
+	// It is zero for literal after-line inserts.
+	BlockStart int
 }
-
-// Section es un bloque del patch: un archivo (Path), el hash esperado (Hash) y
-// sus ediciones (Edits).
+type FileOp struct {
+	Remove bool
+	MoveTo string
+}
 type Section struct {
 	Path, Hash string
 	Edits      []Edit
+	FileOp     FileOp
+	Warnings   []ParseWarning
 }
-
-// Patch es el conjunto de secciones parseadas de un patch hashline.
 type Patch struct {
 	Sections []Section
+	Warnings []ParseWarning
 }
-
-// ApplyResult es el resultado de aplicar las ediciones a un archivo: el texto
-// final (lineas unidas por "\n", sin "\n" final), la primera linea cambiada y
-// las advertencias acumuladas.
 type ApplyResult struct {
 	Text             string
 	FirstChangedLine int
 	Warnings         []string
 }
 
-// MissingTagError indica que el patch (o una seccion) no trae el header
-// [ruta#HASH]. Detail agrega contexto accionable (que se encontro en su lugar).
-type MissingTagError struct {
-	Detail string
+// Clipboard is mutable host-owned state. Named registers persist between
+// batches; anonymous state is intentionally useful only within one batch.
+type Clipboard struct {
+	Anonymous       []string
+	Named           map[string][]string
+	PendingAnonCuts []string
 }
 
-func (e *MissingTagError) Error() string {
-	return "falta el header [ruta#HASH]: " + e.Detail
+// BlockResolver maps a source line to the inclusive multiline syntactic block
+// beginning there. It returns a typed error when the language is unsupported
+// or the line is not a valid block opener.
+type BlockResolver interface {
+	ResolveBlock(path string, lines []string, start int) (end int, err error)
 }
 
-// MismatchError indica que el archivo vivo no corresponde al hash que el edit
-// trae: o cambio entre el read y el edit (Recognized, el hash si es de la sesion),
-// o el hash no es de esta sesion (no Recognized, posible tag inventado). Context
-// agrega detalle accionable opcional.
+// UnsupportedBlockLanguageError reports a path for which no structural grammar exists.
+type UnsupportedBlockLanguageError struct{ Path string }
+
+func (e *UnsupportedBlockLanguageError) Error() string {
+	return "hashline: unsupported block language for " + e.Path
+}
+
+// UnresolvedBlockError reports a line which is not a multiline block opener.
+type UnresolvedBlockError struct {
+	Path   string
+	Line   int
+	Reason string
+}
+
+func (e *UnresolvedBlockError) Error() string {
+	return fmt.Sprintf("hashline: no multiline block starts at %s:%d (%s); anchor the block's opening line without blank lines, closing delimiters, or inner statements", e.Path, e.Line, e.Reason)
+}
+
+type MissingTagError struct{ Detail string }
+
+func (e *MissingTagError) Error() string { return "missing [path#HASH] header: " + e.Detail }
+
 type MismatchError struct {
 	Path, Expected, Live string
 	Recognized           bool
@@ -83,12 +109,12 @@ type MismatchError struct {
 func (e *MismatchError) Error() string {
 	var msg string
 	if e.Recognized {
-		msg = fmt.Sprintf("edit: el archivo %s cambio entre el read y el edit (hash %s -> %s); copia el header [path#newhash] del edit previo o re-lee", e.Path, e.Expected, e.Live)
+		msg = fmt.Sprintf("edit: %s changed since it was read (hash %s -> %s); use the latest edit header or read it again", e.Path, e.Expected, e.Live)
 	} else {
-		msg = fmt.Sprintf("edit: hash #%s no es de esta sesion para %s; re-lee el archivo y nunca inventes el tag", e.Expected, e.Path)
+		msg = fmt.Sprintf("edit: hash #%s is not a snapshot from this session for %s; read the file and use its header", e.Expected, e.Path)
 	}
 	if e.Context != "" {
-		msg += "; contexto: " + e.Context
+		msg += "; " + e.Context
 	}
 	return msg
 }

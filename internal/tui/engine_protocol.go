@@ -12,6 +12,7 @@ import "github.com/K3N4Y/atenea/internal/tui/engine"
 // they are deliberately not re-exported here.
 type (
 	EventMsg            = engine.EventMsg
+	PreviewMsg          = engine.PreviewMsg
 	RunHandle           = engine.RunHandle
 	RunDoneMsg          = engine.RunDoneMsg
 	UndoResult          = engine.UndoResult

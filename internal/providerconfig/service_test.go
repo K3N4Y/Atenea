@@ -12,6 +12,9 @@ import (
 	"time"
 
 	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/wiring"
 )
 
 type inertProvider struct{}
@@ -54,6 +57,32 @@ func TestService_OpenUsesPersistedSelection(t *testing.T) {
 	}
 	if got := s.Active(); got.ProviderID != "p" || got.Model != "m" {
 		t.Fatalf("active = %#v", got)
+	}
+}
+
+func TestServiceEditSettingsFeedsProductionWiring(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "providers.json")
+	body := `{"providers":[],"edit":{"mode":"patch","model_variants":{"gpt-5":"apply_patch"},"fuzzy":true,"fuzzy_threshold":0.91,"enforce_seen_lines":true}}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(context.Background(), path, "", fallbackSnapshot(), os.Getenv, inertRegistry(), nil, nil, nil)
+	if err != nil && !strings.Contains(err.Error(), "no active selection") {
+		t.Fatal(err)
+	}
+	built := wiring.Build(wiring.Config{Root: t.TempDir(), Provider: inertProvider{}, Store: session.NewMemoryStore(), EditSettings: s.EditSettings})
+	defer built.Close()
+	registry := built.Tools.(*tool.Registry)
+	materialized := registry.MaterializeFor(tool.Permissions{"edit": true}, "gpt-5", "session")
+	if materialized.Err != nil {
+		t.Fatal(materialized.Err)
+	}
+	if len(materialized.Definitions) != 1 || materialized.Definitions[0].WireName != "apply_patch" {
+		t.Fatalf("definitions = %#v", materialized.Definitions)
+	}
+	cfg, err := s.EditSettings("other", "session")
+	if err != nil || cfg.Setting != "patch" || !cfg.Fuzzy || cfg.Threshold != 0.91 || !cfg.EnforceSeenLines {
+		t.Fatalf("settings = %#v, %v", cfg, err)
 	}
 }
 

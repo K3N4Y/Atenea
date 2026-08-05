@@ -106,7 +106,7 @@ func TestFilesystemTools_GrantTheWholeTool(t *testing.T) {
 		want  permission.Rule
 	}{
 		{NewWriteTool(root, nil), `{"path":"a.txt","content":"x"}`, permission.Rule{Tool: "write"}},
-		{NewEditTool(root, nil, nil), `{"patch":"[a.txt#ab]\n"}`, permission.Rule{Tool: "edit"}},
+		{NewEditTool(root, nil, nil), `{"input":"[a.txt#ab]\n"}`, permission.Rule{Tool: "edit"}},
 	}
 	for _, tc := range cases {
 		rule, ok := tc.tool.GrantRule(Call{Name: tc.tool.Name(), Input: []byte(tc.input)})

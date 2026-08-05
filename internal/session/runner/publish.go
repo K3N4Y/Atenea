@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"sync"
 
@@ -176,6 +177,71 @@ func (p *Publisher) RegisterSettlementRecorder(callID string, recorder *tool.Set
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.recorders[callID] = recorder
+}
+
+// ToolSuccessResult persists generic structured tool metadata without deriving
+// meaning from a tool name or parsing model-visible output.
+func (p *Publisher) ToolSuccessResult(ctx context.Context, callID string, result tool.Result) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.settled[callID] {
+		return nil
+	}
+	attrs := resultAttrs(result)
+	event := session.SessionEvent{
+		Kind: session.KindToolSuccess, CallID: callID, ToolName: p.tools[callID],
+		Text: result.Output, Diff: result.Diff, Attrs: attrs,
+		Message: &session.Message{ID: callID, Role: session.RoleTool, Text: result.Output, ToolCallID: callID},
+	}
+	if err := p.emit(ctx, p.decorateTaskSettlement(callID, event)); err != nil {
+		return err
+	}
+	p.settled[callID] = true
+	return nil
+}
+func resultAttrs(result tool.Result) map[string]string {
+	attrs := make(map[string]string)
+	if result.Truncated {
+		attrs["tool.truncated"] = "true"
+	}
+	if len(result.Files) != 0 {
+		if encoded, err := json.Marshal(result.Files); err == nil {
+			attrs["tool.files"] = string(encoded)
+		}
+	}
+	if len(result.Metadata) != 0 {
+		if encoded, err := json.Marshal(result.Metadata); err == nil {
+			attrs["tool.metadata"] = string(encoded)
+		}
+	}
+	if len(attrs) == 0 {
+		return nil
+	}
+	return attrs
+}
+
+// ToolFailedResult persists both the failure and any ordinary partial result.
+func (p *Publisher) ToolFailedResult(ctx context.Context, callID string, result tool.Result, cause error) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.settled[callID] {
+		return nil
+	}
+	msg := cause.Error()
+	modelText := msg
+	if result.Output != "" {
+		modelText = result.Output + "\n\nError: " + msg
+	}
+	event := session.SessionEvent{
+		Kind: session.KindToolFailed, CallID: callID, ToolName: p.tools[callID],
+		Text: result.Output, Diff: result.Diff, Error: msg, Attrs: resultAttrs(result),
+		Message: &session.Message{ID: callID, Role: session.RoleTool, Text: modelText, ToolCallID: callID, IsError: true},
+	}
+	if err := p.emit(ctx, p.decorateTaskSettlement(callID, event)); err != nil {
+		return err
+	}
+	p.settled[callID] = true
+	return nil
 }
 
 // ToolSuccess publica el resultado de una tool local asentada: persiste un

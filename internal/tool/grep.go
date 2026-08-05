@@ -145,7 +145,7 @@ func (gt *GrepTool) Execute(ctx context.Context, input json.RawMessage) (Result,
 			part.WriteString(":")
 			part.WriteString(lines[line-1])
 		}
-		snaps.RecordSeenLines(absMatch, tag, emitted)
+		snaps.RecordSeenContent(absMatch, text, emitted)
 		parts = append(parts, grepOutputPart{text: part.String(), matches: len(emitted)})
 	}
 

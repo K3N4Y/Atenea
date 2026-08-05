@@ -30,6 +30,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/session/subagent"
 	"github.com/K3N4Y/atenea/internal/skill"
 	"github.com/K3N4Y/atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/tool/editmode"
 	"github.com/K3N4Y/atenea/internal/tool/hashline"
 )
 
@@ -118,6 +119,9 @@ type Config struct {
 	// model-facing tools with the host's durable semantics; nil omits them.
 	Checkpoint tool.CheckpointFunc
 	Rewind     tool.RewindFunc
+	// EditSettings is read once when each model turn materializes edit.
+	// Nil applies upstream defaults and PI_EDIT_* environment overrides.
+	EditSettings func(model, sessionID string) (editmode.Config, error)
 
 	// OutputLimit caps, in bytes, how much of a tool call's output reaches the
 	// model. The whole output is always kept for the UI to expand
@@ -338,9 +342,14 @@ func Build(cfg Config) Built {
 	// narrowed by each agent's def.Tools. Rebuilding it from cfg.MCPTools on every
 	// assembly makes connect and disconnect visible to new child runs, while the
 	// definition remains the authority over which tools a child may use.
+	newEdit := func() *tool.EditTool {
+		edit := tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, cfg.Snaps)
+		edit.TurnConfig = cfg.EditSettings
+		return edit
+	}
 	childTools := []tool.Tool{
 		tool.NewReadToolWithSnapshotProvider(root, cfg.Snaps), tool.NewWriteToolWithSnapshotProvider(root, cfg.Snaps),
-		tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, cfg.Snaps),
+		newEdit(),
 		tool.NewGlobTool(root), tool.NewGrepToolWithSnapshotProvider(root, cfg.Snaps),
 		tool.NewBashTool(root),
 	}
@@ -365,7 +374,7 @@ func Build(cfg Config) Built {
 	}
 	worktrees := cfg.Worktrees
 	if worktrees == nil {
-		worktrees = worktreeResolver(root, cfg.OutputLimit)
+		worktrees = worktreeResolver(root, cfg.OutputLimit, cfg.EditSettings)
 	}
 	taskTool.SetEnvironmentResolver(worktrees)
 	// Decorate the child runner's store over the shared bus. Permission events
@@ -380,7 +389,7 @@ func Build(cfg Config) Built {
 	// it (SetPlanMode below).
 	registryTools := []tool.Tool{
 		tool.NewReadToolWithSnapshotProvider(root, cfg.Snaps), tool.NewWriteToolWithSnapshotProvider(root, cfg.Snaps),
-		tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, cfg.Snaps),
+		newEdit(),
 		tool.NewGlobTool(root), tool.NewGrepToolWithSnapshotProvider(root, cfg.Snaps),
 		tool.NewBashTool(root), tool.NewPresentPlanTool(root), tool.NewSkillTool(skills), taskTool,
 		tool.NewWebFetchTool(cfg.Provider), tool.TodoWriteTool{},
@@ -440,6 +449,9 @@ func Build(cfg Config) Built {
 	r := runner.NewRunner(cfg.Store, cfg.Inbox, cfg.Provider, registry,
 		permissions,
 		cfg.NextID)
+	if cfg.Bus != nil {
+		r.SetPreviewSink(cfg.Bus.PublishPreview)
+	}
 	r.SetCompactor(runner.NewContextCompactor(cfg.Store, cfg.Provider))
 	r.SetSystemPrompt(systemPromptBuilder(root, skillsBlock, cfg.LocalPrompt))
 	r.SetPermissionGate(cfg.Gate, policy)

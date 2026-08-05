@@ -2,11 +2,9 @@ package tool
 
 import "sort"
 
-// Catalog is the read side of the registry: it resolves the name in a tool call
-// to the tool that would settle it. It is the seam that lets the rest of the host
-// ask a tool about itself — what its calls affect, what granting one of them
-// would authorize, how one should be presented — from places that only ever hold
-// a name.
+// Catalog is the read side of the registry: it resolves canonical names and
+// immutable presentation aliases. It is not an execution router; settlement
+// always uses the turn-local routes returned by Materialize.
 //
 // Every question asked over a Catalog therefore has an answer for "not
 // registered". A name travels a long way: the model produced it, a durable event
@@ -23,12 +21,14 @@ type Catalog interface {
 	Names() []string
 }
 
-// Lookup returns the registered tool by name. It is how the host asks a tool
-// about itself; it is not a way to execute one out of band — settling a call
-// still goes through Materialize, which is what applies permissions, repair and
-// output capping.
+// Lookup returns presentation metadata for canonical and durable historical
+// names. It cannot execute a tool out of band: settlement still goes through
+// Materialize, which applies turn-local routing, permissions, repair and capping.
 func (r *Registry) Lookup(name string) (Tool, bool) {
-	t, ok := r.tools[name]
+	if t, ok := r.tools[name]; ok {
+		return t, true
+	}
+	t, ok := r.presentationAliases[name]
 	return t, ok
 }
 
