@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -174,5 +175,36 @@ func TestRenderMarkdown_DocumentMarginStaysConsistent(t *testing.T) {
 		if !strings.HasPrefix(line, "  ") {
 			t.Fatalf("line %q of %q, every rendered line must keep the 2-cell document margin", line, out)
 		}
+	}
+}
+
+func TestRenderMarkdown_CacheReturnsStableOutputForWidthAndProfile(t *testing.T) {
+	text := "A settled assistant response with `inline code`."
+	profile := lipgloss.ColorProfile()
+
+	first := renderMarkdown(text, 80)
+	second := renderMarkdown(text, 80)
+	if first != second {
+		t.Fatalf("cached render differs for profile %v: first %q, second %q", profile, first, second)
+	}
+}
+
+func TestRenderMarkdown_CacheUsesWidthInKey(t *testing.T) {
+	text := "A settled assistant response containing a deliberately long sentence that must wrap."
+	narrow := renderMarkdown(text, 32)
+	wide := renderMarkdown(text, 80)
+	if narrow == wide {
+		t.Fatalf("renders for different widths should differ: %q", narrow)
+	}
+	assertWrappedInRhythm(t, ansi.Strip(narrow), 32)
+	if strings.Contains(ansi.Strip(wide), "\n") && ansi.StringWidth(strings.Split(ansi.Strip(wide), "\n")[0]) > 80 {
+		t.Fatalf("wide render exceeds requested width: %q", wide)
+	}
+}
+
+func BenchmarkRenderMarkdown_Cached(b *testing.B) {
+	const text = "A settled assistant response with **stable Markdown** and a link."
+	for i := 0; i < b.N; i++ {
+		renderMarkdown(text, 80)
 	}
 }

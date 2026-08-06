@@ -3,6 +3,7 @@ package tui
 import (
 	"reflect"
 	"strings"
+	"sync"
 
 	"github.com/charmbracelet/glamour"
 	glamouransi "github.com/charmbracelet/glamour/ansi"
@@ -163,6 +164,19 @@ func paintCodeBlockBackgrounds(rendered string) string {
 	return strings.Join(out, "\n")
 }
 
+var markdownRenderCache = struct {
+	sync.Mutex
+	entries map[markdownRenderCacheKey]string
+}{}
+
+const markdownRenderCacheCapacity = 128
+
+type markdownRenderCacheKey struct {
+	text    string
+	width   int
+	profile termenv.Profile
+}
+
 var markdownRendererCache struct {
 	wrap     int
 	profile  termenv.Profile
@@ -262,19 +276,38 @@ func splitLeadingSpaces(line string) (spaces int, body string) {
 }
 
 func renderMarkdown(text string, width int) string {
-	text = sanitizeTerminalText(text)
+	profile := lipgloss.ColorProfile()
+	key := markdownRenderCacheKey{text: text, width: width, profile: profile}
+	markdownRenderCache.Lock()
+	if rendered, ok := markdownRenderCache.entries[key]; ok {
+		markdownRenderCache.Unlock()
+		return rendered
+	}
+	markdownRenderCache.Unlock()
+
+	sanitizedText := sanitizeTerminalText(text)
 	wrap := width
 	if wrap > 0 {
 		wrap = max(wrap-markdownDocMargin, 0)
 	}
 	r, err := markdownRenderer(wrap)
 	if err != nil {
-		return text
+		return sanitizedText
 	}
-	out, err := r.Render(text)
+	out, err := r.Render(sanitizedText)
 	if err != nil {
-		return text
+		return sanitizedText
 	}
-	out = hardWrapOverflow(out, width)
-	return strings.Trim(paintCodeBlockBackgrounds(out), "\n")
+	rendered := strings.Trim(paintCodeBlockBackgrounds(hardWrapOverflow(out, width)), "\n")
+
+	markdownRenderCache.Lock()
+	if markdownRenderCache.entries == nil {
+		markdownRenderCache.entries = make(map[markdownRenderCacheKey]string, markdownRenderCacheCapacity)
+	}
+	if len(markdownRenderCache.entries) >= markdownRenderCacheCapacity {
+		clear(markdownRenderCache.entries)
+	}
+	markdownRenderCache.entries[key] = rendered
+	markdownRenderCache.Unlock()
+	return rendered
 }
