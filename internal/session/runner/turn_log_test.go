@@ -37,7 +37,7 @@ func TestRunner_LogsToolFailureForDev(t *testing.T) {
 		llm.Event{Kind: llm.StepEnded},
 	)
 	reg := tool.NewRegistry(tool.NewOutputStore(0), failingTool{})
-	r := NewRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"failing": true}, func() string { return "a1" })
+	r := newRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"failing": true}, func() string { return "a1" })
 
 	var buf strings.Builder
 	r.logf = func(format string, args ...any) { fmt.Fprintf(&buf, format, args...) }
@@ -72,7 +72,7 @@ func TestRunner_LogsDeniedToolForDev(t *testing.T) {
 	)
 	// Echo is registered but excluded from the materialized permissions.
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{}, func() string { return "a1" })
+	r := newRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{}, func() string { return "a1" })
 
 	var buf strings.Builder
 	r.logf = func(format string, args ...any) { fmt.Fprintf(&buf, format, args...) }
@@ -103,7 +103,7 @@ func TestRunner_DoesNotLogSuccessfulTool(t *testing.T) {
 		llm.Event{Kind: llm.StepEnded},
 	)
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
+	r := newRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
 
 	var buf strings.Builder
 	r.logf = func(format string, args ...any) { fmt.Fprintf(&buf, format, args...) }

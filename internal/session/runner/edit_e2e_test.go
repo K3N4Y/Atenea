@@ -87,9 +87,9 @@ func TestEditModesThroughRunnerProviderPermissionFilesystemAndPublisher(t *testi
 			store := newRecordingStore()
 			seedUser(t, store, "s")
 			registry := tool.NewRegistry(tool.NewOutputStore(0), edit)
-			r := NewRunner(store, session.NewMemoryInbox(), provider, registry, tool.Permissions{"edit": true}, func() string { return "assistant" })
+			r := newRunner(store, session.NewMemoryInbox(), provider, registry, tool.Permissions{"edit": true}, func() string { return "assistant" })
 			gate := &fakeGate{approved: true}
-			r.SetPermissionGate(gate, policyFunc(func(string, tool.Call) permission.Decision { return permission.Ask }))
+			r.setPermissionGate(gate, policyFunc(func(string, tool.Call) permission.Decision { return permission.Ask }))
 
 			continued, err := r.runTurn(context.Background(), "s")
 			if err != nil || !continued {
@@ -141,8 +141,8 @@ func TestEditRunnerDeniedPermissionWritesNothing(t *testing.T) {
 	provider := &editE2EProvider{call: llm.Event{Kind: llm.ToolCall, CallID: "denied", ToolName: "edit", Input: json.RawMessage(`{"path":"x.txt","old_string":"old","new_string":"new"}`)}}
 	store := newRecordingStore()
 	seedUser(t, store, "s")
-	r := NewRunner(store, session.NewMemoryInbox(), provider, tool.NewRegistry(tool.NewOutputStore(0), edit), tool.Permissions{"edit": true}, func() string { return "assistant" })
-	r.SetPermissionGate(&fakeGate{approved: false}, policyFunc(func(string, tool.Call) permission.Decision { return permission.Ask }))
+	r := newRunner(store, session.NewMemoryInbox(), provider, tool.NewRegistry(tool.NewOutputStore(0), edit), tool.Permissions{"edit": true}, func() string { return "assistant" })
+	r.setPermissionGate(&fakeGate{approved: false}, policyFunc(func(string, tool.Call) permission.Decision { return permission.Ask }))
 	if _, err := r.runTurn(context.Background(), "s"); err != nil {
 		t.Fatal(err)
 	}

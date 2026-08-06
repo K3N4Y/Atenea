@@ -273,7 +273,10 @@ func TestEmittingStore_TurnStreamsEventsInSeqOrder(t *testing.T) {
 		n++
 		return "m" + strconv.Itoa(n)
 	}
-	r := runner.NewRunner(store, inbox, prov, reg, tool.Permissions{"echo": true}, idGen)
+	r := runner.New(runner.Config{
+		Store: store, Inbox: inbox, Provider: prov, Registry: reg,
+		Permissions: tool.Permissions{"echo": true}, NextID: idGen,
+	})
 
 	if err := r.Run(ctx, "s1", false, 0); err != nil {
 		t.Fatalf("Run: %v", err)

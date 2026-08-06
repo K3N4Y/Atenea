@@ -23,10 +23,9 @@ type Runner struct {
 	nextID    func() string
 	compactor Compactor // optional; nil disables compaction
 
-	// system builds the turn baseline prompt from the epoch's model. nil (default)
-	// = no system prompt. SetSystemPrompt wires it from the real assembly
-	// (app.go); tests inject it directly or via the setter. It receives the model
-	// so internal/session/prompt picks the base prompt by family.
+	// system builds the turn baseline prompt from the epoch's model. nil means no
+	// system prompt. It receives the model so the prompt module can select the
+	// base prompt by family.
 	system func(model string) string
 
 	// mode looks up the session's Mode per turn. nil (default) => always
@@ -36,8 +35,7 @@ type Runner struct {
 
 	// planSystem and planPerms are the plan-mode counterparts of system/perms,
 	// used when mode reports ModePlan. planSystem nil => fall back to system;
-	// planPerms nil => fall back to perms. SetPlanMode wires them from app.go;
-	// tests inject them via the setter.
+	// planPerms nil => fall back to perms.
 	planSystem func(model string) string
 	planPerms  tool.Permissions
 
@@ -72,7 +70,29 @@ type Compactor interface {
 	Compact(ctx context.Context, sessionID string) error
 }
 
-func (r *Runner) SetCompactor(compactor Compactor) {
+// Config is the complete startup configuration of a Runner. New applies it
+// atomically, so callers never observe or accidentally run a partially wired
+// runner. Optional behavior is represented by nil fields.
+type Config struct {
+	Store       session.Store
+	Inbox       session.Inbox
+	Provider    llm.Provider
+	Registry    *tool.Registry
+	Permissions tool.Permissions
+	NextID      func() string
+
+	Compactor  Compactor
+	System     func(model string) string
+	Reasoning  func() *llm.ReasoningPreference
+	Preview    func(tool.PreviewEvent)
+	Gate       permission.Gate
+	Policy     permission.Policy
+	Mode       func(sessionID string) session.Mode
+	PlanSystem func(model string) string
+	PlanPerms  tool.Permissions
+}
+
+func (r *Runner) setCompactor(compactor Compactor) {
 	r.compactor = compactor
 }
 
@@ -83,63 +103,45 @@ func (r *Runner) CompactNow(ctx context.Context, sessionID string) error {
 	return r.compactor.Compact(ctx, sessionID)
 }
 
-// NewRunner constructs a Runner. nextID is injected to keep tests deterministic
-// without introducing a UUID or clock dependency.
-func NewRunner(store session.Store, inbox session.Inbox, provider llm.Provider,
-	registry *tool.Registry, perms tool.Permissions, nextID func() string) *Runner {
-	return &Runner{
-		store: store, inbox: inbox, provider: provider,
-		registry: registry, perms: perms, nextID: nextID,
+// New constructs a fully configured Runner.
+func New(cfg Config) *Runner {
+	r := &Runner{
+		store: cfg.Store, inbox: cfg.Inbox, provider: cfg.Provider,
+		registry: cfg.Registry, perms: cfg.Permissions, nextID: cfg.NextID,
+		compactor: cfg.Compactor, system: cfg.System, reasoning: cfg.Reasoning,
+		preview: cfg.Preview, gate: cfg.Gate, mode: cfg.Mode,
+		planSystem: cfg.PlanSystem, planPerms: cfg.PlanPerms,
 		logf:                 log.Printf,
 		transientRetryDelays: defaultTransientRetryDelays,
 	}
+	if cfg.Registry != nil {
+		cfg.Registry.SetPermissionGate(cfg.Gate, cfg.Policy)
+	}
+	return r
 }
 
-// SetSystemPrompt injects the turn system prompt builder. It receives the epoch's
-// model and returns the baseline prompt that travels in Request.System. nil
-// (default) = no system prompt. This is the exported entry point for the real
-// assembly (app.go, in package main, cannot touch the unexported field).
-func (r *Runner) SetSystemPrompt(build func(model string) string) {
+func (r *Runner) setSystemPrompt(build func(model string) string) {
 	r.system = build
 }
 
-// SetReasoning wires the per-turn reasoning preference. A nil callback keeps
-// provider defaults, and the callback is evaluated when each request is built.
-func (r *Runner) SetReasoning(reasoning func() *llm.ReasoningPreference) {
+func (r *Runner) setReasoning(reasoning func() *llm.ReasoningPreference) {
 	r.reasoning = reasoning
 }
 
-// SetPreviewSink receives ephemeral edit projections. The sink must return
-// promptly; nil disables previews without changing durable stream behavior.
-func (r *Runner) SetPreviewSink(sink func(tool.PreviewEvent)) {
+func (r *Runner) setPreviewSink(sink func(tool.PreviewEvent)) {
 	r.preview = sink
 }
 
-// SetPermissionGate configures ask-before-run on the tool registry: policy
-// classifies each call and gate resolves calls that ask. The registry owns and
-// snapshots this execution policy when a turn materializes its tools; the
-// runner deliberately keeps no second copy.
-func (r *Runner) SetPermissionGate(gate permission.Gate, policy permission.Policy) {
+func (r *Runner) setPermissionGate(gate permission.Gate, policy permission.Policy) {
 	r.gate = gate
 	r.registry.SetPermissionGate(gate, policy)
 }
 
-// SetMode injects the per-session Mode lookup. It receives the session id and
-// returns its Mode; the runner consults it each turn to pick the normal or
-// plan-mode system prompt and permissions. nil (default) = always ModeNormal,
-// so behavior is identical to today. Exported entry point for app.go (package
-// main); tests inject the field via this setter.
-func (r *Runner) SetMode(mode func(sessionID string) session.Mode) {
+func (r *Runner) setMode(mode func(sessionID string) session.Mode) {
 	r.mode = mode
 }
 
-// SetPlanMode wires the plan-mode turn baseline: system builds the plan-mode
-// system prompt and perms is the plan-mode permission set (read-only +
-// present_plan). They take effect only when SetMode reports ModePlan. A nil
-// system falls back to the normal SetSystemPrompt builder; nil perms fall back
-// to the normal permissions. Exported entry point for app.go (package main);
-// tests inject the fields via this setter.
-func (r *Runner) SetPlanMode(system func(model string) string, perms tool.Permissions) {
+func (r *Runner) setPlanMode(system func(model string) string, perms tool.Permissions) {
 	r.planSystem = system
 	r.planPerms = perms
 }

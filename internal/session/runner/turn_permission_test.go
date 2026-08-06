@@ -76,10 +76,10 @@ func TestRunner_GatedToolDeniedPublishesFailedAndDoesNotExecute(t *testing.T) {
 		llm.Event{Kind: llm.StepEnded},
 	)
 	reg := tool.NewRegistry(tool.NewOutputStore(0), countingTool{calls: &calls})
-	r := NewRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"counter": true}, func() string { return "a1" })
+	r := newRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"counter": true}, func() string { return "a1" })
 
 	gate := &fakeGate{approved: false}
-	r.SetPermissionGate(gate, askFor("counter"))
+	r.setPermissionGate(gate, askFor("counter"))
 
 	cont, err := r.runTurn(ctx, "s1")
 	if err != nil {
@@ -152,10 +152,10 @@ func TestRunner_GatedToolApprovedSettlesAfterAsking(t *testing.T) {
 		llm.Event{Kind: llm.StepEnded},
 	)
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
+	r := newRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
 
 	gate := &fakeGate{approved: true}
-	r.SetPermissionGate(gate, askFor("echo"))
+	r.setPermissionGate(gate, askFor("echo"))
 
 	if _, err := r.runTurn(ctx, "s1"); err != nil {
 		t.Fatalf("runTurn unexpected error: %v", err)
@@ -198,10 +198,10 @@ func TestRunner_GateSkippedWhenPolicyAllows(t *testing.T) {
 		llm.Event{Kind: llm.StepEnded},
 	)
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
+	r := newRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
 
 	gate := &fakeGate{approved: false}                                                                                 // would deny if asked
-	r.SetPermissionGate(gate, policyFunc(func(_ string, c tool.Call) permission.Decision { return permission.Allow })) // nothing gated
+	r.setPermissionGate(gate, policyFunc(func(_ string, c tool.Call) permission.Decision { return permission.Allow })) // nothing gated
 
 	if _, err := r.runTurn(ctx, "s1"); err != nil {
 		t.Fatalf("runTurn unexpected error: %v", err)
@@ -239,10 +239,10 @@ func TestRunner_AutoAcceptSafeBashSkipsPermissionButExpansionAsks(t *testing.T) 
 			root := t.TempDir()
 			bash := tool.NewBashTool(root)
 			reg := tool.NewRegistry(tool.NewOutputStore(0), bash)
-			r := NewRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"bash": true}, func() string { return "a1" })
+			r := newRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"bash": true}, func() string { return "a1" })
 			modes := permission.NewAutoAcceptModes()
 			modes.Set("s1", true)
-			r.SetPermissionGate(&fakeGate{approved: false}, permission.NewAutoAcceptPolicy(permission.NewEffectsPolicy(reg), modes, reg))
+			r.setPermissionGate(&fakeGate{approved: false}, permission.NewAutoAcceptPolicy(permission.NewEffectsPolicy(reg), modes, reg))
 			if _, err := r.runTurn(ctx, "s1"); err != nil {
 				t.Fatal(err)
 			}
@@ -264,10 +264,10 @@ func TestRunner_AutoAcceptStillAsksForUndeclaredMCPShape(t *testing.T) {
 	provider := llm.NewFakeProvider(llm.Event{Kind: llm.StepStarted}, llm.Event{Kind: llm.ToolCall, CallID: "m1", ToolName: "counter", Input: json.RawMessage(`{}`)}, llm.Event{Kind: llm.StepEnded})
 	calls := 0
 	reg := tool.NewRegistry(tool.NewOutputStore(0), countingTool{calls: &calls})
-	r := NewRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"counter": true}, func() string { return "a1" })
+	r := newRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"counter": true}, func() string { return "a1" })
 	modes := permission.NewAutoAcceptModes()
 	modes.Set("s1", true)
-	r.SetPermissionGate(&fakeGate{approved: false}, permission.NewAutoAcceptPolicy(permission.NewEffectsPolicy(reg), modes, reg))
+	r.setPermissionGate(&fakeGate{approved: false}, permission.NewAutoAcceptPolicy(permission.NewEffectsPolicy(reg), modes, reg))
 	if _, err := r.runTurn(context.Background(), "s1"); err != nil {
 		t.Fatal(err)
 	}
@@ -294,10 +294,10 @@ func TestRunner_AutoAcceptHardLinkAsksAndPreservesOutsideAlias(t *testing.T) {
 	provider := llm.NewFakeProvider(llm.Event{Kind: llm.StepStarted}, llm.Event{Kind: llm.ToolCall, CallID: "h1", ToolName: "bash", Input: json.RawMessage(`{"command":"touch victim.txt"}`)}, llm.Event{Kind: llm.StepEnded})
 	bash := tool.NewBashTool(root)
 	reg := tool.NewRegistry(tool.NewOutputStore(0), bash)
-	r := NewRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"bash": true}, func() string { return "a1" })
+	r := newRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"bash": true}, func() string { return "a1" })
 	modes := permission.NewAutoAcceptModes()
 	modes.Set("s1", true)
-	r.SetPermissionGate(&fakeGate{approved: false}, permission.NewAutoAcceptPolicy(permission.NewEffectsPolicy(reg), modes, reg))
+	r.setPermissionGate(&fakeGate{approved: false}, permission.NewAutoAcceptPolicy(permission.NewEffectsPolicy(reg), modes, reg))
 	if _, err := r.runTurn(context.Background(), "s1"); err != nil {
 		t.Fatal(err)
 	}
@@ -329,11 +329,11 @@ func TestRunner_GatedAndUngatedToolsConcurrent(t *testing.T) {
 		llm.Event{Kind: llm.StepEnded},
 	)
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}, countingTool{calls: &calls})
-	r := NewRunner(store, session.NewMemoryInbox(), fake, reg,
+	r := newRunner(store, session.NewMemoryInbox(), fake, reg,
 		tool.Permissions{"echo": true, "counter": true}, func() string { return "a1" })
 
 	gate := &fakeGate{approved: true}
-	r.SetPermissionGate(gate, askFor("echo")) // only echo is gated
+	r.setPermissionGate(gate, askFor("echo")) // only echo is gated
 
 	if _, err := r.runTurn(ctx, "s1"); err != nil {
 		t.Fatalf("runTurn unexpected error: %v", err)
@@ -372,10 +372,10 @@ func TestRunner_PolicyDeniedFailsWithoutAsking(t *testing.T) {
 		llm.Event{Kind: llm.StepEnded},
 	)
 	reg := tool.NewRegistry(tool.NewOutputStore(0), countingTool{calls: &calls})
-	r := NewRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"counter": true}, func() string { return "a1" })
+	r := newRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"counter": true}, func() string { return "a1" })
 
 	gate := &fakeGate{approved: true} // would approve if asked: Deny must not ask
-	r.SetPermissionGate(gate, policyFunc(func(_ string, c tool.Call) permission.Decision { return permission.Deny }))
+	r.setPermissionGate(gate, policyFunc(func(_ string, c tool.Call) permission.Decision { return permission.Deny }))
 
 	cont, err := r.runTurn(ctx, "s1")
 	if err != nil {

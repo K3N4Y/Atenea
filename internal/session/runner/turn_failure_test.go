@@ -72,7 +72,7 @@ func TestRunner_CancelDuringTurnFailsInFlightTool(t *testing.T) {
 		tool.NewOutputStore(0),
 		blockingUntilCanceledTool{started: started, once: &sync.Once{}},
 	)
-	r := NewRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"blocking": true}, func() string { return "a1" })
+	r := newRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"blocking": true}, func() string { return "a1" })
 
 	type turnResult struct {
 		cont bool
@@ -131,7 +131,7 @@ func TestRunner_ProviderStreamErrorEmitsStepFailed(t *testing.T) {
 		llm.Event{Kind: llm.StepFailed, Text: "boom"},
 	)
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
+	r := newRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
 
 	cont, err := r.runTurn(ctx, "s1")
 	if err == nil {
@@ -177,7 +177,7 @@ func TestRunner_ProviderExecutedToolNeverResolvesIsClosed(t *testing.T) {
 		llm.Event{Kind: llm.StepFailed, Text: "boom"},
 	)
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
+	r := newRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
 
 	cont, err := r.runTurn(ctx, "s1")
 	if err == nil {
@@ -238,7 +238,7 @@ func TestRunner_RunFailsInterruptedToolsBeforeTurn(t *testing.T) {
 		llm.Event{Kind: llm.StepEnded},
 	)
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, inbox, fake, reg, tool.Permissions{"echo": true}, idCounter())
+	r := newRunner(store, inbox, fake, reg, tool.Permissions{"echo": true}, idCounter())
 
 	if err := r.Run(ctx, "s1", false, 0); err != nil {
 		t.Fatalf("Run error inesperado: %v", err)

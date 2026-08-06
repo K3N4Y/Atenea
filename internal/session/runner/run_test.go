@@ -68,7 +68,7 @@ func TestRunner_ProvidesStableOpaqueSessionKey(t *testing.T) {
 		{{Kind: llm.StepEnded}},
 		{{Kind: llm.StepEnded}},
 	}}
-	runner := NewRunner(store, inbox, provider, tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}), tool.Permissions{"echo": true}, idCounter())
+	runner := newRunner(store, inbox, provider, tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}), tool.Permissions{"echo": true}, idCounter())
 
 	for _, sessionID := range []string{"session-alpha", "session-beta"} {
 		if err := inbox.Admit(ctx, sessionID, session.Prompt{Text: "continue"}, session.DeliveryQueue); err != nil {
@@ -153,7 +153,7 @@ func TestRunner_RunProcessesQueuedPromptThenIdle(t *testing.T) {
 	)
 
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, inbox, fake, reg, tool.Permissions{"echo": true}, idCounter())
+	r := newRunner(store, inbox, fake, reg, tool.Permissions{"echo": true}, idCounter())
 
 	// La sesion no esta idle (hay un queue pendiente): Run lo drena en una actividad.
 	if err := r.Run(ctx, "s1", false, 0); err != nil {
@@ -217,7 +217,7 @@ func TestRunner_RunContinuesWhileToolCalls(t *testing.T) {
 	}}
 
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, inbox, prov, reg, tool.Permissions{"echo": true}, idCounter())
+	r := newRunner(store, inbox, prov, reg, tool.Permissions{"echo": true}, idCounter())
 
 	if err := r.Run(ctx, "s1", false, 0); err != nil {
 		t.Fatalf("Run error inesperado: %v", err)
@@ -270,7 +270,7 @@ func TestRunner_RunAssistantTextDoesNotContinueAlone(t *testing.T) {
 	prov := &scriptedProvider{turns: [][]llm.Event{textTurn, textTurn, textTurn}}
 
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, inbox, prov, reg, tool.Permissions{"echo": true}, idCounter())
+	r := newRunner(store, inbox, prov, reg, tool.Permissions{"echo": true}, idCounter())
 
 	if err := r.Run(ctx, "s1", false, 0); err != nil {
 		t.Fatalf("Run error inesperado: %v", err)
@@ -321,7 +321,7 @@ func TestRunner_RunSteerAdmittedDuringRunEntersNextContinuation(t *testing.T) {
 	}
 
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, inbox, prov, reg, tool.Permissions{"echo": true}, idCounter())
+	r := newRunner(store, inbox, prov, reg, tool.Permissions{"echo": true}, idCounter())
 
 	if err := r.Run(ctx, "s1", false, 0); err != nil {
 		t.Fatalf("Run error inesperado: %v", err)
@@ -372,7 +372,7 @@ func TestRunner_RunSecondQueueOpensNewActivity(t *testing.T) {
 	)
 
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, inbox, fake, reg, tool.Permissions{"echo": true}, idCounter())
+	r := newRunner(store, inbox, fake, reg, tool.Permissions{"echo": true}, idCounter())
 
 	if err := r.Run(ctx, "s1", false, 0); err != nil {
 		t.Fatalf("Run error inesperado: %v", err)
@@ -417,8 +417,8 @@ func TestRunner_FinitePolicyUsesLastTurnForToolFreeSummary(t *testing.T) {
 	}}
 
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, inbox, provider, reg, tool.Permissions{"echo": true}, idCounter())
-	r.SetSystemPrompt(func(string) string { return "base" })
+	r := newRunner(store, inbox, provider, reg, tool.Permissions{"echo": true}, idCounter())
+	r.setSystemPrompt(func(string) string { return "base" })
 
 	if err := r.Run(ctx, "s1", false, 2); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -448,7 +448,7 @@ func TestRunner_FinalTurnRejectsProviderToolCallWithoutExecutingIt(t *testing.T)
 		llm.Event{Kind: llm.ToolCall, CallID: "provider", ToolName: "external", ProviderExecuted: true, Input: json.RawMessage(`{}`)},
 	)
 	reg := tool.NewRegistry(tool.NewOutputStore(0), countingTool{calls: &calls})
-	r := NewRunner(store, inbox, provider, reg, tool.Permissions{"counter": true}, idCounter())
+	r := newRunner(store, inbox, provider, reg, tool.Permissions{"counter": true}, idCounter())
 	if err := r.Run(ctx, "s1", false, 1); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -487,7 +487,7 @@ func TestRunner_SteerAdmittedDuringFinalTurnStartsNewActivity(t *testing.T) {
 		{{Kind: llm.TextDelta, Text: "steered summary"}},
 	}}
 	provider := &steeringProvider{inner: inner, inbox: inbox, sessionID: "s1", steer: session.Prompt{Text: "new direction"}}
-	r := NewRunner(store, inbox, provider, tool.NewRegistry(tool.NewOutputStore(0)), nil, idCounter())
+	r := newRunner(store, inbox, provider, tool.NewRegistry(tool.NewOutputStore(0)), nil, idCounter())
 	if err := r.Run(ctx, "s1", false, 1); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -515,7 +515,7 @@ func TestRunner_CancellationWinsOnFiniteFinalTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	cancel()
-	r := NewRunner(store, inbox, llm.NewFakeProvider(), tool.NewRegistry(tool.NewOutputStore(0)), nil, idCounter())
+	r := newRunner(store, inbox, llm.NewFakeProvider(), tool.NewRegistry(tool.NewOutputStore(0)), nil, idCounter())
 	if err := r.Run(ctx, "s1", false, 1); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run error = %v, want context.Canceled", err)
 	}
@@ -534,7 +534,7 @@ func TestRunner_UnlimitedPolicyCanExceedTwentyFiveTurns(t *testing.T) {
 	}
 	turns[26] = []llm.Event{{Kind: llm.TextDelta, Text: "done"}}
 	provider := &scriptedProvider{turns: turns}
-	r := NewRunner(store, inbox, provider, tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}), tool.Permissions{"echo": true}, idCounter())
+	r := newRunner(store, inbox, provider, tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}), tool.Permissions{"echo": true}, idCounter())
 	if err := r.Run(ctx, "s1", false, 0); err != nil {
 		t.Fatalf("Run: %v", err)
 	}

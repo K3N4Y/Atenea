@@ -188,8 +188,7 @@ func (t *TaskTool) SupervisionTools() []tool.Tool { return t.supervisor.tools() 
 // SetPermissionGate propagates the parent's ask-before-run to the child
 // runner: policy classifies each tool call (Allow/Ask/Deny) and gate resolves
 // the user's decision for the calls that ask. If either is nil the child
-// gates nothing. Same pattern as runner.SetPermissionGate and
-// SetMaxDepth/SetMaxConcurrency (optional config via setter). Entry point for
+// gates nothing. Entry point for
 // the wiring; tests call it directly. This is the security piece: without
 // this propagation the subagent would run gated tools without the
 // confirmation the main chat enforces.
@@ -392,7 +391,6 @@ func (t *TaskTool) run(ctx, metadataCtx context.Context, def agent.Def, in taskI
 		delete(perms, "task")
 	}
 	childID := t.nextID()
-	r := runner.NewRunner(store, env.Inbox, bp, env.Registry, perms, t.nextID)
 	systemPrompt := def.Prompt
 	if env.Workspace != "" {
 		systemPrompt += "\n\nYou are working in an isolated Git worktree at " + env.Workspace + ". Include that path in your final report so the parent can inspect or integrate your changes."
@@ -400,10 +398,11 @@ func (t *TaskTool) run(ctx, metadataCtx context.Context, def agent.Def, in taskI
 	if len(in.OutputSchema) > 0 {
 		systemPrompt += "\n\nYour final response must be only JSON that validates against this output schema:\n" + string(in.OutputSchema)
 	}
-	r.SetSystemPrompt(func(string) string { return systemPrompt })
-	if t.gate != nil && t.policy != nil {
-		r.SetPermissionGate(t.gate, t.policy)
-	}
+	r := runner.New(runner.Config{
+		Store: store, Inbox: env.Inbox, Provider: bp, Registry: env.Registry,
+		Permissions: perms, NextID: t.nextID,
+		System: func(string) string { return systemPrompt }, Gate: t.gate, Policy: t.policy,
+	})
 	finish := func() {
 		s := tool.TaskSettlement{Requests: int(usage.requests.Load()), Tokens: int(usage.tokens.Load()), Duration: time.Since(started), ToolCalls: counting.count(), Workspace: env.Workspace}
 		if rec := tool.SettlementRecorderFrom(metadataCtx); rec != nil {

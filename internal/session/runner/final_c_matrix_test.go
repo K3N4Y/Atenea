@@ -242,7 +242,7 @@ func TestFinalC_PublicCommittedUncertainSettlementAllOperations(t *testing.T) {
 			store := newRecordingStore()
 			seedUser(t, store, "s")
 			registry := tool.NewRegistry(tool.NewOutputStore(0), edit)
-			r := NewRunner(store, session.NewMemoryInbox(), provider, registry, registry.Permissions(), func() string { return "assistant" })
+			r := newRunner(store, session.NewMemoryInbox(), provider, registry, registry.Permissions(), func() string { return "assistant" })
 			continued, err := r.runTurn(context.Background(), "s")
 			if err != nil || !continued {
 				t.Fatalf("runner continued=%v err=%v", continued, err)

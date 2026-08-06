@@ -47,8 +47,8 @@ func validCompactionSummaryEvents() []llm.Event {
 func newCompactionRunner(t *testing.T, store session.Store, provider llm.Provider) *Runner {
 	t.Helper()
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"echo": true}, idCounter())
-	r.SetCompactor(NewContextCompactor(store, provider))
+	r := newRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"echo": true}, idCounter())
+	r.setCompactor(NewContextCompactor(store, provider))
 	return r
 }
 
@@ -214,7 +214,7 @@ func TestRunner_AutomaticCompactionWithoutCompactablePrefixStillStreams(t *testi
 	provider := &compactionProvider{events: []llm.Event{{Kind: llm.StepEnded}}}
 	r := newCompactionRunner(t, store, provider)
 	compactor := &alwaysNeedsCompaction{}
-	r.SetCompactor(compactor)
+	r.setCompactor(compactor)
 	if _, err := r.runTurn(context.Background(), "s1"); err != nil {
 		t.Fatal(err)
 	}

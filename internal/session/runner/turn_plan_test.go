@@ -52,7 +52,7 @@ func newPlanModeRunner(t *testing.T) (*Runner, *recordingProvider, session.Store
 		llm.Event{Kind: llm.StepEnded},
 	)}
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}, plannerTool{})
-	r := NewRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
+	r := newRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
 	return r, prov, store
 }
 
@@ -64,8 +64,8 @@ func TestRunner_PlanModeUsesPlanSystemAndPerms(t *testing.T) {
 	ctx := context.Background()
 	r, prov, store := newPlanModeRunner(t)
 
-	r.SetMode(func(string) session.Mode { return session.ModePlan })
-	r.SetPlanMode(func(model string) string { return "PLAN[" + model + "]" }, tool.Permissions{"planner": true})
+	r.setMode(func(string) session.Mode { return session.ModePlan })
+	r.setPlanMode(func(model string) string { return "PLAN[" + model + "]" }, tool.Permissions{"planner": true})
 
 	if _, err := r.runTurn(ctx, "s1"); err != nil {
 		t.Fatalf("runTurn error inesperado: %v", err)
@@ -95,9 +95,9 @@ func TestRunner_NormalModeUnaffectedByPlanConfig(t *testing.T) {
 	ctx := context.Background()
 	r, prov, store := newPlanModeRunner(t)
 
-	r.SetMode(func(string) session.Mode { return session.ModeNormal })
-	r.SetSystemPrompt(func(m string) string { return "NORM[" + m + "]" })
-	r.SetPlanMode(func(model string) string { return "PLAN[" + model + "]" }, tool.Permissions{"planner": true})
+	r.setMode(func(string) session.Mode { return session.ModeNormal })
+	r.setSystemPrompt(func(m string) string { return "NORM[" + m + "]" })
+	r.setPlanMode(func(model string) string { return "PLAN[" + model + "]" }, tool.Permissions{"planner": true})
 
 	if _, err := r.runTurn(ctx, "s1"); err != nil {
 		t.Fatalf("runTurn error inesperado: %v", err)
@@ -126,8 +126,8 @@ func TestRunner_NilModeHookDefaultsNormal(t *testing.T) {
 	ctx := context.Background()
 	r, prov, store := newPlanModeRunner(t)
 
-	r.SetSystemPrompt(func(m string) string { return "NORM[" + m + "]" })
-	r.SetPlanMode(func(model string) string { return "PLAN[" + model + "]" }, tool.Permissions{"planner": true})
+	r.setSystemPrompt(func(m string) string { return "NORM[" + m + "]" })
+	r.setPlanMode(func(model string) string { return "PLAN[" + model + "]" }, tool.Permissions{"planner": true})
 
 	if _, err := r.runTurn(ctx, "s1"); err != nil {
 		t.Fatalf("runTurn error inesperado: %v", err)
@@ -156,9 +156,9 @@ func TestRunner_PlanModeFallsBackToSystemWhenPlanSystemNil(t *testing.T) {
 	ctx := context.Background()
 	r, prov, store := newPlanModeRunner(t)
 
-	r.SetMode(func(string) session.Mode { return session.ModePlan })
-	r.SetSystemPrompt(func(m string) string { return "NORM[" + m + "]" })
-	r.SetPlanMode(nil, tool.Permissions{"planner": true})
+	r.setMode(func(string) session.Mode { return session.ModePlan })
+	r.setSystemPrompt(func(m string) string { return "NORM[" + m + "]" })
+	r.setPlanMode(nil, tool.Permissions{"planner": true})
 
 	if _, err := r.runTurn(ctx, "s1"); err != nil {
 		t.Fatalf("runTurn error inesperado: %v", err)

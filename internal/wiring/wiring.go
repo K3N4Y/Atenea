@@ -432,23 +432,22 @@ func Build(cfg Config) Built {
 	for _, name := range cfg.PlanMode.Exclusive {
 		delete(permissions, name)
 	}
-	r := runner.NewRunner(cfg.Store, cfg.Inbox, cfg.Provider, registry,
-		permissions,
-		cfg.NextID)
-	if cfg.Bus != nil {
-		r.SetPreviewSink(cfg.Bus.PublishPreview)
-	}
-	r.SetCompactor(runner.NewContextCompactor(cfg.Store, cfg.Provider))
 	normalPrompt, planPrompt := promptBuilders(root, skillsBlock, cfg.LocalPrompt)
-	r.SetSystemPrompt(normalPrompt)
-	r.SetPermissionGate(cfg.Gate, policy)
-	r.SetReasoning(cfg.Reasoning)
+	var preview func(tool.PreviewEvent)
+	if cfg.Bus != nil {
+		preview = cfg.Bus.PublishPreview
+	}
 	// Plan mode: read-only investigation plus present_plan (no write/edit/bash). The
 	// mode hook decides per session; SetMode/SetPlanMode only take effect when
 	// cfg.Mode reports ModePlan (nil = always normal, the runner's default).
-	r.SetMode(cfg.Mode)
-	r.SetPlanMode(planPrompt,
-		cfg.PlanMode.permissions())
+	r := runner.New(runner.Config{
+		Store: cfg.Store, Inbox: cfg.Inbox, Provider: cfg.Provider,
+		Registry: registry, Permissions: permissions, NextID: cfg.NextID,
+		Compactor: runner.NewContextCompactor(cfg.Store, cfg.Provider),
+		System:    normalPrompt, Reasoning: cfg.Reasoning, Preview: preview,
+		Gate: cfg.Gate, Policy: policy, Mode: cfg.Mode,
+		PlanSystem: planPrompt, PlanPerms: cfg.PlanMode.permissions(),
+	})
 
 	return Built{Runner: r, Glob: glob, Commands: commands, Tools: registry, Policy: policy, close: func() {
 		if lsp != nil {

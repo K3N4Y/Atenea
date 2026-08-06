@@ -32,9 +32,9 @@ func TestRunnerTaskDeniedAndFinalRejectedPersistZero(t *testing.T) {
 			provider := llm.NewFakeProvider(llm.Event{Kind: llm.StepStarted}, llm.Event{Kind: llm.ToolCall, CallID: "task-call", ToolName: "task", Input: json.RawMessage(`{}`)}, llm.Event{Kind: llm.StepEnded})
 			calls := 0
 			registry := tool.NewRegistry(tool.NewOutputStore(0), taskProbe{calls: &calls})
-			r := NewRunner(store, session.NewMemoryInbox(), provider, registry, tool.Permissions{"task": true}, func() string { return "a" })
+			r := newRunner(store, session.NewMemoryInbox(), provider, registry, tool.Permissions{"task": true}, func() string { return "a" })
 			if !tc.final {
-				r.SetPermissionGate(&fakeGate{}, policyFunc(func(string, tool.Call) permission.Decision { return permission.Deny }))
+				r.setPermissionGate(&fakeGate{}, policyFunc(func(string, tool.Call) permission.Decision { return permission.Deny }))
 			}
 			_, err := r.runTurnWithFinal(context.Background(), "s", tc.final)
 			if err != nil {

@@ -88,7 +88,7 @@ func TestRunner_RebuildsTurnWhenModelChangesBeforeStream(t *testing.T) {
 	prov := &recordingProvider{FakeProvider: llm.NewFakeProvider(textTurnScript()...)}
 
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, idCounter())
+	r := newRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, idCounter())
 
 	cont, err := r.runTurn(ctx, "s1")
 	if err != nil {
@@ -146,7 +146,7 @@ func TestRunner_RebuildsTurnWhenEpochRevisionChanges(t *testing.T) {
 	prov := &recordingProvider{FakeProvider: llm.NewFakeProvider(textTurnScript()...)}
 
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, idCounter())
+	r := newRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, idCounter())
 
 	cont, err := r.runTurn(ctx, "s1")
 	if err != nil {
@@ -197,7 +197,7 @@ func TestRunnerAttempt_ReturnsErrRebuildTurnWhenEpochChanges(t *testing.T) {
 		llm.Event{Kind: llm.StepEnded},
 	)}
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, idCounter())
+	r := newRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, idCounter())
 
 	cont, err := r.runTurnAttempt(ctx, "s1", false, 0)
 	if !errors.Is(err, errRebuildTurn) {
@@ -259,7 +259,7 @@ func TestRunner_CompactsAndRetriesOnceWhenRequestOverflows(t *testing.T) {
 	prov := &recordingProvider{FakeProvider: llm.NewFakeProvider(textTurnScript()...)}
 
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, idCounter())
+	r := newRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, idCounter())
 	c := &fakeCompactor{store: store}
 	r.compactor = c // inyeccion white-box: NewRunner no cablea el compactor
 
@@ -322,7 +322,7 @@ func TestRunner_HappyPathDoesNotRebuildOrCompact(t *testing.T) {
 	prov := &recordingProvider{FakeProvider: llm.NewFakeProvider(textTurnScript()...)}
 
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, idCounter())
+	r := newRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, idCounter())
 
 	cont, err := r.runTurn(ctx, "s1")
 	if err != nil {

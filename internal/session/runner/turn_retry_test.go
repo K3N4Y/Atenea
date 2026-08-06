@@ -47,7 +47,7 @@ func TestRunner_TransientStreamErrorRetriesAndSucceeds(t *testing.T) {
 		},
 	}}
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"echo": true}, idCounter())
+	r := newRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"echo": true}, idCounter())
 	r.transientRetryDelays = []time.Duration{time.Millisecond, time.Millisecond}
 
 	cont, err := r.runTurn(ctx, "s1")
@@ -89,7 +89,7 @@ func TestRunner_TransientStreamErrorExhaustsRetriesAndFails(t *testing.T) {
 		transientFailureTurn(),
 	}}
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"echo": true}, idCounter())
+	r := newRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"echo": true}, idCounter())
 	r.transientRetryDelays = []time.Duration{time.Millisecond, time.Millisecond}
 
 	_, err := r.runTurn(ctx, "s1")
@@ -125,7 +125,7 @@ func TestRunner_NonTransientStreamErrorDoesNotRetry(t *testing.T) {
 		},
 	}}
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"echo": true}, idCounter())
+	r := newRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"echo": true}, idCounter())
 
 	_, err := r.runTurn(ctx, "s1")
 	var providerErr *ProviderError
@@ -148,7 +148,7 @@ func TestRunner_CancelDuringRetryBackoffClosesStep(t *testing.T) {
 
 	provider := &scriptedProvider{turns: [][]llm.Event{transientFailureTurn()}}
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	r := NewRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"echo": true}, idCounter())
+	r := newRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"echo": true}, idCounter())
 	r.transientRetryDelays = []time.Duration{time.Hour}
 
 	done := make(chan error, 1)
