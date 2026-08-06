@@ -69,6 +69,7 @@ type Model struct {
 	resumeGen    uint64
 	modelPicker  modelPicker
 	mcpPicker    mcpPicker
+	skillsPicker skillsPicker
 	mcpGen       uint64
 	connectPanel connectPanel
 	connectGen   uint64

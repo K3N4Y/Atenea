@@ -56,6 +56,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleModelPickerKey(msg)
 	case targetMCPPicker:
 		return m.handleMCPPickerKey(msg)
+	case targetSkillsPicker:
+		return m.handleSkillsPickerKey(msg)
 	case targetConnectPanel:
 		return m.handleConnectPanelKey(msg)
 	case targetPermissionGate:

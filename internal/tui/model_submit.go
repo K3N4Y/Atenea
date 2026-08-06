@@ -22,6 +22,7 @@ const (
 	localCommandRewind
 	localCommandResume
 	localCommandMCP
+	localCommandSkills
 	localCommandConnect
 	localCommandModel
 	localCommandNew
@@ -41,6 +42,7 @@ type checkpointAgent interface {
 
 func parseLocalCommand(text string) (localCommand, bool) {
 	trimmed := strings.TrimSpace(text)
+	fields := strings.Fields(trimmed)
 	switch {
 	case trimmed == "/mode", trimmed == "/mode:auto-accept", trimmed == "/mode:ask", trimmed == "/mode:yolo":
 		return localCommand{kind: localCommandMode, text: trimmed}, true
@@ -58,6 +60,8 @@ func parseLocalCommand(text string) (localCommand, bool) {
 		return localCommand{kind: localCommandResume, text: trimmed}, true
 	case strings.HasPrefix(trimmed, "/mcp"):
 		return localCommand{kind: localCommandMCP, text: trimmed}, true
+	case len(fields) > 0 && fields[0] == "/skills":
+		return localCommand{kind: localCommandSkills, text: trimmed}, true
 	case strings.HasPrefix(trimmed, "/connect"):
 		return localCommand{kind: localCommandConnect, text: trimmed}, true
 	case strings.HasPrefix(trimmed, "/model"):
@@ -105,6 +109,8 @@ func (m Model) executeLocalCommand(command localCommand) (Model, tea.Cmd) {
 		return m.submitResumeCommand(command.text)
 	case localCommandMCP:
 		return m.submitMCPCommand(command.text)
+	case localCommandSkills:
+		return m.submitSkillsCommand(command.text)
 	case localCommandConnect:
 		return m.submitConnectCommand(command.text)
 	case localCommandModel:

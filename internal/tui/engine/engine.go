@@ -509,6 +509,7 @@ func localCommands(yoloAuthorized bool) []command.Command {
 		{Name: "mode:ask", Description: "Ask before workspace edits", BuiltIn: true},
 		{Name: "resume", Description: "Resume a TUI session in this workspace", BuiltIn: true},
 		{Name: "rewind", Description: "Rewind to the latest explicit checkpoint", BuiltIn: true},
+		{Name: "skills", Description: "Select a skill", BuiltIn: true},
 		{Name: "undo", Description: "Undo the last prompt and its file changes", BuiltIn: true},
 	}
 	if yoloAuthorized {

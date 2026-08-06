@@ -370,6 +370,24 @@ func TestComposer_TypedCommandQueryKeepsShortestNameRanking(t *testing.T) {
 	}
 }
 
+func TestComposer_SlashMenuExcludesSkillsWithAndWithoutQuery(t *testing.T) {
+	commands := []command.Command{
+		{Name: "skills", Description: "Choose a skill", BuiltIn: true},
+		{Name: "review", Description: "MCP prompt"},
+		{Name: "code-review", Description: "Review code", Skill: true},
+	}
+	models := modelSource{catalog: func() ([]providerconfig.ProviderModels, bool) { return nil, false }}
+
+	for _, input := range []string{"/", "/code", "/review"} {
+		c := typeInto(newTestComposer(), input, commands, nil, models)
+		for _, item := range c.menuItems {
+			if item.label == "/code-review" {
+				t.Fatalf("slash menu for %q contains skill command: %#v", input, c.menuItems)
+			}
+		}
+	}
+}
+
 func TestComposer_MentionMenuLoadsFilesOnceThenShowsThem(t *testing.T) {
 	models := modelSource{catalog: func() ([]providerconfig.ProviderModels, bool) { return nil, false }}
 	listFiles := func() ([]string, error) { return []string{"internal/tui/model.go"}, nil }

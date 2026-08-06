@@ -22,6 +22,9 @@ type Command struct {
 	// BuiltIn marks a command handled locally by a host instead of expanded into
 	// an agent prompt. Both UIs use this registry metadata when presenting it.
 	BuiltIn bool
+	// Skill marks commands derived from discovered skills. It is independent of
+	// BuiltIn so hosts can reliably present only skills in dedicated UI.
+	Skill   bool
 	resolve func(context.Context, string) (string, error)
 }
 
@@ -51,6 +54,7 @@ func FromSkills(skills []skill.Info) []Command {
 			Name:        s.Name,
 			Description: s.Description,
 			Template:    fmt.Sprintf("Usa la skill %q.\n\n%s", s.Name, argumentsPlaceholder),
+			Skill:       true,
 		})
 	}
 	return cmds

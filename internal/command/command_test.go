@@ -63,6 +63,11 @@ func TestFromSkills_DerivaUnComandoPorSkill(t *testing.T) {
 		{Name: "deep-research", Description: "investigacion profunda"},
 	}
 	cmds := FromSkills(skills)
+	for _, cmd := range cmds {
+		if !cmd.Skill || cmd.BuiltIn {
+			t.Fatalf("skill command metadata = Skill %v BuiltIn %v", cmd.Skill, cmd.BuiltIn)
+		}
+	}
 	if len(cmds) != 2 {
 		t.Fatalf("FromSkills devolvio %d comandos, want 2", len(cmds))
 	}

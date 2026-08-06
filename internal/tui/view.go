@@ -25,6 +25,9 @@ func (m Model) View() string {
 	if m.mcpPicker.open {
 		return m.mcpPickerView()
 	}
+	if m.skillsPicker.open {
+		return m.skillsPickerView()
+	}
 	if m.connectPanel.open {
 		return m.connectPanelView()
 	}

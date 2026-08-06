@@ -108,16 +108,22 @@ func isCanonicalModelCommand(text string, providers []providerconfig.ProviderMod
 	return false
 }
 
-// filterCommands keeps local commands ahead of extensions in the bounded initial
-// menu. Once the user types a query, matches retain the established quality,
-// shortest-name, and alphabetical ranking regardless of their source.
+// filterCommands excludes skills because they are selected exclusively through
+// the /skills picker. It keeps local commands ahead of other extensions in the
+// bounded initial menu. Once the user types a query, matches retain the
+// established quality, shortest-name, and alphabetical ranking.
 func filterCommands(cmds []command.Command, query string, limit int) []command.Command {
 	if limit <= 0 {
 		return nil
 	}
 	q := strings.ToLower(query)
 	if q == "" {
-		ordered := append([]command.Command(nil), cmds...)
+		ordered := make([]command.Command, 0, len(cmds))
+		for _, cmd := range cmds {
+			if !cmd.Skill {
+				ordered = append(ordered, cmd)
+			}
+		}
 		sort.SliceStable(ordered, func(i, j int) bool {
 			return ordered[i].BuiltIn && !ordered[j].BuiltIn
 		})
@@ -132,6 +138,9 @@ func filterCommands(cmds []command.Command, query string, limit int) []command.C
 	}
 	var matches []scoredCmd
 	for _, cmd := range cmds {
+		if cmd.Skill {
+			continue
+		}
 		name := strings.ToLower(cmd.Name)
 		var score int
 		switch {
