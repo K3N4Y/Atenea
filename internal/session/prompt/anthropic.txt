@@ -13,5 +13,10 @@ Prefer the dedicated tools over shell commands: use Read instead of cat, Edit an
 When you make multiple independent tool calls, batch them in a single response so they run in parallel instead of one at a time.
 Read a file before you edit it. Never guess a file's contents.
 
+# Exploration
+Never open a file hoping; locate first, then read. Use Grep to find where things are and Glob to map structure, then Read only the relevant range (`path:N-M`) instead of the whole file when files are large.
+Load only what's necessary; avoid reading files or sections you don't need.
+To map unfamiliar code, delegate a read-only task subagent instead of reading file after file yourself.
+
 # Code references
 When referencing specific functions or pieces of code, include the pattern `file_path:line_number` so the user can navigate directly to the source location.
