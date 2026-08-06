@@ -13,8 +13,7 @@
 // What it owns falls into three groups:
 //
 //   - The bootstrap that has to happen before anything reads the environment or
-//     the filesystem: the development .env, the built-in skills materialized into
-//     the directory discovery already scans, and the workspace root.
+//     the filesystem: the development .env and the workspace root.
 //   - The resources the two hosts share on purpose, which is what makes a session
 //     started in the terminal show up in the desktop sidebar and a model chosen in
 //     either one the selection both see: the SQLite store and the provider
@@ -26,8 +25,8 @@
 // nothing is reflected over: [Config] names the few things a caller varies, [New]
 // assembles in a fixed order, and [Host] publishes the result as fields.
 //
-// Nothing here is fatal. A store that will not open degrades to memory, a
-// provider config that will not load degrades to the fallback, an unresolvable
-// home skips the built-in skills — each with a line in the log — because a host
-// that refuses to start over any of those is a host the user cannot recover from.
+// Nothing here is fatal. A store that will not open degrades to memory and a
+// provider config that will not load degrades to the fallback, each with a line
+// in the log, because a host that refuses to start over either is a host the user
+// cannot recover from.
 package host

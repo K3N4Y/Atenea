@@ -8,7 +8,6 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/K3N4Y/atenea/internal/host"
 	"github.com/K3N4Y/atenea/internal/paths"
 	"github.com/K3N4Y/atenea/internal/skill"
 )
@@ -202,11 +201,6 @@ func discovered(env Env, path, cwd string) ([]string, []skill.Entry, int) {
 		fmt.Fprintln(env.Stderr, path+":", err)
 		return nil, nil, ExitUsage
 	}
-	// The same materialization every entrypoint performs, from the same function:
-	// the built-in skills live in the binary until something writes them into the
-	// global directory, and a listing that omitted them would describe a workspace
-	// nobody runs. It never overwrites, so it cannot hide a local edit.
-	host.ExtractBuiltinSkills()
 	dirs := paths.SkillDirs(root)
 	entries, err := skill.Scan(dirs...)
 	if err != nil {

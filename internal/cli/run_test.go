@@ -360,9 +360,8 @@ func TestRun_CancellationStopsTheTurn(t *testing.T) {
 	close(s.provider.block)
 }
 
-// TestRun_AsksTheHostForTheSameBootstrapAsTheInteractiveInterface: a headless run
-// that discovered fewer skills, or read no .env, would be a difference between the
-// hosts that nothing announces. --cwd is what it varies, and only that.
+// TestRun_AsksTheHostForTheSameBootstrapAsTheInteractiveInterface verifies that
+// --cwd is the only bootstrap value a headless run varies.
 func TestRun_AsksTheHostForTheSameBootstrapAsTheInteractiveInterface(t *testing.T) {
 	s := newScenario(t, answer("ok"))
 	workspace := t.TempDir()
@@ -377,9 +376,6 @@ func TestRun_AsksTheHostForTheSameBootstrapAsTheInteractiveInterface(t *testing.
 	cfg := s.configs[0]
 	if cfg.Dotenv != ".env" {
 		t.Errorf("Dotenv = %q, want the same .env the interactive interface loads", cfg.Dotenv)
-	}
-	if !cfg.ExtractBuiltinSkills {
-		t.Error("ExtractBuiltinSkills = false: a headless run would have fewer skills than an interactive one")
 	}
 	if cfg.Root != workspace {
 		t.Errorf("Root = %q, want the --cwd %q", cfg.Root, workspace)

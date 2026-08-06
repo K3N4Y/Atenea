@@ -71,13 +71,12 @@ func runInteractive(options cli.InteractiveOptions) error {
 	// is why the redirection lives here and not in main.
 	redirectLog()
 
-	// The shared outer assembly: the .env of the working directory, the built-in
-	// skills, the workspace root, the SQLite store and the provider service the
-	// desktop app also reads, and the sitting. See internal/host.
+	// The shared outer assembly: the .env of the working directory, the workspace
+	// root, the SQLite store and the provider service the desktop app also reads,
+	// and the sitting. See internal/host.
 	h := host.New(context.Background(), host.Config{
-		Identity:             paths.NewIdentity(version),
-		Dotenv:               ".env",
-		ExtractBuiltinSkills: true,
+		Identity: paths.NewIdentity(version),
+		Dotenv:   ".env",
 	})
 	if options.Yolo {
 		h.Sitting = host.NewSittingWithYolo(true)

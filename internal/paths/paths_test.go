@@ -235,16 +235,3 @@ func TestDiscoveryDirs_UnresolvableHomeKeepsProjectDirectories(t *testing.T) {
 		t.Fatalf("AgentDirs() = %v, want %v", got, want)
 	}
 }
-
-func TestBuiltinSkillDir_IsAteneaGlobalDiscoveryDirectory(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	got, err := BuiltinSkillDir()
-	if err != nil {
-		t.Fatalf("BuiltinSkillDir() error = %v", err)
-	}
-	if want := SkillDirs(home)[0]; got != want {
-		t.Fatalf("BuiltinSkillDir() = %q, want %q", got, want)
-	}
-}

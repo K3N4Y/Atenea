@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-27
+updated_at: 2026-08-06
 summary: Filesystem roots, artifact ownership, extension discovery precedence, and compatibility promises shared by every Atenea host.
 ---
 
@@ -47,9 +47,8 @@ definition overrides `.agents` and `.claude` definitions at the same scope.
 Both project and home compatibility layouts are a supported interface, not a
 best-effort import path.
 
-Built-in skills are extracted to the home `.atenea/skills` directory by the
-shared host, then participate in ordinary discovery. Callers may replace a
-discovery list explicitly; a non-nil empty list means discover nothing.
+Callers may replace a discovery list explicitly; a non-nil empty list means
+discover nothing.
 
 ## Workspace MCP overlay
 

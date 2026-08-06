@@ -166,7 +166,6 @@ func (s *scenario) assemble(ctx context.Context, cfg host.Config) *host.Host {
 		s.t.Fatalf("open the provider service: %v", err)
 	}
 	cfg.Dotenv = ""
-	cfg.ExtractBuiltinSkills = false
 	cfg.Store = s.store
 	cfg.Providers = providers
 	if cfg.Root == "" {

@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-08-01
+updated_at: 2026-08-06
 summary: Architecture and behavior of the Atenea terminal user interface — what a bare `atenea` does, one of the binary's two surfaces alongside the headless CLI.
 ---
 
@@ -87,10 +87,10 @@ Three surfaces, one pipeline: only the last arrow differs.
  headless run leaves the log on stderr for the opposite reason), then builds
  `host.New` — the shared outer assembly: the
  `.env` (development builds only — `-tags production` compiles `dotenv.Load` to a
- no-op), the built-in skills, the workspace root, the SQLite SHARED with the
- desktop app, and the global provider service over `providers.json` and
- `credentials.json`, falling back to the first catalog provider whose key is
- exported and then to the offline demo. See
+ no-op), the workspace root, the SQLite SHARED with the desktop app, and the
+ global provider service over `providers.json` and `credentials.json`, falling
+ back to the first catalog provider whose key is exported and then to the offline
+ demo. See
  [Composition root](composition-root.md). Starting on the demo provider seeds the
  transcript with a notice pointing at `/connect`. Every launch starts a fresh
  conversation (older ones stay one `/resume` away), and `tea.NewProgram` runs with

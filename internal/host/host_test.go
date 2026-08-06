@@ -63,34 +63,7 @@ func TestOfflineSnapshot_IsTheFallbackWithoutAnyKey(t *testing.T) {
 	}
 }
 
-// The built-in skills used to be extracted on the desktop path only, so the TUI
-// never had them. They are the host's job now, which is what makes both
-// entrypoints get them: the destination is the global directory wiring already
-// scans, so an extracted skill is discovered like one the user wrote.
-func TestNew_ExtractsBuiltinSkillsWhereDiscoveryScans(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	cfg := injected(t)
-	cfg.ExtractBuiltinSkills = true
-
-	New(context.Background(), cfg)
-
-	entries, err := os.ReadDir(filepath.Join(home, ".atenea", "skills"))
-	if err != nil {
-		t.Fatalf("read the global skills directory: %v", err)
-	}
-	if len(entries) == 0 {
-		t.Fatal("no built-in skill was materialized")
-	}
-	for _, entry := range entries {
-		if _, err := os.Stat(filepath.Join(home, ".atenea", "skills", entry.Name(), "SKILL.md")); err != nil {
-			t.Fatalf("extracted skill %q has no SKILL.md: %v", entry.Name(), err)
-		}
-	}
-}
-
-// Not asked for, not done: the two startup side effects are opt-in so a caller
-// that assembles a host in a test writes nothing anywhere.
+// With dotenv loading disabled, an injected host writes nothing.
 func TestNew_ExtractsNothingUnlessAsked(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

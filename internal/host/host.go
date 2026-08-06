@@ -10,12 +10,10 @@ import (
 	"github.com/K3N4Y/atenea/internal/paths"
 	"github.com/K3N4Y/atenea/internal/providerconfig"
 	"github.com/K3N4Y/atenea/internal/session"
-	"github.com/K3N4Y/atenea/internal/skill"
 )
 
-// Config is what a caller varies. Every field is optional, and the zero value is
-// the production assembly minus the two startup side effects, which a test wants
-// off and both entrypoints turn on.
+// Config is what a caller varies. Every field is optional, and the zero value
+// skips dotenv loading while using the production store and provider defaults.
 type Config struct {
 	Identity paths.Identity
 	// Root anchors the agent: the file and exec tools, skill and subagent
@@ -27,11 +25,6 @@ type Config struct {
 	// working directory during development. Empty loads nothing, and a release
 	// build compiles dotenv.Load to a no-op regardless of this field.
 	Dotenv string
-	// ExtractBuiltinSkills materializes the skills embedded in the binary into the
-	// global skills directory, so a fresh install has them without the user
-	// copying anything. Extraction never overwrites a file that already exists, so
-	// it is idempotent and it respects local edits.
-	ExtractBuiltinSkills bool
 	// Store replaces the durable session store. nil opens the SQLite file both
 	// hosts share; a test passes session.NewMemoryStore() and touches nothing.
 	Store session.Store
@@ -69,9 +62,6 @@ type Host struct {
 func New(ctx context.Context, cfg Config) *Host {
 	if cfg.Dotenv != "" {
 		dotenv.Load(cfg.Dotenv)
-	}
-	if cfg.ExtractBuiltinSkills {
-		ExtractBuiltinSkills()
 	}
 	h := &Host{
 		Sitting:   NewSitting(),
@@ -131,25 +121,4 @@ func openProviders(ctx context.Context) *providerconfig.Service {
 		log.Printf("atenea: provider config: %v", err)
 	}
 	return providers
-}
-
-// ExtractBuiltinSkills writes the embedded skills into ~/.atenea/skills, one of
-// the global directories wiring already scans, so they are discovered exactly
-// like a skill the user wrote. Neither failure is fatal: the host starts with
-// whatever skills are on disk.
-//
-// It is exported for the one caller that needs the skills a run would see without
-// being a run: `atenea skill list` opens no store and no provider, and listing
-// fewer skills than the agent has would make the command a second answer to the
-// question it exists to answer. Extraction never overwrites, so calling it costs
-// nothing and cannot hide a local edit.
-func ExtractBuiltinSkills() {
-	destination, err := paths.BuiltinSkillDir()
-	if err != nil {
-		log.Printf("atenea: could not resolve the home directory to extract the built-in skills: %v", err)
-		return
-	}
-	if err := skill.ExtractBuiltins(destination); err != nil {
-		log.Printf("atenea: could not extract the built-in skills: %v", err)
-	}
 }

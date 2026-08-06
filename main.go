@@ -15,13 +15,11 @@ import (
 var assets embed.FS
 
 func main() {
-	// The shared outer assembly: the .env of the working directory, the built-in
-	// skills, the workspace root, the SQLite store and the provider service the
-	// terminal app also reads, and the sitting. The app over it is only the Wails
-	// adapter. See internal/host.
+	// The shared outer assembly: the .env of the working directory, the workspace
+	// root, the SQLite store and the provider service the terminal app also reads,
+	// and the sitting. The app over it is only the Wails adapter. See internal/host.
 	app := NewApp(host.New(context.Background(), host.Config{
-		Dotenv:               ".env",
-		ExtractBuiltinSkills: true,
+		Dotenv: ".env",
 	}))
 
 	// Create application with options

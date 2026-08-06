@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-07-27
+updated_at: 2026-08-06
 summary: The non-interactive command-line surface — the two-level subcommand dispatch, `atenea run`, durable event output, unattended permission modes, exit codes, and the provider-free MCP, skill, and subagent manifest commands.
 ---
 
@@ -70,7 +70,7 @@ in the same order:
 ```
 cmd/atenea (main)
    └── internal/cli          argument surface, exit codes, serialization
-         ├── host.New        outer root: dotenv, skills, root, store, providers, sitting
+         ├── host.New        outer root: dotenv, root, store, providers, sitting
          ├── wiring.Build    inner root: tools, skills, subagents, runner
          └── Sitting.Agent   the turn lifecycle — unchanged
 ```
@@ -80,17 +80,14 @@ something in it starts deciding what a turn does, it is in the wrong package.
 
 ### It asks for the same bootstrap as the interactive hosts
 
-`host.Config{Dotenv: ".env", ExtractBuiltinSkills: true}` — the same values
-`cmd/atenea` passes for the TUI. A headless run that discovered fewer skills than an
-interactive one would be a difference between the hosts that nothing announces, and
-`AGENTS.md` puts the burden the other way: a change to shared behavior has to hold
-for both. In a release build `dotenv.Load` is compiled out, so the `.env` only ever
-loads during development.
+`host.Config{Dotenv: ".env"}` — the same value `cmd/atenea` passes for the TUI.
+The headless invocation varies only the workspace root. In a release build
+`dotenv.Load` is compiled out, so the `.env` only ever loads during development.
 
-The one thing it does differently is the log. The TUI redirects the standard log to
-`/tmp/atenea.log` because stderr would paint over Bubble Tea's alternate screen; a
-headless run leaves it on stderr, because there is no screen to corrupt and a CI
-job's diagnostics belong in its output.
+The one thing it does differently is the log. The TUI redirects the standard log
+to `/tmp/atenea.log` because stderr would paint over Bubble Tea's alternate
+screen; a headless run leaves it on stderr, because there is no screen to corrupt
+and a CI job's diagnostics belong in its output.
 
 ## Output formats
 
@@ -557,13 +554,11 @@ where the audit asks for them: *a contributor gets a real error instead of silen
 non-discovery*.
 
 ```console
-$ atenea skill list
-NAME             STATUS   DESCRIPTION                                             LOCATION
--                invalid  the frontmatter declares no 'name'                      /repo/.atenea/skills/broken/SKILL.md
-dup              active   The project's own copy.                                 /repo/.atenea/skills/dup/SKILL.md
-dup              shadowed The one that loses.                                     /repo/.agents/skills/dup/SKILL.md
-quiet            invalid  (no description: never announced to the model)          /repo/.agents/skills/quiet/SKILL.md
-ponytail         active   Forces the laziest solution that actually works, sim…   /home/k/.atenea/skills/ponytail/SKILL.md
+NAME   STATUS   DESCRIPTION                                    LOCATION
+-      invalid  the frontmatter declares no 'name'             /repo/.atenea/skills/broken/SKILL.md
+dup    active   The project's own copy.                        /repo/.atenea/skills/dup/SKILL.md
+dup    shadowed The one that loses.                            /repo/.agents/skills/dup/SKILL.md
+quiet  invalid  (no description: never announced to the model) /repo/.agents/skills/quiet/SKILL.md
 ```
 
 Every `SKILL.md` the walk found is a row, sorted by name with the winner of a name
@@ -578,9 +573,8 @@ another directory, pages away). `STATUS` is one of:
 | `invalid` | `validate` fails on it: it does not parse, or it declares no description |
 
 The search order is `wiring.DefaultSkillDirs(root)` — the same ordered list the
-agent is built with, not a second copy of it — and the built-in skills are
-materialized first through the same `host.ExtractBuiltinSkills` every entrypoint
-calls, so the listing cannot show fewer skills than a run would have.
+agent is built with, not a second copy of it — so the listing cannot show a
+different set of installed skills than a run would have.
 
 ### `validate` is the verb that fails
 
@@ -656,9 +650,9 @@ $ echo $?
 0
 ```
 
-Neither command calls `host.New`. They read `mcpclient` and `skill` directly, plus
-`wiring.DefaultSkillDirs` and `host.ExtractBuiltinSkills`, and they open no session
-store, resolve no credential and start no server. The one thing they share with a
+Neither command calls `host.New`. They read `mcpclient` and `skill` directly,
+plus `wiring.DefaultSkillDirs`, and they open no session store, resolve no
+credential and start no server. The one thing they share with a
 run is `--cwd`, which means the same thing everywhere in this CLI: the workspace
 root, resolved the way `host.New` resolves an empty one, so `atenea mcp list` and
 `atenea run` read the same `.mcp.json`.

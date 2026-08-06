@@ -124,15 +124,12 @@ func execute(env Env, t turn) int {
 	defer stopSignals()
 
 	ctx := context.Background()
-	// The same bootstrap both UIs perform, including the built-in skills: a
-	// headless run that discovered fewer skills than the interactive one would be a
-	// difference between the hosts that nothing announces. In a release build the
-	// .env is compiled out, so it only ever loads during development.
+	// The same bootstrap both UIs perform. In a release build the .env is compiled
+	// out, so it only ever loads during development.
 	h := env.assemble(ctx, host.Config{
-		Identity:             env.Identity,
-		Root:                 t.root,
-		Dotenv:               ".env",
-		ExtractBuiltinSkills: true,
+		Identity: env.Identity,
+		Root:     t.root,
+		Dotenv:   ".env",
 	})
 	defer func() { _ = h.Close() }()
 

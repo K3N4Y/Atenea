@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-08-01
+updated_at: 2026-08-06
 summary: The two-layer composition root — internal/host assembles what both entrypoints share (dotenv, root, store, provider service, sitting), internal/wiring.Build assembles what a workspace change rebuilds, and wiring.Config's policy half is what an embedder varies there.
 ---
 
@@ -12,7 +12,7 @@ atenea composes an agent in two layers, and the split is by lifetime:
 
 | Layer | Package | Rebuilt when | Owns |
 |---|---|---|---|
-| Outer | `internal/host` | never — once per process | dotenv, built-in skills, root, store, provider service, the sitting |
+| Outer | `internal/host` | never — once per process | dotenv, root, store, provider service, the sitting |
 | Inner | `internal/wiring` | on a workspace change, an MCP connect, a model change | tools, skills, subagents, the ask policy, the runner |
 
 Between them sits one manager per host, and those are deliberately *not* shared:
@@ -46,25 +46,21 @@ drift:
   provider a user lands on with no credential anywhere was defined in two places
   and only coincidentally the same one.
 - The permission gate constructed in both, the session grants in one.
-- `skill.ExtractBuiltins` called on the desktop path only, so the terminal app
-  never had the skills that ship in its own binary.
 
-That last one is the shape of the problem rather than an oversight: there was no
-place where "what both hosts do at startup" could be written, so it was written
-once and forgotten once.
+Without a shared outer composition root, anything both hosts must do at startup
+could be written once and forgotten once.
 
 ## `host.New`
 
 ```go
 h := host.New(context.Background(), host.Config{
-    Dotenv:               ".env",
-    ExtractBuiltinSkills: true,
+    Dotenv: ".env",
 })
 ```
 
 Both entrypoints open with exactly that. `Config` names only what a caller varies
-— `Root`, the two startup side effects, and a `Store`/`Providers` override — and
-`Host` publishes the result as fields:
+— `Root`, dotenv loading, and a `Store`/`Providers` override — and `Host`
+publishes the result as fields:
 
 ```go
 type Host struct {
@@ -90,12 +86,11 @@ runs that command, and the caller has to be able to bound it. See
 
 ### Nothing in it is fatal
 
-A store that will not open degrades to memory, a provider config that will not
-load degrades to the fallback, an unresolvable home skips the built-in skills —
-each with a line in the log, and `New` returns no error at all. That is what both
-entrypoints already did separately, and it is the right answer: a host that
-refuses to start over any of them is a host the user cannot recover from, because
-every one of those failures is repaired from inside the running app.
+A store that will not open degrades to memory and a provider config that will not
+load degrades to the fallback, each with a line in the log, and `New` returns no
+error at all. That is what both entrypoints already did separately, and it is the
+right answer: a host that refuses to start over either is a host the user cannot
+recover from, because both failures are repaired from inside the running app.
 
 The consequence for the TUI is an ordering rule. `redirectLog()` runs *before*
 `host.New`, so the warnings the bootstrap emits land in `/tmp/atenea.log` instead
@@ -252,26 +247,19 @@ Production and test assembly are the same function over a different host:
 
 ```go
 // production
-NewApp(host.New(ctx, host.Config{Dotenv: ".env", ExtractBuiltinSkills: true}))
+NewApp(host.New(ctx, host.Config{Dotenv: ".env"}))
 
 // app_test.go
 newAppWithHost(host.New(ctx, host.Config{Store: memory, Providers: inert}), fakeEmit)
 ```
 
-With both resources injected and both side effects left off, `host.New` opens no
-file: no `.env`, no built-in skill extraction, no SQLite, no `providers.json`.
-That is what makes the override fields worth having — they are not a hook for
-production behaviour, they are how a test gets the real assembly without the real
-filesystem. `internal/host`'s own tests pin it: one asserts the extraction lands
-where discovery scans, another asserts `~/.atenea` is never created unless asked.
+With both resources injected and dotenv loading left off, `host.New` opens no
+file: no `.env`, SQLite, or `providers.json`. That is what makes the override
+fields worth having — they are not a hook for production behaviour, they are how
+a test gets the real assembly without the real filesystem.
 
 ## What changed for a user
 
-- **The terminal app has the built-in skills.** They are extracted into
-  `~/.atenea/skills` at launch, which is one of the global directories
-  `paths.SkillDirs` scans, so an extracted skill is discovered exactly
-  like one the user wrote and contributes its own slash command. Extraction never
-  overwrites an existing file, so it is idempotent and local edits survive.
 - **The demo greeting is English** (`Hello from atenea.`), which is what moving
   it into a package written under the English-only rule implies.
 

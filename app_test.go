@@ -93,8 +93,7 @@ func (p *requestRecordingProvider) captured() llm.Request {
 // newAppWithStore is the test assembly: the same newAppWithHost production goes
 // through, over a host whose store and provider service are injected. Everything
 // else about that host is the real thing, and with both overrides given nothing
-// in it touches a file: no .env is loaded, no built-in skills are extracted, no
-// SQLite and no providers.json is opened.
+// in it touches a file: no .env, SQLite, or providers.json is loaded.
 func newAppWithStore(store session.Store, providers *providerconfig.Service, emit event.EmitFunc) *App {
 	return newAppWithHost(host.New(context.Background(), host.Config{
 		Store:     store,

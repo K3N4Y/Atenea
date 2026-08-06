@@ -224,10 +224,8 @@ Body.
 	}
 }
 
-// TestSkillList_MatchesWhatARunWouldDiscover: the listing and the agent read one
-// ordered directory list and one walk. A second answer to "which skills are
-// there" is the failure this command exists to prevent, so it must not be able to
-// become one itself.
+// TestSkillList_MatchesWhatARunWouldDiscover verifies that the listing and the
+// agent read one ordered directory list and one walk.
 func TestSkillList_MatchesWhatARunWouldDiscover(t *testing.T) {
 	isolateConfig(t)
 	root := t.TempDir()
@@ -237,38 +235,15 @@ func TestSkillList_MatchesWhatARunWouldDiscover(t *testing.T) {
 	if got.code != ExitOK {
 		t.Fatalf("exit code = %d, want %d", got.code, ExitOK)
 	}
-	// The built-in skills are materialized by the same function every entrypoint
-	// calls, so they are in the listing exactly as they are in a run's prompt.
-	if !strings.Contains(got.stdout, "ponytail") {
-		t.Errorf("the built-in skills are missing from the listing:\n%s", got.stdout)
-	}
 	if !strings.Contains(got.stdout, "good") {
 		t.Errorf("the workspace skill is missing from the listing:\n%s", got.stdout)
 	}
 }
 
-// TestSkill_BuiltinsValidate: the skills atenea ships are held to the rule it
-// enforces on everyone else's. A built-in that fails validation would make a
-// stock install report problems it cannot fix.
-func TestSkill_BuiltinsValidate(t *testing.T) {
-	isolateConfig(t)
-	root := t.TempDir()
-
-	got := invoke(t, "skill", "validate", "--cwd", root)
-	if got.code != ExitOK {
-		t.Fatalf("the built-in skills do not validate: exit %d\n%s", got.code, got.stderr)
-	}
-}
-
-// TestSkillList_EmptyWorkspaceNamesTheDirectoriesSearched: with nothing to list,
-// stdout stays empty for the pipe and the answer to "where would you have looked"
-// goes to the person.
+// TestSkillList_EmptyWorkspaceNamesTheDirectoriesSearched verifies that with
+// nothing to list, stdout stays empty and stderr names where discovery looked.
 func TestSkillList_EmptyWorkspaceNamesTheDirectoriesSearched(t *testing.T) {
 	isolateConfig(t)
-	// The built-ins are extracted into $HOME and would fill any listing, so the one
-	// case with nothing to list is a home that cannot be resolved at all — which
-	// leaves the project directories, and this project has no skills.
-	t.Setenv("HOME", "")
 	root := t.TempDir()
 
 	got := invoke(t, "skill", "list", "--cwd", root)

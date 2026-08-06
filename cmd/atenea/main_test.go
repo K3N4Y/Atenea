@@ -1033,8 +1033,7 @@ func startTUIUnderPTY(t *testing.T, binary, workdir, database string, args ...st
 	// HOME is isolated for the same reason, one level up: skill discovery scans
 	// $HOME/.atenea/skills, $HOME/.agents/skills and $HOME/.claude/skills, so
 	// whatever the developer happens to have installed there was reaching the "/"
-	// menu and the system prompt of these tests. It is also where the launched
-	// binary materializes its built-in skills, which must not be the real home.
+	// menu and the system prompt of these tests.
 	cmd.Env = append(append(os.Environ(), blankProviderKeys()...),
 		"HOME="+t.TempDir(), "XDG_CONFIG_HOME="+t.TempDir(), "ATENEA_DB="+database,
 		"ATENEA_CHECKPOINTS="+filepath.Join(filepath.Dir(database), "checkpoints"))

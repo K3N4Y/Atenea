@@ -173,16 +173,6 @@ func AgentDirs(root string) []string {
 	return discoveryDirs(root, "agents")
 }
 
-// BuiltinSkillDir returns the global Atenea-owned skill directory. Built-in
-// skills are materialized there and then found through normal discovery.
-func BuiltinSkillDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, compatibilityDirectories[0], "skills"), nil
-}
-
 func discoveryDirs(root, kind string) []string {
 	bases := []string{root}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
