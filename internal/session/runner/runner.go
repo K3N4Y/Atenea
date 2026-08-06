@@ -41,14 +41,9 @@ type Runner struct {
 	planSystem func(model string) string
 	planPerms  tool.Permissions
 
-	// gate and policy implement ask-before-run: before settling a tool call
-	// the runner asks the policy for a verdict — Allow settles directly, Ask
-	// blocks on the gate until the user's decision, Deny fails the call
-	// without asking. Both nil (default) = no gating: every tool call is
-	// settled directly (M5 behavior). Set from the wiring via
-	// SetPermissionGate; tests inject a fakeGate and a fake policy.
-	gate   permission.Gate
-	policy permission.Policy
+	// gate resolves user decisions after the runner has durably published the
+	// permission request. Classification belongs exclusively to the registry.
+	gate permission.Gate
 
 	// logf writes tool failures to stderr for development visibility. It defaults
 	// to log.Printf; tests replace it to capture output without touching stderr.
@@ -120,13 +115,12 @@ func (r *Runner) SetPreviewSink(sink func(tool.PreviewEvent)) {
 	r.preview = sink
 }
 
-// SetPermissionGate wires ask-before-run: policy classifies each tool call
-// (Allow/Ask/Deny) and gate resolves the user's decision for the calls that
-// ask. If either is nil the runner gates nothing. Exported entry point for
-// the wiring (internal/wiring); tests inject the fields directly.
+// SetPermissionGate configures ask-before-run on the tool registry: policy
+// classifies each call and gate resolves calls that ask. The registry owns and
+// snapshots this execution policy when a turn materializes its tools; the
+// runner deliberately keeps no second copy.
 func (r *Runner) SetPermissionGate(gate permission.Gate, policy permission.Policy) {
 	r.gate = gate
-	r.policy = policy
 	r.registry.SetPermissionGate(gate, policy)
 }
 

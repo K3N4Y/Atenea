@@ -34,8 +34,7 @@ func TestRunnerTaskDeniedAndFinalRejectedPersistZero(t *testing.T) {
 			registry := tool.NewRegistry(tool.NewOutputStore(0), taskProbe{calls: &calls})
 			r := NewRunner(store, session.NewMemoryInbox(), provider, registry, tool.Permissions{"task": true}, func() string { return "a" })
 			if !tc.final {
-				r.gate = &fakeGate{}
-				r.policy = policyFunc(func(string, tool.Call) permission.Decision { return permission.Deny })
+				r.SetPermissionGate(&fakeGate{}, policyFunc(func(string, tool.Call) permission.Decision { return permission.Deny }))
 			}
 			_, err := r.runTurnWithFinal(context.Background(), "s", tc.final)
 			if err != nil {

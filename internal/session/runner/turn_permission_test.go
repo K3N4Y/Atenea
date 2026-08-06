@@ -79,8 +79,7 @@ func TestRunner_GatedToolDeniedPublishesFailedAndDoesNotExecute(t *testing.T) {
 	r := NewRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"counter": true}, func() string { return "a1" })
 
 	gate := &fakeGate{approved: false}
-	r.gate = gate
-	r.policy = askFor("counter")
+	r.SetPermissionGate(gate, askFor("counter"))
 
 	cont, err := r.runTurn(ctx, "s1")
 	if err != nil {
@@ -156,8 +155,7 @@ func TestRunner_GatedToolApprovedSettlesAfterAsking(t *testing.T) {
 	r := NewRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
 
 	gate := &fakeGate{approved: true}
-	r.gate = gate
-	r.policy = askFor("echo")
+	r.SetPermissionGate(gate, askFor("echo"))
 
 	if _, err := r.runTurn(ctx, "s1"); err != nil {
 		t.Fatalf("runTurn unexpected error: %v", err)
@@ -202,9 +200,8 @@ func TestRunner_GateSkippedWhenPolicyAllows(t *testing.T) {
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
 	r := NewRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
 
-	gate := &fakeGate{approved: false} // would deny if asked
-	r.gate = gate
-	r.policy = policyFunc(func(_ string, c tool.Call) permission.Decision { return permission.Allow }) // nothing gated
+	gate := &fakeGate{approved: false}                                                                                 // would deny if asked
+	r.SetPermissionGate(gate, policyFunc(func(_ string, c tool.Call) permission.Decision { return permission.Allow })) // nothing gated
 
 	if _, err := r.runTurn(ctx, "s1"); err != nil {
 		t.Fatalf("runTurn unexpected error: %v", err)
@@ -245,8 +242,7 @@ func TestRunner_AutoAcceptSafeBashSkipsPermissionButExpansionAsks(t *testing.T) 
 			r := NewRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"bash": true}, func() string { return "a1" })
 			modes := permission.NewAutoAcceptModes()
 			modes.Set("s1", true)
-			r.gate = &fakeGate{approved: false}
-			r.policy = permission.NewAutoAcceptPolicy(permission.NewEffectsPolicy(reg), modes, reg)
+			r.SetPermissionGate(&fakeGate{approved: false}, permission.NewAutoAcceptPolicy(permission.NewEffectsPolicy(reg), modes, reg))
 			if _, err := r.runTurn(ctx, "s1"); err != nil {
 				t.Fatal(err)
 			}
@@ -271,8 +267,7 @@ func TestRunner_AutoAcceptStillAsksForUndeclaredMCPShape(t *testing.T) {
 	r := NewRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"counter": true}, func() string { return "a1" })
 	modes := permission.NewAutoAcceptModes()
 	modes.Set("s1", true)
-	r.gate = &fakeGate{approved: false}
-	r.policy = permission.NewAutoAcceptPolicy(permission.NewEffectsPolicy(reg), modes, reg)
+	r.SetPermissionGate(&fakeGate{approved: false}, permission.NewAutoAcceptPolicy(permission.NewEffectsPolicy(reg), modes, reg))
 	if _, err := r.runTurn(context.Background(), "s1"); err != nil {
 		t.Fatal(err)
 	}
@@ -302,8 +297,7 @@ func TestRunner_AutoAcceptHardLinkAsksAndPreservesOutsideAlias(t *testing.T) {
 	r := NewRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"bash": true}, func() string { return "a1" })
 	modes := permission.NewAutoAcceptModes()
 	modes.Set("s1", true)
-	r.gate = &fakeGate{approved: false}
-	r.policy = permission.NewAutoAcceptPolicy(permission.NewEffectsPolicy(reg), modes, reg)
+	r.SetPermissionGate(&fakeGate{approved: false}, permission.NewAutoAcceptPolicy(permission.NewEffectsPolicy(reg), modes, reg))
 	if _, err := r.runTurn(context.Background(), "s1"); err != nil {
 		t.Fatal(err)
 	}
@@ -339,8 +333,7 @@ func TestRunner_GatedAndUngatedToolsConcurrent(t *testing.T) {
 		tool.Permissions{"echo": true, "counter": true}, func() string { return "a1" })
 
 	gate := &fakeGate{approved: true}
-	r.gate = gate
-	r.policy = askFor("echo") // only echo is gated
+	r.SetPermissionGate(gate, askFor("echo")) // only echo is gated
 
 	if _, err := r.runTurn(ctx, "s1"); err != nil {
 		t.Fatalf("runTurn unexpected error: %v", err)
@@ -382,8 +375,7 @@ func TestRunner_PolicyDeniedFailsWithoutAsking(t *testing.T) {
 	r := NewRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"counter": true}, func() string { return "a1" })
 
 	gate := &fakeGate{approved: true} // would approve if asked: Deny must not ask
-	r.gate = gate
-	r.policy = policyFunc(func(_ string, c tool.Call) permission.Decision { return permission.Deny })
+	r.SetPermissionGate(gate, policyFunc(func(_ string, c tool.Call) permission.Decision { return permission.Deny }))
 
 	cont, err := r.runTurn(ctx, "s1")
 	if err != nil {

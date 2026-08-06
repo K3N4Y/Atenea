@@ -121,7 +121,6 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string, final boo
 	if providerSnapshot.Model != "" {
 		model = providerSnapshot.Model
 	}
-	r.registry.SetPermissionGate(r.gate, r.policy)
 	mat := r.registry.MaterializeFor(perms, model, sessionID)
 	if mat.Err != nil {
 		return false, mat.Err
