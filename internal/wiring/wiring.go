@@ -31,7 +31,6 @@ import (
 	"github.com/K3N4Y/atenea/internal/skill"
 	"github.com/K3N4Y/atenea/internal/tool"
 	"github.com/K3N4Y/atenea/internal/tool/editmode"
-	"github.com/K3N4Y/atenea/internal/tool/hashline"
 )
 
 // Config is what the caller contributes to the assembly, in two halves.
@@ -342,17 +341,7 @@ func Build(cfg Config) Built {
 	// narrowed by each agent's def.Tools. Rebuilding it from cfg.MCPTools on every
 	// assembly makes connect and disconnect visible to new child runs, while the
 	// definition remains the authority over which tools a child may use.
-	newEdit := func() *tool.EditTool {
-		edit := tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, cfg.Snaps)
-		edit.TurnConfig = cfg.EditSettings
-		return edit
-	}
-	childTools := []tool.Tool{
-		tool.NewReadToolWithSnapshotProvider(root, cfg.Snaps), tool.NewWriteToolWithSnapshotProvider(root, cfg.Snaps),
-		newEdit(),
-		tool.NewGlobTool(root), tool.NewGrepToolWithSnapshotProvider(root, cfg.Snaps),
-		tool.NewBashTool(root),
-	}
+	childTools := workspaceTools(root, cfg.Snaps, cfg.EditSettings)
 	childTools = append(childTools, cfg.MCPTools...)
 	childRegistry := tool.NewRegistry(tool.NewOutputStore(cfg.OutputLimit), childTools...)
 	// A def that names a tool the child registry does not have used to lose it
@@ -387,13 +376,10 @@ func Build(cfg Config) Built {
 	// present_plan is registered so the runner can execute it, but it does not enter
 	// the normal permission set: cfg.PlanMode claims it, and only plan mode announces
 	// it (SetPlanMode below).
-	registryTools := []tool.Tool{
-		tool.NewReadToolWithSnapshotProvider(root, cfg.Snaps), tool.NewWriteToolWithSnapshotProvider(root, cfg.Snaps),
-		newEdit(),
-		tool.NewGlobTool(root), tool.NewGrepToolWithSnapshotProvider(root, cfg.Snaps),
-		tool.NewBashTool(root), tool.NewPresentPlanTool(root), tool.NewSkillTool(skills), taskTool,
+	registryTools := append(workspaceTools(root, cfg.Snaps, cfg.EditSettings),
+		tool.NewPresentPlanTool(root), tool.NewSkillTool(skills), taskTool,
 		tool.NewWebFetchTool(cfg.Provider), tool.TodoWriteTool{},
-	}
+	)
 	if memory, ok := cfg.Store.(session.ProjectMemory); ok {
 		project := filepath.Clean(root)
 		registryTools = append(registryTools, tool.NewRetainMemoryTool(project, memory), tool.NewRecallMemoryTool(project, memory))
@@ -453,14 +439,15 @@ func Build(cfg Config) Built {
 		r.SetPreviewSink(cfg.Bus.PublishPreview)
 	}
 	r.SetCompactor(runner.NewContextCompactor(cfg.Store, cfg.Provider))
-	r.SetSystemPrompt(systemPromptBuilder(root, skillsBlock, cfg.LocalPrompt))
+	normalPrompt, planPrompt := promptBuilders(root, skillsBlock, cfg.LocalPrompt)
+	r.SetSystemPrompt(normalPrompt)
 	r.SetPermissionGate(cfg.Gate, policy)
 	r.SetReasoning(cfg.Reasoning)
 	// Plan mode: read-only investigation plus present_plan (no write/edit/bash). The
 	// mode hook decides per session; SetMode/SetPlanMode only take effect when
 	// cfg.Mode reports ModePlan (nil = always normal, the runner's default).
 	r.SetMode(cfg.Mode)
-	r.SetPlanMode(planSystemPromptBuilder(root, skillsBlock, cfg.LocalPrompt),
+	r.SetPlanMode(planPrompt,
 		cfg.PlanMode.permissions())
 
 	return Built{Runner: r, Glob: glob, Commands: commands, Tools: registry, Policy: policy, close: func() {
@@ -502,34 +489,24 @@ func promptSetup(root string) (env func() prompt.Env, instructions string) {
 	return env, instructions
 }
 
-// systemPromptBuilder builds the normal-mode system prompt builder anchored at
-// root: per turn it composes the base prompt + the <env> block with the day's date
-// + the skills block (discovered once during the assembly and passed in already
-// formatted), over the shared promptSetup. The base comes from the local prompt
-// (function-calling protocol) when local reports so on that turn (LM Studio,
-// Ollama); otherwise it is chosen by model family.
-func systemPromptBuilder(root, skills string, local func() bool) func(model string) string {
+// promptBuilders returns the normal and plan-mode prompt builders over one
+// workspace snapshot. Repository instructions are loaded once per assembly;
+// the date and local-provider choice remain live and are evaluated per turn.
+func promptBuilders(root, skills string, local func() bool) (normal, plan func(model string) string) {
 	env, instructions := promptSetup(root)
-	return func(model string) string {
+	normal = func(model string) string {
 		if local != nil && local() {
 			return prompt.BuildLocal(env(), instructions, skills)
 		}
 		return prompt.Build(model, env(), instructions, skills)
 	}
-}
-
-// planSystemPromptBuilder builds the plan-mode system prompt builder: the same
-// shape as systemPromptBuilder, but adding the plan-mode contract (present_plan)
-// on top of the base prompt, through BuildLocalPlan with local or BuildPlan
-// without it.
-func planSystemPromptBuilder(root, skills string, local func() bool) func(model string) string {
-	env, instructions := promptSetup(root)
-	return func(model string) string {
+	plan = func(model string) string {
 		if local != nil && local() {
 			return prompt.BuildLocalPlan(env(), instructions, skills)
 		}
 		return prompt.BuildPlan(model, env(), instructions, skills)
 	}
+	return normal, plan
 }
 
 // NewIDGen returns a real generator of assistantMessageIDs: an atomic counter

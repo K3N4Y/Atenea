@@ -16,6 +16,23 @@ import (
 	"github.com/K3N4Y/atenea/internal/tool/hashline"
 )
 
+// workspaceTools assembles the file and shell tools that every agent receives,
+// whether it runs in the main workspace, as a child, or in an isolated
+// worktree. Keeping this policy here makes the shared snapshot state and
+// per-turn edit configuration invariants local to one module.
+func workspaceTools(root string, snapshots *tool.SessionSnapshots, settings func(model, sessionID string) (editmode.Config, error)) []tool.Tool {
+	edit := tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, snapshots)
+	edit.TurnConfig = settings
+	return []tool.Tool{
+		tool.NewReadToolWithSnapshotProvider(root, snapshots),
+		tool.NewWriteToolWithSnapshotProvider(root, snapshots),
+		edit,
+		tool.NewGlobTool(root),
+		tool.NewGrepToolWithSnapshotProvider(root, snapshots),
+		tool.NewBashTool(root),
+	}
+}
+
 func worktreeResolver(root string, outputLimit int, settings func(model, sessionID string) (editmode.Config, error)) subagent.EnvironmentResolver {
 	return func(ctx context.Context, _ agent.Def) (subagent.ChildEnvironment, error) {
 		path, err := os.MkdirTemp("", "atenea-worktree-")
@@ -40,15 +57,7 @@ func worktreeResolver(root string, outputLimit int, settings func(model, session
 			return errors.Join(removeErr, filesystemErr)
 		}
 		snapshots := tool.NewSessionSnapshots()
-		edit := tool.NewEditToolWithSnapshotProvider(path, hashline.OSFilesystem{}, snapshots)
-		edit.TurnConfig = settings
-		registry := tool.NewRegistry(tool.NewOutputStore(outputLimit),
-			tool.NewReadToolWithSnapshotProvider(path, snapshots),
-			tool.NewWriteToolWithSnapshotProvider(path, snapshots),
-			edit,
-			tool.NewGlobTool(path), tool.NewGrepToolWithSnapshotProvider(path, snapshots),
-			tool.NewBashTool(path),
-		)
+		registry := tool.NewRegistry(tool.NewOutputStore(outputLimit), workspaceTools(path, snapshots, settings)...)
 		if registry == nil {
 			_ = discard()
 			return subagent.ChildEnvironment{}, fmt.Errorf("create tools for worktree %s", filepath.Base(path))
