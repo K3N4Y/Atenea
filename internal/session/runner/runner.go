@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"time"
 
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/permission"
@@ -54,7 +55,17 @@ type Runner struct {
 	logf      func(format string, args ...any)
 	reasoning func() *llm.ReasoningPreference
 	preview   func(tool.PreviewEvent)
+
+	// transientRetryDelays paces the automatic retries of a turn whose stream
+	// died on a transient transport interruption; its length is the retry
+	// budget, and exhausting it surfaces the failure as Step.Failed. Empty (the
+	// zero value) disables the retries. Tests shorten it to keep the suite fast.
+	transientRetryDelays []time.Duration
 }
+
+// defaultTransientRetryDelays gives a failing endpoint three more chances over
+// about seven seconds before its turn fails for the user.
+var defaultTransientRetryDelays = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}
 
 // Compactor decides whether a Request exceeds the model context and compacts
 // durable session history so the next attempt fits. A nil Compactor disables it.
@@ -84,7 +95,8 @@ func NewRunner(store session.Store, inbox session.Inbox, provider llm.Provider,
 	return &Runner{
 		store: store, inbox: inbox, provider: provider,
 		registry: registry, perms: perms, nextID: nextID,
-		logf: log.Printf,
+		logf:                 log.Printf,
+		transientRetryDelays: defaultTransientRetryDelays,
 	}
 }
 

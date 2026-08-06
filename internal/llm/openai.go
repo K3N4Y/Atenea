@@ -24,6 +24,16 @@ const defaultRequestTimeout = 60 * time.Second
 func streamingHTTPClient(responseHeaderTimeout time.Duration) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = responseHeaderTimeout
+	// Without a health check, a stream that goes quiet is indistinguishable
+	// from a dead connection, and the turn hangs until the peer resets it.
+	// Ping any connection silent for SendPingTimeout and close it if the ping
+	// goes unanswered for PingTimeout, so a dead gateway surfaces as an error
+	// in seconds. Legitimately quiet streams (a model reasoning without
+	// emitting frames) survive: a live peer still answers pings.
+	transport.HTTP2 = &http.HTTP2Config{
+		SendPingTimeout: 30 * time.Second,
+		PingTimeout:     15 * time.Second,
+	}
 	return &http.Client{Transport: transport}
 }
 

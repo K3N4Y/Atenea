@@ -199,7 +199,7 @@ func TestRunnerAttempt_ReturnsErrRebuildTurnWhenEpochChanges(t *testing.T) {
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
 	r := NewRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, idCounter())
 
-	cont, err := r.runTurnAttempt(ctx, "s1", false)
+	cont, err := r.runTurnAttempt(ctx, "s1", false, 0)
 	if !errors.Is(err, errRebuildTurn) {
 		t.Fatalf("runTurnAttempt error = %v, quiero errRebuildTurn (errors.Is)", err)
 	}

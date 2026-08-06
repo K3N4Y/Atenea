@@ -6,6 +6,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
@@ -15,16 +17,21 @@ import (
 	"github.com/K3N4Y/atenea/internal/tool"
 )
 
-// errRebuildTurn and errContinueAfterCompaction are internal turn-control
-// signals consumed by runTurn's retry loop.
+// errRebuildTurn, errContinueAfterCompaction and errRetryTransientStream are
+// internal turn-control signals consumed by runTurn's retry loop.
 //
 //   - errRebuildTurn: context changed while preparing the turn. The stale request
 //     is discarded and rebuilt without calling the provider.
 //   - errContinueAfterCompaction: context overflow was compacted before the
 //     assistant message began, so preparation retries against the new history.
+//   - errRetryTransientStream: the provider stream died on a transient transport
+//     interruption. The failure was published as Step.Retrying, the backoff wait
+//     already happened, and the attempt repeats against the durable store — the
+//     same rebuild a manual retry performs.
 var (
 	errRebuildTurn             = errors.New("rebuild prepared turn")
 	errContinueAfterCompaction = errors.New("continue after overflow compaction")
+	errRetryTransientStream    = errors.New("retry after transient stream failure")
 )
 
 const finalTurnToolError = "tool calls are unavailable during the final summary turn"
@@ -32,6 +39,7 @@ const finalTurnToolError = "tool calls are unavailable during the final summary 
 // ProviderError wraps a provider StepFailed for errors.As and durable failure.
 type ProviderError struct {
 	Message string
+	Err     error // the typed cause, when the stream reported one
 }
 
 func (e *ProviderError) Error() string {
@@ -41,6 +49,9 @@ func (e *ProviderError) Error() string {
 	return "provider stream failed: " + e.Message
 }
 
+// Unwrap exposes the typed cause so callers can classify it with errors.As.
+func (e *ProviderError) Unwrap() error { return e.Err }
+
 // runTurn retries a turn for internal control signals and returns every other
 // error or successful result. Each retry rebuilds state from the store.
 func (r *Runner) runTurn(ctx context.Context, sessionID string) (bool, error) {
@@ -48,13 +59,17 @@ func (r *Runner) runTurn(ctx context.Context, sessionID string) (bool, error) {
 }
 
 func (r *Runner) runTurnWithFinal(ctx context.Context, sessionID string, final bool) (bool, error) {
+	retriesUsed := 0
 	for {
-		cont, err := r.runTurnAttempt(ctx, sessionID, final)
+		cont, err := r.runTurnAttempt(ctx, sessionID, final, retriesUsed)
 		switch {
 		case errors.Is(err, errRebuildTurn):
 			continue // preparation changed; rebuild from the store
 		case errors.Is(err, errContinueAfterCompaction):
 			continue // overflow was compacted; retry the post-compaction path
+		case errors.Is(err, errRetryTransientStream):
+			retriesUsed++
+			continue // the backoff already happened; rebuild and call again
 		default:
 			return cont, err
 		}
@@ -64,7 +79,7 @@ func (r *Runner) runTurnWithFinal(ctx context.Context, sessionID string, final b
 // runTurnAttempt performs one turn attempt. It snapshots the epoch, builds the
 // request from projected history and materialized tools, compacts on overflow,
 // and rechecks the epoch before calling Stream exactly once.
-func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string, final bool) (bool, error) {
+func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string, final bool, retriesUsed int) (bool, error) {
 	before, err := r.store.Epoch(ctx, sessionID)
 	if err != nil {
 		return false, err
@@ -155,7 +170,7 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string, final boo
 	usageRequest := req
 	usageRequest.MaxOutputTokens = 0
 	pub := NewPublisher(r.store, sessionID, r.nextID(), llm.EstimateRequestTokens(usageRequest))
-	return r.consume(ctx, sessionID, in, pub, mat.Settle, mat.Preview, final)
+	return r.consume(ctx, sessionID, in, pub, mat.Settle, mat.Preview, final, retriesUsed)
 }
 
 func sessionKey(sessionID string) string {
@@ -168,7 +183,7 @@ func sessionKey(sessionID string) string {
 // the assistant message that declared it. Tool failures become Tool.Failed and
 // do not abort the turn; durable-store failures do.
 func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Event,
-	pub *Publisher, settle tool.SettleFunc, preview tool.PreviewFunc, rejectLocalTools bool) (bool, error) {
+	pub *Publisher, settle tool.SettleFunc, preview tool.PreviewFunc, rejectLocalTools bool, retriesUsed int) (bool, error) {
 
 	g, gctx := errgroup.WithContext(ctx)
 	cleanupCtx := context.WithoutCancel(ctx)
@@ -204,7 +219,7 @@ func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Ev
 			emitPreview(ev.CallID)
 		}
 		if ev.Kind == llm.StepFailed {
-			streamErr = &ProviderError{Message: ev.Text}
+			streamErr = &ProviderError{Message: ev.Text, Err: ev.Err}
 			continue
 		}
 		if err := pub.Publish(ctx, ev); err != nil {
@@ -258,16 +273,43 @@ func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Ev
 	} else {
 		cause = ctx.Err()
 	}
-	if cause != nil {
-		if err := pub.FailUnresolvedTools(cleanupCtx, cause); err != nil {
-			return false, err
-		}
-		if err := pub.StepFailed(cleanupCtx, cause); err != nil {
-			return false, err
-		}
-		return false, cause
+	if cause == nil {
+		return needsContinuation, nil
 	}
-	return needsContinuation, nil
+	if err := pub.FailUnresolvedTools(cleanupCtx, cause); err != nil {
+		return false, err
+	}
+	// A transient transport interruption retries the turn instead of failing
+	// it: the request rebuilds from the durable store, exactly like a manual
+	// retry. Anything else — or an exhausted budget — closes the step.
+	if streamErr != nil && ctx.Err() == nil && retriesUsed < len(r.transientRetryDelays) && llm.IsTransientStreamError(streamErr) {
+		delay := r.transientRetryDelays[retriesUsed]
+		notice := fmt.Sprintf("%s — retrying in %s (attempt %d of %d)",
+			streamErr.Message, delay, retriesUsed+1, len(r.transientRetryDelays))
+		if err := pub.Publish(cleanupCtx, llm.Event{Kind: llm.StepRetrying, Text: notice}); err != nil {
+			return false, err
+		}
+		if sleepErr := sleepFor(ctx, delay); sleepErr == nil {
+			return false, errRetryTransientStream
+		}
+		// Cancelled while waiting: fall through and close the step durably.
+	}
+	if err := pub.StepFailed(cleanupCtx, cause); err != nil {
+		return false, err
+	}
+	return false, cause
+}
+
+// sleepFor waits d or until ctx cancels, whichever comes first.
+func sleepFor(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // toLLMMessages projects the durable history into the provider's format. It
