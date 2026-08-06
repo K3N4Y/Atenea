@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -213,24 +214,35 @@ func TestListPosthogModels_ReportsFailures(t *testing.T) {
 		}
 	})
 }
-func TestPosthogClaude_RejectsExplicitReasoningBeforeCredentialOrHTTP(t *testing.T) {
-	gateway := newPosthogGateway(t)
-	tokens := &staticTokens{err: errors.New("credential resolution must not run")}
-	provider := NewAnthropicOAuthProvider(tokens, gateway.server.URL, "claude-opus-4-8")
+func TestPosthogClaude_MapsReasoningEffortBeforeCredentialAndHTTP(t *testing.T) {
+	var requestBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "event: message\ndata: {\"type\":\"message_stop\"}\n\n")
+	}))
+	defer server.Close()
+	tokens := &staticTokens{token: OAuthToken{AccessToken: "access"}}
+	provider := NewAnthropicOAuthProvider(tokens, server.URL, "claude-opus-4-8")
 	req := contractRequest("claude-opus-4-8")
 	req.Reasoning = &ReasoningPreference{Effort: ReasoningEffortHigh}
 
-	_, err := provider.Stream(context.Background(), req)
-	if err == nil || !strings.Contains(err.Error(), "PostHog Claude") || !strings.Contains(err.Error(), string(ReasoningEffortHigh)) {
-		t.Fatalf("Stream error = %v, want PostHog Claude and the requested effort", err)
+	out, err := provider.Stream(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if tokens.count() != 0 {
-		t.Fatalf("credential resolutions = %d, want zero", tokens.count())
+	drain(out)
+
+	var body struct {
+		OutputConfig struct {
+			Effort string `json:"effort"`
+		} `json:"output_config"`
 	}
-	gateway.mu.Lock()
-	defer gateway.mu.Unlock()
-	if len(gateway.auths) != 0 {
-		t.Fatalf("HTTP requests = %d, want zero", len(gateway.auths))
+	if err := json.Unmarshal(requestBody, &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.OutputConfig.Effort != "high" {
+		t.Fatalf("output_config.effort = %q, want high; request=%s", body.OutputConfig.Effort, requestBody)
 	}
 }
 

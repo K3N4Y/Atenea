@@ -103,6 +103,108 @@ func TestAnthropicProvider_StreamMapsNativeMessagesRequestAndEvents(t *testing.T
 	}
 }
 
+func TestAnthropicProvider_StreamMapsReasoningEffortToOutputConfig(t *testing.T) {
+	var requestBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "event: message\ndata: {\"type\":\"message_stop\"}\n\n")
+	}))
+	defer server.Close()
+
+	out, err := NewAnthropicProvider("key", server.URL, "claude-opus-4-8").Stream(context.Background(), Request{
+		Messages:  []Message{TextMessage("user", "think carefully")},
+		Reasoning: &ReasoningPreference{Effort: ReasoningEffortXHigh},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drain(out)
+
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(requestBody, &body); err != nil {
+		t.Fatal(err)
+	}
+	var outputConfig struct {
+		Effort string `json:"effort"`
+	}
+	if err := json.Unmarshal(body["output_config"], &outputConfig); err != nil {
+		t.Fatalf("output_config = %s: %v", body["output_config"], err)
+	}
+	if outputConfig.Effort != "xhigh" {
+		t.Fatalf("output_config.effort = %q, want xhigh; request=%s", outputConfig.Effort, requestBody)
+	}
+	if _, ok := body["thinking"]; ok {
+		t.Fatalf("configurable effort must not enable thinking blocks: %s", requestBody)
+	}
+}
+
+func TestResolveAnthropicEffortValidatesTheModelMatrix(t *testing.T) {
+	tests := []struct {
+		name    string
+		model   string
+		effort  ReasoningEffort
+		want    string
+		wantErr bool
+	}{
+		{name: "default stays omitted", model: "claude-haiku-4-5"},
+		{name: "opus 4.8 xhigh", model: "claude-opus-4-8", effort: ReasoningEffortXHigh, want: "xhigh"},
+		{name: "dated opus 4.8 max", model: "claude-opus-4-8-20260805", effort: ReasoningEffortMax, want: "max"},
+		{name: "fable 5 max", model: "claude-fable-5", effort: ReasoningEffortMax, want: "max"},
+		{name: "sonnet 5 xhigh", model: "claude-sonnet-5", effort: ReasoningEffortXHigh, want: "xhigh"},
+		{name: "opus 4.6 max", model: "claude-opus-4-6", effort: ReasoningEffortMax, want: "max"},
+		{name: "opus 4.6 rejects xhigh", model: "claude-opus-4-6", effort: ReasoningEffortXHigh, wantErr: true},
+		{name: "opus 4.5 high", model: "claude-opus-4-5", effort: ReasoningEffortHigh, want: "high"},
+		{name: "opus 4.5 rejects max", model: "claude-opus-4-5", effort: ReasoningEffortMax, wantErr: true},
+		{name: "haiku 4.5 has no configurable effort", model: "claude-haiku-4-5", effort: ReasoningEffortLow, wantErr: true},
+		{name: "minimal is not an Anthropic effort", model: "claude-opus-4-8", effort: ReasoningEffortMinimal, wantErr: true},
+		{name: "unknown model is rejected", model: "claude-unknown", effort: ReasoningEffortLow, wantErr: true},
+		{name: "lookalike model is rejected", model: "claude-opus-5x", effort: ReasoningEffortLow, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var preference *ReasoningPreference
+			if tt.effort != "" {
+				preference = &ReasoningPreference{Effort: tt.effort}
+			}
+			got, err := resolveAnthropicEffort(tt.model, preference)
+			if tt.wantErr {
+				if err == nil || !strings.Contains(err.Error(), tt.model) || !strings.Contains(err.Error(), string(tt.effort)) {
+					t.Fatalf("resolveAnthropicEffort(%q, %q) error = %v, want model and effort", tt.model, tt.effort, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveAnthropicEffort(%q, %q): %v", tt.model, tt.effort, err)
+			}
+			if string(got) != tt.want {
+				t.Fatalf("resolveAnthropicEffort(%q, %q) = %q, want %q", tt.model, tt.effort, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAnthropicProvider_StreamRejectsUnsupportedReasoningBeforeHTTP(t *testing.T) {
+	var called bool
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
+	defer server.Close()
+
+	out, err := NewAnthropicProvider("key", server.URL, "claude-haiku-4-5").Stream(context.Background(), Request{
+		Messages:  []Message{TextMessage("user", "hello")},
+		Reasoning: &ReasoningPreference{Effort: ReasoningEffortLow},
+	})
+	if out != nil {
+		t.Fatal("Stream returned a channel")
+	}
+	if err == nil || !strings.Contains(err.Error(), "claude-haiku-4-5") || !strings.Contains(err.Error(), "low") {
+		t.Fatalf("Stream error = %v, want the unsupported model and effort", err)
+	}
+	if called {
+		t.Fatal("unsupported effort reached the endpoint")
+	}
+}
+
 func TestAnthropicProvider_StreamPreservesUsagePresence(t *testing.T) {
 	tests := []struct {
 		name   string

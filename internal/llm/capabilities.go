@@ -101,8 +101,10 @@ var anthropicCapabilities = Capabilities{
 	Streaming: true,
 	Tools:     true,
 	Vision:    true,
-	// The adapter never sends Anthropic's `thinking` parameter, so it does not
-	// ask for reasoning; it forwards a ThinkingBlock if one arrives anyway.
+	// output_config.effort is mapped per request for the supported Claude
+	// families. Reasoning remains false because the adapter deliberately does not
+	// enable thinking blocks; effort affects the whole response, including tool
+	// use and prose, without exposing chain-of-thought events.
 	Reasoning: false,
 	// CacheControl goes on every request, with no key and no opt-out, so
 	// Request.SessionKey buys nothing here.
@@ -114,8 +116,8 @@ var anthropicCapabilities = Capabilities{
 	ContextWindows:         anthropicWindows,
 }
 
-// posthogCapabilities is the gateway's catalog-wide behavior. Reasoning and
-// prompt caching are intentionally represented per model: Claude uses the
+// posthogCapabilities is the gateway's catalog-wide behavior. Reasoning events
+// and prompt caching are intentionally represented per model: Claude uses the
 // Anthropic adapter (cache_control on every request, SessionKey buys nothing)
 // and GPT uses Responses (prompt_cache_key carries Request.SessionKey).
 var posthogCapabilities = Capabilities{
@@ -127,10 +129,12 @@ var posthogCapabilities = Capabilities{
 }
 
 // posthogClaudeCapabilities is what the gateway's anthropic-messages instance
-// declares. Serving one family makes the flat claim honest again: cache_control
-// goes on every request, so Request.SessionKey buys nothing here.
+// declares. Serving one family makes the flat claims honest again: Claude maps
+// effort preferences but does not enable thinking blocks, and cache_control goes
+// on every request, so Request.SessionKey buys nothing here.
 func posthogClaudeCapabilities() Capabilities {
 	caps := posthogCapabilities
+	caps.Reasoning = false
 	caps.PromptCaching = ImplicitPromptCaching
 	caps.Vision = true
 	return caps

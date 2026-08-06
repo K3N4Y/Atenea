@@ -103,6 +103,13 @@ Anthropic, and finally the offline demo. `ANTHROPIC_MODEL` can override the
 built-in Anthropic default.
 That default is `claude-opus-4-8`, Anthropic's recommended starting point for
 complex agentic coding; set `ANTHROPIC_MODEL` to pin a specific snapshot.
+Claude models that expose API effort can use the shared `/reasoning:<level>`
+preference through both the Anthropic and PostHog providers. Atenea sends it as
+Anthropic `output_config.effort`; supported levels depend on the selected Claude
+model (`low`, `medium`, `high`, plus `xhigh` and/or `max` on newer families).
+`/reasoning:default` restores Anthropic's default. Unsupported model/level
+combinations fail before an API request instead of being silently downgraded.
+This controls response effort without enabling raw extended thinking blocks.
 
 OpenCode Zen and Go are separate providers: Zen is pay-as-you-go at
 `https://opencode.ai/zen/v1`, while Go is the subscription endpoint at

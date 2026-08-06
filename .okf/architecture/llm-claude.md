@@ -1,6 +1,6 @@
 ---
-updated_at: 2026-07-22
-summary: Architecture and current constraints of the native Anthropic Go SDK provider.
+updated_at: 2026-08-06
+summary: Architecture, reasoning-effort support, and thinking constraints of the native Anthropic Go SDK provider.
 ---
 
 # LLM Integration: Claude (Go)
@@ -184,24 +184,31 @@ The input of each `tool_use` is parsed with `json.Unmarshal` over the raw JSON
 (`variant.JSON.Input.Raw()`) — never string match over the serialized JSON:
 Opus 4.8 can escape Unicode/slashes differently.
 
-## Thinking and effort
+## Reasoning effort and thinking
 
-Thinking is deliberately disabled in the current adapter. Atenea's durable
-message model does not yet persist `thinking`/`redacted_thinking` blocks and
-their signatures, which Anthropic requires to be sent back unchanged during a
-tool-use continuation. Enabling it before extending persistence would make
-multi-step tool conversations invalid. The notes below are future design work,
-not current behavior.
+The Anthropic and PostHog Claude adapters map an explicit
+`Request.Reasoning.Effort` to Anthropic `output_config.effort`. This controls the
+effort spent across the whole response (prose, tool calls and thinking when
+separately enabled) without requiring `thinking`. The default preference omits
+`output_config`, preserving Anthropic's `high` default.
 
-- **Adaptive only** in Opus 4.8: `Thinking: {OfAdaptive: &ThinkingConfigAdaptiveParam{}}`.
-- `thinking: {type:"enabled", budget_tokens:N}` gives **400**. Neither does `temperature`,
- `top_p`, `top_k` (400). It is steered by prompt/effort, not by sampling.
-- **Thinking content omitted by default** in Opus 4.8: the block arrives empty
- unless `display: "summarized"` is requested. If the UI shows reasoning, you should
- opt for summarized (map to `Reasoning.Delta`); if not, leave it omitted.
-- **Effort**: `high`/`xhigh` for agentic/coding work. It goes in the output config
- of the request; **check the exact binding in `anthropic-sdk-go`** before setting
- the field (do not invent it). Default `high`.
+The adapter validates the selected model before network I/O. The current API
+matrix is:
+
+| Model family | Accepted explicit efforts |
+| --- | --- |
+| Fable 5, Mythos 5, Opus 5/4.8/4.7, Sonnet 5 | `low`, `medium`, `high`, `xhigh`, `max` |
+| Mythos Preview, Opus 4.6, Sonnet 4.6 | `low`, `medium`, `high`, `max` |
+| Opus 4.5 | `low`, `medium`, `high` |
+
+`minimal` is not an Anthropic API effort. Models absent from this matrix keep
+working with the default preference, but reject an explicit effort rather than
+silently downgrading it.
+
+Extended thinking blocks remain deliberately disabled. Atenea's durable message
+model does not yet persist `thinking`/`redacted_thinking` blocks and their
+signatures for tool-use continuation. Therefore the adapter does not set
+`thinking.type`; changing effort does not expose or persist raw chain of thought.
 
 ## Prompt caching
 

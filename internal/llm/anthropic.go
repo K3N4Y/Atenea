@@ -16,6 +16,72 @@ import (
 
 const defaultAnthropicMaxOutputTokens = 8192
 
+type anthropicEffortSupport uint8
+
+const (
+	anthropicEffortThroughHigh anthropicEffortSupport = iota + 1
+	anthropicEffortThroughMax
+	anthropicEffortWithXHigh
+)
+
+var anthropicEffortModels = []struct {
+	prefix  string
+	support anthropicEffortSupport
+}{
+	{prefix: "claude-opus-4-8", support: anthropicEffortWithXHigh},
+	{prefix: "claude-opus-4-7", support: anthropicEffortWithXHigh},
+	{prefix: "claude-opus-5", support: anthropicEffortWithXHigh},
+	{prefix: "claude-sonnet-5", support: anthropicEffortWithXHigh},
+	{prefix: "claude-fable-5", support: anthropicEffortWithXHigh},
+	{prefix: "claude-mythos-5", support: anthropicEffortWithXHigh},
+	{prefix: "claude-opus-4-6", support: anthropicEffortThroughMax},
+	{prefix: "claude-sonnet-4-6", support: anthropicEffortThroughMax},
+	{prefix: "claude-mythos", support: anthropicEffortThroughMax},
+	{prefix: "claude-opus-4-5", support: anthropicEffortThroughHigh},
+}
+
+var anthropicEfforts = map[ReasoningEffort]anthropic.OutputConfigEffort{
+	ReasoningEffortLow:    anthropic.OutputConfigEffortLow,
+	ReasoningEffortMedium: anthropic.OutputConfigEffortMedium,
+	ReasoningEffortHigh:   anthropic.OutputConfigEffortHigh,
+	ReasoningEffortXHigh:  anthropic.OutputConfigEffortXhigh,
+	ReasoningEffortMax:    anthropic.OutputConfigEffortMax,
+}
+
+func supportsAnthropicEffort(support anthropicEffortSupport, effort ReasoningEffort) bool {
+	switch effort {
+	case ReasoningEffortLow, ReasoningEffortMedium, ReasoningEffortHigh:
+		return true
+	case ReasoningEffortMax:
+		return support >= anthropicEffortThroughMax
+	case ReasoningEffortXHigh:
+		return support == anthropicEffortWithXHigh
+	default:
+		return false
+	}
+}
+
+func matchesAnthropicModel(model, prefix string) bool {
+	return model == prefix || strings.HasPrefix(model, prefix+"-")
+}
+
+func resolveAnthropicEffort(model string, preference *ReasoningPreference) (anthropic.OutputConfigEffort, error) {
+	if preference == nil || preference.Effort == "" {
+		return "", nil
+	}
+	effort, valid := anthropicEfforts[preference.Effort]
+	for _, modelSupport := range anthropicEffortModels {
+		if !matchesAnthropicModel(model, modelSupport.prefix) {
+			continue
+		}
+		if valid && supportsAnthropicEffort(modelSupport.support, preference.Effort) {
+			return effort, nil
+		}
+		break
+	}
+	return "", fmt.Errorf("Anthropic model %q does not support requested reasoning effort %q", model, preference.Effort)
+}
+
 // AnthropicProvider adapts Anthropic's native Messages API to Provider.
 //
 // It serves two endpoints that speak the same wire format with different
@@ -94,11 +160,9 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req Request) (<-chan Eve
 	if p.posthog && !posthogAnthropicModel(model) {
 		return nil, fmt.Errorf("PostHog does not recognize model family %q", model)
 	}
-	// Claude thinking on PostHog is intentionally gated until its wire behavior
-	// is verified. Reject the host's explicit preference before doing any work
-	// that could resolve credentials or contact the gateway.
-	if p.posthog && req.Reasoning != nil && req.Reasoning.Effort != "" {
-		return nil, fmt.Errorf("PostHog Claude does not support requested reasoning effort %q", req.Reasoning.Effort)
+	effort, err := resolveAnthropicEffort(model, req.Reasoning)
+	if err != nil {
+		return nil, err
 	}
 	messages, err := toAnthropicMessages(req.Messages)
 	if err != nil {
@@ -118,6 +182,9 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req Request) (<-chan Eve
 		Messages:     messages,
 		Tools:        tools,
 		CacheControl: anthropic.NewCacheControlEphemeralParam(),
+	}
+	if effort != "" {
+		params.OutputConfig.Effort = effort
 	}
 	if req.System != "" {
 		params.System = []anthropic.TextBlockParam{{Text: req.System}}
