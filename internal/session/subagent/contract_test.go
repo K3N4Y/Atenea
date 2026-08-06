@@ -34,7 +34,7 @@ func TestTaskTool_Contract(t *testing.T) {
 		nextID := func() string { return "m" + strconv.FormatInt(messages.Add(1), 10) }
 
 		return tooltest.Subject{
-			Tool:  NewTaskTool(defs, child, children, nextID),
+			Tool:  newTaskTool(defs, child, children, nextID),
 			Input: json.RawMessage(`{"subagent_type":"reviewer","prompt":"review this"}`),
 		}
 	})

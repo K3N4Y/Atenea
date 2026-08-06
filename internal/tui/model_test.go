@@ -349,7 +349,7 @@ func shippedToolCatalog() tool.Catalog {
 		tool.NewEditTool(root, nil, nil), tool.NewGlobTool(root),
 		tool.NewGrepTool(root, nil), tool.NewBashTool(root),
 		tool.NewPresentPlanTool(root), tool.NewSkillTool(nil),
-		subagent.NewTaskTool(nil, nil, nil, nil), tool.NewWebFetchTool(nil),
+		subagent.NewTaskTool(subagent.Config{}), tool.NewWebFetchTool(nil),
 		tool.TodoWriteTool{})
 }
 

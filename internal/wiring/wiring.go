@@ -354,24 +354,23 @@ func Build(cfg Config) Built {
 	// The task tool starts child subagents. Its own nextID (thread-safe) because
 	// several subagents can run in parallel (internal concurrency cap).
 	ownedSupervisor := cfg.TaskSupervisor == nil
-	taskTool := subagent.NewTaskTool(agentDefs, cfg.Provider, childRegistry, NewIDGen())
-	if cfg.TaskSupervisor != nil {
-		taskTool.SetSupervisor(cfg.TaskSupervisor)
-	}
-	if cfg.RoleProvider != nil {
-		taskTool.SetProviderResolver(cfg.RoleProvider)
-	}
 	worktrees := cfg.Worktrees
 	if worktrees == nil {
 		worktrees = worktreeResolver(root, cfg.OutputLimit, cfg.EditSettings)
 	}
-	taskTool.SetEnvironmentResolver(worktrees)
 	// Decorate the child runner's store over the shared bus. Permission events
 	// always reach the parent's channel so either host can resolve the child gate.
 	// The TUI additionally opts into ephemeral child tool-batch events; Desktop
 	// leaves them disabled so its existing transcript projection is unchanged.
-	taskTool.SetStoreDecorator(func(parentSessionID, parentCallID string, inner session.Store) session.Store {
+	decorateChildStore := func(parentSessionID, parentCallID string, inner session.Store) session.Store {
 		return event.NewChildActivityStore(parentSessionID, parentCallID, inner, cfg.Bus, cfg.ChildActivity)
+	}
+	var policy permission.Policy
+	taskTool := subagent.NewTaskTool(subagent.Config{
+		Definitions: agentDefs, Provider: cfg.Provider, Children: childRegistry, NextID: NewIDGen(),
+		ProviderResolver: cfg.RoleProvider, EnvironmentResolver: worktrees,
+		Supervisor: cfg.TaskSupervisor, Gate: cfg.Gate,
+		Policy: func() permission.Policy { return policy }, StoreDecorator: decorateChildStore,
 	})
 	// present_plan is registered so the runner can execute it, but it does not enter
 	// the normal permission set: cfg.PlanMode claims it, and only plan mode announces
@@ -408,7 +407,7 @@ func Build(cfg Config) Built {
 	// as good as the catalog it reads and that catalog changes with every rewire —
 	// an MCP server that just connected contributes tools this policy has to be
 	// able to see.
-	policy := permission.NewRulePolicy(cfg.Policy(registry), cfg.PersistentGrants, registry)
+	policy = permission.NewRulePolicy(cfg.Policy(registry), cfg.PersistentGrants, registry)
 	policy = permission.NewGrantedPolicy(policy, cfg.Grants, registry)
 	policy = permission.NewAutoAcceptPolicy(policy, cfg.AutoAccept, registry)
 	home, _ := os.UserHomeDir()
@@ -423,7 +422,6 @@ func Build(cfg Config) Built {
 	// resolution finds it. Session grants are keyed by session too, so a subagent
 	// does not inherit the chat's grants: it asks on its own behalf, and a grant
 	// answered on its prompt covers only that child.
-	taskTool.SetPermissionGate(cfg.Gate, policy)
 	permissions := registry.Permissions()
 	// What normal mode announces is what is registered, minus the tools plan mode
 	// claims for itself. Every ordinary and dynamic MCP tool arrives from the

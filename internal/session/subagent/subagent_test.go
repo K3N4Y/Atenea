@@ -86,7 +86,7 @@ func TestTaskTool_RunsChildAndReturnsReport(t *testing.T) {
 	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
 	defs := []agent.Def{{Name: "reviewer", Description: "Revisa codigo", Prompt: "Eres un revisor."}}
 
-	tt := NewTaskTool(defs, prov, children, idCounter())
+	tt := newTaskTool(defs, prov, children, idCounter())
 
 	if tt.Name() != "task" {
 		t.Errorf("tt.Name() = %q, quiero %q", tt.Name(), "task")
@@ -122,7 +122,7 @@ func TestTaskTool_UnknownSubagentType(t *testing.T) {
 	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
 	defs := []agent.Def{{Name: "reviewer", Description: "Revisa codigo", Prompt: "Eres un revisor."}}
 
-	tt := NewTaskTool(defs, prov, children, idCounter())
+	tt := newTaskTool(defs, prov, children, idCounter())
 
 	_, err := tt.Execute(ctx, json.RawMessage(`{"subagent_type":"noexiste","prompt":"x"}`))
 	if err == nil {
@@ -146,7 +146,7 @@ func TestTaskTool_InvalidJSON(t *testing.T) {
 	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
 	defs := []agent.Def{{Name: "reviewer", Description: "Revisa codigo", Prompt: "Eres un revisor."}}
 
-	tt := NewTaskTool(defs, prov, children, idCounter())
+	tt := newTaskTool(defs, prov, children, idCounter())
 
 	_, err := tt.Execute(ctx, json.RawMessage("no-es-json"))
 	if err == nil {
@@ -166,7 +166,7 @@ func TestTaskTool_AppliesAgentStepPolicy(t *testing.T) {
 	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
 	defs := []agent.Def{{Name: "looper", Tools: []string{"echo"}, Steps: 1, Description: "loopea", Prompt: "loop"}}
 
-	tt := NewTaskTool(defs, prov, children, idCounter())
+	tt := newTaskTool(defs, prov, children, idCounter())
 
 	result, err := tt.Execute(ctx, json.RawMessage(`{"subagent_type":"looper","prompt":"loop"}`))
 	if err != nil {
@@ -190,7 +190,7 @@ func TestTaskTool_DescriptionListsAvailable(t *testing.T) {
 		{Name: "explorer", Description: "Explora"},
 	}
 
-	tt := NewTaskTool(defs, prov, children, idCounter())
+	tt := newTaskTool(defs, prov, children, idCounter())
 	desc := tt.Description()
 
 	for _, want := range []string{"reviewer", "Revisa codigo", "explorer", "Explora"} {
@@ -207,7 +207,7 @@ func TestTaskTool_DescriptionListsAvailable(t *testing.T) {
 func TestTaskTool_DescriptionTeachesToolDecisions(t *testing.T) {
 	provider := llm.NewFakeProvider()
 	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
-	taskTool := NewTaskTool([]agent.Def{{Name: "explorer", Description: "Explores code."}}, provider, children, idCounter())
+	taskTool := newTaskTool([]agent.Def{{Name: "explorer", Description: "Explores code."}}, provider, children, idCounter())
 
 	description := taskTool.Description()
 	for _, required := range []string{"## Input grammar", "## Examples", "## Recoverable failures", "WRONG:", "RIGHT:", "<critical>", "</critical>", "subagent_type", "self-contained", `{"result":...,"worktree":"..."}`, "narrow the assignment"} {
@@ -248,7 +248,7 @@ func TestTaskTool_ChildUsesToolThenReportsFinalText(t *testing.T) {
 	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
 	defs := []agent.Def{{Name: "worker", Tools: []string{"echo"}, Description: "trabaja", Prompt: "Eres un worker."}}
 
-	tt := NewTaskTool(defs, prov, children, idCounter())
+	tt := newTaskTool(defs, prov, children, idCounter())
 
 	res, err := tt.Execute(ctx, json.RawMessage(`{"subagent_type":"worker","prompt":"haz algo"}`))
 	if err != nil {
@@ -305,8 +305,8 @@ func TestTaskTool_StripsTaskToolAtMaxDepth(t *testing.T) {
 	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}, taskStub{})
 	defs := []agent.Def{{Name: "worker", Tools: []string{"task", "echo"}}}
 
-	tt := NewTaskTool(defs, prov, children, idCounter())
-	tt.SetMaxDepth(1) // childDepth del primer hijo = 1 >= 1 -> "task" se elimina
+	tt := newTaskTool(defs, prov, children, idCounter())
+	tt.setMaxDepth(1) // childDepth del primer hijo = 1 >= 1 -> "task" se elimina
 
 	_, err := tt.Execute(context.Background(), json.RawMessage(`{"subagent_type":"worker","prompt":"haz"}`))
 	if err != nil {
@@ -333,8 +333,8 @@ func TestTaskTool_KeepsTaskToolBelowMaxDepth(t *testing.T) {
 	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}, taskStub{})
 	defs := []agent.Def{{Name: "worker", Tools: []string{"task", "echo"}}}
 
-	tt := NewTaskTool(defs, prov, children, idCounter())
-	tt.SetMaxDepth(2) // childDepth del primer hijo = 1 < 2 -> "task" se conserva
+	tt := newTaskTool(defs, prov, children, idCounter())
+	tt.setMaxDepth(2) // childDepth del primer hijo = 1 < 2 -> "task" se conserva
 
 	_, err := tt.Execute(context.Background(), json.RawMessage(`{"subagent_type":"worker","prompt":"haz"}`))
 	if err != nil {
@@ -361,8 +361,8 @@ func TestTaskTool_DepthIncrementsFromContext(t *testing.T) {
 	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
 	defs := []agent.Def{{Name: "worker", Tools: []string{"echo"}}}
 
-	tt := NewTaskTool(defs, prov, children, idCounter())
-	tt.SetMaxDepth(5) // alto: no nos interesa el strip aqui, solo la profundidad
+	tt := newTaskTool(defs, prov, children, idCounter())
+	tt.setMaxDepth(5) // alto: no nos interesa el strip aqui, solo la profundidad
 
 	ctx := withDepth(context.Background(), 1)
 	_, err := tt.Execute(ctx, json.RawMessage(`{"subagent_type":"worker","prompt":"haz"}`))
@@ -386,8 +386,8 @@ func TestTaskTool_DefaultIncomingDepthIsZero(t *testing.T) {
 	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
 	defs := []agent.Def{{Name: "worker", Tools: []string{"echo"}}}
 
-	tt := NewTaskTool(defs, prov, children, idCounter())
-	tt.SetMaxDepth(5) // alto: aqui solo importa la profundidad observada
+	tt := newTaskTool(defs, prov, children, idCounter())
+	tt.setMaxDepth(5) // alto: aqui solo importa la profundidad observada
 
 	_, err := tt.Execute(context.Background(), json.RawMessage(`{"subagent_type":"worker","prompt":"haz"}`))
 	if err != nil {
@@ -456,8 +456,8 @@ func TestTaskTool_CapsConcurrentSubagents(t *testing.T) {
 	probe := &concurrencyProbe{entered: make(chan struct{}, m), release: make(chan struct{})}
 	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
 	defs := []agent.Def{{Name: "worker", Prompt: "x"}}
-	tt := NewTaskTool(defs, probe, children, safeIDCounter())
-	tt.SetMaxConcurrency(n)
+	tt := newTaskTool(defs, probe, children, safeIDCounter())
+	tt.setMaxConcurrency(n)
 
 	var wg sync.WaitGroup
 	for i := 0; i < m; i++ {
@@ -497,8 +497,8 @@ func TestTaskTool_UnlimitedConcurrencyWhenZero(t *testing.T) {
 	probe := &concurrencyProbe{entered: make(chan struct{}, m), release: make(chan struct{})}
 	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
 	defs := []agent.Def{{Name: "worker", Prompt: "x"}}
-	tt := NewTaskTool(defs, probe, children, safeIDCounter())
-	tt.SetMaxConcurrency(0) // sin tope
+	tt := newTaskTool(defs, probe, children, safeIDCounter())
+	tt.setMaxConcurrency(0) // sin tope
 
 	var wg sync.WaitGroup
 	for i := 0; i < m; i++ {
@@ -532,8 +532,8 @@ func TestTaskTool_AcquireRespectsContextCancel(t *testing.T) {
 	probe := &concurrencyProbe{entered: make(chan struct{}, 2), release: make(chan struct{})}
 	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
 	defs := []agent.Def{{Name: "worker", Prompt: "x"}}
-	tt := NewTaskTool(defs, probe, children, safeIDCounter())
-	tt.SetMaxConcurrency(1) // un solo slot
+	tt := newTaskTool(defs, probe, children, safeIDCounter())
+	tt.setMaxConcurrency(1) // un solo slot
 
 	// Primer Execute ocupa el unico slot y se queda bloqueado en release.
 	var wg sync.WaitGroup
@@ -572,7 +572,7 @@ func TestTaskTool_DefaultConcurrencyCap(t *testing.T) {
 	probe := &concurrencyProbe{entered: make(chan struct{}, m), release: make(chan struct{})}
 	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
 	defs := []agent.Def{{Name: "worker", Prompt: "x"}}
-	tt := NewTaskTool(defs, probe, children, safeIDCounter()) // SIN setter: usa el default
+	tt := newTaskTool(defs, probe, children, safeIDCounter()) // SIN setter: usa el default
 
 	var wg sync.WaitGroup
 	for i := 0; i < m; i++ {
@@ -632,7 +632,7 @@ func TestTaskTool_ReadOnlyAgentNotOfferedMutatingTools(t *testing.T) {
 		t.Fatal("agent.Builtins does not include explorer")
 	}
 
-	tt := NewTaskTool([]agent.Def{explorer}, prov, children, idCounter())
+	tt := newTaskTool([]agent.Def{explorer}, prov, children, idCounter())
 	_, err := tt.Execute(context.Background(), json.RawMessage(`{"subagent_type":"explorer","prompt":"investigate"}`))
 	if err != nil {
 		t.Fatalf("Execute error inesperado: %v", err)

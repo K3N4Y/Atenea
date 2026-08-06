@@ -20,7 +20,7 @@ func runtimeIDs() func() string {
 	return func() string { return "runtime-" + string(rune('a'+n.Add(1))) }
 }
 func runtimeTool(provider llm.Provider) *TaskTool {
-	return NewTaskTool([]agent.Def{{Name: "worker", Tools: []string{"echo"}}}, provider, tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}), runtimeIDs())
+	return newTaskTool([]agent.Def{{Name: "worker", Tools: []string{"echo"}}}, provider, tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}), runtimeIDs())
 }
 
 func TestTaskOutputSchema(t *testing.T) {
@@ -149,14 +149,16 @@ func TestTaskInjectedProviderEnvironmentAndSummary(t *testing.T) {
 	fallback := llm.NewFakeProvider(llm.Event{Kind: llm.TextDelta, Text: "wrong"}, llm.Event{Kind: llm.StepEnded})
 	tt := runtimeTool(fallback)
 	var gotDef string
-	tt.SetProviderResolver(func(_ context.Context, def agent.Def) (llm.Provider, error) {
+	tt.setProviderResolver(func(_ context.Context, def agent.Def) (llm.Provider, error) {
 		gotDef = def.Name
 		return llm.NewFakeProvider(llm.Event{Kind: llm.TextStarted}, llm.Event{Kind: llm.TextDelta, Text: "isolated"}, llm.Event{Kind: llm.TextEnded}, llm.Event{Kind: llm.StepEnded, Usage: &llm.Usage{InputTokens: 1, OutputTokens: 2, ReasoningTokens: 3}}), nil
 	})
+
 	var cleaned atomic.Bool
-	tt.SetEnvironmentResolver(func(context.Context, agent.Def) (ChildEnvironment, error) {
+	tt.setEnvironmentResolver(func(context.Context, agent.Def) (ChildEnvironment, error) {
 		return ChildEnvironment{Store: session.NewMemoryStore(), Inbox: session.NewMemoryInbox(), Registry: tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}), Cleanup: func() error { cleaned.Store(true); return nil }}, nil
 	})
+
 	recorder := tool.NewSettlementRecorder()
 	ctx := tool.WithSettlementRecorder(context.Background(), recorder)
 	result, err := tt.Execute(ctx, json.RawMessage(`{"subagent_type":"worker","prompt":"x","worktree":true}`))
@@ -199,9 +201,10 @@ func TestSupervisorRejectsStartsAfterClose(t *testing.T) {
 func TestTaskDiscardsFailedIsolatedEnvironment(t *testing.T) {
 	tt := runtimeTool(llm.NewFakeProvider(llm.Event{Kind: llm.TextStarted}, llm.Event{Kind: llm.TextDelta, Text: `{"answer":3}`}, llm.Event{Kind: llm.TextEnded}, llm.Event{Kind: llm.StepEnded}))
 	var discarded atomic.Bool
-	tt.SetEnvironmentResolver(func(context.Context, agent.Def) (ChildEnvironment, error) {
+	tt.setEnvironmentResolver(func(context.Context, agent.Def) (ChildEnvironment, error) {
 		return ChildEnvironment{Store: session.NewMemoryStore(), Inbox: session.NewMemoryInbox(), Registry: tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}), Workspace: "/tmp/isolation", Discard: func() error { discarded.Store(true); return nil }}, nil
 	})
+
 	_, err := tt.Execute(context.Background(), json.RawMessage(`{"subagent_type":"worker","prompt":"x","worktree":true,"output_schema":{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}}`))
 	if err == nil || !discarded.Load() {
 		t.Fatalf("err=%v discarded=%v", err, discarded.Load())
@@ -210,9 +213,10 @@ func TestTaskDiscardsFailedIsolatedEnvironment(t *testing.T) {
 
 func TestTypedWorktreeResultCarriesArtifactEnvelope(t *testing.T) {
 	tt := runtimeTool(llm.NewFakeProvider(llm.Event{Kind: llm.TextStarted}, llm.Event{Kind: llm.TextDelta, Text: `{"answer":"ok"}`}, llm.Event{Kind: llm.TextEnded}, llm.Event{Kind: llm.StepEnded}))
-	tt.SetEnvironmentResolver(func(context.Context, agent.Def) (ChildEnvironment, error) {
+	tt.setEnvironmentResolver(func(context.Context, agent.Def) (ChildEnvironment, error) {
 		return ChildEnvironment{Store: session.NewMemoryStore(), Inbox: session.NewMemoryInbox(), Registry: tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}), Workspace: "/tmp/isolation"}, nil
 	})
+
 	result, err := tt.Execute(context.Background(), json.RawMessage(`{"subagent_type":"worker","prompt":"x","worktree":true,"output_schema":{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}}`))
 	if err != nil || !strings.Contains(result.Output, `"worktree":"/tmp/isolation"`) || !strings.Contains(result.Output, `"result":{"answer":"ok"}`) {
 		t.Fatalf("result=%s err=%v", result.Output, err)
@@ -221,9 +225,10 @@ func TestTypedWorktreeResultCarriesArtifactEnvelope(t *testing.T) {
 
 func TestTaskReportsDiscardFailure(t *testing.T) {
 	tt := runtimeTool(llm.NewFakeProvider(llm.Event{Kind: llm.TextStarted}, llm.Event{Kind: llm.TextDelta, Text: `not-json`}, llm.Event{Kind: llm.TextEnded}, llm.Event{Kind: llm.StepEnded}))
-	tt.SetEnvironmentResolver(func(context.Context, agent.Def) (ChildEnvironment, error) {
+	tt.setEnvironmentResolver(func(context.Context, agent.Def) (ChildEnvironment, error) {
 		return ChildEnvironment{Store: session.NewMemoryStore(), Inbox: session.NewMemoryInbox(), Registry: tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}), Discard: func() error { return errors.New("discard failed") }}, nil
 	})
+
 	_, err := tt.Execute(context.Background(), json.RawMessage(`{"subagent_type":"worker","prompt":"x","worktree":true,"output_schema":{"type":"object"}}`))
 	if err == nil || !strings.Contains(err.Error(), "schema violation") || !strings.Contains(err.Error(), "discard failed") {
 		t.Fatalf("err=%v", err)
@@ -233,7 +238,7 @@ func TestTaskReportsDiscardFailure(t *testing.T) {
 func TestTaskTimeoutIncludesConcurrencyQueue(t *testing.T) {
 	provider := blockingProvider{}
 	tt := runtimeTool(provider)
-	tt.SetMaxConcurrency(1)
+	tt.setMaxConcurrency(1)
 	first, err := tt.Execute(context.Background(), json.RawMessage(`{"subagent_type":"worker","prompt":"hold","detached":true}`))
 	if err != nil {
 		t.Fatal(err)

@@ -64,6 +64,34 @@ type ChildEnvironment struct {
 }
 type EnvironmentResolver func(context.Context, agent.Def) (ChildEnvironment, error)
 type ProviderResolver func(context.Context, agent.Def) (llm.Provider, error)
+type StoreDecorator func(parentSessionID, parentCallID string, inner session.Store) session.Store
+type PolicyResolver func() permission.Policy
+
+// Limits controls delegated nesting and parallelism. A nil *Limits in Config
+// applies the package defaults; within Limits, MaxConcurrency <= 0 explicitly
+// requests unlimited concurrency.
+type Limits struct {
+	MaxDepth       int
+	MaxConcurrency int
+}
+
+// Config is the complete startup configuration of a TaskTool. NewTaskTool
+// applies it atomically so delegated execution cannot begin with only part of
+// its provider, environment, supervision, or permission policy installed.
+type Config struct {
+	Definitions []agent.Def
+	Provider    llm.Provider
+	Children    *tool.Registry
+	NextID      func() string
+
+	ProviderResolver    ProviderResolver
+	EnvironmentResolver EnvironmentResolver
+	Supervisor          *Supervisor
+	Gate                permission.Gate
+	Policy              PolicyResolver
+	StoreDecorator      StoreDecorator
+	Limits              *Limits
+}
 
 type taskInput struct {
 	SubagentType string          `json:"subagent_type"`
@@ -131,49 +159,55 @@ type TaskTool struct {
 	// gate and policy propagate the parent's ask-before-run to the child
 	// runner: the policy classifies each of the child's tool calls
 	// (Allow/Ask/Deny) and the gate blocks the asking ones until the user's
-	// decision. Both nil (default) = the child gates nothing (compatibility
-	// with tests that do not wire the gate). INJECTED with SetPermissionGate
-	// from the wiring; WITHOUT them a "general" subagent would run gated tools
+	// decision. Both nil means the child gates nothing. Config installs them
+	// from wiring; without them a "general" subagent would run gated tools
 	// (bash, write, edit, web_fetch) without the confirmation the main chat
 	// enforces, evading the gate. The gate is keyed by (sessionID, callID):
 	// the child's sessionID is its childID.
 	gate   permission.Gate
-	policy permission.Policy
+	policy PolicyResolver
 
-	// storeDecorator envuelve el store en memoria del runner hijo antes de correrlo.
-	// Recibe el sessionID del PADRE (el que esta atendiendo la UI) para que la
-	// decoracion pueda surfacing los eventos del hijo en su canal. nil (default en
-	// tests) = el hijo usa su MemoryStore aislado. SE INYECTA con SetStoreDecorator
-	// desde app.go con un EmittingStore que publica los eventos de permiso del hijo
-	// en el canal del padre; asi la UI ve el Tool.Permission.Requested del hijo y
-	// puede aprobar/denegar. Sin esto el hijo bloquea en gate.Ask pero la UI nunca
-	// ve la solicitud (el evento muere en el store aislado).
-	storeDecorator func(parentSessionID, parentCallID string, inner session.Store) session.Store
+	// storeDecorator wraps the child runner's memory store before execution. It
+	// receives the parent session and task call IDs so child activity can surface
+	// on the parent's channel. Nil keeps the child store isolated.
+	storeDecorator StoreDecorator
 }
 
-// NewTaskTool indexa las defs por nombre. Si dos comparten nombre gana la ultima
-// (config del programa, no input del modelo). maxDepth arranca en el default; se
-// ajusta con SetMaxDepth (config opcional, igual que el runner usa Set*). El cap
-// de concurrencia arranca en el default; se ajusta con SetMaxConcurrency. nextID
-// DEBE ser seguro para uso concurrente: varios Execute en paralelo comparten el
-// generador.
-func NewTaskTool(defs []agent.Def, provider llm.Provider, children *tool.Registry, nextID func() string) *TaskTool {
-	m := make(map[string]agent.Def, len(defs))
-	for _, d := range defs {
+// NewTaskTool indexes definitions by name; the final duplicate wins. NextID
+// must be safe for concurrent use because parallel Execute calls share it.
+func NewTaskTool(cfg Config) *TaskTool {
+	m := make(map[string]agent.Def, len(cfg.Definitions))
+	for _, d := range cfg.Definitions {
 		m[d.Name] = d
 	}
-	return &TaskTool{catalog: m, provider: provider, children: children, nextID: nextID, maxDepth: defaultMaxDepth, sem: make(chan struct{}, defaultMaxConcurrency), supervisor: NewSupervisor(nextID)}
+	maxDepth, maxConcurrency := defaultMaxDepth, defaultMaxConcurrency
+	if cfg.Limits != nil {
+		maxDepth, maxConcurrency = cfg.Limits.MaxDepth, cfg.Limits.MaxConcurrency
+	}
+	supervisor := cfg.Supervisor
+	if supervisor == nil {
+		supervisor = NewSupervisor(cfg.NextID)
+	}
+	t := &TaskTool{
+		catalog: m, provider: cfg.Provider, children: cfg.Children, nextID: cfg.NextID,
+		maxDepth: maxDepth, providerResolver: cfg.ProviderResolver,
+		environmentResolver: cfg.EnvironmentResolver, supervisor: supervisor,
+		gate: cfg.Gate, policy: cfg.Policy, storeDecorator: cfg.StoreDecorator,
+	}
+	if maxConcurrency > 0 {
+		t.sem = make(chan struct{}, maxConcurrency)
+	}
+	return t
 }
 
-// SetMaxDepth fija la profundidad maxima de anidamiento de subagentes.
-func (t *TaskTool) SetMaxDepth(n int) { t.maxDepth = n }
+func (t *TaskTool) setMaxDepth(n int) { t.maxDepth = n }
 
-func (t *TaskTool) SetProviderResolver(resolve ProviderResolver) { t.providerResolver = resolve }
-func (t *TaskTool) SetEnvironmentResolver(resolve EnvironmentResolver) {
+func (t *TaskTool) setProviderResolver(resolve ProviderResolver) { t.providerResolver = resolve }
+func (t *TaskTool) setEnvironmentResolver(resolve EnvironmentResolver) {
 	t.environmentResolver = resolve
 }
 
-func (t *TaskTool) SetSupervisor(supervisor *Supervisor) {
+func (t *TaskTool) setSupervisor(supervisor *Supervisor) {
 	if supervisor != nil {
 		t.supervisor = supervisor
 	}
@@ -185,26 +219,16 @@ func (t *TaskTool) Close() { t.supervisor.Close() }
 // SupervisionTools returns the status, wait, and cancel tools sharing this supervisor.
 func (t *TaskTool) SupervisionTools() []tool.Tool { return t.supervisor.tools() }
 
-// SetPermissionGate propagates the parent's ask-before-run to the child
-// runner: policy classifies each tool call (Allow/Ask/Deny) and gate resolves
-// the user's decision for the calls that ask. If either is nil the child
-// gates nothing. Entry point for
-// the wiring; tests call it directly. This is the security piece: without
-// this propagation the subagent would run gated tools without the
-// confirmation the main chat enforces.
-func (t *TaskTool) SetPermissionGate(gate permission.Gate, policy permission.Policy) {
+func (t *TaskTool) setPermissionGate(gate permission.Gate, policy permission.Policy) {
 	t.gate = gate
-	t.policy = policy
+	t.policy = func() permission.Policy { return policy }
 }
 
-// SetStoreDecorator injects the bus-only child activity decorator. Parent
-// session and exact task call IDs come from the settlement context.
-func (t *TaskTool) SetStoreDecorator(dec func(parentSessionID, parentCallID string, inner session.Store) session.Store) {
+func (t *TaskTool) setStoreDecorator(dec StoreDecorator) {
 	t.storeDecorator = dec
 }
 
-// SetMaxConcurrency fija el tope de subagentes simultaneos. n <= 0 deja sin tope.
-func (t *TaskTool) SetMaxConcurrency(n int) {
+func (t *TaskTool) setMaxConcurrency(n int) {
 	if n > 0 {
 		t.sem = make(chan struct{}, n)
 		return
@@ -261,7 +285,7 @@ func (*TaskTool) Schema() json.RawMessage {
 
 // Effects: none of its own. A task runs no command and writes no file itself —
 // it starts a child runner whose every tool call goes through the SAME gate and
-// the SAME policy as the main chat (see SetPermissionGate), so the child's
+// the SAME policy as the main chat (provided through Config), so the child's
 // effects are asked about on the child's behalf, as they happen and with the
 // real command on screen. Declaring the union here instead would ask one vague
 // question up front and answer for calls nobody has seen yet.
@@ -398,10 +422,14 @@ func (t *TaskTool) run(ctx, metadataCtx context.Context, def agent.Def, in taskI
 	if len(in.OutputSchema) > 0 {
 		systemPrompt += "\n\nYour final response must be only JSON that validates against this output schema:\n" + string(in.OutputSchema)
 	}
+	var policy permission.Policy
+	if t.policy != nil {
+		policy = t.policy()
+	}
 	r := runner.New(runner.Config{
 		Store: store, Inbox: env.Inbox, Provider: bp, Registry: env.Registry,
 		Permissions: perms, NextID: t.nextID,
-		System: func(string) string { return systemPrompt }, Gate: t.gate, Policy: t.policy,
+		System: func(string) string { return systemPrompt }, Gate: t.gate, Policy: policy,
 	})
 	finish := func() {
 		s := tool.TaskSettlement{Requests: int(usage.requests.Load()), Tokens: int(usage.tokens.Load()), Duration: time.Since(started), ToolCalls: counting.count(), Workspace: env.Workspace}

@@ -89,10 +89,10 @@ func TestTaskTool_PropagatesGateAndDenyDoesNotRunTool(t *testing.T) {
 	children := tool.NewRegistry(tool.NewOutputStore(0), bash)
 	defs := []agent.Def{{Name: "general", Tools: []string{"bash"}, Steps: 2, Description: "full", Prompt: "x"}}
 
-	tt := NewTaskTool(defs, prov, children, idCounter())
+	tt := newTaskTool(defs, prov, children, idCounter())
 
 	gate := &recordingGate{approved: false} // niega
-	tt.SetPermissionGate(gate, askBash{})
+	tt.setPermissionGate(gate, askBash{})
 
 	_, _ = tt.Execute(ctx, json.RawMessage(`{"subagent_type":"general","prompt":"borra todo"}`))
 
@@ -142,10 +142,10 @@ func TestTaskTool_PropagatedGateApprovalRunsTool(t *testing.T) {
 	children := tool.NewRegistry(tool.NewOutputStore(0), bash)
 	defs := []agent.Def{{Name: "general", Tools: []string{"bash"}, Steps: 2, Description: "full", Prompt: "x"}}
 
-	tt := NewTaskTool(defs, prov, children, idCounter())
+	tt := newTaskTool(defs, prov, children, idCounter())
 
 	gate := &recordingGate{approved: true} // aprueba
-	tt.SetPermissionGate(gate, askBash{})
+	tt.setPermissionGate(gate, askBash{})
 
 	res, err := tt.Execute(ctx, json.RawMessage(`{"subagent_type":"general","prompt":"lista"}`))
 	if err != nil {
@@ -228,14 +228,14 @@ func TestTaskTool_StoreDecoratorReceivesChildPermissionRequest(t *testing.T) {
 	children := tool.NewRegistry(tool.NewOutputStore(0), bash)
 	defs := []agent.Def{{Name: "general", Tools: []string{"bash"}, Steps: 2, Description: "full", Prompt: "x"}}
 
-	tt := NewTaskTool(defs, prov, children, idCounter())
+	tt := newTaskTool(defs, prov, children, idCounter())
 	gate := &recordingGate{approved: false} // niega: el hijo no corre bash y cierra
-	tt.SetPermissionGate(gate, askBash{})
+	tt.setPermissionGate(gate, askBash{})
 
 	var dec *recordingStore
 	var gotParent string
 	var gotCall string
-	tt.SetStoreDecorator(func(parentSessionID, parentCallID string, inner session.Store) session.Store {
+	tt.setStoreDecorator(func(parentSessionID, parentCallID string, inner session.Store) session.Store {
 		gotParent = parentSessionID
 		gotCall = parentCallID
 		dec = &recordingStore{Store: inner}
@@ -292,7 +292,7 @@ func TestTaskTool_NoGatePropagatedRunsToolUngated(t *testing.T) {
 	children := tool.NewRegistry(tool.NewOutputStore(0), bash)
 	defs := []agent.Def{{Name: "general", Tools: []string{"bash"}, Steps: 2, Description: "full", Prompt: "x"}}
 
-	tt := NewTaskTool(defs, prov, children, idCounter()) // sin SetPermissionGate
+	tt := newTaskTool(defs, prov, children, idCounter()) // sin SetPermissionGate
 
 	if _, err := tt.Execute(ctx, json.RawMessage(`{"subagent_type":"general","prompt":"lista"}`)); err != nil {
 		t.Fatalf("Execute error inesperado: %v", err)
