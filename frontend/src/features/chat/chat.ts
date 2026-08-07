@@ -11,7 +11,17 @@ import {
   PermissionMode,
   ReasoningEffort,
   SetReasoningEffort,
+  QueueLearning,
+  AuditLearning,
+  ApprovedLessons,
+  ApproveLearning,
+  RejectLearning,
+  CancelLearning,
+  RetryLearning,
+  SetLessonEnabled,
+  DeleteLesson,
 } from '../../../wailsjs/go/main/App'
+import type { learning } from '../../../wailsjs/go/models'
 import { EventsOn } from '../../../wailsjs/runtime/runtime'
 import type { Command } from './command'
 import type {
@@ -113,6 +123,10 @@ export const useChatStore = defineStore(
     const running = ref(false)
     const errorText = ref<string | null>(null)
     const statusText = ref<string | null>(null)
+    const learningAuditOpen = ref(false)
+    const learningRuns = ref<learning.Run[]>([])
+    const approvedLessons = ref<learning.Lesson[]>([])
+    const learningPending = ref(new Set<string>())
     // Modo de envio: 'normal' manda prompts directos; 'plan' pide al agente que
     // planifique antes de ejecutar. `plan` guarda el plan vigente que la tool
     // present_plan abre a pantalla completa (null = sin overlay de plan).
@@ -486,6 +500,26 @@ export const useChatStore = defineStore(
     async function send(text: string): Promise<void> {
       const trimmed = text.trim()
       if (!trimmed) return
+      if (trimmed === '/learn') {
+        try {
+          const run = await QueueLearning(sessionID.value)
+          errorText.value = null
+          statusText.value = `Learning run ${run.id.slice(0, 8)} queued`
+        } catch (error) {
+          applyError(error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+      if (trimmed === '/learned') {
+        try {
+          await refreshLearning()
+          learningAuditOpen.value = true
+          errorText.value = null
+        } catch (error) {
+          applyError(error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
       if (
         trimmed === '/mode' ||
         trimmed === '/mode:auto-accept' ||
@@ -542,6 +576,47 @@ export const useChatStore = defineStore(
       // y reordenarse en la sidebar.
       await loadSessions()
     }
+
+    async function refreshLearning(): Promise<void> {
+      const [runs, lessons] = await Promise.all([
+        AuditLearning(),
+        ApprovedLessons(),
+      ])
+      learningRuns.value = runs
+      approvedLessons.value = lessons
+    }
+
+    async function learningAction(
+      key: string,
+      action: () => Promise<unknown>,
+    ): Promise<void> {
+      if (learningPending.value.has(key)) return
+      learningPending.value = new Set(learningPending.value).add(key)
+      try {
+        await action()
+        await refreshLearning()
+        statusText.value = 'Learning audit updated'
+      } catch (error) {
+        applyError(error instanceof Error ? error.message : String(error))
+      } finally {
+        const next = new Set(learningPending.value)
+        next.delete(key)
+        learningPending.value = next
+      }
+    }
+
+    const approveLearning = (id: string, candidate: learning.Candidate) =>
+      learningAction(`approve:${id}`, () => ApproveLearning(id, candidate))
+    const rejectLearning = (id: string) =>
+      learningAction(`reject:${id}`, () => RejectLearning(id))
+    const cancelLearning = (id: string) =>
+      learningAction(`cancel:${id}`, () => CancelLearning(id))
+    const retryLearning = (id: string) =>
+      learningAction(`retry:${id}`, () => RetryLearning(id))
+    const toggleLesson = (id: string, enabled: boolean) =>
+      learningAction(`lesson:${id}`, () => SetLessonEnabled(id, enabled))
+    const deleteLesson = (id: string) =>
+      learningAction(`delete:${id}`, () => DeleteLesson(id))
 
     // toggleMode alterna entre envio normal y modo plan.
     function toggleMode(): void {
@@ -620,6 +695,9 @@ export const useChatStore = defineStore(
         // El backend lo emite cuando OTRO proceso (la TUI) escribio sesiones en
         // el SQLite compartido; re-pedir ListSessions refresca la sidebar.
         EventsOn('sessions:changed', () => void loadSessions()),
+        EventsOn('learning:changed', () => {
+          if (learningAuditOpen.value) void refreshLearning()
+        }),
       )
     }
 
@@ -633,6 +711,17 @@ export const useChatStore = defineStore(
       running,
       errorText,
       statusText,
+      learningAuditOpen,
+      learningRuns,
+      approvedLessons,
+      learningPending,
+      refreshLearning,
+      approveLearning,
+      rejectLearning,
+      cancelLearning,
+      retryLearning,
+      toggleLesson,
+      deleteLesson,
       sessions,
       workspace,
       mode,

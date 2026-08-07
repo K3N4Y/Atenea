@@ -12,6 +12,9 @@ import (
 // shutdown (OnShutdown de Wails) mata todos los shells vivos al cerrar la app,
 // para no dejar procesos colgados.
 func (a *App) shutdown(_ context.Context) {
+	if a.learning != nil {
+		a.learning.Close()
+	}
 	a.term.CloseAll()
 	a.workspace.Close()
 }

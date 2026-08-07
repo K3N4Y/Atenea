@@ -925,15 +925,15 @@ describe('chat store: acciones sobre los bindings', () => {
     const secondSessionID = store.sessionID
 
     expect(secondSessionID).not.toBe(firstSessionID)
-    // Cada subscribe() registra 3 canales (sesion, error y el global
-    // sessions:changed), asi que el segundo subscribe arranca en la llamada 4.
+    // Cada subscribe() registra 4 canales (sesion, error y los globales
+    // sessions:changed/learning:changed), asi que el segundo arranca en la 5.
     expect(EventsOn).toHaveBeenNthCalledWith(
-      4,
+      5,
       `session:${secondSessionID}`,
       expect.any(Function),
     )
     expect(EventsOn).toHaveBeenNthCalledWith(
-      5,
+      6,
       `session:${secondSessionID}:error`,
       expect.any(Function),
     )

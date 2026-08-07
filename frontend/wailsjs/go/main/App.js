@@ -10,6 +10,30 @@ export function ActiveProvider() {
   return window['go']['main']['App']['ActiveProvider']();
 }
 
+export function ApproveLearning(arg1, arg2) {
+  return window['go']['main']['App']['ApproveLearning'](arg1, arg2);
+}
+
+export function ApprovedLessons() {
+  return window['go']['main']['App']['ApprovedLessons']();
+}
+
+export function AuditLearning() {
+  return window['go']['main']['App']['AuditLearning']();
+}
+
+export function AwaitProviderLogin(arg1) {
+  return window['go']['main']['App']['AwaitProviderLogin'](arg1);
+}
+
+export function CancelLearning(arg1) {
+  return window['go']['main']['App']['CancelLearning'](arg1);
+}
+
+export function CancelProviderLogin(arg1) {
+  return window['go']['main']['App']['CancelProviderLogin'](arg1);
+}
+
 export function ClosePty(arg1) {
   return window['go']['main']['App']['ClosePty'](arg1);
 }
@@ -26,16 +50,12 @@ export function ConnectProvider(arg1, arg2) {
   return window['go']['main']['App']['ConnectProvider'](arg1, arg2);
 }
 
-export function AwaitProviderLogin(arg1) {
-  return window['go']['main']['App']['AwaitProviderLogin'](arg1);
-}
-
-export function CancelProviderLogin(arg1) {
-  return window['go']['main']['App']['CancelProviderLogin'](arg1);
-}
-
 export function DeclareEndpoint(arg1, arg2, arg3) {
   return window['go']['main']['App']['DeclareEndpoint'](arg1, arg2, arg3);
+}
+
+export function DeleteLesson(arg1) {
+  return window['go']['main']['App']['DeleteLesson'](arg1);
 }
 
 export function DeleteSession(arg1) {
@@ -70,18 +90,6 @@ export function ListCommands() {
   return window['go']['main']['App']['ListCommands']();
 }
 
-export function PermissionMode(arg1, arg2) {
-  return window['go']['main']['App']['PermissionMode'](arg1, arg2);
-}
-
-export function ReasoningEffort() {
-  return window['go']['main']['App']['ReasoningEffort']();
-}
-
-export function SetReasoningEffort(arg1) {
-  return window['go']['main']['App']['SetReasoningEffort'](arg1);
-}
-
 export function ListMCPs() {
   return window['go']['main']['App']['ListMCPs']();
 }
@@ -102,16 +110,28 @@ export function OpenLoginPage(arg1) {
   return window['go']['main']['App']['OpenLoginPage'](arg1);
 }
 
+export function PermissionMode(arg1, arg2) {
+  return window['go']['main']['App']['PermissionMode'](arg1, arg2);
+}
+
 export function ProviderCatalog() {
   return window['go']['main']['App']['ProviderCatalog']();
 }
 
-export function StartProviderLogin(arg1) {
-  return window['go']['main']['App']['StartProviderLogin'](arg1);
+export function QueueLearning(arg1) {
+  return window['go']['main']['App']['QueueLearning'](arg1);
+}
+
+export function ReasoningEffort() {
+  return window['go']['main']['App']['ReasoningEffort']();
 }
 
 export function RefreshModels() {
   return window['go']['main']['App']['RefreshModels']();
+}
+
+export function RejectLearning(arg1) {
+  return window['go']['main']['App']['RejectLearning'](arg1);
 }
 
 export function RemoveMCPConfig(arg1) {
@@ -124,6 +144,10 @@ export function ResizePty(arg1, arg2, arg3) {
 
 export function ResolveToolPermission(arg1, arg2, arg3) {
   return window['go']['main']['App']['ResolveToolPermission'](arg1, arg2, arg3);
+}
+
+export function RetryLearning(arg1) {
+  return window['go']['main']['App']['RetryLearning'](arg1);
 }
 
 export function SaveMCPConfig(arg1) {
@@ -150,8 +174,20 @@ export function SessionHistory(arg1) {
   return window['go']['main']['App']['SessionHistory'](arg1);
 }
 
+export function SetLessonEnabled(arg1, arg2) {
+  return window['go']['main']['App']['SetLessonEnabled'](arg1, arg2);
+}
+
+export function SetReasoningEffort(arg1) {
+  return window['go']['main']['App']['SetReasoningEffort'](arg1);
+}
+
 export function SetWorkspace(arg1) {
   return window['go']['main']['App']['SetWorkspace'](arg1);
+}
+
+export function StartProviderLogin(arg1) {
+  return window['go']['main']['App']['StartProviderLogin'](arg1);
 }
 
 export function StartPty(arg1, arg2, arg3) {

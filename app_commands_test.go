@@ -75,10 +75,10 @@ func TestApp_ListCommandsReturnsRegisteredCommands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListCommands: %v", err)
 	}
-	if len(cmds) != 6 || cmds[0].Name != "abc" || cmds[1].Name != "commit" || cmds[2].Name != "mode" || cmds[3].Name != "mode:auto-accept" || cmds[4].Name != "mode:ask" || cmds[5].Name != "reasoning" {
-		t.Fatalf("ListCommands = %+v, want [abc commit mode mode:auto-accept mode:ask reasoning]", cmds)
+	if len(cmds) != 8 || cmds[0].Name != "abc" || cmds[1].Name != "commit" || cmds[2].Name != "learn" || cmds[3].Name != "learned" || cmds[4].Name != "mode" || cmds[5].Name != "mode:auto-accept" || cmds[6].Name != "mode:ask" || cmds[7].Name != "reasoning" {
+		t.Fatalf("ListCommands = %+v, want [abc commit learn learned mode mode:auto-accept mode:ask reasoning]", cmds)
 	}
-	if got := cmds[5].Description; got != llm.ReasoningCommandDescription {
+	if got := cmds[7].Description; got != llm.ReasoningCommandDescription {
 		t.Fatalf("reasoning description = %q, want %q", got, llm.ReasoningCommandDescription)
 	}
 }

@@ -69,10 +69,12 @@ function clearLegacyConfigs(): void {
 // como la pestaña MCPs de Settings.
 export interface MCPServer {
   name: string
+  type?: string
   command: string
   args: string[]
   env?: Record<string, string>
   cwd?: string
+  url?: string
   connected: boolean
   tools: number
 }

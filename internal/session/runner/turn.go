@@ -14,6 +14,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/permission"
 	"github.com/K3N4Y/atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/session/prompt"
 	"github.com/K3N4Y/atenea/internal/tool"
 )
 
@@ -131,6 +132,16 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string, final boo
 	}
 	if sys != nil {
 		req.System = sys(model)
+	}
+	if r.lessonSection != nil {
+		latest := ""
+		for i := len(msgs) - 1; i >= 0; i-- {
+			if msgs[i].Role == session.RoleUser {
+				latest = msgs[i].Text
+				break
+			}
+		}
+		req.System = prompt.InsertLessons(req.System, r.lessonSection(sessionID, latest))
 	}
 	if final {
 		req.Tools = nil

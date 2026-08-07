@@ -4,6 +4,8 @@ export namespace command {
 	    Name: string;
 	    Description: string;
 	    Template: string;
+	    BuiltIn: boolean;
+	    Skill: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Command(source);
@@ -14,7 +16,237 @@ export namespace command {
 	        this.Name = source["Name"];
 	        this.Description = source["Description"];
 	        this.Template = source["Template"];
+	        this.BuiltIn = source["BuiltIn"];
+	        this.Skill = source["Skill"];
 	    }
+	}
+
+}
+
+export namespace learning {
+	
+	export class Evidence {
+	    seq: number;
+	    summary: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Evidence(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.seq = source["seq"];
+	        this.summary = source["summary"];
+	    }
+	}
+	export class Candidate {
+	    statement: string;
+	    scope: string;
+	    exceptions: string;
+	    evidence: Evidence[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Candidate(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.statement = source["statement"];
+	        this.scope = source["scope"];
+	        this.exceptions = source["exceptions"];
+	        this.evidence = this.convertValues(source["evidence"], Evidence);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class InputMessage {
+	    seq: number;
+	    role: string;
+	    text: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new InputMessage(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.seq = source["seq"];
+	        this.role = source["role"];
+	        this.text = source["text"];
+	    }
+	}
+	export class Input {
+	    messages: InputMessage[];
+	    truncated: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new Input(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.messages = this.convertValues(source["messages"], InputMessage);
+	        this.truncated = source["truncated"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class Lesson {
+	    id: string;
+	    workspace: string;
+	    runID: string;
+	    candidate: Candidate;
+	    enabled: boolean;
+	    deleted: boolean;
+	    // Go type: time
+	    createdAt: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new Lesson(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.workspace = source["workspace"];
+	        this.runID = source["runID"];
+	        this.candidate = this.convertValues(source["candidate"], Candidate);
+	        this.enabled = source["enabled"];
+	        this.deleted = source["deleted"];
+	        this.createdAt = this.convertValues(source["createdAt"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class Usage {
+	    inputTokens: number;
+	    outputTokens: number;
+	    reasoningTokens: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Usage(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.inputTokens = source["inputTokens"];
+	        this.outputTokens = source["outputTokens"];
+	        this.reasoningTokens = source["reasoningTokens"];
+	    }
+	}
+	export class Run {
+	    id: string;
+	    workspace: string;
+	    sessionID: string;
+	    cutSeq: number;
+	    status: string;
+	    input: Input;
+	    candidate?: Candidate;
+	    noCandidateReason?: string;
+	    providerID: string;
+	    model: string;
+	    usage: Usage;
+	    error?: string;
+	    // Go type: time
+	    createdAt: any;
+	    // Go type: time
+	    startedAt?: any;
+	    // Go type: time
+	    finishedAt?: any;
+	    // Go type: time
+	    decidedAt?: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new Run(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.workspace = source["workspace"];
+	        this.sessionID = source["sessionID"];
+	        this.cutSeq = source["cutSeq"];
+	        this.status = source["status"];
+	        this.input = this.convertValues(source["input"], Input);
+	        this.candidate = this.convertValues(source["candidate"], Candidate);
+	        this.noCandidateReason = source["noCandidateReason"];
+	        this.providerID = source["providerID"];
+	        this.model = source["model"];
+	        this.usage = this.convertValues(source["usage"], Usage);
+	        this.error = source["error"];
+	        this.createdAt = this.convertValues(source["createdAt"], null);
+	        this.startedAt = this.convertValues(source["startedAt"], null);
+	        this.finishedAt = this.convertValues(source["finishedAt"], null);
+	        this.decidedAt = this.convertValues(source["decidedAt"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 
 }
@@ -96,6 +328,12 @@ export namespace mcpclient {
 	    env?: Record<string, string>;
 	    cwd?: string;
 	    url?: string;
+	    sensitivity?: string;
+	    allowedTools?: string[];
+	    allowSampling?: boolean;
+	    autoConnect?: boolean;
+	    connectTimeoutMs?: number;
+	    callTimeoutMs?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new ServerConfig(source);
@@ -110,6 +348,12 @@ export namespace mcpclient {
 	        this.env = source["env"];
 	        this.cwd = source["cwd"];
 	        this.url = source["url"];
+	        this.sensitivity = source["sensitivity"];
+	        this.allowedTools = source["allowedTools"];
+	        this.allowSampling = source["allowSampling"];
+	        this.autoConnect = source["autoConnect"];
+	        this.connectTimeoutMs = source["connectTimeoutMs"];
+	        this.callTimeoutMs = source["callTimeoutMs"];
 	    }
 	}
 	export class ServerStatus {
@@ -120,8 +364,16 @@ export namespace mcpclient {
 	    env?: Record<string, string>;
 	    cwd?: string;
 	    url?: string;
+	    sensitivity?: string;
+	    allowedTools?: string[];
+	    allowSampling?: boolean;
+	    autoConnect?: boolean;
+	    connectTimeoutMs?: number;
+	    callTimeoutMs?: number;
 	    connected: boolean;
 	    tools: number;
+	    health: string;
+	    error?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ServerStatus(source);
@@ -136,8 +388,16 @@ export namespace mcpclient {
 	        this.env = source["env"];
 	        this.cwd = source["cwd"];
 	        this.url = source["url"];
+	        this.sensitivity = source["sensitivity"];
+	        this.allowedTools = source["allowedTools"];
+	        this.allowSampling = source["allowSampling"];
+	        this.autoConnect = source["autoConnect"];
+	        this.connectTimeoutMs = source["connectTimeoutMs"];
+	        this.callTimeoutMs = source["callTimeoutMs"];
 	        this.connected = source["connected"];
 	        this.tools = source["tools"];
+	        this.health = source["health"];
+	        this.error = source["error"];
 	    }
 	}
 
@@ -238,6 +498,20 @@ export namespace session {
 		}
 	}
 	
+	export class Image {
+	    MediaType: string;
+	    Data: number[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Image(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.MediaType = source["MediaType"];
+	        this.Data = source["Data"];
+	    }
+	}
 	export class ToolCall {
 	    ID: string;
 	    Name: string;
@@ -258,6 +532,7 @@ export namespace session {
 	    ID: string;
 	    Role: string;
 	    Text: string;
+	    Images: Image[];
 	    ToolCalls: ToolCall[];
 	    ToolCallID: string;
 	    IsError: boolean;
@@ -272,6 +547,7 @@ export namespace session {
 	        this.ID = source["ID"];
 	        this.Role = source["Role"];
 	        this.Text = source["Text"];
+	        this.Images = this.convertValues(source["Images"], Image);
 	        this.ToolCalls = this.convertValues(source["ToolCalls"], ToolCall);
 	        this.ToolCallID = source["ToolCallID"];
 	        this.IsError = source["IsError"];
@@ -299,8 +575,10 @@ export namespace session {
 	export class PromptCheckpoint {
 	    ID: string;
 	    Prompt: string;
+	    PromptImages: Image[];
 	    BeforeTree: string;
 	    AfterTree: string;
+	    OriginCallID: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new PromptCheckpoint(source);
@@ -310,9 +588,29 @@ export namespace session {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ID = source["ID"];
 	        this.Prompt = source["Prompt"];
+	        this.PromptImages = this.convertValues(source["PromptImages"], Image);
 	        this.BeforeTree = source["BeforeTree"];
 	        this.AfterTree = source["AfterTree"];
+	        this.OriginCallID = source["OriginCallID"];
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class Usage {
 	    InputTokens: number;
@@ -348,6 +646,7 @@ export namespace session {
 	    Usage?: Usage;
 	    Error: string;
 	    Diff: string;
+	    Attrs: Record<string, string>;
 	    Compaction?: CompactionCheckpoint;
 	    Checkpoint?: PromptCheckpoint;
 	
@@ -368,6 +667,7 @@ export namespace session {
 	        this.Usage = this.convertValues(source["Usage"], Usage);
 	        this.Error = source["Error"];
 	        this.Diff = source["Diff"];
+	        this.Attrs = source["Attrs"];
 	        this.Compaction = this.convertValues(source["Compaction"], CompactionCheckpoint);
 	        this.Checkpoint = this.convertValues(source["Checkpoint"], PromptCheckpoint);
 	    }
@@ -486,3 +786,4 @@ export namespace workspacegit {
 	}
 
 }
+

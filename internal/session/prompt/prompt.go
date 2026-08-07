@@ -36,6 +36,7 @@ type Context struct {
 	Instructions     string
 	Skills           string
 	ModeInstructions string
+	ApprovedLessons  string
 	Env              Env
 }
 
@@ -52,6 +53,7 @@ const (
 	SectionOrderInstructions
 	SectionOrderSkills
 	SectionOrderMode
+	SectionOrderLessons
 	SectionOrderEnvironment
 )
 
@@ -68,17 +70,42 @@ func Build(modelID string, env Env, instructions, skills string) string {
 	return assemble(Select(modelID), env, instructions, skills, "")
 }
 
+// BuildWithLessons places preselected user-approved guidance after project
+// context and before the volatile environment section. Selection remains the
+// caller's deterministic, provider-free responsibility.
+func BuildWithLessons(modelID string, env Env, instructions, skills, lessons string) string {
+	return assembleWithLessons(Select(modelID), env, instructions, skills, "", lessons)
+}
+
+// InsertLessons augments a prompt assembled by this package while preserving
+// the stable placement before environment data.
+func InsertLessons(system, lessons string) string {
+	if lessons == "" {
+		return system
+	}
+	marker := "\n\nCurrent working directory:"
+	if at := strings.LastIndex(system, marker); at >= 0 {
+		return system[:at] + "\n\n" + lessons + system[at:]
+	}
+	return system + "\n\n" + lessons
+}
+
 // BuildLocal assembles the dedicated tool-calling prompt for local endpoints.
 func BuildLocal(env Env, instructions, skills string) string {
 	return assemble(localPrompt, env, instructions, skills, "")
 }
 
 func assemble(base string, env Env, instructions, skills, modeInstructions string) string {
+	return assembleWithLessons(base, env, instructions, skills, modeInstructions, "")
+}
+
+func assembleWithLessons(base string, env Env, instructions, skills, modeInstructions, lessons string) string {
 	return Assemble(Context{
 		Base:             base,
 		Instructions:     instructions,
 		Skills:           skills,
 		ModeInstructions: modeInstructions,
+		ApprovedLessons:  lessons,
 		Env:              env,
 	}, StandardSections())
 }
@@ -91,6 +118,7 @@ func StandardSections() []PromptSection {
 		{Order: SectionOrderInstructions, Name: "instructions", Render: func(ctx Context) string { return ctx.Instructions }},
 		{Order: SectionOrderSkills, Name: "skills", Render: func(ctx Context) string { return ctx.Skills }},
 		{Order: SectionOrderMode, Name: "mode", Render: func(ctx Context) string { return ctx.ModeInstructions }},
+		{Order: SectionOrderLessons, Name: "approved-lessons", Render: func(ctx Context) string { return ctx.ApprovedLessons }},
 		{Order: SectionOrderEnvironment, Name: "environment", Render: func(ctx Context) string { return renderEnv(ctx.Env) }},
 	}
 }

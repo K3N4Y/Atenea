@@ -36,8 +36,9 @@ type Runner struct {
 	// planSystem and planPerms are the plan-mode counterparts of system/perms,
 	// used when mode reports ModePlan. planSystem nil => fall back to system;
 	// planPerms nil => fall back to perms.
-	planSystem func(model string) string
-	planPerms  tool.Permissions
+	planSystem    func(model string) string
+	planPerms     tool.Permissions
+	lessonSection func(sessionID, latestPrompt string) string
 
 	// gate resolves user decisions after the runner has durably published the
 	// permission request. Classification belongs exclusively to the registry.
@@ -81,15 +82,16 @@ type Config struct {
 	Permissions tool.Permissions
 	NextID      func() string
 
-	Compactor  Compactor
-	System     func(model string) string
-	Reasoning  func() *llm.ReasoningPreference
-	Preview    func(tool.PreviewEvent)
-	Gate       permission.Gate
-	Policy     permission.Policy
-	Mode       func(sessionID string) session.Mode
-	PlanSystem func(model string) string
-	PlanPerms  tool.Permissions
+	Compactor     Compactor
+	System        func(model string) string
+	Reasoning     func() *llm.ReasoningPreference
+	Preview       func(tool.PreviewEvent)
+	Gate          permission.Gate
+	Policy        permission.Policy
+	Mode          func(sessionID string) session.Mode
+	PlanSystem    func(model string) string
+	PlanPerms     tool.Permissions
+	LessonSection func(sessionID, latestPrompt string) string
 }
 
 func (r *Runner) setCompactor(compactor Compactor) {
@@ -111,6 +113,7 @@ func New(cfg Config) *Runner {
 		compactor: cfg.Compactor, system: cfg.System, reasoning: cfg.Reasoning,
 		preview: cfg.Preview, gate: cfg.Gate, mode: cfg.Mode,
 		planSystem: cfg.PlanSystem, planPerms: cfg.PlanPerms,
+		lessonSection:        cfg.LessonSection,
 		logf:                 log.Printf,
 		transientRetryDelays: defaultTransientRetryDelays,
 	}

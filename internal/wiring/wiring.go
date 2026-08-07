@@ -88,8 +88,9 @@ type Config struct {
 	// next turn without re-assembling anything. nil means never local.
 	// Reasoning is read for every turn so both hosts share the same preference
 	// without rebuilding the workspace.
-	Reasoning   func() *llm.ReasoningPreference
-	LocalPrompt func() bool
+	Reasoning     func() *llm.ReasoningPreference
+	LocalPrompt   func() bool
+	LessonSection func(sessionID, latestPrompt string) string
 	// NextID generates the runner's assistantMessageIDs (see NewIDGen).
 	NextID func() string
 	// Mode is the per-session mode hook (normal/plan) the runner consults every
@@ -445,6 +446,7 @@ func Build(cfg Config) Built {
 		System:    normalPrompt, Reasoning: cfg.Reasoning, Preview: preview,
 		Gate: cfg.Gate, Policy: policy, Mode: cfg.Mode,
 		PlanSystem: planPrompt, PlanPerms: cfg.PlanMode.permissions(),
+		LessonSection: cfg.LessonSection,
 	})
 
 	return Built{Runner: r, Glob: glob, Commands: commands, Tools: registry, Policy: policy, close: func() {

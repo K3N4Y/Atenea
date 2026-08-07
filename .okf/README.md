@@ -30,6 +30,7 @@ The project-wide vocabulary lives in the root [domain glossary](../CONTEXT.md).
 - [Composition root](architecture/composition-root.md)
 - [Continuous integration and automated review](architecture/continuous-integration.md)
 - [Durable event stream](architecture/event-stream.md)
+- [Desktop learning](architecture/desktop-learning.md)
 - [Filesystem and compatibility contract](architecture/filesystem-compatibility.md)
 - [CLI distribution](architecture/distribution.md)
 - [Headless CLI](architecture/headless-cli.md)

@@ -61,6 +61,7 @@ const (
 	providersFile   = "providers.json"
 	modelsCacheFile = "models-cache.json"
 	mcpConfigFile   = "mcp.json"
+	learningFile    = "learning.json"
 )
 
 // ConfigDir returns the directory for user-specific configuration.
@@ -112,6 +113,15 @@ func DB() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, databaseFile), nil
+}
+
+// Learning returns the private durable learning audit path.
+func Learning() (string, error) {
+	dir, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, learningFile), nil
 }
 
 // Checkpoints returns the directory for durable workspace checkpoints.

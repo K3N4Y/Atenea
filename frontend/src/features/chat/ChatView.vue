@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { PhSidebarSimple, PhWrench, PhPlugs } from '@phosphor-icons/vue'
 import AppSidebar from '../sessions/AppSidebar.vue'
 import DevToolsPanel from '../../components/DevToolsPanel.vue'
@@ -15,6 +15,7 @@ import TodoList from './TodoList.vue'
 import ContextUsedBar from './ContextUsedBar.vue'
 import DevEventPanel from '../../components/DevEventPanel.vue'
 import DiffScreen from '../git/DiffScreen.vue'
+import LearningAudit from '../learning/LearningAudit.vue'
 import { useChatStore } from './chat'
 import { useGitStore } from '../git/git'
 import { knownWorkspaces } from '../workspace/workspaces'
@@ -48,6 +49,13 @@ const mcpMenu = ref<{
 function toggleMcpMenu(e: MouseEvent) {
   if (mcpMenu.value?.isOpen) mcpMenu.value.close()
   else mcpMenu.value?.open(e)
+}
+async function closeLearningAudit() {
+  chat.learningAuditOpen = false
+  await nextTick()
+  document
+    .querySelector<HTMLTextAreaElement>('[aria-label="Message atenea"]')
+    ?.focus()
 }
 
 // Un chat nuevo e inactivo (sin mensajes, sin plan, sin corrida en vuelo) muestra
@@ -290,6 +298,20 @@ onUnmounted(() => chat.teardown())
           @minimize="chat.togglePlanExpanded"
         />
       </Transition>
+
+      <LearningAudit
+        v-if="chat.learningAuditOpen"
+        :runs="chat.learningRuns"
+        :lessons="chat.approvedLessons"
+        :pending="chat.learningPending"
+        @close="closeLearningAudit"
+        @approve="chat.approveLearning"
+        @reject="chat.rejectLearning"
+        @cancel="chat.cancelLearning"
+        @retry="chat.retryLearning"
+        @toggle-lesson="chat.toggleLesson"
+        @delete-lesson="chat.deleteLesson"
+      />
 
       <!-- Pantalla de diff (estilo VSCode): overlay sobre la columna del chat al
            seleccionar un archivo en el panel de git. No tapa la sidebar ni el

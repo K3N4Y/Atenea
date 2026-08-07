@@ -31,9 +31,10 @@ type Config struct {
 	Provider llm.Provider
 	// LocalPrompt is the per-turn question wiring asks about that selection; see
 	// wiring.Config.LocalPrompt.
-	LocalPrompt func() bool
-	Store       session.Store
-	Bus         *event.Bus
+	LocalPrompt   func() bool
+	LessonSection func(workspace, latestPrompt string) string
+	Store         session.Store
+	Bus           *event.Bus
 	// Sitting is the per-process agent state this manager rewires into every build
 	// rather than rebuilding: the permission gate, the prompt inbox, the read
 	// snapshots and the turn lifecycle it reconfigures. See host.Sitting.
@@ -43,27 +44,29 @@ type Config struct {
 // Manager owns workspace and MCP lifecycle state. Admit serializes prompt
 // admission with every rebuild, so a prompt always sees one complete wiring.
 type Manager struct {
-	lifecycleMu sync.Mutex
-	mu          sync.Mutex
-	root        string
-	glob        *tool.GlobTool
-	provider    llm.Provider
-	localPrompt func() bool
-	store       session.Store
-	bus         *event.Bus
-	sitting     *host.Sitting
-	mcp         *mcpclient.Manager
+	lifecycleMu   sync.Mutex
+	mu            sync.Mutex
+	root          string
+	glob          *tool.GlobTool
+	provider      llm.Provider
+	localPrompt   func() bool
+	lessonSection func(workspace, latestPrompt string) string
+	store         session.Store
+	bus           *event.Bus
+	sitting       *host.Sitting
+	mcp           *mcpclient.Manager
 }
 
 // New builds and publishes the initial workspace wiring.
 func New(cfg Config) *Manager {
 	m := &Manager{
-		provider:    cfg.Provider,
-		localPrompt: cfg.LocalPrompt,
-		store:       cfg.Store,
-		bus:         cfg.Bus,
-		sitting:     cfg.Sitting,
-		mcp:         mcpclient.NewManagerWithRuntime(cfg.Root, cfg.Identity, cfg.Provider, nil),
+		provider:      cfg.Provider,
+		localPrompt:   cfg.LocalPrompt,
+		lessonSection: cfg.LessonSection,
+		store:         cfg.Store,
+		bus:           cfg.Bus,
+		sitting:       cfg.Sitting,
+		mcp:           mcpclient.NewManagerWithRuntime(cfg.Root, cfg.Identity, cfg.Provider, nil),
 	}
 	m.lifecycleMu.Lock()
 	m.rebuildLocked(cfg.Root)
@@ -196,6 +199,12 @@ func (m *Manager) rebuildLocked(root string) {
 		Reasoning: func() *llm.ReasoningPreference { return m.sitting.Reasoning.Get() },
 		NextID:    wiring.NewIDGen(), Mode: m.sitting.Agent.Mode, MCPTools: m.mcp.Tools(),
 		PersistentGrants: m.mcp.PermissionRules(),
+		LessonSection: func(_ string, latestPrompt string) string {
+			if m.lessonSection == nil {
+				return ""
+			}
+			return m.lessonSection(root, latestPrompt)
+		},
 	})
 	m.mu.Lock()
 	m.root = root

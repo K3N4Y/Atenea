@@ -12,8 +12,10 @@ import (
 	"github.com/K3N4Y/atenea/internal/command"
 	"github.com/K3N4Y/atenea/internal/event"
 	"github.com/K3N4Y/atenea/internal/host"
+	"github.com/K3N4Y/atenea/internal/learning"
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/mcpclient"
+	"github.com/K3N4Y/atenea/internal/paths"
 	"github.com/K3N4Y/atenea/internal/permission"
 	"github.com/K3N4Y/atenea/internal/providerconfig"
 	"github.com/K3N4Y/atenea/internal/session"
@@ -77,15 +79,17 @@ type ActiveProvider struct {
 // from the frontend and forwards the durable log over the Bus. The loop's logic
 // does not change.
 type App struct {
-	ctx       context.Context // Wails ctx, set by startup. Only the real EmitFunc reads it.
-	inbox     session.Inbox
-	bus       *event.Bus
-	emit      event.EmitFunc          // the same boundary the bus uses; the Terminal tab pushes its output through it
-	gate      *permission.MemoryGate  // ask-before-run: the UI resolves via ResolveToolPermission
-	agent     *agent.Service          // the headless turn lifecycle shared with the TUI
-	providers *providerconfig.Service // the same catalog, credentials and selection the TUI holds
-	workspace *wailsworkspace.Manager // root, wiring, glob and MCP published as one serialized configuration
-	sessions  *wailssession.Manager   // durable history, initial metadata, titles and deletion
+	ctx             context.Context // Wails ctx, set by startup. Only the real EmitFunc reads it.
+	inbox           session.Inbox
+	bus             *event.Bus
+	emit            event.EmitFunc          // the same boundary the bus uses; the Terminal tab pushes its output through it
+	gate            *permission.MemoryGate  // ask-before-run: the UI resolves via ResolveToolPermission
+	agent           *agent.Service          // the headless turn lifecycle shared with the TUI
+	providers       *providerconfig.Service // the same catalog, credentials and selection the TUI holds
+	workspace       *wailsworkspace.Manager // root, wiring, glob and MCP published as one serialized configuration
+	sessions        *wailssession.Manager   // durable history, initial metadata, titles and deletion
+	learning        *learning.Service
+	learningInitErr error
 
 	term *terminal.Manager // the Terminal tabs: several live pty sessions, one per id
 }
@@ -108,6 +112,11 @@ func newAppWithHost(h *host.Host, emit event.EmitFunc) *App {
 	a.bus = event.NewBus(emit)
 	a.term = terminal.NewManager()
 	emitting := event.NewEmittingStore(h.Store, a.bus)
+	a.learning = learning.NewService(context.Background(), learning.NewMemoryStore(), h.Store, h.Providers.Provider(), func(workspace string) {
+		if a.emit != nil {
+			a.emit("learning:changed", workspace)
+		}
+	})
 	a.workspace = wailsworkspace.New(wailsworkspace.Config{
 		Root: h.Root, Identity: h.Identity,
 		// The switchable handle is stable: choosing another model changes what it
@@ -116,6 +125,13 @@ func newAppWithHost(h *host.Host, emit event.EmitFunc) *App {
 		Provider:    a.providers.Provider(),
 		LocalPrompt: func() bool { return a.providers.Active().LocalModels },
 		Store:       emitting, Bus: a.bus, Sitting: h.Sitting,
+		LessonSection: func(workspace, latestPrompt string) string {
+			lessons, err := a.learning.Lessons(context.Background(), workspace)
+			if err != nil {
+				return ""
+			}
+			return learning.RenderLessons(learning.Select(latestPrompt, lessons))
+		},
 	})
 	a.sessions = wailssession.New(wailssession.Config{
 		Store: emitting, Root: a.workspace.Root, Forget: a.agent.Forget,
@@ -133,6 +149,17 @@ func NewApp(h *host.Host) *App {
 		runtime.EventsEmit(a.ctx, name, data...)
 	}
 	a = newAppWithHost(h, emit)
+	// Production replaces the in-memory test store with private durable state.
+	if path, err := paths.Learning(); err == nil {
+		if store, openErr := learning.OpenFileStore(path); openErr == nil {
+			a.learning.Close()
+			a.learning = learning.NewService(context.Background(), store, h.Store, h.Providers.Provider(), func(workspace string) { emit("learning:changed", workspace) })
+		} else {
+			a.learningInitErr = fmt.Errorf("open durable learning store: %w", openErr)
+		}
+	} else {
+		a.learningInitErr = fmt.Errorf("resolve durable learning store: %w", err)
+	}
 	// Auto-title: the first message of each session is summarized with the real
 	// provider. Production only; tests leave titler nil so a send does not double the
 	// calls to the provider. It reads the provider and model in force (they can change
@@ -349,6 +376,9 @@ func (a *App) currentModel() string { return a.providers.Active().Model }
 // closes, which shuts the watcher down.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	if err := a.learning.Recover(context.Background()); err != nil {
+		a.learningInitErr = fmt.Errorf("recover durable learning runs: %w", err)
+	}
 	a.sessions.Watch(ctx)
 }
 
@@ -361,6 +391,49 @@ func (a *App) SendPrompt(sessionID, text string) error {
 		_, err := a.agent.Send(sessionID, session.Prompt{Text: text}, a.turnHooks(sessionID, turn))
 		return err
 	})
+}
+
+// QueueLearning captures a stable durable session cut and returns before the
+// independent provider request completes.
+func (a *App) QueueLearning(sessionID string) (learning.Run, error) {
+	if a.learningInitErr != nil {
+		return learning.Run{}, a.learningInitErr
+	}
+	return a.learning.Enqueue(context.Background(), a.workspace.Root(), sessionID)
+}
+
+func (a *App) AuditLearning() ([]learning.Run, error) {
+	if a.learningInitErr != nil {
+		return nil, a.learningInitErr
+	}
+	return a.learning.Audit(context.Background(), a.workspace.Root())
+}
+
+func (a *App) ApprovedLessons() ([]learning.Lesson, error) {
+	if a.learningInitErr != nil {
+		return nil, a.learningInitErr
+	}
+	return a.learning.Lessons(context.Background(), a.workspace.Root())
+}
+
+func (a *App) ApproveLearning(runID string, candidate learning.Candidate) (learning.Lesson, error) {
+	return a.learning.Approve(context.Background(), runID, candidate)
+}
+
+func (a *App) RejectLearning(runID string) error {
+	return a.learning.Reject(context.Background(), runID)
+}
+func (a *App) CancelLearning(runID string) error {
+	return a.learning.Cancel(context.Background(), runID)
+}
+func (a *App) RetryLearning(runID string) (learning.Run, error) {
+	return a.learning.Retry(context.Background(), runID)
+}
+func (a *App) SetLessonEnabled(lessonID string, enabled bool) error {
+	return a.learning.SetLessonEnabled(context.Background(), lessonID, enabled)
+}
+func (a *App) DeleteLesson(lessonID string) error {
+	return a.learning.DeleteLesson(context.Background(), lessonID)
 }
 
 // PermissionMode handles the exact local /mode commands without recording a turn.
@@ -523,6 +596,8 @@ func (a *App) ListProjectFiles() ([]string, error) {
 func (a *App) ListCommands() ([]command.Command, error) {
 	commands := a.workspace.Commands()
 	commands = append(commands,
+		command.Command{Name: "learn", Description: "Extract a lesson from this session", BuiltIn: true},
+		command.Command{Name: "learned", Description: "Open the learning audit", BuiltIn: true},
 		command.Command{Name: "mode", Description: "Show safe auto-accept mode", BuiltIn: true},
 		command.Command{Name: "mode:auto-accept", Description: "Auto-accept safe workspace edits", BuiltIn: true},
 		command.Command{Name: "mode:ask", Description: "Ask before workspace edits", BuiltIn: true},
