@@ -13,6 +13,8 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m.handleModelPickerMouse(msg)
 	case targetMCPPicker:
 		return m.handleMCPPickerMouse(msg)
+	case targetLearnedPicker:
+		return m.handleLearnedPickerMouse(msg)
 	case targetSkillsPicker:
 		return m.handleSkillsPickerMouse(msg)
 	case targetConnectPanel:

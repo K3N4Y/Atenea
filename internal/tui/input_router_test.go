@@ -63,6 +63,14 @@ func TestActiveInputTarget_ResolvesEachContext(t *testing.T) {
 			want: targetMCPPicker,
 		},
 		{
+			name: "learned picker open",
+			setup: func(_ *testing.T, m Model) Model {
+				m.learnedPicker.open = true
+				return m
+			},
+			want: targetLearnedPicker,
+		},
+		{
 			name: "connect panel open",
 			setup: func(_ *testing.T, m Model) Model {
 				m.connectPanel.open = true
@@ -139,6 +147,16 @@ func TestActiveInputTarget_PrecedenceTieBreaks(t *testing.T) {
 			want: targetMCPPicker,
 		},
 		{
+			name: "learned picker beats connect and the gates",
+			setup: func(t *testing.T, m Model) Model {
+				m = openPermissionGate(t, m)
+				m.connectPanel.open = true
+				m.learnedPicker.open = true
+				return m
+			},
+			want: targetLearnedPicker,
+		},
+		{
 			name: "connect panel beats the permission gate",
 			setup: func(t *testing.T, m Model) Model {
 				m = openPermissionGate(t, m)
@@ -175,6 +193,7 @@ func TestInputTarget_ModalActive(t *testing.T) {
 		targetResumePicker:   true,
 		targetModelPicker:    true,
 		targetMCPPicker:      true,
+		targetLearnedPicker:  true,
 		targetConnectPanel:   true,
 		targetPermissionGate: true,
 		targetPlanGate:       true,

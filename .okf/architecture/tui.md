@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-08-06
+updated_at: 2026-08-07
 summary: Architecture and behavior of the Atenea terminal user interface — what a bare `atenea` does, one of the binary's two surfaces alongside the headless CLI.
 ---
 
@@ -22,9 +22,10 @@ non-interactively, over the same store and the same provider selection; see
 does.
 
 On exit, the executable calls `Engine.Shutdown` before closing the shared
-session store. Shutdown stops active runs, cancels and waits for context
-compactions, and disables further Bubble Tea messages once its event loop has
-ended. This preserves final events and prompt checkpoints before SQLite closes.
+session store. Shutdown stops active runs, learning extraction workers, and
+context compactions, then disables further Bubble Tea messages once its event
+loop has ended. This preserves final events, learning audit state, and prompt
+checkpoints before SQLite closes.
 
 The root `Model` intercepts built-in commands that never become model messages.
 The composer only submits literal text; `submitPrompt` is the single entry point,
@@ -33,12 +34,15 @@ them to explicit handlers while ordinary text goes to `submitAgentPrompt`.
 `/new` stops any in-flight run and then creates a session (otherwise the old
 session would keep collecting events and win the resume-on-startup ordering),
 `/resume` opens a searchable picker of TUI sessions from the same workspace,
-`/compact` requests durable context compaction for the active session, and
-`/model` opens a full-screen two-column picker with providers on the left and
-the selected provider's models on the wider right.
+`/compact` requests durable context compaction for the active session, `/learn`
+queues extraction from the latest completed session cut, `/learned` opens the
+workspace learning audit, and `/model` opens a full-screen two-column picker
+with providers on the left and the selected provider's models on the wider
+right.
 
-The engine registers `/new`, `/compact`, `/model`, `/mcp`, `/connect`, `/resume`,
-and `/undo` in the same `command.Set` as skill-derived and MCP commands. The
+The engine registers `/new`, `/compact`, `/learn`, `/learned`, `/model`, `/mcp`,
+`/connect`, `/resume`, and `/undo` in the same `command.Set` as skill-derived
+and MCP commands. The
 composer receives that single list and uses `Command.BuiltIn` to distinguish
 local dispatch from prompt expansion. Registration rejects duplicate names;
 dynamic collisions fall back to the local catalog rather than allowing an
@@ -94,8 +98,12 @@ Three surfaces, one pipeline: only the last arrow differs.
  [Composition root](composition-root.md). Starting on the demo provider seeds the
  transcript with a notice pointing at `/connect`. Every launch starts a fresh
  conversation (older ones stay one `/resume` away), and `tea.NewProgram` runs with
- alt-screen. `h.Close()` closes the store on the way out. Without its own testable
- logic beyond `gitBranch`/`displayDir`.
+ alt-screen. `h.Close()` closes the store on the way out. It also opens the
+ private, cross-process-serialized `learning.json` store for `/learn` and
+ `/learned`; failure to resolve or open that durable store aborts startup and
+ closes host resources rather than silently losing learning state. Without its
+ own testable logic beyond
+ `gitBranch`/`displayDir`.
 - `internal/tui/engine/engine.go` — coordinates `/compact` per session. An idle session
   starts immediately; an active run records one deduplicated pending request and
   drains it after normal completion or cancellation. Prompt execution and
@@ -116,17 +124,19 @@ Three surfaces, one pipeline: only the last arrow differs.
  one of its own when the field is left nil, decorates the store with
  `EmittingStore` on a `event.Bus` whose `EmitFunc` bridges each
  `session.SessionEvent` to the TUI channel, and delegates runner wiring to
- `wiring.Build`. `SendPrompt`,
- `SendPlanPrompt`, `AcceptPlan`, and `Stop` delegate their common behavior to
- `agent.Service`; hooks retain TUI-only CWD persistence, checkpoints, literal
- prompt history, durable session mode, `RunDoneMsg`, and pending compaction. It
- satisfies the `Agent` interface of Model and
- exposes catalog, refresh, current-selection, and transactional selection
- operations to the optional model-selector boundary. The event and lifecycle
- types it produces (`EventMsg`, `RunHandle`, `RunDoneMsg`, `CompactionStatusMsg`,
- `HistoryLimit`) are the engine↔Model contract and live in
- `internal/tui/engine/protocol.go`; the `tui` package re-exports them as type
- aliases so the dependency only ever points `tui -> engine`.
+ `wiring.Build`. The engine also owns `learning.Service`, publishes learning
+ invalidations over the same channel, and supplies `LessonSection` so approved,
+ relevant workspace lessons enter later system prompts.
+ `SendPrompt`, `SendPlanPrompt`, `AcceptPlan`, and `Stop` delegate their common
+ behavior to `agent.Service`; hooks retain TUI-only CWD persistence,
+ checkpoints, literal prompt history, durable session mode, `RunDoneMsg`, and
+ pending compaction. It satisfies the `Agent` interface of Model and exposes
+ optional model-selector and learning-management boundaries. The event and
+ lifecycle types it produces (`EventMsg`, `LearningChangedMsg`, `RunHandle`,
+ `RunDoneMsg`, `CompactionStatusMsg`, `HistoryLimit`) are the engine↔Model
+ contract and live in `internal/tui/engine/protocol.go`; the `tui` package
+ re-exports them as type aliases so the dependency only ever points
+ `tui -> engine`.
 - `internal/checkpoint/git.go` — prompt-level workspace snapshots for the TUI.
   It stores Git trees in a private bare repository below
   `session.DefaultCheckpointPath()` (`ATENEA_CHECKPOINTS` overrides it), using
@@ -164,8 +174,8 @@ Three surfaces, one pipeline: only the last arrow differs.
   render and click-targeting paths consume. Thin Model wrappers in
   `model_state.go` thread the session id into transcript folds.
   `input_router.go` owns the input-precedence ORDER once as
-  `Model.activeInputTarget` (resume/model/mcp pickers, connect panel,
-  permission gate, plan gate, then the composer): the keyboard router,
+  `Model.activeInputTarget` (resume/model/mcp/learned/skills pickers, connect
+  panel, permission gate, plan gate, then the composer): the keyboard router,
   `syncComposerFocus`, and the mouse branch's modal short-circuits all consult
   that single resolver instead of re-listing the chain, so the three sites
   cannot drift out of lockstep. Per-context leaf behavior stays put — the

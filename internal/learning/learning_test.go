@@ -2,7 +2,6 @@ package learning
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -375,14 +374,79 @@ func TestFileStoreSurvivesReopen(t *testing.T) {
 	}
 }
 
+func TestFileStoreSerializesIndependentInstancesAndReloadsReads(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "learning.json")
+	first, err := OpenFileStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := OpenFileStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	runA := Run{ID: "a", Workspace: "w", SessionID: "s", CutSeq: 1, Status: Queued, CreatedAt: time.Now()}
+	runB := Run{ID: "b", Workspace: "w", SessionID: "s", CutSeq: 2, Status: Queued, CreatedAt: time.Now()}
+	if _, _, err := first.CreateRun(ctx, runA); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := second.CreateRun(ctx, runB); err != nil {
+		t.Fatal(err)
+	}
+	for _, store := range []*FileStore{first, second} {
+		runs, err := store.Runs(ctx, "w")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(runs) != 2 {
+			t.Fatalf("store %p sees %d runs, want 2: %+v", store, len(runs), runs)
+		}
+	}
+}
+
+func TestFileStoreLessonMutationsUseLatestCrossProcessState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "learning.json")
+	first, err := OpenFileStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := OpenFileStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	run := Run{ID: "run", Workspace: "w", SessionID: "s", CutSeq: 1, Status: Ready, CreatedAt: time.Now()}
+	candidate := Candidate{Statement: "Use focused tests", Scope: "workspace", Evidence: []Evidence{{Seq: 1, Summary: "observed"}}}
+	run.Candidate = &candidate
+	if _, _, err := first.CreateRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	lesson, err := first.Approve(ctx, run.ID, candidate, Lesson{ID: "lesson", Workspace: "w", RunID: run.ID, Enabled: true, CreatedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.DeleteLesson(ctx, lesson.ID); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := first.SetLessonEnabled(ctx, lesson.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updated.Deleted {
+		t.Fatal("enabling from a stale store resurrected a deleted lesson")
+	}
+}
+
 func TestFileStoreFailedPersistenceIsNotVisible(t *testing.T) {
 	s := &FileStore{MemoryStore: NewMemoryStore(), path: "/proc/atenea-learning/state.json"}
 	r := Run{ID: "r", Workspace: "w", SessionID: "s", CutSeq: 1, Status: Queued}
 	if _, _, err := s.CreateRun(context.Background(), r); err == nil {
 		t.Fatal("expected persistence failure")
 	}
-	if _, err := s.Run(context.Background(), "r"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("visible mutation: %v", err)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.runs["r"]; ok {
+		t.Fatal("failed persistence left mutation visible in memory")
 	}
 }
 
@@ -426,6 +490,117 @@ func TestRecoverMarksEveryWorkspaceInterrupted(t *testing.T) {
 		if r.Status != Interrupted {
 			t.Fatalf("%s=%s", id, r.Status)
 		}
+	}
+}
+
+func TestRecoverDoesNotInterruptRunLeasedByAnotherService(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "learning.json")
+	first, err := OpenFileStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := OpenFileStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release := make(chan struct{})
+	p := &scripted{release: release, response: `{"type":"no_candidate","reason":"none"}`}
+	switcher, err := internalllm.NewSwitchableProvider(internalllm.ProviderSnapshot{ProviderID: "p", ProviderName: "P", BaseURL: "local", Model: "m", Provider: p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := NewService(context.Background(), first, durableSession(t), switcher, nil)
+	r, err := owner.Enqueue(context.Background(), "w", "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		got, _ := second.Run(context.Background(), r.ID)
+		if got.Status == Running {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	recoverer := NewService(context.Background(), second, durableSession(t), switcher, nil)
+	if err := recoverer.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := second.Run(context.Background(), r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != Running {
+		t.Fatalf("live leased run became %s", got.Status)
+	}
+	owner.Close()
+	recoverer.Close()
+}
+
+func TestCloseSettlesAllJobsBeyondWorkerCapacity(t *testing.T) {
+	release := make(chan struct{})
+	p := &scripted{release: release, response: `{"type":"no_candidate","reason":"none"}`}
+	switcher, err := internalllm.NewSwitchableProvider(internalllm.ProviderSnapshot{ProviderID: "p", ProviderName: "P", BaseURL: "local", Model: "m", Provider: p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "learning.json")
+	store, err := OpenFileStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(context.Background(), store, durableSession(t), switcher, nil)
+	var ids []string
+	for i := 0; i < 8; i++ {
+		r, err := svc.Enqueue(context.Background(), fmt.Sprintf("w-%d", i), "s")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, r.ID)
+	}
+	svc.Close()
+	for _, id := range ids {
+		r, err := store.Run(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.Status == Queued || r.Status == Running || r.Status == Cancelling {
+			t.Fatalf("%s remained %s after Close", id, r.Status)
+		}
+	}
+	reopened, err := OpenFileStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range ids {
+		r, err := reopened.Run(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.Status == Queued || r.Status == Running || r.Status == Cancelling {
+			t.Fatalf("%s was durably left %s after Close", id, r.Status)
+		}
+	}
+}
+
+func TestFileStoreRecoverMarksOrphanRunInterrupted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "learning.json")
+	store, err := OpenFileStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orphan := Run{ID: "../../untrusted", Workspace: "w", SessionID: "s", CutSeq: 1, Status: Running, CreatedAt: time.Now()}
+	if _, _, err := store.CreateRun(context.Background(), orphan); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(context.Background(), store, durableSession(t), &scripted{}, nil)
+	defer svc.Close()
+	if err := svc.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := store.Run(context.Background(), orphan.ID)
+	if got.Status != Interrupted {
+		t.Fatalf("orphan status=%s", got.Status)
 	}
 }
 

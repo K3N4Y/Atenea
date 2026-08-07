@@ -19,6 +19,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/command"
 	"github.com/K3N4Y/atenea/internal/event"
 	"github.com/K3N4Y/atenea/internal/host"
+	"github.com/K3N4Y/atenea/internal/learning"
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/mcpclient"
 	"github.com/K3N4Y/atenea/internal/paths"
@@ -35,13 +36,14 @@ import (
 // Config describes the headless agent assembly: the workspace root, the LLM
 // provider and the durable store.
 type Config struct {
-	Identity     paths.Identity
-	Root         string
-	Provider     llm.Provider
-	Store        session.Store
-	Models       ModelService
-	Checkpoints  checkpoint.Store
-	EditSettings func(model, sessionID string) (editmode.Config, error)
+	Identity      paths.Identity
+	Root          string
+	Provider      llm.Provider
+	Store         session.Store
+	LearningStore learning.Store
+	Models        ModelService
+	Checkpoints   checkpoint.Store
+	EditSettings  func(model, sessionID string) (editmode.Config, error)
 	// Sitting is the per-process agent state the engine rewires into every build
 	// instead of rebuilding — the permission gate and grants, the prompt inbox, the
 	// turn lifecycle and the read snapshots. It belongs to whoever owns the sitting,
@@ -137,6 +139,7 @@ type Engine struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 
+	learning *learning.Service
 	// runner, glob and tools are the mutable pieces of the assembly: rewire (on an MCP connect or disconnect) replaces them, so they are read under mu. glob feeds the composer's @-menu of files (the mirror of App.ListProjectFiles); tools is the catalog the TUI asks about a tool it only knows by name.
 	runner   *runner.Runner
 	glob     *tool.GlobTool
@@ -222,6 +225,16 @@ func New(cfg Config) *Engine {
 	e.store = event.NewEmittingStore(cfg.Store, bus)
 	e.checkpoints = cfg.Checkpoints
 	e.models = cfg.Models
+	learningStore := cfg.LearningStore
+	if learningStore == nil {
+		learningStore = learning.NewMemoryStore()
+	}
+	e.learning = learning.NewService(e.ctx, learningStore, e.store, cfg.Provider, func(workspace string) {
+		e.sendEvent(LearningChangedMsg{Workspace: workspace})
+	})
+	if err := e.learning.Recover(e.ctx); err != nil {
+		log.Printf("atenea: could not recover learning runs: %v", err)
+	}
 	if preferences, ok := cfg.Models.(SelectionPreferences); ok {
 		if err := e.reasoning.Set(preferences.ReasoningEffort()); err != nil {
 			log.Printf("atenea: could not load reasoning effort: %v", err)
@@ -266,6 +279,14 @@ func New(cfg Config) *Engine {
 		RoleProvider:   roleProvider,
 		TaskSupervisor: e.taskSupervisor,
 		EditSettings:   cfg.EditSettings,
+		LessonSection: func(_ string, latestPrompt string) string {
+			lessons, err := e.learning.Lessons(e.ctx, e.root)
+			if err != nil {
+				log.Printf("atenea: could not load workspace lessons: %v", err)
+				return ""
+			}
+			return learning.RenderLessons(learning.Select(latestPrompt, lessons))
+		},
 	}
 	e.rewire()
 	if configs, err := mcpclient.LoadConfig(cfg.Root); err == nil {
@@ -500,6 +521,8 @@ func localCommands(yoloAuthorized bool) []command.Command {
 		{Name: "compact", Description: "Compact conversation context", BuiltIn: true},
 		{Name: "checkpoint", Description: "Save an explicit conversation and workspace checkpoint", BuiltIn: true},
 		{Name: "connect", Description: "Connect a provider by API key or ChatGPT login", BuiltIn: true},
+		{Name: "learn", Description: "Learn from the current conversation", BuiltIn: true},
+		{Name: "learned", Description: "Review learned workspace guidance", BuiltIn: true},
 		{Name: "mcp", Description: "Toggle MCP servers on or off", BuiltIn: true},
 		{Name: "reasoning", Description: llm.ReasoningCommandDescription, BuiltIn: true},
 		{Name: "model", Description: "Select provider and model", BuiltIn: true},
@@ -1054,6 +1077,47 @@ func (e *Engine) ResolvePermission(sessionID, callID string, verdict permission.
 	e.gate.Resolve(sessionID, callID, verdict.Approved())
 }
 
+// Learn captures the durable session through its current cut and queues an
+// independent learning extraction for this workspace.
+func (e *Engine) Learn(sessionID string) (learning.Run, error) {
+	return e.learning.Enqueue(e.ctx, e.root, sessionID)
+}
+
+// LearningAudit returns both the extraction audit and approved lesson catalog
+// from one workspace snapshot request.
+func (e *Engine) LearningAudit() ([]learning.Run, []learning.Lesson, error) {
+	runs, err := e.learning.Audit(e.ctx, e.root)
+	if err != nil {
+		return nil, nil, err
+	}
+	lessons, err := e.learning.Lessons(e.ctx, e.root)
+	return runs, lessons, err
+}
+
+func (e *Engine) ApproveLearning(runID string, candidate learning.Candidate) (learning.Lesson, error) {
+	return e.learning.Approve(e.ctx, runID, candidate)
+}
+
+func (e *Engine) RejectLearning(runID string) error {
+	return e.learning.Reject(e.ctx, runID)
+}
+
+func (e *Engine) CancelLearning(runID string) error {
+	return e.learning.Cancel(e.ctx, runID)
+}
+
+func (e *Engine) RetryLearning(runID string) (learning.Run, error) {
+	return e.learning.Retry(e.ctx, runID)
+}
+
+func (e *Engine) SetLessonEnabled(lessonID string, enabled bool) error {
+	return e.learning.SetLessonEnabled(e.ctx, lessonID, enabled)
+}
+
+func (e *Engine) DeleteLesson(lessonID string) error {
+	return e.learning.DeleteLesson(e.ctx, lessonID)
+}
+
 // Stop interrupts the session's run in progress. No-op if none is running.
 func (e *Engine) Stop(sessionID string) {
 	e.agent.Stop(sessionID)
@@ -1072,6 +1136,7 @@ func (e *Engine) Shutdown(ctx context.Context) error {
 		go func() {
 			e.agent.Wait()
 			e.compactions.Wait()
+			e.learning.Close()
 			// With the runs already stopped, closing the MCPs kills their subprocesses.
 			e.mcp.Close()
 			e.mu.Lock()

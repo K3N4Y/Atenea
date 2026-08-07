@@ -83,6 +83,24 @@ func TestAteneaVersion_PrintsReleaseMetadataAndExits(t *testing.T) {
 	}
 }
 
+func TestOpenInteractiveLearningStoreFailsAndClosesHost(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", filepath.Join(t.TempDir(), "data-file"))
+	if err := os.WriteFile(os.Getenv("XDG_DATA_HOME"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	closed := 0
+	store, err := openInteractiveLearningStore(func() error {
+		closed++
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "open durable learning store") {
+		t.Fatalf("store=%v err=%v", store, err)
+	}
+	if closed != 1 {
+		t.Fatalf("host close calls=%d, want 1", closed)
+	}
+}
+
 func TestTUI_PromptHistorySurvivesRestartUnderPTY(t *testing.T) {
 	repoRoot, err := filepath.Abs("../..")
 	if err != nil {
@@ -210,6 +228,52 @@ func TestTUI_YoloSendsPromptOutsideGitWorkspaceUnderPTY(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForPTYTextAfter(t, output, before, "Hello from atenea.")
+}
+
+func TestTUI_LearningCommandsUnderPTY(t *testing.T) {
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "atenea")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	build.Dir = filepath.Join(repoRoot, "cmd/atenea")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, output)
+	}
+
+	cmd, terminal, output, _ := startTUIUnderPTY(t, binary, repoRoot, filepath.Join(t.TempDir(), "atenea.db"))
+	defer stopPTYProcess(cmd, terminal)
+	waitForPTYText(t, output, " demo ─╯")
+	if _, err := terminal.Write([]byte("/learned")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, output, "│ ❯ /learned")
+	if _, err := terminal.Write([]byte("\r")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := terminal.Write([]byte("\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, output, "Learned Guidance")
+	waitForPTYText(t, output, "Nothing learned in this workspace")
+	beforeClose := output.String()
+	if _, err := terminal.Write([]byte("\x1b")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYTextAfter(t, output, beforeClose, " demo ─╯")
+	if _, err := terminal.Write([]byte("/learn")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYText(t, output, "│ ❯ /learn")
+	beforeLearn := output.String()
+	if _, err := terminal.Write([]byte("\r")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := terminal.Write([]byte("\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYTextAfter(t, output, beforeLearn, "session not found")
 }
 
 // TestTUI_StartsFreshSessionOnLaunchUnderPTY pins the launch contract end to
@@ -382,7 +446,7 @@ func TestTUI_ModelSelectorPersistsSelectionUnderPTY(t *testing.T) {
 	if _, err := terminal.Write([]byte("/")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYText(t, output, "/model")
+	waitForPTYText(t, output, "/learn")
 	if _, err := terminal.Write([]byte("model new\r")); err != nil {
 		t.Fatal(err)
 	}
@@ -1034,9 +1098,10 @@ func startTUIUnderPTY(t *testing.T, binary, workdir, database string, args ...st
 	// $HOME/.atenea/skills, $HOME/.agents/skills and $HOME/.claude/skills, so
 	// whatever the developer happens to have installed there was reaching the "/"
 	// menu and the system prompt of these tests.
+	dataHome := t.TempDir()
 	cmd.Env = append(append(os.Environ(), blankProviderKeys()...),
-		"HOME="+t.TempDir(), "XDG_CONFIG_HOME="+t.TempDir(), "ATENEA_DB="+database,
-		"ATENEA_CHECKPOINTS="+filepath.Join(filepath.Dir(database), "checkpoints"))
+		"HOME="+t.TempDir(), "XDG_CONFIG_HOME="+t.TempDir(), "XDG_DATA_HOME="+dataHome,
+		"ATENEA_DB="+database, "ATENEA_CHECKPOINTS="+filepath.Join(filepath.Dir(database), "checkpoints"))
 	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 24})
 	if err != nil {
 		t.Fatal(err)

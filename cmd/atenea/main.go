@@ -24,6 +24,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/checkpoint"
 	"github.com/K3N4Y/atenea/internal/cli"
 	"github.com/K3N4Y/atenea/internal/host"
+	"github.com/K3N4Y/atenea/internal/learning"
 	"github.com/K3N4Y/atenea/internal/paths"
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/tui"
@@ -84,16 +85,21 @@ func runInteractive(options cli.InteractiveOptions) error {
 	// The active selection is read ONCE: the same value feeds the engine and the
 	// composer footer.
 	active := h.Providers.Active()
+	learningStore, err := openInteractiveLearningStore(h.Close)
+	if err != nil {
+		return err
+	}
 
 	eng := engine.New(engine.Config{
-		Identity:     h.Identity,
-		Root:         h.Root,
-		Provider:     h.Providers.Provider(),
-		Store:        h.Store,
-		Models:       h.Providers,
-		Checkpoints:  checkpoint.NewGitStore(session.DefaultCheckpointPath()),
-		Sitting:      h.Sitting,
-		EditSettings: h.Providers.EditSettings,
+		Identity:      h.Identity,
+		Root:          h.Root,
+		Provider:      h.Providers.Provider(),
+		Store:         h.Store,
+		LearningStore: learningStore,
+		Models:        h.Providers,
+		Checkpoints:   checkpoint.NewGitStore(session.DefaultCheckpointPath()),
+		Sitting:       h.Sitting,
+		EditSettings:  h.Providers.EditSettings,
 	})
 	history, err := eng.PromptHistory()
 	if err != nil {
@@ -127,6 +133,18 @@ func runInteractive(options cli.InteractiveOptions) error {
 	_, runErr := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithReportFocus()).Run()
 	shutdownErr := eng.Shutdown(context.Background())
 	return errors.Join(runErr, shutdownErr, h.Close())
+}
+
+func openInteractiveLearningStore(closeHost func() error) (learning.Store, error) {
+	learningPath, err := paths.Learning()
+	if err != nil {
+		return nil, errors.Join(errors.New("resolve durable learning store path"), err, closeHost())
+	}
+	store, err := learning.OpenFileStore(learningPath)
+	if err != nil {
+		return nil, errors.Join(errors.New("open durable learning store "+learningPath), err, closeHost())
+	}
+	return store, nil
 }
 
 // gitBranch returns the current git branch of the repo at root (git rev-parse

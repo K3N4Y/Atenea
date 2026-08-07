@@ -10,6 +10,19 @@ import (
 	"github.com/K3N4Y/atenea/internal/tool"
 )
 
+func (m Model) applyLearnedAudit(ev learnedAuditDoneMsg) (Model, tea.Cmd) {
+	if !m.learnedPicker.open || ev.generation != m.learnedAuditGen {
+		return m, nil
+	}
+	if ev.err != "" {
+		m.learnedPicker.loading = false
+		m.learnedPicker.err = ev.err
+		return m, nil
+	}
+	m.learnedPicker.set(ev.runs, ev.lessons)
+	return m, nil
+}
+
 type UndoDoneMsg struct {
 	Result UndoResult
 	Err    string
@@ -72,6 +85,30 @@ func waitForEvent(ch <-chan tea.Msg) tea.Cmd {
 
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch ev := msg.(type) {
+	case learnDoneMsg:
+		if ev.err != "" {
+			return m.appendError(ev.err).syncViewport(), nil
+		}
+		m.Transcript = m.Transcript.appendNotice(learningQueuedNotice(ev.run))
+		return m.syncViewport(), nil
+	case LearningChangedMsg:
+		if !m.learnedPicker.open {
+			return m, waitForEvent(m.events)
+		}
+		next, cmd := m.beginLearningAudit()
+		return next, tea.Batch(cmd, waitForEvent(m.events))
+	case learnedAuditDoneMsg:
+		return m.applyLearnedAudit(ev)
+	case learnedActionDoneMsg:
+		if !m.learnedPicker.open || ev.generation != m.learnedGen {
+			return m, nil
+		}
+		delete(m.learnedPicker.busy, ev.key)
+		if ev.err != "" {
+			m.learnedPicker.err = ev.err
+			return m, nil
+		}
+		return m.beginLearningAudit()
 	case imageClipboardMsg:
 		if ev.generation != m.composer.generation {
 			return m, nil

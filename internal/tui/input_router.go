@@ -18,6 +18,8 @@ const (
 	targetModelPicker
 	// targetMCPPicker: the MCP server picker overlay is open.
 	targetMCPPicker
+	// targetLearnedPicker: the learning audit overlay is open.
+	targetLearnedPicker
 	// targetSkillsPicker: the in-terminal skill selection modal is open.
 	targetSkillsPicker
 	// targetConnectPanel: the provider connect panel overlay is open.
@@ -47,6 +49,8 @@ func (m Model) activeInputTarget() inputTarget {
 		return targetModelPicker
 	case m.mcpPicker.open:
 		return targetMCPPicker
+	case m.learnedPicker.open:
+		return targetLearnedPicker
 	case m.skillsPicker.open:
 		return targetSkillsPicker
 	case m.connectPanel.open:
@@ -67,8 +71,8 @@ func (m Model) activeInputTarget() inputTarget {
 // pointer-specific short-circuit) instead of re-listing the overlay chain.
 func (t inputTarget) modalActive() bool {
 	switch t {
-	case targetResumePicker, targetModelPicker, targetMCPPicker, targetSkillsPicker,
-		targetConnectPanel, targetPermissionGate, targetPlanGate:
+	case targetResumePicker, targetModelPicker, targetMCPPicker, targetLearnedPicker,
+		targetSkillsPicker, targetConnectPanel, targetPermissionGate, targetPlanGate:
 		return true
 	default:
 		return false

@@ -15,17 +15,20 @@ import (
 
 type ChangeFunc func(workspace string)
 type Service struct {
-	store    Store
-	sessions session.Store
-	provider corellm.Provider
-	extract  Extractor
-	changed  ChangeFunc
-	ctx      context.Context
-	cancel   context.CancelFunc
-	mu       sync.Mutex
-	queues   map[string]*jobQueue
-	active   map[string]context.CancelFunc
-	workers  chan struct{}
+	store     Store
+	sessions  session.Store
+	provider  corellm.Provider
+	extract   Extractor
+	changed   ChangeFunc
+	ctx       context.Context
+	cancel    context.CancelFunc
+	mu        sync.Mutex
+	queues    map[string]*jobQueue
+	active    map[string]context.CancelFunc
+	workers   chan struct{}
+	workerWG  sync.WaitGroup
+	closeOnce sync.Once
+	closed    bool
 }
 type jobQueue struct {
 	pending []job
@@ -34,6 +37,7 @@ type jobQueue struct {
 type job struct {
 	id       string
 	snapshot llm.ProviderSnapshot
+	lease    RunLease
 }
 
 func NewService(parent context.Context, store Store, sessions session.Store, provider corellm.Provider, changed ChangeFunc) *Service {
@@ -41,7 +45,26 @@ func NewService(parent context.Context, store Store, sessions session.Store, pro
 	s := &Service{store: store, sessions: sessions, provider: provider, changed: changed, ctx: ctx, cancel: cancel, queues: map[string]*jobQueue{}, active: map[string]context.CancelFunc{}, workers: make(chan struct{}, 2)}
 	return s
 }
-func (s *Service) Close() { s.cancel() }
+func (s *Service) Close() {
+	s.closeOnce.Do(func() {
+		s.mu.Lock()
+		s.closed = true
+		var pending []job
+		for _, q := range s.queues {
+			pending = append(pending, q.pending...)
+			q.pending = nil
+		}
+		for _, cancel := range s.active {
+			cancel()
+		}
+		s.mu.Unlock()
+		s.cancel()
+		for _, j := range pending {
+			s.abandon(j)
+		}
+		s.workerWG.Wait()
+	})
+}
 
 func (s *Service) Recover(ctx context.Context) error {
 	workspaces, err := s.store.Workspaces(ctx)
@@ -54,14 +77,26 @@ func (s *Service) Recover(ctx context.Context) error {
 			return err
 		}
 		for _, r := range runs {
-			if r.Status == Queued || r.Status == Running || r.Status == Cancelling {
-				from := r.Status
-				r.Status = Interrupted
-				now := time.Now().UTC()
-				r.FinishedAt = &now
-				if _, err := s.store.UpdateRunCAS(ctx, from, r); err != nil {
-					return err
-				}
+			if r.Status != Queued && r.Status != Running && r.Status != Cancelling {
+				continue
+			}
+			lease, acquired, err := s.tryLease(r.ID)
+			if err != nil {
+				return err
+			}
+			if !acquired {
+				continue
+			}
+			from := r.Status
+			r.Status = Interrupted
+			now := time.Now().UTC()
+			r.FinishedAt = &now
+			_, updateErr := s.store.UpdateRunCAS(ctx, from, r)
+			if lease != nil {
+				updateErr = errors.Join(updateErr, lease.Release())
+			}
+			if updateErr != nil {
+				return updateErr
 			}
 		}
 	}
@@ -81,20 +116,37 @@ func (s *Service) Enqueue(ctx context.Context, workspace, sessionID string) (Run
 		return Run{}, errors.New("learning requires an active provider")
 	}
 	r := Run{ID: newID(), Workspace: workspace, SessionID: sessionID, CutSeq: cut, Status: Queued, Input: input, ProviderID: snap.ProviderID, Model: snap.Model, CreatedAt: time.Now().UTC()}
+	lease, acquired, err := s.tryLease(r.ID)
+	if err != nil {
+		return Run{}, err
+	}
+	if !acquired {
+		return Run{}, errors.New("learning run lease unexpectedly unavailable")
+	}
+	j := job{id: r.ID, snapshot: snap, lease: lease}
 	r, created, err := s.store.CreateRun(ctx, r)
 	if err != nil || !created {
+		j.release()
 		return r, err
 	}
-	s.queue(workspace, job{r.ID, snap})
+	if !s.queue(workspace, j) {
+		s.abandon(j)
+		return r, context.Canceled
+	}
 	s.notify(workspace)
 	return r, nil
 }
-func (s *Service) queue(workspace string, j job) {
+func (s *Service) queue(workspace string, j job) bool {
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return false
+	}
 	q := s.queues[workspace]
 	if q == nil {
 		q = &jobQueue{wake: make(chan struct{}, 1)}
 		s.queues[workspace] = q
+		s.workerWG.Add(1)
 		go s.worker(workspace, q)
 	}
 	q.pending = append(q.pending, j)
@@ -103,8 +155,10 @@ func (s *Service) queue(workspace string, j job) {
 	case q.wake <- struct{}{}:
 	default:
 	}
+	return true
 }
 func (s *Service) worker(workspace string, q *jobQueue) {
+	defer s.workerWG.Done()
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -122,6 +176,7 @@ func (s *Service) worker(workspace string, q *jobQueue) {
 				select {
 				case s.workers <- struct{}{}:
 				case <-s.ctx.Done():
+					s.abandon(j)
 					return
 				}
 				s.execute(workspace, j)
@@ -135,7 +190,13 @@ func (s *Service) execute(workspace string, j job) {
 	s.mu.Lock()
 	s.active[j.id] = cancel
 	s.mu.Unlock()
-	defer func() { cancel(); s.mu.Lock(); delete(s.active, j.id); s.mu.Unlock() }()
+	defer func() {
+		cancel()
+		s.mu.Lock()
+		delete(s.active, j.id)
+		s.mu.Unlock()
+		j.release()
+	}()
 	r, err := s.store.Run(ctx, j.id)
 	if err != nil || r.Status != Queued {
 		return
@@ -181,7 +242,6 @@ func (s *Service) finish(ctx context.Context, result Run) {
 			_, _ = s.store.UpdateRunCAS(ctx, Cancelling, current)
 			return
 		case Running:
-			result.Status = result.Status
 			if ok, _ := s.store.UpdateRunCAS(ctx, Running, result); ok {
 				return
 			}
@@ -254,12 +314,25 @@ func (s *Service) Retry(ctx context.Context, id string) (Run, error) {
 	r.StartedAt = nil
 	r.FinishedAt = nil
 	r.DecidedAt = nil
-	r, _, err = s.store.CreateRun(ctx, r)
-	if err == nil {
-		s.queue(r.Workspace, job{r.ID, snap})
-		s.notify(r.Workspace)
+	lease, acquired, err := s.tryLease(r.ID)
+	if err != nil {
+		return Run{}, err
 	}
-	return r, err
+	if !acquired {
+		return Run{}, errors.New("learning run lease unexpectedly unavailable")
+	}
+	j := job{id: r.ID, snapshot: snap, lease: lease}
+	r, created, err := s.store.CreateRun(ctx, r)
+	if err != nil || !created {
+		j.release()
+		return r, err
+	}
+	if !s.queue(r.Workspace, j) {
+		s.abandon(j)
+		return r, context.Canceled
+	}
+	s.notify(r.Workspace)
+	return r, nil
 }
 func (s *Service) Approve(ctx context.Context, id string, c Candidate) (Lesson, error) {
 	r, err := s.store.Run(ctx, id)
@@ -288,54 +361,48 @@ func (s *Service) Lessons(ctx context.Context, w string) ([]Lesson, error) {
 	return s.store.Lessons(ctx, w)
 }
 func (s *Service) SetLessonEnabled(ctx context.Context, id string, enabled bool) error {
-	ls, err := s.findLesson(ctx, id)
-	if err != nil {
-		return err
-	}
-	ls.Enabled = enabled
-	if err = s.store.UpdateLesson(ctx, ls); err == nil {
-		s.notify(ls.Workspace)
+	lesson, err := s.store.SetLessonEnabled(ctx, id, enabled)
+	if err == nil {
+		s.notify(lesson.Workspace)
 	}
 	return err
 }
 func (s *Service) DeleteLesson(ctx context.Context, id string) error {
-	ls, err := s.findLesson(ctx, id)
-	if err != nil {
-		return err
-	}
-	ls.Deleted = true
-	ls.Enabled = false
-	if err = s.store.UpdateLesson(ctx, ls); err == nil {
-		s.notify(ls.Workspace)
+	lesson, err := s.store.DeleteLesson(ctx, id)
+	if err == nil {
+		s.notify(lesson.Workspace)
 	}
 	return err
-}
-func (s *Service) findLesson(ctx context.Context, id string) (Lesson, error) { // IDs are globally unique; scan known run workspaces.
-	// Store deliberately keeps workspace indexing explicit. File/memory stores expose this safe internal shortcut.
-	switch x := s.store.(type) {
-	case *MemoryStore:
-		x.mu.Lock()
-		defer x.mu.Unlock()
-		l, ok := x.lessons[id]
-		if !ok {
-			return Lesson{}, ErrNotFound
-		}
-		return l, nil
-	case *FileStore:
-		x.mu.Lock()
-		defer x.mu.Unlock()
-		l, ok := x.lessons[id]
-		if !ok {
-			return Lesson{}, ErrNotFound
-		}
-		return l, nil
-	default:
-		return Lesson{}, ErrNotFound
-	}
 }
 func (s *Service) notify(w string) {
 	if s.changed != nil {
 		s.changed(w)
+	}
+}
+func (s *Service) tryLease(id string) (RunLease, bool, error) {
+	store, ok := s.store.(runLeaseStore)
+	if !ok {
+		return nil, true, nil
+	}
+	return store.TryRunLease(id)
+}
+
+func (s *Service) abandon(j job) {
+	r, err := s.store.Run(context.Background(), j.id)
+	if err == nil && r.Status == Queued {
+		now := time.Now().UTC()
+		r.Status = Interrupted
+		r.FinishedAt = &now
+		_, _ = s.store.UpdateRunCAS(context.Background(), Queued, r)
+		s.notify(r.Workspace)
+	}
+	j.release()
+}
+
+func (j *job) release() {
+	if j.lease != nil {
+		_ = j.lease.Release()
+		j.lease = nil
 	}
 }
 func newID() string {

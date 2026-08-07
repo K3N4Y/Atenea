@@ -65,14 +65,17 @@ type Model struct {
 	listFiles func() ([]string, error)
 	cacheStatsState
 
-	resumePicker resumePicker
-	resumeGen    uint64
-	modelPicker  modelPicker
-	mcpPicker    mcpPicker
-	skillsPicker skillsPicker
-	mcpGen       uint64
-	connectPanel connectPanel
-	connectGen   uint64
+	resumePicker    resumePicker
+	resumeGen       uint64
+	modelPicker     modelPicker
+	mcpPicker       mcpPicker
+	learnedPicker   learnedPicker
+	skillsPicker    skillsPicker
+	mcpGen          uint64
+	learnedGen      uint64
+	learnedAuditGen uint64
+	connectPanel    connectPanel
+	connectGen      uint64
 
 	focus           panelFocus
 	terminalFocused bool

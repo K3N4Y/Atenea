@@ -22,6 +22,8 @@ const (
 	localCommandRewind
 	localCommandResume
 	localCommandMCP
+	localCommandLearn
+	localCommandLearned
 	localCommandSkills
 	localCommandConnect
 	localCommandModel
@@ -60,6 +62,10 @@ func parseLocalCommand(text string) (localCommand, bool) {
 		return localCommand{kind: localCommandResume, text: trimmed}, true
 	case strings.HasPrefix(trimmed, "/mcp"):
 		return localCommand{kind: localCommandMCP, text: trimmed}, true
+	case strings.HasPrefix(trimmed, "/learned"):
+		return localCommand{kind: localCommandLearned, text: trimmed}, true
+	case strings.HasPrefix(trimmed, "/learn"):
+		return localCommand{kind: localCommandLearn, text: trimmed}, true
 	case len(fields) > 0 && fields[0] == "/skills":
 		return localCommand{kind: localCommandSkills, text: trimmed}, true
 	case strings.HasPrefix(trimmed, "/connect"):
@@ -109,6 +115,10 @@ func (m Model) executeLocalCommand(command localCommand) (Model, tea.Cmd) {
 		return m.submitResumeCommand(command.text)
 	case localCommandMCP:
 		return m.submitMCPCommand(command.text)
+	case localCommandLearn:
+		return m.submitLearnCommand(command.text)
+	case localCommandLearned:
+		return m.submitLearnedCommand(command.text)
 	case localCommandSkills:
 		return m.submitSkillsCommand(command.text)
 	case localCommandConnect:

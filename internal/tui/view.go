@@ -25,6 +25,9 @@ func (m Model) View() string {
 	if m.mcpPicker.open {
 		return m.mcpPickerView()
 	}
+	if m.learnedPicker.open {
+		return m.learnedPickerView()
+	}
 	if m.skillsPicker.open {
 		return m.skillsPickerView()
 	}

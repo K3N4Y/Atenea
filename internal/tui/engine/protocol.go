@@ -24,6 +24,12 @@ type EventMsg session.SessionEvent
 // never loaded from or written to durable session history.
 type PreviewMsg tool.PreviewEvent
 
+// LearningChangedMsg tells the TUI that the workspace's run or lesson catalog
+// changed and should be reloaded through LearningAudit.
+type LearningChangedMsg struct {
+	Workspace string
+}
+
 // RunHandle identifies a concrete run within a session. RunID == 0 means the
 // operation did not start a run (/new, /compact).
 type RunHandle struct {

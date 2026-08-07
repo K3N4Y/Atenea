@@ -13,6 +13,7 @@ import "github.com/K3N4Y/atenea/internal/tui/engine"
 type (
 	EventMsg            = engine.EventMsg
 	PreviewMsg          = engine.PreviewMsg
+	LearningChangedMsg  = engine.LearningChangedMsg
 	RunHandle           = engine.RunHandle
 	RunDoneMsg          = engine.RunDoneMsg
 	UndoResult          = engine.UndoResult
@@ -34,8 +35,9 @@ const (
 // Compile-time proof that the Engine satisfies the small consumer interfaces
 // the presentation layer defines for it (the seam lives with its consumer).
 var (
-	_ Agent        = (*engine.Engine)(nil)
-	_ modelAgent   = (*engine.Engine)(nil)
-	_ mcpAgent     = (*engine.Engine)(nil)
-	_ connectAgent = (*engine.Engine)(nil)
+	_ Agent         = (*engine.Engine)(nil)
+	_ modelAgent    = (*engine.Engine)(nil)
+	_ mcpAgent      = (*engine.Engine)(nil)
+	_ connectAgent  = (*engine.Engine)(nil)
+	_ learningAgent = (*engine.Engine)(nil)
 )

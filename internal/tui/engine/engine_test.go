@@ -19,6 +19,7 @@ import (
 
 	"github.com/K3N4Y/atenea/internal/agent"
 	"github.com/K3N4Y/atenea/internal/checkpoint"
+	"github.com/K3N4Y/atenea/internal/learning"
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/permission"
 	"github.com/K3N4Y/atenea/internal/providerconfig"
@@ -1519,6 +1520,113 @@ func TestEngine_CommandsListsLocalAndSkillCommandsFromOneSet(t *testing.T) {
 	}
 	if len(want) != 0 {
 		t.Fatalf("Commands() is missing local commands: %v", want)
+	}
+}
+
+func TestLocalCommands_IncludesLearningCommands(t *testing.T) {
+	want := map[string]bool{"learn": true, "learned": true}
+	for _, cmd := range localCommands(false) {
+		if _, ok := want[cmd.Name]; ok {
+			if !cmd.BuiltIn {
+				t.Fatalf("local command %q is not marked built-in", cmd.Name)
+			}
+			delete(want, cmd.Name)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("localCommands() is missing learning commands: %v", want)
+	}
+}
+
+func TestEngine_LearnQueuesAndAuditsWorkspaceRun(t *testing.T) {
+	root := t.TempDir()
+	sessions := session.NewMemoryStore()
+	provider := llm.NewFakeProvider(
+		llm.Event{Kind: llm.StepStarted},
+		llm.Event{Kind: llm.TextDelta, Text: "done"},
+		llm.Event{Kind: llm.StepEnded},
+	)
+	learningStore := learning.NewMemoryStore()
+	e := New(Config{Root: root, Provider: provider, Store: sessions, LearningStore: learningStore})
+	defer e.Shutdown(context.Background())
+
+	if _, err := e.SendPrompt("s1", session.Prompt{Text: "remember this"}); err != nil {
+		t.Fatal(err)
+	}
+	collectUntilRunDone(t, e.Events(), 10*time.Second, nil)
+
+	run, err := e.Learn("s1")
+	if err != nil {
+		t.Fatalf("Learn = %v", err)
+	}
+	runs, lessons, err := e.LearningAudit()
+	if err != nil {
+		t.Fatalf("LearningAudit = %v", err)
+	}
+	if len(runs) != 1 || runs[0].ID != run.ID || runs[0].Workspace != root || runs[0].SessionID != "s1" {
+		t.Fatalf("LearningAudit runs = %+v, want queued run %+v", runs, run)
+	}
+	if len(lessons) != 0 {
+		t.Fatalf("LearningAudit lessons = %+v, want none", lessons)
+	}
+
+	select {
+	case msg := <-e.Events():
+		changed, ok := msg.(LearningChangedMsg)
+		if !ok || changed.Workspace != root {
+			t.Fatalf("learning event = %#v, want LearningChangedMsg for %q", msg, root)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for LearningChangedMsg")
+	}
+}
+
+func TestEngine_InsertsSelectedLessonsIntoPrompt(t *testing.T) {
+	root := t.TempDir()
+	learningStore := learning.NewMemoryStore()
+	ctx := context.Background()
+	run, _, err := learningStore.CreateRun(ctx, learning.Run{
+		ID: "run-1", Workspace: root, SessionID: "prior", CutSeq: 1,
+		Status: learning.Queued, CreatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.Status = learning.Running
+	if ok, err := learningStore.UpdateRunCAS(ctx, learning.Queued, run); err != nil || !ok {
+		t.Fatalf("queue -> running = %v, %v", ok, err)
+	}
+	candidate := learning.Candidate{
+		Statement: "Always format Go source with gofmt.",
+		Scope:     "Go source formatting",
+		Evidence:  []learning.Evidence{{Seq: 1, Summary: "Formatting was required."}},
+	}
+	run.Status = learning.Ready
+	run.Candidate = &candidate
+	if ok, err := learningStore.UpdateRunCAS(ctx, learning.Running, run); err != nil || !ok {
+		t.Fatalf("running -> ready = %v, %v", ok, err)
+	}
+	if _, err := learningStore.Approve(ctx, run.ID, candidate, learning.Lesson{
+		ID: "lesson-1", Workspace: root, RunID: run.ID, Candidate: candidate,
+		Enabled: true, CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := &systemRecordingProvider{}
+	e := New(Config{
+		Root: root, Provider: provider, Store: session.NewMemoryStore(),
+		LearningStore: learningStore,
+	})
+	defer e.Shutdown(context.Background())
+	if _, err := e.SendPrompt("s1", session.Prompt{Text: "format this Go source"}); err != nil {
+		t.Fatal(err)
+	}
+	collectUntilRunDone(t, e.Events(), 10*time.Second, nil)
+	systems := provider.captured()
+	if len(systems) != 1 || !strings.Contains(systems[0], "<approved_workspace_lessons>") ||
+		!strings.Contains(systems[0], candidate.Statement) {
+		t.Fatalf("system prompt = %q, want selected approved lesson", systems)
 	}
 }
 
