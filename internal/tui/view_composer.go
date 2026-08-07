@@ -13,7 +13,7 @@ import (
 var (
 	composerBorderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Border))
 	composerBoxStyle    = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
+				Border(lipgloss.NormalBorder()).
 				BorderForeground(lipgloss.Color(theme.Border)).
 				Padding(0, composerBoxPadding)
 )
@@ -66,8 +66,8 @@ func (m Model) composerBoxWithWidth(width int) string {
 		style = style.Width(max(width-composerBoxBorderWidth, 0))
 	}
 	box := style.Render(m.composer.inputView())
-	box = decorateComposerBorder(box, 0, m.tokenUsageLabel(), "╭", "╮", true, false)
-	return decorateComposerBorder(box, -1, m.composerModelLabel(), "╰", "╯", false, true)
+	box = decorateComposerBorder(box, 0, m.tokenUsageLabel(), "┌", "┐", true, false)
+	return decorateComposerBorder(box, -1, m.composerModelLabel(), "└", "┘", false, true)
 }
 
 func (m Model) composerModelLabel() string {

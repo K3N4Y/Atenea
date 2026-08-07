@@ -392,7 +392,7 @@ func TestModel_CopySnackbarOverlaysTranscriptAboveComposer(t *testing.T) {
 	view := ansi.Strip(m.View())
 	lines := strings.Split(view, "\n")
 	messageRow := lineIndexWith(t, view, "Copied to clipboard")
-	composerRow := lineIndexWith(t, view, "╭")
+	composerRow := lineIndexWith(t, view, "┌")
 	if messageRow >= composerRow-1 {
 		t.Fatalf("snackbar message row %d must sit above composer row %d with a gap", messageRow, composerRow)
 	}

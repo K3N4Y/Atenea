@@ -1568,13 +1568,13 @@ func assertNoLineWiderThan(t *testing.T, view string, width int) {
 	}
 }
 
-// assertBoxLinesExactWidth fails if any composer box line (those that contain a border character ╭/│/╰ after the margin) does not measure exactly the width of visible cells, or if the view does not contain any. Measure with ansi.StringWidth to ignore ANSI codes.
+// assertBoxLinesExactWidth fails if any composer box line (those that contain a border character ┌/│/└ after the margin) does not measure exactly the width of visible cells, or if the view does not contain any. Measure with ansi.StringWidth to ignore ANSI codes.
 func assertBoxLinesExactWidth(t *testing.T, view string, width int) {
 	t.Helper()
 	found := false
 	for _, line := range strings.Split(view, "\n") {
 		trimmed := strings.TrimLeft(line, " ")
-		for _, prefix := range []string{"╭", "│", "╰"} {
+		for _, prefix := range []string{"┌", "│", "└"} {
 			if strings.HasPrefix(trimmed, prefix) {
 				found = true
 				if w := ansi.StringWidth(line); w != width {
@@ -1584,7 +1584,7 @@ func assertBoxLinesExactWidth(t *testing.T, view string, width int) {
 		}
 	}
 	if !found {
-		t.Fatalf("View() = %q, contains no composer box line (borders ╭/│/╰)", view)
+		t.Fatalf("View() = %q, contains no composer box line (borders ┌/│/└)", view)
 	}
 }
 
@@ -3462,7 +3462,7 @@ func TestModel_PermissionPanelRendersInlineAboveComposer(t *testing.T) {
 	}
 	for _, unwanted := range []string{
 		"Bash command", "Requested by", "Working directory",
-		"←/→ select", "›",
+		"❯",
 	} {
 		if strings.Contains(view, unwanted) {
 			t.Fatalf("View() = %q, Bash permission panel must hide %q", view, unwanted)
@@ -4505,7 +4505,7 @@ func TestModel_ViewFitsHeightWithIndicator(t *testing.T) {
 	}
 }
 
-// TestModel_WorkingIndicatorAlignsWithComposerLeftMargin covers the left margin of the "working" status line: the rest of the view (the composer box and the top bar) starts composerOuterMargin columns from the left edge of the terminal, but the spinner line starts in column 0 (attached to the edge). The spinner glyph should align with the "╭" edge of the composer box, both to composerOuterMargin columns.
+// TestModel_WorkingIndicatorAlignsWithComposerLeftMargin covers the left margin of the "working" status line: the rest of the view (the composer box and the top bar) starts composerOuterMargin columns from the left edge of the terminal, but the spinner line starts in column 0 (attached to the edge). The spinner glyph should align with the "┌" edge of the composer box, both to composerOuterMargin columns.
 func TestModel_WorkingIndicatorAlignsWithComposerLeftMargin(t *testing.T) {
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
@@ -4533,13 +4533,13 @@ func TestModel_WorkingIndicatorAlignsWithComposerLeftMargin(t *testing.T) {
 	for _, line := range lines {
 		plain := ansi.Strip(line)
 		trimmed := strings.TrimLeft(plain, " ")
-		if strings.HasPrefix(trimmed, "╭") {
+		if strings.HasPrefix(trimmed, "┌") {
 			composerCol = len(plain) - len(trimmed)
 			break
 		}
 	}
 	if composerCol == -1 {
-		t.Fatalf("View() = %q, no line with the composer's top border (╭) was found", view)
+		t.Fatalf("View() = %q, no line with the composer's top border (┌) was found", view)
 	}
 
 	if spinnerCol != composerCol {
@@ -4579,13 +4579,13 @@ func TestModel_WorkingIndicatorAlignsWithComposerLeftMargin_WiderTerminal(t *tes
 	for _, line := range lines {
 		plain := ansi.Strip(line)
 		trimmed := strings.TrimLeft(plain, " ")
-		if strings.HasPrefix(trimmed, "╭") {
+		if strings.HasPrefix(trimmed, "┌") {
 			composerCol = len(plain) - len(trimmed)
 			break
 		}
 	}
 	if composerCol == -1 {
-		t.Fatalf("View() = %q, no line with the composer's top border (╭) was found", view)
+		t.Fatalf("View() = %q, no line with the composer's top border (┌) was found", view)
 	}
 
 	if spinnerCol != composerCol {
@@ -4775,7 +4775,7 @@ func TestModel_ComposerBottomBorderShowsModel(t *testing.T) {
 	lines := strings.Split(plain, "\n")
 	var bottomBorder string
 	for _, line := range lines {
-		if strings.HasPrefix(strings.TrimLeft(line, " "), "╰") {
+		if strings.HasPrefix(strings.TrimLeft(line, " "), "└") {
 			bottomBorder = line
 		}
 	}
@@ -4883,7 +4883,7 @@ func TestModel_ComposerHasTwoCellOuterMargin(t *testing.T) {
 	lines := strings.Split(ansi.Strip(m.View()), "\n")
 	bottom := -1
 	for index, line := range lines {
-		if strings.Contains(line, "╰") {
+		if strings.Contains(line, "└") {
 			bottom = index
 			if !strings.HasPrefix(line, "  ") || !strings.HasSuffix(line, "  ") {
 				t.Fatalf("composer border = %q, want two-cell left and right margins", line)
@@ -4937,8 +4937,8 @@ func TestModel_ComposerBottomBorderOmitsModelWhenTerminalIsTooNarrow(t *testing.
 	if strings.Contains(bottomBorder, "model") || strings.Contains(bottomBorder, "…") {
 		t.Fatalf("composer bottom border = %q, terminal too narrow must omit the model label", bottomBorder)
 	}
-	if !strings.HasPrefix(bottomBorder, "╰") || !strings.HasSuffix(bottomBorder, "╯") {
-		t.Fatalf("composer bottom border = %q, rounded corners must remain intact", bottomBorder)
+	if !strings.HasPrefix(bottomBorder, "└") || !strings.HasSuffix(bottomBorder, "┘") {
+		t.Fatalf("composer bottom border = %q, square corners must remain intact", bottomBorder)
 	}
 	assertBoxLinesExactWidth(t, m.composerBox(), 6)
 }
@@ -5002,10 +5002,10 @@ func TestModel_ComposerMultilineRendersPromptOnlyOnFirstRow(t *testing.T) {
 	m = typeRunes(t, m, "second line")
 
 	plain := ansi.Strip(m.composerBox())
-	if got := strings.Count(plain, "❯"); got != 1 {
+	if got := strings.Count(plain, "›"); got != 1 {
 		t.Fatalf("composer prompt count = %d, want 1 across wrapped and explicit multiline rows:\n%s", got, plain)
 	}
-	if line := lineWith(t, plain, "first line"); !strings.Contains(line, "❯ first line") {
+	if line := lineWith(t, plain, "first line"); !strings.Contains(line, "› first line") {
 		t.Fatalf("first composer row = %q, the prompt must stay beside the first text row", line)
 	}
 }
@@ -5042,7 +5042,7 @@ func TestModel_ComposerTopBorderShowsTokenUsage(t *testing.T) {
 	plain := ansi.Strip(m.View())
 	var topBorder string
 	for _, line := range strings.Split(plain, "\n") {
-		if strings.HasPrefix(strings.TrimLeft(line, " "), "╭") {
+		if strings.HasPrefix(strings.TrimLeft(line, " "), "┌") {
 			topBorder = line
 			break
 		}
@@ -5224,47 +5224,47 @@ func TestFormatTokenCount(t *testing.T) {
 }
 
 func TestModel_ComposerBoxWrapsInput(t *testing.T) {
-	// TRIANGULATE: the input ALWAYS lives inside a rounded-edge box that spans the width of the terminal (Claude Code style), whether or not the composer's status is set.
+	// TRIANGULATE: the input ALWAYS lives inside a square-corner box that spans the width of the terminal (Claude Code style), whether or not the composer's status is set.
 	m := NewModel(nil, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 12})
 
 	view := m.View()
-	for _, want := range []string{"╭", "╰"} {
+	for _, want := range []string{"┌", "└"} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("View() = %q, the input must render inside a rounded-border box: missing %q", view, want)
+			t.Fatalf("View() = %q, the input must render inside a square-border box: missing %q", view, want)
 		}
 	}
 	assertBoxLinesExactWidth(t, view, 40)
 
-	// The box has horizontal padding (Claude Code style): the inner line starts with "│ ❯" (border, space, prompt), not with the prompt attached to the edge. It is measured without ANSI because the prompt is stylized.
-	if plain := ansi.Strip(view); !strings.Contains(plain, "│ ❯") {
-		t.Fatalf("View() without ANSI = %q, the box's inner line must have horizontal padding: it must contain %q (border, space, prompt), not a prompt attached to the edge", plain, "│ ❯")
+	// The box has horizontal padding (Claude Code style): the inner line starts with "│ ›" (border, space, prompt), not with the prompt attached to the edge. It is measured without ANSI because the prompt is stylized.
+	if plain := ansi.Strip(view); !strings.Contains(plain, "│ ›") {
+		t.Fatalf("View() without ANSI = %q, the box's inner line must have horizontal padding: it must contain %q (border, space, prompt), not a prompt attached to the edge", plain, "│ ›")
 	}
 
 	topAt, inputAt, bottomAt := -1, -1, -1
 	for i, line := range strings.Split(view, "\n") {
 		trimmed := strings.TrimLeft(line, " ")
 		switch {
-		case strings.HasPrefix(trimmed, "╭"):
+		case strings.HasPrefix(trimmed, "┌"):
 			topAt = i
-		case strings.HasPrefix(trimmed, "╰"):
+		case strings.HasPrefix(trimmed, "└"):
 			bottomAt = i
 		case strings.Contains(line, inputPrompt):
 			inputAt = i
 		}
 	}
 	if topAt == -1 || inputAt == -1 || bottomAt == -1 || topAt >= inputAt || inputAt >= bottomAt {
-		t.Fatalf("View() = %q, the input line (%q at %d) must be BETWEEN the top border (╭ at %d) and bottom border (╰ at %d)", view, inputPrompt, inputAt, topAt, bottomAt)
+		t.Fatalf("View() = %q, the input line (%q at %d) must be BETWEEN the top border (┌ at %d) and bottom border (└ at %d)", view, inputPrompt, inputAt, topAt, bottomAt)
 	}
 
 	// With set status the foot is BELOW the bottom edge of the box.
 	m2 := NewModel(nil, "s1", nil).WithStatus("build", "openrouter/free")
 	m2 = apply(t, m2, tea.WindowSizeMsg{Width: 40, Height: 12})
 	view2 := m2.View()
-	bottomAt2 := strings.Index(view2, "╰")
+	bottomAt2 := strings.Index(view2, "└")
 	footerAt := strings.Index(view2, "openrouter/free")
 	if bottomAt2 == -1 || footerAt == -1 || footerAt < bottomAt2 {
-		t.Fatalf("View() = %q, the status footer (openrouter/free at %d) must appear AFTER the box's bottom border (╰ at %d)", view2, footerAt, bottomAt2)
+		t.Fatalf("View() = %q, the status footer (openrouter/free at %d) must appear AFTER the box's bottom border (└ at %d)", view2, footerAt, bottomAt2)
 	}
 }
 
@@ -5319,8 +5319,8 @@ func TestModel_LongTypedPromptGrowsWithoutOverflowingTerminal(t *testing.T) {
 	if lines := strings.Count(view, "\n") + 1; lines > 10 {
 		t.Fatalf("View() has %d lines; a long prompt must not exceed bounded height (<= 10)", lines)
 	}
-	if got := strings.Count(view, "❯"); got != 1 {
-		t.Fatalf("View() = %q, prompt %q must appear exactly once even when text wraps (count=%d)", view, "❯", got)
+	if got := strings.Count(view, "›"); got != 1 {
+		t.Fatalf("View() = %q, prompt %q must appear exactly once even when text wraps (count=%d)", view, "›", got)
 	}
 	interior := 0
 	for _, line := range strings.Split(view, "\n") {
@@ -5374,7 +5374,7 @@ func TestModel_TabTogglesBackToBuild(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyTab})
 
 	view := m.View()
-	if !strings.Contains(view, " m ─╯") {
+	if !strings.Contains(view, " m ─┘") {
 		t.Fatalf("View() = %q, after Tab Tab the composer border must show only model %q again", view, "m")
 	}
 	if strings.Contains(view, "· plan") {
@@ -5405,7 +5405,7 @@ func TestModel_TabIsInertWhilePermissionPending(t *testing.T) {
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyTab})
 
 	view := m.View()
-	if !strings.Contains(view, " m ─╯") {
+	if !strings.Contains(view, " m ─┘") {
 		t.Fatalf("View() = %q, with pending permission Tab must not change the border: it must keep showing model %q", view, "m")
 	}
 	if strings.Contains(view, "· plan") {
@@ -5506,7 +5506,7 @@ func TestModel_PlanApprovalCapturesKeyboard(t *testing.T) {
 		t.Fatalf("accepted = %v, 'y' must call AcceptPlan(%q) exactly once", fake.accepted, "s1")
 	}
 	view := m.View()
-	if !strings.Contains(view, " m ─╯") {
+	if !strings.Contains(view, " m ─┘") {
 		t.Fatalf("View() = %q, after accepting the plan the border must show only model %q again", view, "m")
 	}
 	if strings.Contains(view, "· plan") {
@@ -5966,7 +5966,7 @@ func TestModel_TabAppliesSelectedCommand(t *testing.T) {
 	if got := menuSelectedLine(view); got != "" {
 		t.Fatalf("selected menu line = %q; applying the command must close the menu (recomputation sees the space)", got)
 	}
-	if !strings.Contains(view, " m ─╯") || strings.Contains(view, "· plan") {
+	if !strings.Contains(view, " m ─┘") || strings.Contains(view, "· plan") {
 		t.Fatalf("View() = %q; Tab with the menu open must NOT toggle plan mode: the border must continue showing model %q", view, "m")
 	}
 }

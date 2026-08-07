@@ -14,7 +14,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/tool"
 )
 
-const inputPrompt = "❯ "
+const inputPrompt = "› "
 
 const userMessageRail = "┃"
 

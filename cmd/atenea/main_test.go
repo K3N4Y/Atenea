@@ -116,7 +116,7 @@ func TestTUI_PromptHistorySurvivesRestartUnderPTY(t *testing.T) {
 	workdir := repoRoot
 
 	firstCmd, firstTerminal, firstOutput, firstDone := startTUIUnderPTY(t, binary, workdir, database)
-	waitForPTYText(t, firstOutput, " demo ─╯")
+	waitForPTYText(t, firstOutput, " demo ─┘")
 	beforeSubmit := firstOutput.String()
 	if _, err := firstTerminal.Write([]byte("mensaje persistente\r")); err != nil {
 		t.Fatal(err)
@@ -131,7 +131,7 @@ func TestTUI_PromptHistorySurvivesRestartUnderPTY(t *testing.T) {
 
 	secondCmd, secondTerminal, secondOutput, secondDone := startTUIUnderPTY(t, binary, workdir, database)
 	defer stopPTYProcess(secondCmd, secondTerminal)
-	waitForPTYText(t, secondOutput, " demo ─╯")
+	waitForPTYText(t, secondOutput, " demo ─┘")
 	before := secondOutput.String()
 	if _, err := secondTerminal.Write([]byte("\x1b[A")); err != nil {
 		t.Fatal(err)
@@ -156,7 +156,7 @@ func TestTUI_DragAssistantTextCopiesSelectionUnderPTY(t *testing.T) {
 	}
 	cmd, terminal, output, done := startTUIUnderPTY(t, binary, repoRoot, filepath.Join(t.TempDir(), "atenea.db"))
 	defer stopPTYProcess(cmd, terminal)
-	waitForPTYText(t, output, " demo ─╯")
+	waitForPTYText(t, output, " demo ─┘")
 	if _, err := terminal.Write([]byte("copy this\r")); err != nil {
 		t.Fatal(err)
 	}
@@ -244,11 +244,11 @@ func TestTUI_LearningCommandsUnderPTY(t *testing.T) {
 
 	cmd, terminal, output, _ := startTUIUnderPTY(t, binary, repoRoot, filepath.Join(t.TempDir(), "atenea.db"))
 	defer stopPTYProcess(cmd, terminal)
-	waitForPTYText(t, output, " demo ─╯")
+	waitForPTYText(t, output, " demo ─┘")
 	if _, err := terminal.Write([]byte("/learned")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYText(t, output, "│ ❯ /learned")
+	waitForPTYText(t, output, "│ › /learned")
 	if _, err := terminal.Write([]byte("\r")); err != nil {
 		t.Fatal(err)
 	}
@@ -261,11 +261,11 @@ func TestTUI_LearningCommandsUnderPTY(t *testing.T) {
 	if _, err := terminal.Write([]byte("\x1b")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYTextAfter(t, output, beforeClose, " demo ─╯")
+	waitForPTYTextAfter(t, output, beforeClose, " demo ─┘")
 	if _, err := terminal.Write([]byte("/learn")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYText(t, output, "│ ❯ /learn")
+	waitForPTYText(t, output, "│ › /learn")
 	beforeLearn := output.String()
 	if _, err := terminal.Write([]byte("\r")); err != nil {
 		t.Fatal(err)
@@ -295,7 +295,7 @@ func TestTUI_StartsFreshSessionOnLaunchUnderPTY(t *testing.T) {
 	workdir := repoRoot
 
 	firstCmd, firstTerminal, firstOutput, firstDone := startTUIUnderPTY(t, binary, workdir, database)
-	waitForPTYText(t, firstOutput, " demo ─╯")
+	waitForPTYText(t, firstOutput, " demo ─┘")
 	beforeSubmit := firstOutput.String()
 	if _, err := firstTerminal.Write([]byte("\tcontinuidad tui\r")); err != nil {
 		t.Fatal(err)
@@ -312,7 +312,7 @@ func TestTUI_StartsFreshSessionOnLaunchUnderPTY(t *testing.T) {
 	defer stopPTYProcess(secondCmd, secondTerminal)
 	// The build-mode footer (no "· plan") is the full-render signal: the plan
 	// mode of the previous run must not survive the restart either.
-	waitForPTYText(t, secondOutput, " demo ─╯")
+	waitForPTYText(t, secondOutput, " demo ─┘")
 	if rendered := ansi.Strip(secondOutput.String()); strings.Contains(rendered, "continuidad tui") {
 		t.Fatalf("a fresh launch must not show transcripts from previous runs:\n%s", rendered)
 	}
@@ -337,7 +337,7 @@ func TestTUI_ResumeCommandOpensPreviousWorkspaceSessionUnderPTY(t *testing.T) {
 	workdir := repoRoot
 
 	firstCmd, firstTerminal, firstOutput, firstDone := startTUIUnderPTY(t, binary, workdir, database)
-	waitForPTYText(t, firstOutput, " demo ─╯")
+	waitForPTYText(t, firstOutput, " demo ─┘")
 	// A session is titled after its first user message, so the wait has to be
 	// on the reply — the composer echoes the text a frame before Enter is
 	// handled, and quitting on that frame leaves an untitled session behind.
@@ -356,7 +356,7 @@ func TestTUI_ResumeCommandOpensPreviousWorkspaceSessionUnderPTY(t *testing.T) {
 	// The second launch starts fresh, so its conversation becomes a second
 	// resumable session without needing /new.
 	secondCmd, secondTerminal, secondOutput, secondDone := startTUIUnderPTY(t, binary, workdir, database)
-	waitForPTYText(t, secondOutput, " demo ─╯")
+	waitForPTYText(t, secondOutput, " demo ─┘")
 	beforeSecondSubmit := secondOutput.String()
 	if _, err := secondTerminal.Write([]byte("sesion actual\r")); err != nil {
 		t.Fatal(err)
@@ -371,7 +371,7 @@ func TestTUI_ResumeCommandOpensPreviousWorkspaceSessionUnderPTY(t *testing.T) {
 
 	thirdCmd, thirdTerminal, thirdOutput, thirdDone := startTUIUnderPTY(t, binary, workdir, database)
 	defer stopPTYProcess(thirdCmd, thirdTerminal)
-	waitForPTYText(t, thirdOutput, " demo ─╯")
+	waitForPTYText(t, thirdOutput, " demo ─┘")
 	before := thirdOutput.String()
 	if _, err := thirdTerminal.Write([]byte("/resume\r")); err != nil {
 		t.Fatal(err)
@@ -380,7 +380,7 @@ func TestTUI_ResumeCommandOpensPreviousWorkspaceSessionUnderPTY(t *testing.T) {
 	if _, err := thirdTerminal.Write([]byte("\x1b[B\r")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYTextAfter(t, thirdOutput, before, " demo · plan ─╯")
+	waitForPTYTextAfter(t, thirdOutput, before, " demo · plan ─┘")
 	if _, err := thirdTerminal.Write([]byte("\x03")); err != nil {
 		t.Fatal(err)
 	}
@@ -427,11 +427,11 @@ func TestTUI_ModelSelectorPersistsSelectionUnderPTY(t *testing.T) {
 	}
 
 	firstCmd, firstTerminal, firstOutput := start()
-	waitForPTYText(t, firstOutput, " old ─╯")
+	waitForPTYText(t, firstOutput, " old ─┘")
 	if _, err := firstTerminal.Write([]byte("/reasoning:high\r")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYText(t, firstOutput, " old(high) ─╯")
+	waitForPTYText(t, firstOutput, " old(high) ─┘")
 	if _, err := firstTerminal.Write([]byte("\x03")); err != nil {
 		t.Fatal(err)
 	}
@@ -442,7 +442,7 @@ func TestTUI_ModelSelectorPersistsSelectionUnderPTY(t *testing.T) {
 
 	cmd, terminal, output := start()
 	defer stopPTYProcess(cmd, terminal)
-	waitForPTYText(t, output, " old(high) ─╯")
+	waitForPTYText(t, output, " old(high) ─┘")
 	if _, err := terminal.Write([]byte("/")); err != nil {
 		t.Fatal(err)
 	}
@@ -454,7 +454,7 @@ func TestTUI_ModelSelectorPersistsSelectionUnderPTY(t *testing.T) {
 	if _, err := terminal.Write([]byte("\r")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYText(t, output, " new ─╯")
+	waitForPTYText(t, output, " new ─┘")
 
 	persisted, err := os.ReadFile(configPath)
 	if err != nil {
@@ -486,7 +486,7 @@ func TestTUI_DefaultOpenRouterModelsShowContextUnderPTY(t *testing.T) {
 	defer stopPTYProcess(cmd, terminal)
 	output := &lockedBuffer{}
 	copyPTYAnsweringTerminalQueries(terminal, output)
-	waitForPTYText(t, output, " openrouter/free ─╯")
+	waitForPTYText(t, output, " openrouter/free ─┘")
 	if _, err := terminal.Write([]byte("/model ")); err != nil {
 		t.Fatal(err)
 	}
@@ -581,7 +581,7 @@ func TestTUI_CtrlJCreatesMultilineComposerUnderPTY(t *testing.T) {
 	workdir := repoRoot
 	cmd, terminal, output, _ := startTUIUnderPTY(t, binary, workdir, filepath.Join(t.TempDir(), "atenea.db"))
 	defer stopPTYProcess(cmd, terminal)
-	waitForPTYText(t, output, " demo ─╯")
+	waitForPTYText(t, output, " demo ─┘")
 
 	before := output.String()
 	if _, err := terminal.Write([]byte("primera linea\x0asegunda linea\x0atercera linea\x0acuarta linea")); err != nil {
@@ -614,12 +614,12 @@ func TestTUI_PlanModeAppearsAfterModelUnderPTY(t *testing.T) {
 	workdir := repoRoot
 	cmd, terminal, output, _ := startTUIUnderPTY(t, binary, workdir, filepath.Join(t.TempDir(), "atenea.db"))
 	defer stopPTYProcess(cmd, terminal)
-	waitForPTYText(t, output, " demo ─╯")
+	waitForPTYText(t, output, " demo ─┘")
 
 	if _, err := terminal.Write([]byte("\t")); err != nil {
 		t.Fatal(err)
 	}
-	waitForPTYText(t, output, " demo · plan ─╯")
+	waitForPTYText(t, output, " demo · plan ─┘")
 }
 
 // fakeOpenRouter is a local OpenAI-compatible gateway for the /connect E2E
@@ -729,7 +729,7 @@ func TestTUI_ProductionEditApprovalUnderPTY(t *testing.T) {
 	defer stopPTYProcess(cmd, terminal)
 	output := &lockedBuffer{}
 	copyPTYAnsweringTerminalQueries(terminal, output)
-	waitForPTYText(t, output, " e2e ─╯")
+	waitForPTYText(t, output, " e2e ─┘")
 	if _, err := terminal.Write([]byte("update note\r")); err != nil {
 		t.Fatal(err)
 	}
@@ -822,7 +822,7 @@ func TestTUI_ConnectCommandFullFlowUnderPTY(t *testing.T) {
 	copyPTYAnsweringTerminalQueries(terminal, output)
 
 	// No key anywhere: demo mode, and the launch notice points at /connect.
-	waitForPTYText(t, output, " demo ─╯")
+	waitForPTYText(t, output, " demo ─┘")
 	waitForPTYText(t, output, "run /connect to connect an LLM provider")
 
 	// /connect opens the panel on the provider list, not yet connected.
@@ -855,7 +855,7 @@ func TestTUI_ConnectCommandFullFlowUnderPTY(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForPTYText(t, output, "Connected to OpenRouter · openrouter/free")
-	waitForPTYText(t, output, " openrouter/free ─╯")
+	waitForPTYText(t, output, " openrouter/free ─┘")
 
 	// The credential is persisted privately and the selection is saved.
 	credentialsPath := filepath.Join(configDir, "credentials.json")
@@ -996,7 +996,7 @@ func TestTUI_ChatGPTSubscriptionLoginUnderPTY(t *testing.T) {
 	output := &lockedBuffer{}
 	copyPTYAnsweringTerminalQueries(terminal, output)
 
-	waitForPTYText(t, output, " demo ─╯")
+	waitForPTYText(t, output, " demo ─┘")
 
 	// The panel says the subscription is not connected, and selecting it starts the
 	// login straight away: there is no key to type.
@@ -1018,7 +1018,7 @@ func TestTUI_ChatGPTSubscriptionLoginUnderPTY(t *testing.T) {
 	// away, which is why this wait is longer than the UI's own.
 	close(approve)
 	waitForPTYTextWithin(t, output, "Connected to OpenAI (ChatGPT subscription)", 30*time.Second)
-	waitForPTYText(t, output, " gpt-5.5 ─╯")
+	waitForPTYText(t, output, " gpt-5.5 ─┘")
 
 	// The credential is stored as its own arm, privately, and the selection is saved.
 	credentialsPath := filepath.Join(configDir, "credentials.json")
