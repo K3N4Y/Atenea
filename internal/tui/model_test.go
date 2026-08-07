@@ -5717,10 +5717,11 @@ func typeRunes(t *testing.T, m Model, s string) Model {
 	return m
 }
 
-// menuSelectedLine returns the menu line marked with "❯ " (prefix at the beginning of the line, without ANSI), or "" if there is none. The composer's line is not confusing: it starts with the border "│", not with the marker.
+// menuSelectedLine returns the menu row marked with "❯ " (without ANSI). The
+// selector sits inside the menu's left border, so the row starts with "│ ❯ ".
 func menuSelectedLine(view string) string {
 	for _, line := range strings.Split(view, "\n") {
-		if plain := ansi.Strip(line); strings.HasPrefix(plain, "❯ ") {
+		if plain := ansi.Strip(line); strings.Contains(plain, "│ ❯ ") {
 			return plain
 		}
 	}
@@ -6147,8 +6148,8 @@ func TestModel_SlashOpensCommandMenu(t *testing.T) {
 	}
 	lineWith(t, view, "/review")
 	newLine := lineWith(t, view, "/new")
-	if plain := ansi.Strip(newLine); !strings.HasPrefix(plain, "❯ ") {
-		t.Fatalf("/new line without ANSI = %q; the built-in command must start selected with prefix %q", plain, "❯ ")
+	if plain := ansi.Strip(newLine); !strings.Contains(plain, "│ ❯ ") {
+		t.Fatalf("/new line without ANSI = %q; the built-in command must have its selector inside the rectangle as %q", plain, "│ ❯ ")
 	}
 }
 

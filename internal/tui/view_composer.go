@@ -18,8 +18,14 @@ var (
 				Padding(0, composerBoxPadding)
 )
 
+const (
+	menuBoxBorderWidth  = 2
+	menuBoxBorderHeight = 2
+	menuBoxPadding      = 1
+)
+
 func (m Model) menuView() string {
-	var b strings.Builder
+	var rows []string
 	m.composer.visitMenuItems(func(label, description string, selected bool) {
 		prefix := "  "
 		if selected {
@@ -29,12 +35,62 @@ func (m Model) menuView() string {
 		if description != "" {
 			line += "  " + metadataStyle.Render(sanitizeTerminalText(description))
 		}
-		if width := m.chatContentWidth(); m.ready && width > 0 {
-			line = ansi.Truncate(line, width, "…")
-		}
-		b.WriteString(line + "\n")
+		rows = append(rows, line)
 	})
-	return b.String()
+	if len(rows) == 0 {
+		return ""
+	}
+
+	width := m.chatContentWidth()
+	margin := 0
+	if m.ready {
+		l := m.baseLayout()
+		width = l.chatInnerWidth
+		margin = l.chatMargin
+	} else {
+		for _, row := range rows {
+			width = max(width, ansi.StringWidth(row)+menuBoxBorderWidth+2*menuBoxPadding)
+		}
+	}
+	if width < menuBoxBorderWidth {
+		for i, row := range rows {
+			rows[i] = ansi.Truncate(row, width, "…")
+		}
+		return strings.Repeat(" ", margin) + strings.Join(rows, "\n") + "\n"
+	}
+
+	contentWidth := max(width-menuBoxBorderWidth-2*menuBoxPadding, 0)
+	for i, row := range rows {
+		row = ansi.Truncate(row, contentWidth, "…")
+		rows[i] = composerBorderStyle.Render("│") +
+			strings.Repeat(" ", menuBoxPadding) + row +
+			strings.Repeat(" ", max(contentWidth-ansi.StringWidth(row), 0)+menuBoxPadding) +
+			composerBorderStyle.Render("│")
+	}
+
+	box := renderMenuBox(rows, width)
+	if !m.ready {
+		return box + "\n"
+	}
+	right := max(m.chatContentWidth()-margin-width, 0)
+	leftPadding := strings.Repeat(" ", margin)
+	rightPadding := strings.Repeat(" ", right)
+	boxLines := strings.Split(box, "\n")
+	for i, line := range boxLines {
+		boxLines[i] = leftPadding + line + rightPadding
+	}
+	return strings.Join(boxLines, "\n") + "\n"
+}
+
+func renderMenuBox(rows []string, width int) string {
+	border := func(left, right string) string {
+		return composerBorderStyle.Render(left + strings.Repeat("─", max(width-menuBoxBorderWidth, 0)) + right)
+	}
+	lines := make([]string, 0, len(rows)+menuBoxBorderHeight)
+	lines = append(lines, border("┌", "┐"))
+	lines = append(lines, rows...)
+	lines = append(lines, border("└", "┘"))
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) composerBox() string {

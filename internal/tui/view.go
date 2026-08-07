@@ -55,12 +55,19 @@ func (m Model) chatContent() string {
 }
 
 func (m Model) reservedLines() int {
-	reserved := m.composerReservedLines() + m.composer.menuHeight()
+	reserved := m.composerReservedLines() + m.composerMenuReservedLines()
 	if m.showsWorking() {
 		reserved++
 	}
 	reserved += m.permissionPanelHeight()
 	return reserved
+}
+
+func (m Model) composerMenuReservedLines() int {
+	if m.composer.menuHeight() == 0 {
+		return 0
+	}
+	return m.composer.menuHeight() + menuBoxBorderHeight
 }
 
 func (m Model) composerReservedLines() int {

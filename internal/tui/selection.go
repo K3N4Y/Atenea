@@ -380,7 +380,7 @@ func (m Model) snackbarView() (string, snackbarRect, bool) {
 	if m.snackbar.message == "" || !m.ready || m.width <= 0 {
 		return "", snackbarRect{}, false
 	}
-	composerTop := m.viewport.Height + m.composer.menuHeight()
+	composerTop := m.viewport.Height + m.composerMenuReservedLines()
 	if m.showsWorking() {
 		composerTop++
 	}

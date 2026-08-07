@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -206,5 +207,74 @@ func BenchmarkRenderMarkdown_Cached(b *testing.B) {
 	const text = "A settled assistant response with **stable Markdown** and a link."
 	for i := 0; i < b.N; i++ {
 		renderMarkdown(text, 80)
+	}
+}
+
+func TestMenuView_RendersCommandsInsideRectangularBox(t *testing.T) {
+	m := Model{composer: composer{
+		menuItems: []menuItem{{label: "/new", description: "Start a new session"}},
+	}}
+
+	view := ansi.Strip(m.menuView())
+	if !strings.Contains(view, "┌") || !strings.Contains(view, "┐") ||
+		!strings.Contains(view, "└") || !strings.Contains(view, "┘") {
+		t.Fatalf("menuView() = %q, want a rectangular command box", view)
+	}
+	if strings.Contains(view, "╭") || strings.Contains(view, "╮") ||
+		strings.Contains(view, "╰") || strings.Contains(view, "╯") {
+		t.Fatalf("menuView() = %q, want square corners rather than rounded corners", view)
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(view, "\n"), "\n") {
+		if !strings.HasPrefix(line, "┌") && !strings.HasPrefix(line, "│") &&
+			!strings.HasPrefix(line, "└") {
+			t.Fatalf("menu line = %q, rectangular box geometry is invalid", line)
+		}
+	}
+}
+func TestMenuView_PutsSelectionInsideTheRectangle(t *testing.T) {
+	m := Model{composer: composer{
+		menuItems: []menuItem{{label: "/new", description: "Start a new session"}},
+	}}
+
+	lines := strings.Split(strings.TrimSuffix(ansi.Strip(m.menuView()), "\n"), "\n")
+	var top, selected string
+	for _, line := range lines {
+		if strings.Contains(line, "┌") {
+			top = line
+		}
+		if strings.Contains(line, "❯") {
+			selected = line
+		}
+	}
+	if !strings.Contains(selected, "│ ❯ ") {
+		t.Fatalf("selected menu line = %q, want the selector inside the left border", selected)
+	}
+	if strings.Index(top, "┌") != strings.Index(selected, "│") {
+		t.Fatalf("top border = %q and selected row = %q, rectangle sides must align", top, selected)
+	}
+}
+
+func TestMenuView_DoesNotHideTopBarWhenMenuOpens(t *testing.T) {
+	m := NewModel(nil, "s1", nil).
+		WithWorkspace("main", "~/workspace").
+		WithCompletions(nil, nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 12})
+	m.composer.menuItems = []menuItem{{label: "/new", description: "Start a new session"}}
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "main") {
+		t.Fatalf("View() = %q, opening the slash menu must not remove the top bar", view)
+	}
+	lines := strings.Split(view, "\n")
+	top, selected := -1, -1
+	for index, line := range lines {
+		if strings.Contains(line, "┌") && top < 0 {
+			top = index
+		}
+		if strings.Contains(line, "│ ❯ ") {
+			selected = index
+		}
+	}
+	if top < 0 || selected < 0 || len(lines[top])-len(strings.TrimLeft(lines[top], " ")) != len(lines[selected])-len(strings.TrimLeft(lines[selected], " ")) {
+		t.Fatalf("menu borders are not aligned in ready view:\n%s", view)
 	}
 }

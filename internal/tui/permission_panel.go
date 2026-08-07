@@ -169,7 +169,7 @@ func (m Model) permissionPanelHeight() int {
 	contentHeight := m.bodyHeight()
 	// No working-line reservation: a pending permission suppresses it (see
 	// showsWorking), so the panel takes that row too.
-	baseReserved := m.composerReservedLines() + m.composer.menuHeight()
+	baseReserved := m.composerReservedLines() + m.composerMenuReservedLines()
 	available := max(contentHeight-baseReserved, 0)
 	if len(m.entries) > 0 && available > 0 {
 		available--
@@ -189,7 +189,7 @@ func (m Model) permissionPanelLayout() (permissionPanelLayout, bool) {
 		return permissionPanelLayout{}, false
 	}
 	x := margin
-	y := m.viewport.Height + m.composer.menuHeight()
+	y := m.viewport.Height + m.composerMenuReservedLines()
 	return permissionPanelLayout{
 		x: x, y: y, width: panelWidth, height: len(lines),
 		actionY: metadata.actionY, actions: metadata.actions,
