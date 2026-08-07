@@ -1,28 +1,22 @@
-Run real terminal programs through `bash -c` for builds, tests, package managers, git, and short fact-producing pipelines. Use dedicated workspace tools instead for reading, searching, or editing files.
+Run real terminal programs through `bash -c`.
 
-## Input grammar
-- `command` is the complete non-interactive shell command. Each call starts a fresh process in the workspace; cwd, variables, aliases, and shell state do not persist.
+<instructions>
+- command: the complete non-interactive shell command; each call starts a fresh process in the workspace, so cwd, variables, and aliases do not persist.
 - Set `slow_ok=true` for builds, tests, downloads, and installations that may exceed the short timeout.
-- Chain dependent commands in one `command`; use separate parallel calls for independent commands.
+- Chain dependent steps in one `command`; use separate calls for independent commands.
 - Every command requires user approval before execution and may be denied.
+</instructions>
 
-## Examples
-- `{"command":"go test ./internal/tool","slow_ok":true}` runs a focused test package.
-- `{"command":"git status --short"}` asks a real CLI for repository state.
-
-## Recoverable failures
-- `[exit N]` means the program exited nonzero, not that the tool malfunctioned: inspect stdout/stderr, correct the command or code, and rerun only when useful.
-- A timeout on legitimate long work: retry with `slow_ok=true`.
-- User denial: do not repeat the same call; explain its purpose or choose a dedicated safe tool.
-- Missing executable or invalid flags: correct the program/arguments from the output; do not conceal the failure.
-
-## Anti-patterns
-- WRONG: use `cat`, `grep`, `find`, `sed`, `head`, `tail`, or `echo` to inspect or mutate workspace files. RIGHT: use read, grep, glob, edit, or write.
-- WRONG: launch an editor, pager, password prompt, or other interactive process. RIGHT: pass non-interactive flags or use a dedicated tool.
-- WRONG: assume `cd` or `export` survives another call. RIGHT: combine dependent steps or use explicit paths.
+<avoid>
+- Do not use bash for reading, searching, or editing files covered by dedicated workspace tools.
+- Do not launch editors, pagers, password prompts, or other interactive processes.
+- Do not assume `cd` or `export` persists between calls.
+</avoid>
 
 <critical>
-- Use bash for executing programs, not for file operations covered by dedicated tools.
+- Use bash to execute programs, not for file operations covered by dedicated workspace tools.
 - Mark potentially slow commands with `slow_ok=true`.
-- Every command requires approval; treat nonzero exits as evidence to inspect, and never blindly retry a denied call.
+- Treat a nonzero exit as evidence to inspect; do not blindly retry.
+- If a command is denied, do not repeat it; explain its purpose or choose a dedicated safe tool.
+- If an executable or flag is missing or invalid, correct the command without concealing the failure.
 </critical>
