@@ -1,31 +1,13 @@
-Read a workspace text file once you know the path and lines you need. Use `glob` to find files by name and `grep` to locate content; use `read` to inspect the resulting file. You SHOULD parallelize independent reads.
+Read files
 
-## Input grammar
-- `path` is a workspace-relative file path.
-- Append `:N` for one line or `:N-M` for an inclusive 1-indexed range, for example `src/foo.go:50-200`.
-- With no selector, read returns at most 2,000 lines and about 30 KiB. A truncation notice names the next selector to use.
-- File names containing `:` are unsupported because the final colon starts the selector.
-
-## Examples
-- `{"path":"internal/tool/read.go:50-90"}` reads the relevant implementation section.
-- `{"path":"go.mod"}` reads a known small file from the start.
-
-## Recoverable failures
-- A missing or invalid path: correct it using `glob` or `grep`, then call `read` again.
-- A truncated result: continue with the selector named in the notice.
-- A snapshot rejected because of a limit or collision returns without a header: change or reduce the content or start a new session, then use read again before editing.
-- A binary, directory, URL, archive, database, document, image, or internal URI: use its dedicated tool; read only supports local workspace text files.
-
-## Anti-patterns
-- WRONG: read a guessed file or repeatedly read tiny adjacent ranges. RIGHT: locate it first, then request one broad relevant range.
-- WRONG: infer lines hidden by a selector or truncation. RIGHT: read the omitted range.
-- WRONG: fabricate a `[path#HASH]`. RIGHT: copy the exact header returned by read into `edit`.
-
-## Output
-Text output starts with a `[path#HASH]` snapshot header followed by `LINE:TEXT` lines. The hash identifies the content you read. Files containing NUL bytes are treated as binary and do not produce editable snapshots.
+<instructions>
+- path: one workspace-relative text file; append `:N` for one line or `:N-M` for an inclusive line range, such as `src/foo.go:50-200`.
+- A read without a line selector returns at most 2,000 lines and about 30 KiB; continue from the range named in the truncation notice.
+- Use `glob` to find files by name and `grep` to locate content before reading the relevant section.
+</instructions>
 
 <critical>
-- Use glob/grep to locate, read to inspect, and edit to change.
-- A selector exposes only requested lines; NEVER guess omitted content.
-- NEVER fabricate the hash. Without a header, read again successfully before editing.
+- Never infer content outside the returned line range.
+- Never fabricate a `[path#HASH]` snapshot header; read the file again if no header is returned.
+- Read only workspace text files; use the appropriate tool for directories, binary files, URLs, archives, databases, documents, or images.
 </critical>
