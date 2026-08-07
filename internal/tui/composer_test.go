@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -284,6 +285,43 @@ func TestComposer_MenuTakesPriorityOverHistoryKeys(t *testing.T) {
 	}
 	if c.histIdx != len(c.history) {
 		t.Fatalf("histIdx = %d, history navigation must stay parked while the menu is open", c.histIdx)
+	}
+}
+
+func TestComposer_CommandMenuNavigatesAllMatchesWithinFixedPopup(t *testing.T) {
+	commands := make([]command.Command, 0, menuLimit+2)
+	for i := 0; i < menuLimit+2; i++ {
+		commands = append(commands, command.Command{Name: fmt.Sprintf("command-%02d", i)})
+	}
+	models := modelSource{catalog: func() ([]providerconfig.ProviderModels, bool) { return nil, false }}
+	c := typeInto(newTestComposer(), "/command", commands, nil, models)
+
+	if got, want := len(c.menuItems), menuLimit+2; got != want {
+		t.Fatalf("menu items = %d, want all %d matching commands available to navigation", got, want)
+	}
+	if got, want := c.menuHeight(), menuLimit; got != want {
+		t.Fatalf("menu height = %d, want the fixed popup height %d", got, want)
+	}
+
+	for range menuLimit {
+		c, _, _ = c.handleKey(keyMsg(tea.KeyDown), commands, nil, models)
+	}
+	if got, want := c.menuSelected, menuLimit; got != want {
+		t.Fatalf("selected = %d after moving past the visible rows, want %d", got, want)
+	}
+
+	visible := make([]string, 0, menuLimit)
+	c.visitMenuItems(func(label, _ string, selected bool) {
+		visible = append(visible, label)
+		if selected && label != "/command-10" {
+			t.Fatalf("selected label = %q, want /command-10", label)
+		}
+	})
+	if len(visible) != menuLimit {
+		t.Fatalf("visible menu rows = %d, want fixed limit %d", len(visible), menuLimit)
+	}
+	if visible[0] == "/command-00" {
+		t.Fatalf("visible menu did not scroll after navigating beyond the first page: %v", visible)
 	}
 }
 

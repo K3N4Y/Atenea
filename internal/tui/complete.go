@@ -109,9 +109,9 @@ func isCanonicalModelCommand(text string, providers []providerconfig.ProviderMod
 }
 
 // filterCommands excludes skills because they are selected exclusively through
-// the /skills picker. It keeps local commands ahead of other extensions in the
-// bounded initial menu. Once the user types a query, matches retain the
-// established quality, shortest-name, and alphabetical ranking.
+// the /skills picker. It keeps local commands ahead of other extensions. The
+// caller controls how many matching commands are retained; the popup itself
+// windows the result to menuLimit rows while arrows navigate the full result.
 func filterCommands(cmds []command.Command, query string, limit int) []command.Command {
 	if limit <= 0 {
 		return nil
@@ -307,9 +307,10 @@ func (c composer) refreshMenu(commands []command.Command, listFiles func() ([]st
 	} else if q := detectCommand(text, caret); q.active {
 		c.modelSearch = false
 		c = c.dropFileCache()
-		query := strings.ToLower(q.query)
-		developmentItems := developmentBuiltinCommands(query)
-		for _, cmd := range filterCommands(commands, q.query, menuLimit-len(developmentItems)) {
+		developmentItems := developmentBuiltinCommands(strings.ToLower(q.query))
+		// Keep every matching command in the navigation model. The view shows
+		// only menuLimit rows, but Up/Down must be able to reach the rest.
+		for _, cmd := range filterCommands(commands, q.query, len(commands)) {
 			c.menuItems = append(c.menuItems, menuItem{
 				label: "/" + cmd.Name, description: cmd.Description, builtin: cmd.BuiltIn,
 			})

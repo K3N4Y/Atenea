@@ -171,10 +171,11 @@ type composer struct {
 	histIdx int
 
 	// menuItems / menuSelected are the autocomplete popup state: refreshMenu
-	// recomputes them after every key that feeds the input, and the view renders
-	// one line per item above the composer box. modelSearch marks the inline
-	// "/model <query>" mode. files/filesLoaded/... cache the workspace listing
-	// while the "@" token stays active (loadFilesOnce/dropFileCache).
+	// recomputes them after every key that feeds the input. menuItems keeps every
+	// match for keyboard navigation; the view renders only the fixed-size window.
+	// modelSearch marks the inline "/model <query>" mode. files/filesLoaded/...
+	// cache the workspace listing while the "@" token stays active
+	// (loadFilesOnce/dropFileCache).
 	menuItems    []menuItem
 	menuSelected int
 	modelSearch  bool
@@ -309,16 +310,21 @@ func (c composer) setHeight(height int) composer {
 
 func (c composer) inputView() string { return c.input.View() }
 
-// visitMenuItems exposes each popup row as immutable rendering values without
-// leaking the mutable backing slice or allocating a projection on every view.
+// visitMenuItems exposes the visible popup rows as immutable rendering values
+// without leaking the mutable backing slice or allocating a projection on every
+// view. The popup keeps all matching items for keyboard navigation, but renders
+// only its fixed-size window.
 func (c composer) visitMenuItems(visit func(label, description string, selected bool)) {
-	for i := range c.menuItems {
+	start, end := listWindow(len(c.menuItems), c.menuSelected, menuLimit)
+	for i := start; i < end; i++ {
 		item := c.menuItems[i]
 		visit(item.label, item.description, i == c.menuSelected)
 	}
 }
 
-func (c composer) menuHeight() int { return len(c.menuItems) }
+func (c composer) menuHeight() int {
+	return min(len(c.menuItems), menuLimit)
+}
 
 // focus focuses the textarea, returning the blink command; blur removes focus.
 // The root decides which to call via syncComposerFocus (activeInputTarget).
