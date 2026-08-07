@@ -15,7 +15,7 @@ type localCommandKind uint8
 
 const (
 	localCommandMode localCommandKind = iota
-	localCommandReasoning
+	localCommandVariants
 	localCommandCacheStats
 	localCommandUndo
 	localCommandCheckpoint
@@ -48,8 +48,10 @@ func parseLocalCommand(text string) (localCommand, bool) {
 	switch {
 	case trimmed == "/mode", trimmed == "/mode:auto-accept", trimmed == "/mode:ask", trimmed == "/mode:yolo":
 		return localCommand{kind: localCommandMode, text: trimmed}, true
+	case trimmed == "/variants" || strings.HasPrefix(trimmed, "/variants:"):
+		return localCommand{kind: localCommandVariants, text: trimmed}, true
 	case trimmed == "/reasoning" || strings.HasPrefix(trimmed, "/reasoning:"):
-		return localCommand{kind: localCommandReasoning, text: trimmed}, true
+		return localCommand{kind: localCommandVariants, text: trimmed}, true
 	case trimmed == "/cache-stats":
 		return localCommand{kind: localCommandCacheStats, text: trimmed, original: text}, true
 	case strings.HasPrefix(trimmed, "/undo"):
@@ -96,8 +98,19 @@ func (m Model) executeLocalCommand(command localCommand) (Model, tea.Cmd) {
 	switch command.kind {
 	case localCommandMode:
 		return m.submitModeCommand(command.text)
-	case localCommandReasoning:
-		next, _ := m.handleReasoningCommand(command.text)
+	case localCommandVariants:
+		if strings.HasPrefix(command.text, "/reasoning") {
+			next, _ := m.handleReasoningCommand(command.text)
+			return next, nil
+		}
+		if command.text == "/variants" {
+			if agent, ok := m.agent.(reasoningAgent); ok {
+				m.composer = m.composer.clear()
+				m.variantsPicker.openAt(agent.ReasoningEffort())
+				return m, nil
+			}
+		}
+		next, _ := m.handleReasoningCommand(strings.Replace(command.text, "/variants", "/reasoning", 1))
 		return next, nil
 	case localCommandCacheStats:
 		next, handled := m.handleCacheStatsCommand(command.text)

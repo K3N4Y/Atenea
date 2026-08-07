@@ -71,6 +71,7 @@ type Model struct {
 	mcpPicker       mcpPicker
 	learnedPicker   learnedPicker
 	skillsPicker    skillsPicker
+	variantsPicker  variantsPicker
 	mcpGen          uint64
 	learnedGen      uint64
 	learnedAuditGen uint64

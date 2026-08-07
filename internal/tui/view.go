@@ -31,6 +31,9 @@ func (m Model) View() string {
 	if m.skillsPicker.open {
 		return m.skillsPickerView()
 	}
+	if m.variantsPicker.open {
+		return m.variantsPickerView()
+	}
 	if m.connectPanel.open {
 		return m.connectPanelView()
 	}

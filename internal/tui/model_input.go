@@ -52,6 +52,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.activeInputTarget() {
 	case targetResumePicker:
 		return m.handleResumePickerKey(msg)
+	case targetVariantsPicker:
+		return m.handleVariantsPickerKey(msg)
 	case targetModelPicker:
 		return m.handleModelPickerKey(msg)
 	case targetMCPPicker:

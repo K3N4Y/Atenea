@@ -5,14 +5,14 @@ import (
 	"sync"
 )
 
-const ReasoningCommandDescription = "Set reasoning effort: /reasoning:<level> (default, minimal, low, medium, high, xhigh, max)"
+const ReasoningCommandDescription = "Choose reasoning variant with /variants (default, minimal, low, medium, high, xhigh, max)"
 
 func ReasoningHelp(effort ReasoningEffort) string {
 	label := string(effort)
 	if label == "" {
 		label = "default"
 	}
-	return fmt.Sprintf("reasoning effort: %s; choose with /reasoning:<level> (default, minimal, low, medium, high, xhigh, max)", label)
+	return fmt.Sprintf("reasoning effort: %s; choose with /variants (default, minimal, low, medium, high, xhigh, max)", label)
 }
 
 // ReasoningSelection stores the process-local user preference shared by hosts

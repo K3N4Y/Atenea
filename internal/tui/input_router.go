@@ -11,36 +11,18 @@ package tui
 type inputTarget int
 
 const (
-	// targetResumePicker: the resume session picker overlay is open. It wins
-	// over every other overlay and gate.
 	targetResumePicker inputTarget = iota
-	// targetModelPicker: the model/provider picker overlay is open.
 	targetModelPicker
-	// targetMCPPicker: the MCP server picker overlay is open.
 	targetMCPPicker
-	// targetLearnedPicker: the learning audit overlay is open.
 	targetLearnedPicker
-	// targetSkillsPicker: the in-terminal skill selection modal is open.
 	targetSkillsPicker
-	// targetConnectPanel: the provider connect panel overlay is open.
+	targetVariantsPicker
 	targetConnectPanel
-	// targetPermissionGate: a tool permission decision is pending. The keyboard
-	// enters approval mode; only context-specific exceptions (PgUp/PgDn scroll)
-	// escape it, and those exceptions live in the leaf handler, not here.
 	targetPermissionGate
-	// targetPlanGate: a plan approval is pending (no permission pending).
 	targetPlanGate
-	// targetComposer: nothing above claims input; the chat composer owns it.
 	targetComposer
 )
 
-// activeInputTarget resolves which context owns input given the current Model
-// state, encoding the precedence order EXACTLY ONCE. Callers consult it to
-// dispatch to the right leaf handler (keyboard), to decide composer focus, and
-// to short-circuit modal overlays before pointer-specific handling (mouse).
-//
-// The order is: the four overlay pickers (resume, model, mcp, connect), then
-// the permission gate, then the plan gate, then the composer.
 func (m Model) activeInputTarget() inputTarget {
 	switch {
 	case m.resumePicker.open:
@@ -53,6 +35,8 @@ func (m Model) activeInputTarget() inputTarget {
 		return targetLearnedPicker
 	case m.skillsPicker.open:
 		return targetSkillsPicker
+	case m.variantsPicker.open:
+		return targetVariantsPicker
 	case m.connectPanel.open:
 		return targetConnectPanel
 	}
@@ -65,14 +49,10 @@ func (m Model) activeInputTarget() inputTarget {
 	return targetComposer
 }
 
-// modalActive reports whether an overlay or gate currently claims input, i.e.
-// the active target is one of the pickers, the permission gate, or the plan
-// gate. The mouse router uses this shared notion (with each modal's own
-// pointer-specific short-circuit) instead of re-listing the overlay chain.
 func (t inputTarget) modalActive() bool {
 	switch t {
 	case targetResumePicker, targetModelPicker, targetMCPPicker, targetLearnedPicker,
-		targetSkillsPicker, targetConnectPanel, targetPermissionGate, targetPlanGate:
+		targetSkillsPicker, targetVariantsPicker, targetConnectPanel, targetPermissionGate, targetPlanGate:
 		return true
 	default:
 		return false

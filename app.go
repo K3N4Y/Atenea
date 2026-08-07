@@ -601,7 +601,7 @@ func (a *App) ListCommands() ([]command.Command, error) {
 		command.Command{Name: "mode", Description: "Show safe auto-accept mode", BuiltIn: true},
 		command.Command{Name: "mode:auto-accept", Description: "Auto-accept safe workspace edits", BuiltIn: true},
 		command.Command{Name: "mode:ask", Description: "Ask before workspace edits", BuiltIn: true},
-		command.Command{Name: "reasoning", Description: llm.ReasoningCommandDescription, BuiltIn: true},
+		command.Command{Name: "variants", Description: llm.ReasoningCommandDescription, BuiltIn: true},
 	)
 	return commands, nil
 }

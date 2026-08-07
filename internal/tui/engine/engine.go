@@ -524,7 +524,7 @@ func localCommands(yoloAuthorized bool) []command.Command {
 		{Name: "learn", Description: "Learn from the current conversation", BuiltIn: true},
 		{Name: "learned", Description: "Review learned workspace guidance", BuiltIn: true},
 		{Name: "mcp", Description: "Toggle MCP servers on or off", BuiltIn: true},
-		{Name: "reasoning", Description: llm.ReasoningCommandDescription, BuiltIn: true},
+		{Name: "variants", Description: llm.ReasoningCommandDescription, BuiltIn: true},
 		{Name: "model", Description: "Select provider and model", BuiltIn: true},
 		{Name: "new", Description: "Start a new session", BuiltIn: true},
 		{Name: "mode", Description: "Show safe auto-accept mode", BuiltIn: true},
