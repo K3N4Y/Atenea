@@ -1,31 +1,12 @@
-Search workspace file contents with ripgrep regular expressions. Use `glob` for file-name discovery and `read` when you need a broader file window.
+Searches files
 
-## Input grammar
-- `pattern` is a ripgrep regular expression such as `func\s+\w+` or `TODO|FIXME`.
-- `path` optionally narrows the search to a workspace-relative file or directory; it defaults to `.`.
-- `include` optionally filters file names with a glob such as `*.go` or `*.{ts,tsx}`.
-- Results are capped at the first 100 matches; narrow the search when truncation is reported.
-
-## Examples
-- `{"pattern":"func\\s+\\w+","path":"internal/tool","include":"*.go"}` finds Go function declarations.
-- `{"pattern":"TODO|FIXME","include":"*.go"}` finds maintenance markers in Go files.
-
-## Recoverable failures
-- No matches: verify the regex and scope, then broaden one of them; do not retry unchanged.
-- Invalid regex: correct it using ripgrep syntax.
-- Truncated results: narrow `path`, `include`, or `pattern`.
-- A snapshot collision or retention limit may return a result without a header. Change or reduce the content or start a new session, then use `read` before editing.
-
-## Anti-patterns
-- WRONG: use grep to find a file by name. RIGHT: use `glob`.
-- WRONG: use grep when source syntax shape matters. RIGHT: use `ast`.
-- WRONG: edit from a result without a `[path#HASH]` header. RIGHT: read the file successfully first.
-
-## Output
-Each editable result starts with `[path#HASH]` and then matching `LINE:TEXT` rows. The header and line numbers can anchor a later `edit`; a result without a header is not editable evidence.
+<instruction>
+- pattern: one ripgrep regular expression; use `|` for alternatives, such as `TODO|FIXME`.
+- path: one workspace-relative file or directory to search; use separate calls for independent search roots.
+- include: one optional file-name glob; use braces for alternatives, such as `*.{go,md}`.
+</instruction>
 
 <critical>
-- Use grep to find where text occurs, not to read a whole file.
-- Never fabricate a snapshot header.
-- If output has no header, use `read` before editing.
+- MUST use this instead of shell `grep`/`rg`.
+- Open-ended multi-round
 </critical>
