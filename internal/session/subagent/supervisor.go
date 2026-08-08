@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/K3N4Y/atenea/internal/session/tasksettlement"
 	"github.com/K3N4Y/atenea/internal/tool"
 )
 
@@ -16,11 +17,11 @@ const completedJobCap = 128
 
 type jobProgress struct {
 	mu        sync.RWMutex
-	summary   tool.TaskSettlement
+	summary   tasksettlement.Summary
 	workspace string
 }
 
-func (p *jobProgress) set(summary tool.TaskSettlement) {
+func (p *jobProgress) set(summary tasksettlement.Summary) {
 	p.mu.Lock()
 	p.summary = summary
 	p.mu.Unlock()
@@ -30,7 +31,7 @@ func (p *jobProgress) setWorkspace(workspace string) {
 	p.workspace = workspace
 	p.mu.Unlock()
 }
-func (p *jobProgress) get() (tool.TaskSettlement, string) {
+func (p *jobProgress) get() (tasksettlement.Summary, string) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.summary, p.workspace

@@ -24,6 +24,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/K3N4Y/atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/session/tasksettlement"
 	"github.com/K3N4Y/atenea/internal/tool"
 )
 
@@ -55,7 +56,7 @@ type Transcript struct {
 	revealing       bool
 	childBatches    map[string][]entry
 	childTotals     map[string]int
-	childSummaries  map[string]tool.TaskSettlement
+	childSummaries  map[string]tasksettlement.Summary
 	childDetached   map[string]bool
 	childCandidates map[string]childCandidate
 	pendingPreviews map[previewKey]tool.Preview
@@ -249,7 +250,7 @@ func (t Transcript) settleChildTotal(ev EventMsg) Transcript {
 	t.childTotals[ev.CallID] = total
 	if summary, ok := session.TaskSettlement(session.SessionEvent(ev)); ok {
 		if t.childSummaries == nil {
-			t.childSummaries = make(map[string]tool.TaskSettlement)
+			t.childSummaries = make(map[string]tasksettlement.Summary)
 		}
 		t.childSummaries[ev.CallID] = summary
 	}

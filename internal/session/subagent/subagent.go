@@ -19,6 +19,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/permission"
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/session/runner"
+	"github.com/K3N4Y/atenea/internal/session/tasksettlement"
 	"github.com/K3N4Y/atenea/internal/tool"
 )
 
@@ -333,7 +334,7 @@ func (t *TaskTool) Execute(ctx context.Context, input json.RawMessage) (tool.Res
 		if err != nil {
 			return tool.Result{}, err
 		}
-		if recorder := tool.SettlementRecorderFrom(ctx); recorder != nil {
+		if recorder := tasksettlement.FromContext(ctx); recorder != nil {
 			recorder.SetTaskDetached()
 		}
 		return result, nil
@@ -398,7 +399,7 @@ func (t *TaskTool) run(ctx, metadataCtx context.Context, def agent.Def, in taskI
 	bp := &budgetProvider{provider: provider, usage: usage}
 	updateProgress := func() {
 		if progress != nil {
-			progress.set(tool.TaskSettlement{Requests: int(usage.requests.Load()), Tokens: int(usage.tokens.Load()), Duration: time.Since(started), ToolCalls: counting.count()})
+			progress.set(tasksettlement.Summary{Requests: int(usage.requests.Load()), Tokens: int(usage.tokens.Load()), Duration: time.Since(started), ToolCalls: counting.count()})
 		}
 	}
 	counting.onChange = func(int) { updateProgress() }
@@ -432,9 +433,9 @@ func (t *TaskTool) run(ctx, metadataCtx context.Context, def agent.Def, in taskI
 		System: func(string) string { return systemPrompt }, Gate: t.gate, Policy: policy,
 	})
 	finish := func() {
-		s := tool.TaskSettlement{Requests: int(usage.requests.Load()), Tokens: int(usage.tokens.Load()), Duration: time.Since(started), ToolCalls: counting.count(), Workspace: env.Workspace}
-		if rec := tool.SettlementRecorderFrom(metadataCtx); rec != nil {
-			rec.SetTaskSettlement(s)
+		s := tasksettlement.Summary{Requests: int(usage.requests.Load()), Tokens: int(usage.tokens.Load()), Duration: time.Since(started), ToolCalls: counting.count(), Workspace: env.Workspace}
+		if rec := tasksettlement.FromContext(metadataCtx); rec != nil {
+			rec.SetSummary(s)
 		}
 		if progress != nil {
 			progress.set(s)

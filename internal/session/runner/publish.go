@@ -8,6 +8,7 @@ import (
 
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/session/tasksettlement"
 	"github.com/K3N4Y/atenea/internal/tool"
 )
 
@@ -40,7 +41,7 @@ type Publisher struct {
 	tools                map[string]string                   // callID -> toolName (mapa de tool calls del turno)
 	order                []string                            // orden de Tool.Called del turno
 	settled              map[string]bool                     // callID -> ya tiene Tool.Success/Tool.Failed
-	recorders            map[string]*tool.SettlementRecorder // callID -> private task settlement data
+	recorders            map[string]*tasksettlement.Recorder // callID -> private task settlement data
 	estimatedInputTokens int
 }
 
@@ -55,7 +56,7 @@ func NewPublisher(store eventAppender, sessionID, assistantMessageID string, est
 		input:                make(map[string][]byte),
 		tools:                make(map[string]string),
 		settled:              make(map[string]bool),
-		recorders:            make(map[string]*tool.SettlementRecorder),
+		recorders:            make(map[string]*tasksettlement.Recorder),
 		estimatedInputTokens: estimatedInputTokens,
 	}
 }
@@ -173,7 +174,7 @@ func (p *Publisher) ToolPermissionRequested(ctx context.Context, callID string) 
 
 // RegisterSettlementRecorder associates private execution data with one local
 // call. Registration and settlement share the publisher lock.
-func (p *Publisher) RegisterSettlementRecorder(callID string, recorder *tool.SettlementRecorder) {
+func (p *Publisher) RegisterSettlementRecorder(callID string, recorder *tasksettlement.Recorder) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.recorders[callID] = recorder
@@ -331,7 +332,7 @@ func (p *Publisher) decorateTaskSettlement(callID string, event session.SessionE
 		if recorder.TaskDetached() {
 			return session.WithTaskDetached(event)
 		}
-		return session.WithTaskSettlement(event, recorder.TaskSettlement())
+		return session.WithTaskSettlement(event, recorder.Summary())
 	}
 	return session.WithSubagentToolCalls(event, 0)
 }

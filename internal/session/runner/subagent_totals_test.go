@@ -7,7 +7,7 @@ import (
 
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/session"
-	"github.com/K3N4Y/atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/session/tasksettlement"
 )
 
 func TestPublisherDecoratesOnlyTaskSettlementsIncludingUnresolved(t *testing.T) {
@@ -22,7 +22,7 @@ func TestPublisherDecoratesOnlyTaskSettlementsIncludingUnresolved(t *testing.T) 
 			spy := &recordingAppender{}
 			p := NewPublisher(spy, "s", "a", 0)
 			publishAll(t, p, llm.Event{Kind: llm.ToolCall, CallID: "c", ToolName: "task"})
-			r := tool.NewSettlementRecorder()
+			r := tasksettlement.NewRecorder()
 			r.SetSubagentToolCalls(tc.total)
 			p.RegisterSettlementRecorder("c", r)
 			var err error
@@ -59,7 +59,7 @@ func TestPublisherDecoratesOnlyTaskSettlementsIncludingUnresolved(t *testing.T) 
 		spy := &recordingAppender{}
 		p := NewPublisher(spy, "s", "a", 0)
 		publishAll(t, p, llm.Event{Kind: llm.ToolCall, CallID: "c", ToolName: "task"})
-		r := tool.NewSettlementRecorder()
+		r := tasksettlement.NewRecorder()
 		r.SetTaskDetached()
 		p.RegisterSettlementRecorder("c", r)
 		if err := p.ToolSuccess(context.Background(), "c", `{"job_id":"j","status":"running"}`, ""); err != nil {
@@ -72,7 +72,7 @@ func TestPublisherDecoratesOnlyTaskSettlementsIncludingUnresolved(t *testing.T) 
 	spy := &recordingAppender{}
 	p := NewPublisher(spy, "s", "a", 0)
 	publishAll(t, p, llm.Event{Kind: llm.ToolCall, CallID: "c", ToolName: "echo"})
-	p.RegisterSettlementRecorder("c", tool.NewSettlementRecorder())
+	p.RegisterSettlementRecorder("c", tasksettlement.NewRecorder())
 	_ = p.ToolSuccess(context.Background(), "c", "", "")
 	if _, ok := session.SubagentToolCalls(spy.events[1]); ok {
 		t.Fatal("non-task decorated")

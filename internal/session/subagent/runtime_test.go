@@ -12,6 +12,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/agent"
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/session/tasksettlement"
 	"github.com/K3N4Y/atenea/internal/tool"
 )
 
@@ -58,12 +59,12 @@ func TestTaskAllowsMultipleRequestsWithoutRequestBudget(t *testing.T) {
 
 func TestTaskCountsTokensWithoutEnforcingABudget(t *testing.T) {
 	usage := &llm.Usage{InputTokens: 2, OutputTokens: 3, ReasoningTokens: 4}
-	recorder := tool.NewSettlementRecorder()
-	ctx := tool.WithSettlementRecorder(context.Background(), recorder)
+	recorder := tasksettlement.NewRecorder()
+	ctx := tasksettlement.WithRecorder(context.Background(), recorder)
 	if _, err := runtimeTool(llm.NewFakeProvider(llm.Event{Kind: llm.StepEnded, Usage: usage})).Execute(ctx, json.RawMessage(`{"subagent_type":"worker","prompt":"x"}`)); err != nil {
 		t.Fatal(err)
 	}
-	if got := recorder.TaskSettlement().Tokens; got != 9 {
+	if got := recorder.Summary().Tokens; got != 9 {
 		t.Fatalf("recorded tokens = %d, want 9", got)
 	}
 }
@@ -159,8 +160,8 @@ func TestTaskInjectedProviderEnvironmentAndSummary(t *testing.T) {
 		return ChildEnvironment{Store: session.NewMemoryStore(), Inbox: session.NewMemoryInbox(), Registry: tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}), Cleanup: func() error { cleaned.Store(true); return nil }}, nil
 	})
 
-	recorder := tool.NewSettlementRecorder()
-	ctx := tool.WithSettlementRecorder(context.Background(), recorder)
+	recorder := tasksettlement.NewRecorder()
+	ctx := tasksettlement.WithRecorder(context.Background(), recorder)
 	result, err := tt.Execute(ctx, json.RawMessage(`{"subagent_type":"worker","prompt":"x","worktree":true}`))
 	if err != nil {
 		t.Fatal(err)
@@ -168,7 +169,7 @@ func TestTaskInjectedProviderEnvironmentAndSummary(t *testing.T) {
 	if result.Output != "isolated" || gotDef != "worker" || !cleaned.Load() {
 		t.Fatalf("result=%q def=%q cleanup=%v", result.Output, gotDef, cleaned.Load())
 	}
-	summary := recorder.TaskSettlement()
+	summary := recorder.Summary()
 	if summary.Requests != 1 || summary.Tokens != 6 || summary.Duration <= 0 {
 		t.Fatalf("summary=%+v", summary)
 	}

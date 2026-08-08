@@ -1,4 +1,4 @@
-package tool
+package tasksettlement
 
 import (
 	"context"
@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-func TestSettlementRecorderContextAndConcurrency(t *testing.T) {
-	r := NewSettlementRecorder()
-	ctx := WithSettlementRecorder(context.Background(), r)
-	if SettlementRecorderFrom(ctx) != r {
+func TestRecorderContextAndConcurrency(t *testing.T) {
+	r := NewRecorder()
+	ctx := WithRecorder(context.Background(), r)
+	if FromContext(ctx) != r {
 		t.Fatal("recorder not recovered from context")
 	}
 	var wg sync.WaitGroup

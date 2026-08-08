@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/K3N4Y/atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/session/tasksettlement"
 )
 
 const (
@@ -50,7 +50,7 @@ func SubagentToolCalls(event SessionEvent) (int, bool) {
 }
 
 // WithTaskSettlement returns an event copy carrying canonical compact task usage.
-func WithTaskSettlement(event SessionEvent, summary tool.TaskSettlement) SessionEvent {
+func WithTaskSettlement(event SessionEvent, summary tasksettlement.Summary) SessionEvent {
 	event = WithSubagentToolCalls(event, summary.ToolCalls)
 	event.Attrs[subagentRequestsAttr] = strconv.Itoa(max(summary.Requests, 0))
 	event.Attrs[subagentTokensAttr] = strconv.Itoa(max(summary.Tokens, 0))
@@ -73,24 +73,24 @@ func TaskDetached(event SessionEvent) bool { return event.Attrs[subagentDetached
 
 // TaskSettlement strictly reads all task usage attributes. Partial or
 // non-canonical metadata is rejected rather than silently producing bad totals.
-func TaskSettlement(event SessionEvent) (tool.TaskSettlement, bool) {
+func TaskSettlement(event SessionEvent) (tasksettlement.Summary, bool) {
 	requests, ok := strictNonnegative(event.Attrs[subagentRequestsAttr])
 	if !ok {
-		return tool.TaskSettlement{}, false
+		return tasksettlement.Summary{}, false
 	}
 	tokens, ok := strictNonnegative(event.Attrs[subagentTokensAttr])
 	if !ok {
-		return tool.TaskSettlement{}, false
+		return tasksettlement.Summary{}, false
 	}
 	duration, ok := strictNonnegative(event.Attrs[subagentDurationAttr])
 	if !ok {
-		return tool.TaskSettlement{}, false
+		return tasksettlement.Summary{}, false
 	}
 	calls, ok := SubagentToolCalls(event)
 	if !ok {
-		return tool.TaskSettlement{}, false
+		return tasksettlement.Summary{}, false
 	}
-	return tool.TaskSettlement{Requests: requests, Tokens: tokens, Duration: time.Duration(duration) * time.Millisecond, ToolCalls: calls, Workspace: event.Attrs[subagentWorkspaceAttr]}, true
+	return tasksettlement.Summary{Requests: requests, Tokens: tokens, Duration: time.Duration(duration) * time.Millisecond, ToolCalls: calls, Workspace: event.Attrs[subagentWorkspaceAttr]}, true
 }
 
 func strictNonnegative(raw string) (int, bool) {

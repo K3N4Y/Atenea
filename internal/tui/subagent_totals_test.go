@@ -8,14 +8,14 @@ import (
 	"time"
 
 	"github.com/K3N4Y/atenea/internal/session"
-	"github.com/K3N4Y/atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/session/tasksettlement"
 )
 
 func TestSubagentTotalReplacesLiveAndRehydrates(t *testing.T) {
 	called := session.SessionEvent{Kind: session.KindToolCalled, CallID: "task", ToolName: "task", SessionID: "parent"}
 	child := session.WithParentTaskCall(session.SessionEvent{Kind: session.KindToolCalled, CallID: "read", ToolName: "read", SessionID: "child"}, "task")
 	started := session.WithParentTaskCall(session.SessionEvent{Kind: session.KindStepStarted, SessionID: "child"}, "task")
-	settled := session.WithTaskSettlement(session.SessionEvent{Kind: session.KindToolSuccess, CallID: "task", ToolName: "task", SessionID: "parent"}, tool.TaskSettlement{ToolCalls: 1, Requests: 2, Tokens: 30, Duration: 1500 * time.Millisecond})
+	settled := session.WithTaskSettlement(session.SessionEvent{Kind: session.KindToolSuccess, CallID: "task", ToolName: "task", SessionID: "parent"}, tasksettlement.Summary{ToolCalls: 1, Requests: 2, Tokens: 30, Duration: 1500 * time.Millisecond})
 	tr := Transcript{}
 	for _, ev := range []session.SessionEvent{called, started, child} {
 		tr = tr.foldEvent(EventMsg(ev), "parent")
@@ -62,7 +62,7 @@ func TestSubagentTotalPersistsThroughSQLiteReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	called := session.SessionEvent{Kind: session.KindToolCalled, CallID: "task", ToolName: "task"}
-	settled := session.WithTaskSettlement(session.SessionEvent{Kind: session.KindToolSuccess, CallID: "task", ToolName: "task"}, tool.TaskSettlement{ToolCalls: 4, Requests: 3, Tokens: 200, Duration: 2 * time.Second})
+	settled := session.WithTaskSettlement(session.SessionEvent{Kind: session.KindToolSuccess, CallID: "task", ToolName: "task"}, tasksettlement.Summary{ToolCalls: 4, Requests: 3, Tokens: 200, Duration: 2 * time.Second})
 	for _, event := range []session.SessionEvent{called, settled} {
 		if _, err := store.AppendEvent(context.Background(), "parent", event); err != nil {
 			t.Fatal(err)
