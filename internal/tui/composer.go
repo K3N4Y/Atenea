@@ -402,10 +402,9 @@ func (c composer) recallHistory(dir int) (composer, bool) {
 
 // handleKey processes a single key while the composer holds input focus and the
 // active target is targetComposer. It encodes the composer-internal precedence:
-// the open autocomplete menu wins over everything (Up/Down cycle, Tab/Enter
-// apply, Esc close), then Enter submits (surfaced outward), then Up/Down
-// navigate history, and finally the key feeds the textarea and recomputes the
-// popup.
+// exact built-in commands can bypass it, then Enter submits (surfaced outward),
+// then Up/Down navigate history, and finally the key feeds the textarea and
+// recomputes the popup.
 //
 // Run-control keys the root owns (Esc-cancel while working, Tab plan-toggle)
 // are NOT handled here: when none of the composer's own cases fire, it returns
@@ -418,12 +417,21 @@ func (c composer) recallHistory(dir int) (composer, bool) {
 // models the inline "/model" search source. It returns the updated composer,
 // its intent, and any command (the file-listing fetch or the model refresh) the
 // key triggered.
+func isImmediateBuiltin(label string) bool {
+	switch label {
+	case "/new", "/compact", "/checkpoint", "/rewind", "/resume", "/skills", "/variants", "/learned",
+		"/model", "/mcp", "/connect", "/mode", "/mode:auto-accept", "/mode:ask", "/mode:yolo":
+		return true
+	default:
+		return isDevelopmentBuiltinSelection(label)
+	}
+}
+
 func (c composer) handleKey(msg tea.KeyMsg, commands []command.Command, listFiles func() ([]string, error), models modelSource) (composer, composerIntent, tea.Cmd) {
 	// Enter on an exact local command with the menu closed submits it straight
 	// away (the value already IS the command), matching the root's former
 	// early-out before the menu block.
-	if msg.Type == tea.KeyEnter && !c.menuOpen() &&
-		(c.input.Value() == "/new" || c.input.Value() == "/compact" || c.input.Value() == "/checkpoint" || c.input.Value() == "/rewind" || c.input.Value() == "/resume" || c.input.Value() == "/skills" || c.input.Value() == "/learned") {
+	if msg.Type == tea.KeyEnter && !c.menuOpen() && isImmediateBuiltin(c.input.Value()) {
 		return c, composerIntent{submit: true, handled: true}, nil
 	}
 	if c.menuOpen() {
@@ -442,7 +450,7 @@ func (c composer) handleKey(msg tea.KeyMsg, commands []command.Command, listFile
 			// A builtin selection completes the command onto the input and submits
 			// it through the root; every other selection completes inline.
 			selected := c.menuItems[c.menuSelected]
-			if selected.builtin && (selected.label == "/new" || selected.label == "/compact" || selected.label == "/checkpoint" || selected.label == "/rewind" || selected.label == "/resume" || selected.label == "/skills" || selected.label == "/learned" || selected.label == "/model" || selected.label == "/mcp" || selected.label == "/connect" || selected.label == "/mode" || selected.label == "/mode:auto-accept" || selected.label == "/mode:ask" || selected.label == "/mode:yolo" || isDevelopmentBuiltinSelection(selected.label)) {
+			if selected.builtin && isImmediateBuiltin(selected.label) {
 				c.input.SetValue(selected.label)
 				c.input.SetCursor(len([]rune(selected.label)))
 				c = c.closeMenu()

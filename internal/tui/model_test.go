@@ -163,6 +163,22 @@ func TestModel_ReasoningCommandExplainsAvailableEfforts(t *testing.T) {
 	}
 }
 
+func TestModel_VariantsCommandOpensPickerOnFirstEnter(t *testing.T) {
+	fake := &fakeAgent{reasoning: llm.ReasoningEffortHigh}
+	m := typeRunes(t, NewModel(fake, "s1", nil), "/variants")
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatal("/variants returned an async command")
+	}
+	m = updated.(Model)
+	if !m.variantsPicker.open || m.activeInputTarget() != targetVariantsPicker {
+		t.Fatalf("variants picker = open %v target %v", m.variantsPicker.open, m.activeInputTarget())
+	}
+	if got := reasoningVariants[m.variantsPicker.selected]; got != llm.ReasoningEffortHigh {
+		t.Fatalf("selected variant = %q, want %q", got, llm.ReasoningEffortHigh)
+	}
+}
+
 func TestModel_ReasoningCommandSetsEffort(t *testing.T) {
 	fake := &fakeAgent{}
 	m := typeRunes(t, NewModel(fake, "s1", nil), "/reasoning:low")

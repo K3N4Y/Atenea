@@ -174,6 +174,26 @@ func TestComposer_EnterSubmitsLearnedCommandImmediately(t *testing.T) {
 	}
 }
 
+func TestComposer_EnterSubmitsVariantsCommandImmediately(t *testing.T) {
+	models := modelSource{catalog: func() ([]providerconfig.ProviderModels, bool) { return nil, false }}
+	commands := []command.Command{{Name: "variants", Description: "Choose reasoning effort", BuiltIn: true}}
+	c := typeInto(newTestComposer(), "/variants", commands, nil, models)
+	_, intent, _ := c.handleKey(keyMsg(tea.KeyEnter), commands, nil, models)
+	if !intent.submit || !intent.handled {
+		t.Fatalf("Enter intent = %+v, want submit+handled for /variants", intent)
+	}
+}
+
+func TestComposer_VariantsMenuSelectionSubmitsImmediately(t *testing.T) {
+	models := modelSource{catalog: func() ([]providerconfig.ProviderModels, bool) { return nil, false }}
+	commands := []command.Command{{Name: "variants", Description: "Choose reasoning effort", BuiltIn: true}}
+	c := typeInto(newTestComposer(), "/var", commands, nil, models)
+	c, intent, _ := c.handleKey(keyMsg(tea.KeyEnter), commands, nil, models)
+	if !intent.submit || !intent.handled || c.value() != "/variants" {
+		t.Fatalf("Enter selection = value %q intent %+v, want immediate /variants submit", c.value(), intent)
+	}
+}
+
 func TestComposer_TabAndEscWithMenuClosedAreLeftToTheRoot(t *testing.T) {
 	commands, listFiles, models := noCompletions()
 	c := typeInto(newTestComposer(), "hello", commands, listFiles, models)
