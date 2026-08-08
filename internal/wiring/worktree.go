@@ -20,7 +20,7 @@ import (
 // whether it runs in the main workspace, as a child, or in an isolated
 // worktree. Keeping this policy here makes the shared snapshot state and
 // per-turn edit configuration invariants local to one module.
-func workspaceTools(root string, snapshots *tool.SessionSnapshots, settings func(model, sessionID string) (editmode.Config, error)) []tool.Tool {
+func workspaceTools(root string, snapshots *tool.SessionSnapshots, settings func(model, sessionID string) (editmode.Config, error), batchEnv func(context.Context) []string) []tool.Tool {
 	edit := tool.NewEditToolWithSnapshotProvider(root, hashline.OSFilesystem{}, snapshots)
 	edit.TurnConfig = settings
 	return []tool.Tool{
@@ -29,11 +29,28 @@ func workspaceTools(root string, snapshots *tool.SessionSnapshots, settings func
 		edit,
 		tool.NewGlobTool(root),
 		tool.NewGrepToolWithSnapshotProvider(root, snapshots),
-		tool.NewBashTool(root),
+		newBashTool(root, batchEnv),
 	}
 }
 
-func worktreeResolver(root string, outputLimit int, settings func(model, sessionID string) (editmode.Config, error)) subagent.EnvironmentResolver {
+func newBashTool(root string, batchEnv func(context.Context) []string) *tool.BashTool {
+	bash := tool.NewBashTool(root)
+	bash.ExtraEnv = batchEnv
+	return bash
+}
+
+type childRegistryKey struct{}
+
+func withChildRegistry(ctx context.Context, registry *tool.Registry) context.Context {
+	return context.WithValue(ctx, childRegistryKey{}, registry)
+}
+
+func childRegistryFrom(ctx context.Context) *tool.Registry {
+	registry, _ := ctx.Value(childRegistryKey{}).(*tool.Registry)
+	return registry
+}
+
+func worktreeResolver(root string, outputLimit int, settings func(model, sessionID string) (editmode.Config, error), task tool.Tool, batchEnv func(context.Context) []string) subagent.EnvironmentResolver {
 	return func(ctx context.Context, _ agent.Def) (subagent.ChildEnvironment, error) {
 		path, err := os.MkdirTemp("", "atenea-worktree-")
 		if err != nil {
@@ -57,7 +74,11 @@ func worktreeResolver(root string, outputLimit int, settings func(model, session
 			return errors.Join(removeErr, filesystemErr)
 		}
 		snapshots := tool.NewSessionSnapshots()
-		registry := tool.NewRegistry(tool.NewOutputStore(outputLimit), workspaceTools(path, snapshots, settings)...)
+		tools := workspaceTools(path, snapshots, settings, batchEnv)
+		if task != nil {
+			tools = append(tools, task)
+		}
+		registry := tool.NewRegistry(tool.NewOutputStore(outputLimit), tools...)
 		if registry == nil {
 			_ = discard()
 			return subagent.ChildEnvironment{}, fmt.Errorf("create tools for worktree %s", filepath.Base(path))
@@ -65,6 +86,9 @@ func worktreeResolver(root string, outputLimit int, settings func(model, session
 		return subagent.ChildEnvironment{
 			Store: session.NewMemoryStore(), Inbox: session.NewMemoryInbox(),
 			Registry: registry, Workspace: path, Discard: discard,
+			Context: func(ctx context.Context) context.Context {
+				return withChildRegistry(ctx, registry)
+			},
 		}, nil
 	}
 }

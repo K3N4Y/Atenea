@@ -33,8 +33,8 @@ func TestBashTool_EmptyCommandIsError(t *testing.T) {
 	if err == nil {
 		t.Fatalf("Execute: se esperaba error por command vacio, se obtuvo nil")
 	}
-	if !strings.Contains(err.Error(), "command requerido") {
-		t.Fatalf("Execute: error\n  debe contener %q\n  se obtuvo      %q", "command requerido", err.Error())
+	if !strings.Contains(err.Error(), "command is required") {
+		t.Fatalf("Execute error must contain %q, got %q", "command is required", err.Error())
 	}
 	if res.Output != "" {
 		t.Fatalf("Execute: output debe quedar vacio, se obtuvo %q", res.Output)
@@ -108,8 +108,8 @@ func TestBashTool_TruncatesLargeOutput(t *testing.T) {
 	if !res.Truncated {
 		t.Fatalf("Execute: Truncated debe ser true para output grande")
 	}
-	if !strings.Contains(res.Output, "salida truncada") {
-		t.Fatalf("Execute: output debe contener %q, se obtuvo (%d runas)", "salida truncada", utf8.RuneCountInString(res.Output))
+	if !strings.Contains(res.Output, "output truncated") {
+		t.Fatalf("Execute output must contain %q, got %d runes", "output truncated", utf8.RuneCountInString(res.Output))
 	}
 	// 40000 lineas de "a\n" son 80000 runas crudas; el acotado debe ser menor.
 	if utf8.RuneCountInString(res.Output) >= 80000 {

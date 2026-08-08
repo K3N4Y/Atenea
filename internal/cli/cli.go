@@ -15,6 +15,7 @@ import (
 
 	"github.com/K3N4Y/atenea/internal/host"
 	"github.com/K3N4Y/atenea/internal/paths"
+	"github.com/K3N4Y/atenea/internal/session/subagent"
 )
 
 // Env is everything the dispatch takes from the process. Nothing in this package
@@ -116,6 +117,9 @@ var commands = []command{
 // calls os.Exit: the entrypoint does that, so every path through here is reachable
 // from a test.
 func Main(env Env) int {
+	if len(env.Args) == 1 && env.Args[0] == "__rah_batch" {
+		return subagent.RunBatchClient(env.Stdin, env.Stdout, env.Stderr)
+	}
 	if len(env.Args) == 0 {
 		return interactive(env, InteractiveOptions{})
 	}

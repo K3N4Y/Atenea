@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -65,8 +67,19 @@ func TestValidate_BuiltinsResolveAgainstTheChildRegistry(t *testing.T) {
 	children := tool.NewRegistry(tool.NewOutputStore(1024),
 		tool.NewReadTool(root, nil), tool.NewWriteTool(root, nil),
 		tool.NewEditTool(root, nil, nil), tool.NewGlobTool(root),
-		tool.NewGrepTool(root, nil), tool.NewBashTool(root))
+		tool.NewGrepTool(root, nil), tool.NewBashTool(root), taskStub{})
 	if problems := Validate(Builtins(), children); len(problems) != 0 {
 		t.Errorf("Validate(Builtins()) = %v, want no problems", problems)
 	}
+}
+
+type taskStub struct{}
+
+func (taskStub) Name() string        { return "task" }
+func (taskStub) Description() string { return "recursive task" }
+func (taskStub) Schema() json.RawMessage {
+	return json.RawMessage(`{"type":"object"}`)
+}
+func (taskStub) Execute(context.Context, json.RawMessage) (tool.Result, error) {
+	return tool.Result{}, nil
 }

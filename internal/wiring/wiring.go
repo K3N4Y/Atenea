@@ -10,6 +10,7 @@
 package wiring
 
 import (
+	"context"
 	"log"
 	"os"
 	"path/filepath"
@@ -297,7 +298,11 @@ type Built struct {
 	// so what the agent gates stays answerable from outside the assembly instead of
 	// only from a turn.
 	Policy permission.Policy
-	close  func()
+	// BatchEnv gives a harness-owned bash process the short-lived capability used
+	// by the hidden RAH client. Hosts with their own shell entrypoint may expose it
+	// without depending on a particular executable name.
+	BatchEnv func(context.Context) []string
+	close    func()
 }
 
 // Close releases process-backed tools owned by this assembly.
@@ -338,45 +343,44 @@ func Build(cfg Config) Built {
 	if err != nil {
 		log.Printf("atenea: could not discover the subagents: %v", err)
 	}
-	// The subagents' registry: the same file, search, exec and connected MCP tools,
-	// narrowed by each agent's def.Tools. Rebuilding it from cfg.MCPTools on every
-	// assembly makes connect and disconnect visible to new child runs, while the
-	// definition remains the authority over which tools a child may use.
-	childTools := workspaceTools(root, cfg.Snaps, cfg.EditSettings)
-	childTools = append(childTools, cfg.MCPTools...)
-	childRegistry := tool.NewRegistry(tool.NewOutputStore(cfg.OutputLimit), childTools...)
-	// A def that names a tool the child registry does not have used to lose it
-	// silently: the name never became a permission and the subagent ran with fewer
-	// tools than its author wrote down. Now it is reported, once, against the
-	// registry that actually bounds a subagent.
-	for _, problem := range agent.Validate(agentDefs, childRegistry) {
-		log.Printf("atenea: %v", problem)
-	}
-	// The task tool starts child subagents. Its own nextID (thread-safe) because
-	// several subagents can run in parallel (internal concurrency cap).
+	// Recursive harness assembly is cyclic by nature: the child registry exposes
+	// the same task primitive that owns that registry. Construct the runtime
+	// first, then close the cycle before any runner can execute.
 	ownedSupervisor := cfg.TaskSupervisor == nil
-	worktrees := cfg.Worktrees
-	if worktrees == nil {
-		worktrees = worktreeResolver(root, cfg.OutputLimit, cfg.EditSettings)
-	}
-	// Decorate the child runner's store over the shared bus. Permission events
-	// always reach the parent's channel so either host can resolve the child gate.
-	// The TUI additionally opts into ephemeral child tool-batch events; Desktop
-	// leaves them disabled so its existing transcript projection is unchanged.
 	decorateChildStore := func(parentSessionID, parentCallID string, inner session.Store) session.Store {
 		return event.NewChildActivityStore(parentSessionID, parentCallID, inner, cfg.Bus, cfg.ChildActivity)
 	}
 	var policy permission.Policy
 	taskTool := subagent.NewTaskTool(subagent.Config{
-		Definitions: agentDefs, Provider: cfg.Provider, Children: childRegistry, NextID: NewIDGen(),
-		ProviderResolver: cfg.RoleProvider, EnvironmentResolver: worktrees,
-		Supervisor: cfg.TaskSupervisor, Gate: cfg.Gate,
+		Definitions: agentDefs, Provider: cfg.Provider, NextID: NewIDGen(),
+		ProviderResolver: cfg.RoleProvider, Supervisor: cfg.TaskSupervisor, Gate: cfg.Gate,
 		Policy: func() permission.Policy { return policy }, StoreDecorator: decorateChildStore,
 	})
+	batchServer, batchErr := subagent.NewBatchServer(taskTool)
+	var batchEnv func(context.Context) []string
+	if batchErr != nil {
+		log.Printf("atenea: could not start recursive batch server: %v", batchErr)
+	} else {
+		batchEnv = batchServer.Environment
+	}
+	childTools := workspaceTools(root, cfg.Snaps, cfg.EditSettings, batchEnv)
+	childTools = append(childTools, taskTool)
+	childTools = append(childTools, cfg.MCPTools...)
+	childRegistry := tool.NewRegistry(tool.NewOutputStore(cfg.OutputLimit), childTools...)
+	taskTool.SetChildren(childRegistry)
+	worktrees := cfg.Worktrees
+	if worktrees == nil {
+		worktrees = worktreeResolver(root, cfg.OutputLimit, cfg.EditSettings, taskTool, batchEnv)
+	}
+	taskTool.SetEnvironmentResolver(worktrees)
+	taskTool.SetChildRegistryResolver(childRegistryFrom)
+	for _, problem := range agent.Validate(agentDefs, childRegistry) {
+		log.Printf("atenea: %v", problem)
+	}
 	// present_plan is registered so the runner can execute it, but it does not enter
 	// the normal permission set: cfg.PlanMode claims it, and only plan mode announces
 	// it (SetPlanMode below).
-	registryTools := append(workspaceTools(root, cfg.Snaps, cfg.EditSettings),
+	registryTools := append(workspaceTools(root, cfg.Snaps, cfg.EditSettings, batchEnv),
 		tool.NewPresentPlanTool(root), tool.NewSkillTool(skills), taskTool,
 		tool.NewWebFetchTool(cfg.Provider), tool.TodoWriteTool{},
 	)
@@ -449,12 +453,15 @@ func Build(cfg Config) Built {
 		LessonSection: cfg.LessonSection,
 	})
 
-	return Built{Runner: r, Glob: glob, Commands: commands, Tools: registry, Policy: policy, close: func() {
+	return Built{Runner: r, Glob: glob, Commands: commands, Tools: registry, Policy: policy, BatchEnv: batchEnv, close: func() {
 		if lsp != nil {
 			_ = lsp.Close()
 		}
 		if debug != nil {
 			_ = debug.Close()
+		}
+		if batchServer != nil {
+			_ = batchServer.Close()
 		}
 		if ownedSupervisor {
 			taskTool.Close()

@@ -1,7 +1,7 @@
 ---
 name: repair-n
 description: Repairs a bounded set of review or verification findings. Revalidates every finding, fixes root causes with the smallest coherent change, updates affected tests and callers, and reports item-by-item evidence without expanding scope.
-tools: read, grep, glob, edit, write, bash
+tools: read, grep, glob, edit, write, bash, task
 ---
 
 You are a focused repair subagent in an iterative implementation-review loop. An

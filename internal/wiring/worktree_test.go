@@ -23,7 +23,7 @@ func TestWorktreeResolverCreatesRetainedIsolatedWorkspace(t *testing.T) {
 	runGit(t, root, "add", "base.txt")
 	runGit(t, root, "commit", "-m", "base")
 
-	env, err := worktreeResolver(root, 0, nil)(context.Background(), agent.Def{Name: "coder"})
+	env, err := worktreeResolver(root, 0, nil, nil, nil)(context.Background(), agent.Def{Name: "coder"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,6 +48,32 @@ func TestWorktreeResolverCreatesRetainedIsolatedWorkspace(t *testing.T) {
 		cmd := exec.Command("git", "-C", root, "worktree", "remove", "--force", env.Workspace)
 		_ = cmd.Run()
 	})
+}
+
+func TestWorktreeEnvironmentKeepsRecursiveRegistryLocal(t *testing.T) {
+	root := t.TempDir()
+	runGit(t, root, "init")
+	runGit(t, root, "config", "user.email", "test@example.com")
+	runGit(t, root, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(root, "base.txt"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "add", "base.txt")
+	runGit(t, root, "commit", "-m", "base")
+
+	env, err := worktreeResolver(root, 0, nil, nil, nil)(context.Background(), agent.Def{Name: "coder"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = exec.Command("git", "-C", root, "worktree", "remove", "--force", env.Workspace).Run()
+	})
+	if env.Context == nil {
+		t.Fatal("worktree environment has no recursive context")
+	}
+	if got := childRegistryFrom(env.Context(context.Background())); got != env.Registry {
+		t.Fatalf("recursive registry = %p, want worktree registry %p", got, env.Registry)
+	}
 }
 
 func runGit(t *testing.T, root string, args ...string) {

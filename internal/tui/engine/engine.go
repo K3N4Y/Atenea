@@ -326,6 +326,19 @@ func (e *Engine) rewire() {
 	e.lifecycleMu.Unlock()
 }
 
+// BatchEnvironment returns a short-lived recursive-harness capability for a
+// process launched by this engine. Desktop and terminal entrypoints can use it
+// without assuming their own executable implements the hidden client command.
+func (e *Engine) BatchEnvironment(ctx context.Context) []string {
+	e.mu.Lock()
+	batchEnv := e.assembly.BatchEnv
+	e.mu.Unlock()
+	if batchEnv == nil {
+		return nil
+	}
+	return batchEnv(ctx)
+}
+
 // MCPServers lists the servers declared in <root>/.mcp.json merged with the
 // live connection state. The file is re-read on every call so edits show up
 // the next time the picker opens or refreshes.

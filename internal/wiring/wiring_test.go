@@ -654,6 +654,28 @@ func TestBuild_ConnectedMCPToolsReachOnlySubagentsThatDeclareThem(t *testing.T) 
 	}
 }
 
+// TestBuild_RecursiveChildReceivesTask proves production composition closes the
+// recursive harness cycle instead of exercising the depth logic only with a stub.
+func TestBuild_RecursiveChildReceivesTask(t *testing.T) {
+	root := t.TempDir()
+	agents := filepath.Join(root, ".atenea", "agents")
+	writeAgentWithTools(t, agents, "recursive-worker", "read, task")
+	provider := &recordingProvider{FakeProvider: llm.NewFakeProvider(
+		llm.Event{Kind: llm.TextDelta, Text: "done"},
+		llm.Event{Kind: llm.StepEnded},
+	)}
+	built := buildWith(t, Config{Root: root, Provider: provider})
+	t.Cleanup(built.Close)
+	task, _ := built.Tools.Lookup("task")
+
+	if _, err := task.Execute(context.Background(), json.RawMessage(`{"subagent_type":"recursive-worker","prompt":"delegate if needed"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got := provider.announced(); !slices.Contains(got, "task") {
+		t.Fatalf("recursive child tools = %v, want task", got)
+	}
+}
+
 // TestBuild_SubagentMCPCallUsesSharedPolicy proves the newly reachable remote
 // adapter does not bypass authorization. Deny is resolved before Execute, and
 // the child can continue from the recorded denial.

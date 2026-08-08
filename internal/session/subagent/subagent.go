@@ -9,6 +9,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -23,25 +24,120 @@ import (
 	"github.com/K3N4Y/atenea/internal/tool"
 )
 
-// defaultMaxDepth limita la recursion de subagentes: con 2 se permite
-// padre->hijo->nieto y el nieto ya no puede anidar mas (estilo opencode).
-const defaultMaxDepth = 2
+// defaultMaxDepth allows three delegated harness levels below the root. A child
+// running at depth 3 can finish its assignment but cannot spawn another child.
+const defaultMaxDepth = 3
 
-// defaultMaxConcurrency topa cuantos subagentes corren a la vez: un default
-// modesto evita una avalancha de runners hijos paralelos por recursos.
+// defaultMaxConcurrency caps runnable leaf subagents. An ancestor releases its
+// slot while it invokes descendants, so a recursive tree cannot deadlock by
+// filling every slot with agents waiting for their own children.
 const defaultMaxConcurrency = 4
 
-// depthKey es la key (de tipo propio para no colisionar con otras del ctx) que
-// lleva la profundidad de anidamiento de subagentes en el context.
 type depthKey struct{}
+type leaseKey struct{}
 
-// withDepth devuelve un ctx que lleva la profundidad de anidamiento de subagentes.
+type scheduler struct {
+	sem chan struct{}
+}
+
+type lease struct {
+	scheduler   *scheduler
+	mu          sync.Mutex
+	held        bool
+	suspensions int
+	closed      bool
+}
+
 func withDepth(ctx context.Context, d int) context.Context {
 	return context.WithValue(ctx, depthKey{}, d)
 }
 
-// depthFrom lee la profundidad del ctx; 0 si no hay (el agente raiz).
 func depthFrom(ctx context.Context) int { d, _ := ctx.Value(depthKey{}).(int); return d }
+
+func withLease(ctx context.Context, l *lease) context.Context {
+	return context.WithValue(ctx, leaseKey{}, l)
+}
+
+func leaseFrom(ctx context.Context) *lease {
+	l, _ := ctx.Value(leaseKey{}).(*lease)
+	return l
+}
+
+func (s *scheduler) acquire(ctx context.Context) (*lease, error) {
+	l := &lease{scheduler: s}
+	if s == nil || s.sem == nil {
+		l.held = true
+		return l, nil
+	}
+	select {
+	case s.sem <- struct{}{}:
+		l.held = true
+		return l, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (l *lease) close() {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return
+	}
+	l.closed = true
+	if l.held && l.scheduler != nil && l.scheduler.sem != nil {
+		<-l.scheduler.sem
+	}
+	l.held = false
+}
+
+func (l *lease) suspend() {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return
+	}
+	l.suspensions++
+	if l.suspensions == 1 && l.held {
+		if l.scheduler != nil && l.scheduler.sem != nil {
+			<-l.scheduler.sem
+		}
+		l.held = false
+	}
+}
+
+func (l *lease) resume(ctx context.Context) error {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return nil
+	}
+	if l.suspensions == 0 {
+		return nil
+	}
+	l.suspensions--
+	if l.suspensions > 0 || l.held {
+		return nil
+	}
+	if l.scheduler != nil && l.scheduler.sem != nil {
+		select {
+		case l.scheduler.sem <- struct{}{}:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	l.held = true
+	return nil
+}
 
 // BudgetError identifies which delegated execution limit was exhausted.
 type BudgetError struct {
@@ -59,13 +155,21 @@ type ChildEnvironment struct {
 	Inbox     session.Inbox
 	Registry  *tool.Registry
 	Workspace string
-	Cleanup   func() error
+	// Context decorates the child runner context with environment-local
+	// capabilities such as its default recursive registry.
+	Context func(context.Context) context.Context
+	Cleanup func() error
 	// Discard removes an isolated environment whose run did not complete.
 	Discard func() error
 }
 type EnvironmentResolver func(context.Context, agent.Def) (ChildEnvironment, error)
 type ProviderResolver func(context.Context, agent.Def) (llm.Provider, error)
 type StoreDecorator func(parentSessionID, parentCallID string, inner session.Store) session.Store
+
+// ChildRegistryResolver selects the default registry for a delegated child from
+// the caller's execution context. It keeps recursive worktree descendants rooted
+// in the worktree that spawned them.
+type ChildRegistryResolver func(context.Context) *tool.Registry
 type PolicyResolver func() permission.Policy
 
 // Limits controls delegated nesting and parallelism. A nil *Limits in Config
@@ -85,13 +189,14 @@ type Config struct {
 	Children    *tool.Registry
 	NextID      func() string
 
-	ProviderResolver    ProviderResolver
-	EnvironmentResolver EnvironmentResolver
-	Supervisor          *Supervisor
-	Gate                permission.Gate
-	Policy              PolicyResolver
-	StoreDecorator      StoreDecorator
-	Limits              *Limits
+	ProviderResolver      ProviderResolver
+	EnvironmentResolver   EnvironmentResolver
+	ChildRegistryResolver ChildRegistryResolver
+	Supervisor            *Supervisor
+	Gate                  permission.Gate
+	Policy                PolicyResolver
+	StoreDecorator        StoreDecorator
+	Limits                *Limits
 }
 
 type taskInput struct {
@@ -142,17 +247,17 @@ func (p *budgetProvider) Stream(ctx context.Context, req llm.Request) (<-chan ll
 	return out, nil
 }
 
-// TaskTool delega una tarea a un subagente. catalog indexa las defs por nombre;
-// provider y children son las dependencias del runner hijo; nextID genera los IDs
-// de mensaje del hijo (determinista en tests). maxDepth topa la recursion.
+// TaskTool delegates work to child harnesses. catalog indexes definitions by
+// name; provider and children supply each runner; nextID must be concurrency-safe.
+// maxDepth bounds recursive delegation.
 type TaskTool struct {
-	catalog  map[string]agent.Def
-	provider llm.Provider
-	children *tool.Registry
-	nextID   func() string
-	maxDepth int
-	// sem topa la concurrencia de subagentes (nil = sin tope).
-	sem chan struct{}
+	catalog         map[string]agent.Def
+	provider        llm.Provider
+	children        *tool.Registry
+	resolveChildren ChildRegistryResolver
+	nextID          func() string
+	maxDepth        int
+	scheduler       *scheduler
 
 	providerResolver    ProviderResolver
 	environmentResolver EnvironmentResolver
@@ -192,20 +297,23 @@ func NewTaskTool(cfg Config) *TaskTool {
 	t := &TaskTool{
 		catalog: m, provider: cfg.Provider, children: cfg.Children, nextID: cfg.NextID,
 		maxDepth: maxDepth, providerResolver: cfg.ProviderResolver,
-		environmentResolver: cfg.EnvironmentResolver, supervisor: supervisor,
-		gate: cfg.Gate, policy: cfg.Policy, storeDecorator: cfg.StoreDecorator,
+		environmentResolver: cfg.EnvironmentResolver, resolveChildren: cfg.ChildRegistryResolver,
+		supervisor: supervisor, gate: cfg.Gate, policy: cfg.Policy,
+		storeDecorator: cfg.StoreDecorator, scheduler: &scheduler{},
 	}
 	if maxConcurrency > 0 {
-		t.sem = make(chan struct{}, maxConcurrency)
+		t.scheduler.sem = make(chan struct{}, maxConcurrency)
 	}
 	return t
 }
 
 func (t *TaskTool) setMaxDepth(n int) { t.maxDepth = n }
+func (t *TaskTool) setProviderResolver(resolve ProviderResolver) {
+	t.providerResolver = resolve
+}
 
-func (t *TaskTool) setProviderResolver(resolve ProviderResolver) { t.providerResolver = resolve }
 func (t *TaskTool) setEnvironmentResolver(resolve EnvironmentResolver) {
-	t.environmentResolver = resolve
+	t.SetEnvironmentResolver(resolve)
 }
 
 func (t *TaskTool) setSupervisor(supervisor *Supervisor) {
@@ -230,32 +338,30 @@ func (t *TaskTool) setStoreDecorator(dec StoreDecorator) {
 }
 
 func (t *TaskTool) setMaxConcurrency(n int) {
+	t.scheduler = &scheduler{}
 	if n > 0 {
-		t.sem = make(chan struct{}, n)
-		return
-	}
-	t.sem = nil
-}
-
-// acquire toma un slot del cap de concurrencia de subagentes; bloquea hasta que
-// haya uno libre y respeta la cancelacion del ctx. Sin semaforo (nil) no topa.
-func (t *TaskTool) acquire(ctx context.Context) error {
-	if t.sem == nil {
-		return nil
-	}
-	select {
-	case t.sem <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+		t.scheduler.sem = make(chan struct{}, n)
 	}
 }
 
-// release devuelve el slot. No-op si no hay semaforo.
-func (t *TaskTool) release() {
-	if t.sem != nil {
-		<-t.sem
-	}
+// SetChildren installs the final recursive child registry during composition.
+// NewTaskTool cannot receive that registry initially because the registry itself
+// contains this task tool.
+func (t *TaskTool) SetChildren(children *tool.Registry) {
+	t.children = children
+}
+
+// SetChildRegistryResolver installs the context-aware default registry selector
+// after recursive workspace registries have been assembled.
+func (t *TaskTool) SetChildRegistryResolver(resolve ChildRegistryResolver) {
+	t.resolveChildren = resolve
+}
+
+// SetEnvironmentResolver installs the final isolated-environment factory during
+// composition. Worktree registries also contain this task tool, so wiring closes
+// that cycle after construction.
+func (t *TaskTool) SetEnvironmentResolver(resolve EnvironmentResolver) {
+	t.environmentResolver = resolve
 }
 
 func (*TaskTool) Name() string { return "task" }
@@ -322,7 +428,7 @@ func (t *TaskTool) Execute(ctx context.Context, input json.RawMessage) (tool.Res
 	}
 	def, ok := t.catalog[in.SubagentType]
 	if !ok {
-		return tool.Result{}, fmt.Errorf("subagent_type %q desconocido. Disponibles: %s", in.SubagentType, t.available())
+		return tool.Result{}, fmt.Errorf("unknown subagent_type %q; available: %s", in.SubagentType, t.available())
 	}
 	if in.Worktree && t.environmentResolver == nil {
 		return tool.Result{}, errors.New("subagent: worktree requested but no isolated environment resolver is configured")
@@ -350,13 +456,22 @@ func (t *TaskTool) run(ctx, metadataCtx context.Context, def agent.Def, in taskI
 		runCtx, cancel = context.WithTimeout(ctx, time.Duration(*in.TimeoutMS)*time.Millisecond)
 	}
 	defer cancel()
-	if err := t.acquire(runCtx); err != nil {
+
+	parentLease := leaseFrom(metadataCtx)
+	if parentLease != nil {
+		parentLease.suspend()
+		defer func() {
+			err = errors.Join(err, parentLease.resume(ctx))
+		}()
+	}
+	childLease, acquireErr := t.scheduler.acquire(runCtx)
+	if acquireErr != nil {
 		if in.TimeoutMS != nil && errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 			return "", &BudgetError{Kind: "timeout_ms", Limit: *in.TimeoutMS}
 		}
-		return "", err
+		return "", acquireErr
 	}
-	defer t.release()
+	defer childLease.close()
 	provider := t.provider
 	if t.providerResolver != nil {
 		var err error
@@ -368,7 +483,13 @@ func (t *TaskTool) run(ctx, metadataCtx context.Context, def agent.Def, in taskI
 			provider = t.provider
 		}
 	}
-	env := ChildEnvironment{Store: session.NewMemoryStore(), Inbox: session.NewMemoryInbox(), Registry: t.children}
+	children := t.children
+	if t.resolveChildren != nil {
+		if resolved := t.resolveChildren(metadataCtx); resolved != nil {
+			children = resolved
+		}
+	}
+	env := ChildEnvironment{Store: session.NewMemoryStore(), Inbox: session.NewMemoryInbox(), Registry: children}
 	if in.Worktree {
 		var err error
 		env, err = t.environmentResolver(runCtx, def)
@@ -414,6 +535,7 @@ func (t *TaskTool) run(ctx, metadataCtx context.Context, def agent.Def, in taskI
 	childDepth := depthFrom(metadataCtx) + 1
 	if childDepth >= t.maxDepth {
 		delete(perms, "task")
+		delete(perms, "bash")
 	}
 	childID := t.nextID()
 	systemPrompt := def.Prompt
@@ -445,7 +567,11 @@ func (t *TaskTool) run(ctx, metadataCtx context.Context, def agent.Def, in taskI
 	if err := env.Inbox.Admit(runCtx, childID, session.Prompt{Text: in.Prompt}, session.DeliveryQueue); err != nil {
 		return "", err
 	}
-	err = r.Run(withDepth(runCtx, childDepth), childID, false, def.Steps)
+	childCtx := withLease(withDepth(runCtx, childDepth), childLease)
+	if env.Context != nil {
+		childCtx = env.Context(childCtx)
+	}
+	err = r.Run(childCtx, childID, false, def.Steps)
 	if err != nil {
 		if in.TimeoutMS != nil && (errors.Is(err, context.DeadlineExceeded) || errors.Is(runCtx.Err(), context.DeadlineExceeded)) {
 			return "", &BudgetError{Kind: "timeout_ms", Limit: *in.TimeoutMS}
@@ -500,15 +626,14 @@ func validateReport(raw json.RawMessage, report string) error {
 	return nil
 }
 
-// available devuelve los nombres del catalogo ordenados, para el mensaje de error
-// cuando el modelo pide un subagent_type inexistente.
+// available returns catalog names in stable order for validation errors.
 func (t *TaskTool) available() string {
 	names := make([]string, 0, len(t.catalog))
 	for n := range t.catalog {
 		names = append(names, n)
 	}
 	if len(names) == 0 {
-		return "ninguno"
+		return "none"
 	}
 	sort.Strings(names)
 	return strings.Join(names, ", ")

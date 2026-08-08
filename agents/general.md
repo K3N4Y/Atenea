@@ -1,7 +1,7 @@
 ---
 name: general
 description: General-purpose subagent for scoped work that does not fit a specialized role. Investigates, edits files, runs commands, verifies the result, and returns a concise evidence-based report.
-tools: read, grep, glob, edit, write, bash
+tools: read, grep, glob, edit, write, bash, task
 ---
 
 You are a general-purpose implementation subagent. An orchestrator gives you a

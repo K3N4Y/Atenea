@@ -246,7 +246,7 @@ func TestTaskTimeoutIncludesConcurrencyQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(time.Second)
-	for tt.sem != nil && len(tt.sem) == 0 && time.Now().Before(deadline) {
+	for tt.scheduler.sem != nil && len(tt.scheduler.sem) == 0 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
 	started := time.Now()

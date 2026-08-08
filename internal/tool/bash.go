@@ -37,6 +37,9 @@ type BashTool struct {
 	Root        string
 	FastTimeout time.Duration // 0 => defaultBashFastTimeout
 	SlowTimeout time.Duration // 0 => defaultBashSlowTimeout
+	// ExtraEnv contributes short-lived host capabilities to the child process.
+	// It is evaluated for every call and appended after inherited variables.
+	ExtraEnv func(context.Context) []string
 }
 
 // NewBashTool arma una BashTool sobre Root, por consistencia con NewWriteTool y
@@ -171,10 +174,10 @@ func (bt *BashTool) Execute(ctx context.Context, input json.RawMessage) (Result,
 		SlowOK  bool   `json:"slow_ok"`
 	}
 	if err := json.Unmarshal(input, &in); err != nil {
-		return Result{}, fmt.Errorf("bash: input invalido: %w", err)
+		return Result{}, fmt.Errorf("bash: invalid input: %w", err)
 	}
 	if strings.TrimSpace(in.Command) == "" {
-		return Result{}, fmt.Errorf("bash: command requerido")
+		return Result{}, fmt.Errorf("bash: command is required")
 	}
 
 	timeout := bt.fastTimeout()
@@ -191,7 +194,7 @@ func (bt *BashTool) Execute(ctx context.Context, input json.RawMessage) (Result,
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
 	cmd.WaitDelay = bashWaitDelay
-	cmd.Env = bashEnv(os.Environ())
+	cmd.Env = append(bashEnv(os.Environ()), bt.extraEnv(ctxT)...)
 
 	// Mata el GRUPO de procesos (no solo el hijo) al cancelar: sin esto un
 	// "sleep 5 &" dejaria huerfanos y el Wait colgaria hasta WaitDelay.
@@ -202,7 +205,7 @@ func (bt *BashTool) Execute(ctx context.Context, input json.RawMessage) (Result,
 	out := strings.TrimRight(buf.String(), "\n")
 
 	if ctxT.Err() == context.DeadlineExceeded {
-		marker := fmt.Sprintf("[bash: comando excedio el timeout de %s]", timeout)
+		marker := fmt.Sprintf("[bash: command exceeded the %s timeout]", timeout)
 		if out == "" {
 			out = marker
 		} else {
@@ -229,6 +232,13 @@ func (bt *BashTool) Execute(ctx context.Context, input json.RawMessage) (Result,
 		return Result{Output: bashNoOutput}, nil
 	}
 	return capBashOutput(out), nil
+}
+
+func (bt *BashTool) extraEnv(ctx context.Context) []string {
+	if bt.ExtraEnv == nil {
+		return nil
+	}
+	return bt.ExtraEnv(ctx)
 }
 
 // bashEnv prepara el entorno del comando: scrubea variables con secretos (cuyo
@@ -272,5 +282,5 @@ func capBashOutput(s string) Result {
 	half := maxBashOutputRunes / 2
 	head := string(runes[:half])
 	tail := string(runes[len(runes)-half:])
-	return Result{Output: head + "\n...[salida truncada]...\n" + tail, Truncated: true}
+	return Result{Output: head + "\n...[output truncated]...\n" + tail, Truncated: true}
 }
