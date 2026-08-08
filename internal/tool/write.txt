@@ -1,28 +1,12 @@
-Creates a new file in the workspace with complete content. Use `edit` for existing files; `write` never overwrites a file.
+Creates or overwrites file at specified path.
 
-## Input grammar
-- `path` is the workspace-relative path for the new file.
-- `content` is the complete file content.
-- Missing parent directories are created automatically.
-- An initial UTF-8 BOM is removed and line endings are normalized to LF.
-
-## Examples
-- `{"path":"docs/notes.md","content":"# Notes\n"}` creates a Markdown file and its missing parent directory.
-- `{"path":"internal/example/testdata/input.txt","content":"alpha\nbeta\n"}` creates a text fixture.
-
-## Recoverable failures
-- File already exists: use `edit`; do not retry `write` against the same path.
-- Invalid or outside-workspace path: choose a workspace-relative destination.
-- A snapshot collision or retention limit may return success without a header. Change or reduce the content or start a new session, then use `read` before editing.
-- Write failure: inspect the returned filesystem error and correct the path or environment.
-
-## Anti-patterns
-- WRONG: use write to replace an existing file. RIGHT: use `edit`.
-- WRONG: create a second file when an existing module is the proper home. RIGHT: modify the existing file.
-- WRONG: assume success without checking an error result. RIGHT: treat the tool result as authoritative.
+<conditions>
+- Creating new files explicitly required by task
+- Replacing entire file contents when editing would be more complex
+</conditions>
 
 <critical>
 - You SHOULD use the edit tool for modifying existing files.
-- NEVER overwrite an existing file with write; the call fails if the path exists.
-- Create a file only when the task genuinely requires a new file.
+- You NEVER create documentation files (*.md, README) unless explicitly requested
+- You NEVER use emojis unless requested 
 </critical>
