@@ -32,7 +32,7 @@ func (m Model) View() string {
 		return m.skillsPickerView()
 	}
 	if m.variantsPicker.open {
-		return m.variantsPickerView()
+		return m.variantsPickerView(m.chatView())
 	}
 	if m.connectPanel.open {
 		return m.connectPanelView()
@@ -41,6 +41,10 @@ func (m Model) View() string {
 		return m.resumePickerView()
 	}
 
+	return m.chatView()
+}
+
+func (m Model) chatView() string {
 	content := m.chatContent()
 	canvas := m.renderCanvas(content)
 	if !m.ready {
