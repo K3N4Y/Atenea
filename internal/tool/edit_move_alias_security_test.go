@@ -12,7 +12,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/tool/hashline"
 )
 
-func TestRound5_PublicMoveDestinationsRejectInWorkspaceSymlinkParents(t *testing.T) {
+func TestMoveDestinationsRejectInWorkspaceSymlinkParents(t *testing.T) {
 	modes := []struct {
 		name  string
 		mode  editmode.Mode
@@ -85,7 +85,7 @@ func TestRound5_PublicMoveDestinationsRejectInWorkspaceSymlinkParents(t *testing
 	}
 }
 
-func TestRound5_PublicMoveDestinationNestedAliasAndRealParentBehavior(t *testing.T) {
+func TestMoveDestinationDistinguishesNestedAliasesFromRealParents(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		destination string

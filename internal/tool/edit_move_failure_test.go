@@ -50,7 +50,7 @@ func (f *round4MoveFaultFS) MoveWithContent(a, b string, data []byte, _ os.FileM
 	return nil
 }
 
-func TestRound4_HashlineEditMoveFailureStates(t *testing.T) {
+func TestHashlineMoveReportsDistinctFailureStates(t *testing.T) {
 	for _, tc := range []struct {
 		name, kind                        string
 		destination                       bool

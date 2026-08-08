@@ -15,7 +15,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/tool/hashline"
 )
 
-func TestRound2HashlinePermissiveProviderFields(t *testing.T) {
+func TestHashlineSchemaPermitsProviderFields(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "x.txt")
 	if err := os.WriteFile(path, []byte("old\n"), 0o644); err != nil {
@@ -43,7 +43,7 @@ func TestRound2HashlinePermissiveProviderFields(t *testing.T) {
 	}
 }
 
-func TestRound2HashlineInvalidJSONDoesNotMutate(t *testing.T) {
+func TestHashlineInvalidJSONDoesNotMutate(t *testing.T) {
 	cases := []struct {
 		name string
 		raw  string
@@ -72,7 +72,7 @@ func TestRound2HashlineInvalidJSONDoesNotMutate(t *testing.T) {
 	}
 }
 
-func TestRound2DeleteContinuesOrderedPatchModes(t *testing.T) {
+func TestDeleteContinuesThroughOrderedPatchOperations(t *testing.T) {
 	modes := []editmode.Mode{editmode.Patch, editmode.ApplyPatch}
 	for _, mode := range modes {
 		t.Run(string(mode), func(t *testing.T) {
@@ -134,7 +134,7 @@ func TestRound2DeleteContinuesOrderedPatchModes(t *testing.T) {
 	}
 }
 
-func TestRound2UncertainDeleteStopsWithoutRetry(t *testing.T) {
+func TestUncertainDeleteStopsWithoutRetry(t *testing.T) {
 	root := filepath.Clean("/work")
 	fs := &finalBFS{files: map[string][]byte{filepath.Join(root, "a"): []byte("old\n")}, fault: "readback", mutated: map[string]bool{}}
 	edit := NewEditTool(root, fs, hashline.NewMemSnapshotStore())
@@ -148,7 +148,7 @@ func TestRound2UncertainDeleteStopsWithoutRetry(t *testing.T) {
 	}
 }
 
-func TestRound2OtherModesRemainStrict(t *testing.T) {
+func TestNonHashlineSchemasRejectAdditionalProperties(t *testing.T) {
 	for _, mode := range []editmode.Mode{editmode.Replace, editmode.Patch, editmode.ApplyPatch} {
 		edit := NewEditTool(t.TempDir(), hashline.OSFilesystem{}, hashline.NewMemSnapshotStore())
 		edit.Mode = mode

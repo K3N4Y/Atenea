@@ -112,9 +112,9 @@ func finalBRaw(mode editmode.Mode, op string) json.RawMessage {
 	}
 }
 
-// TestFinalB_NonHashlineLandedStateAndCrossTurnSnapshots is the common
-// non-hashline settlement matrix. Subtests deliberately use mode/operation/fault.
-func TestFinalB_NonHashlineLandedStateAndCrossTurnSnapshots(t *testing.T) {
+// TestNonHashlineSettlementUsesLandedStateAndCrossTurnSnapshots covers the
+// common non-hashline settlement matrix by mode, operation, and fault.
+func TestNonHashlineSettlementUsesLandedStateAndCrossTurnSnapshots(t *testing.T) {
 	cases := []struct {
 		name string
 		mode editmode.Mode

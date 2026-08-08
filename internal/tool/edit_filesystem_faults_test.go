@@ -14,7 +14,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/tool/hashline"
 )
 
-func TestCategoryE_SecurityIdentityHardlinkSymlinkAndCanonicalAliasTable(t *testing.T) {
+func TestMoveRejectsHardlinkSymlinkAndCanonicalAliases(t *testing.T) {
 	cases := []struct {
 		name        string
 		setup       func(t *testing.T, root, outside, source string)
@@ -118,7 +118,7 @@ func (f *matrixFaultFS) Rename(a, b string) error {
 	return nil
 }
 
-func TestCategoryG_MultiSectionCommitFaultEveryPositionAndVariant(t *testing.T) {
+func TestMultiSectionCommitFaultPreservesLandedPrefix(t *testing.T) {
 	for _, variant := range []string{"write", "remove", "move"} {
 		for _, position := range []int{1, 2, 3} {
 			t.Run(variant+string(rune('0'+position)), func(t *testing.T) {
@@ -153,7 +153,7 @@ func TestCategoryG_MultiSectionCommitFaultEveryPositionAndVariant(t *testing.T) 
 	}
 }
 
-func TestCategoryG_ResultFilesOrderedCommittedFailedSkippedAndRetrySafe(t *testing.T) {
+func TestPartialResultsOrderCommittedFailedAndSkippedFiles(t *testing.T) {
 	fs := &nthWriteFS{memoryEditFS: &memoryEditFS{files: map[string][]byte{"a": []byte("A"), "b": []byte("B"), "c": []byte("C")}}, fail: 2}
 	snaps := hashline.NewMemSnapshotStore()
 	ha, _ := snaps.Record("a", "A")
@@ -175,7 +175,7 @@ func TestCategoryG_ResultFilesOrderedCommittedFailedSkippedAndRetrySafe(t *testi
 	}
 }
 
-func TestCategoryH_OutputCapPreservesFileEventMetadataTable(t *testing.T) {
+func TestOutputCapPreservesFileEventMetadata(t *testing.T) {
 	ops := []contract.FileOperation{contract.FileUpdated, contract.FileCreated, contract.FileDeleted, contract.FileMoved, contract.FileNoop, contract.FileError}
 	for _, op := range ops {
 		t.Run(string(op), func(t *testing.T) {

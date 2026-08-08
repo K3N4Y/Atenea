@@ -71,7 +71,7 @@ func assertSnapshotMatchesDisk(t *testing.T, snaps *hashline.MemSnapshotStore, p
 	}
 }
 
-func TestCategoryF_PublicInverseMovesConcurrently(t *testing.T) {
+func TestInverseMovesAreSerializable(t *testing.T) {
 	root := t.TempDir()
 	a, b, x := filepath.Join(root, "a"), filepath.Join(root, "b"), filepath.Join(root, "x")
 	matrixMustWrite(t, a, "A")
@@ -115,7 +115,7 @@ func TestCategoryF_PublicInverseMovesConcurrently(t *testing.T) {
 	assertSnapshotMatchesDisk(t, snaps, a, b, x)
 }
 
-func TestCategoryF_PublicReplaceVersusMoveConcurrently(t *testing.T) {
+func TestReplaceAndMoveAreSerializable(t *testing.T) {
 	root := t.TempDir()
 	a, x := filepath.Join(root, "a"), filepath.Join(root, "x")
 	matrixMustWrite(t, a, "old")
@@ -153,7 +153,7 @@ func TestCategoryF_PublicReplaceVersusMoveConcurrently(t *testing.T) {
 	assertSnapshotMatchesDisk(t, snaps, a, x)
 }
 
-func TestCategoryF_PublicOverlappingMultiSectionCalls(t *testing.T) {
+func TestOverlappingMultiSectionCallsAreSerializable(t *testing.T) {
 	root := t.TempDir()
 	paths := []string{filepath.Join(root, "a"), filepath.Join(root, "b"), filepath.Join(root, "c")}
 	snaps := hashline.NewMemSnapshotStore()
@@ -186,7 +186,7 @@ func TestCategoryF_PublicOverlappingMultiSectionCalls(t *testing.T) {
 	assertSnapshotMatchesDisk(t, snaps, paths...)
 }
 
-func TestCategoryG_OrdinaryCommitFaultEveryPositionPreservesPrefixState(t *testing.T) {
+func TestCommitFaultPreservesPrefixStateAtEveryPosition(t *testing.T) {
 	for fail := 1; fail <= 3; fail++ {
 		fs := &nthWriteFS{memoryEditFS: &memoryEditFS{files: map[string][]byte{"a": []byte("A"), "b": []byte("B"), "c": []byte("C")}}, fail: fail}
 		snaps := hashline.NewMemSnapshotStore()
@@ -241,7 +241,7 @@ func (f *uncertainWriteFS) WriteFile(path string, data []byte, mode os.FileMode)
 	return nil
 }
 
-func TestCategoryG_CommittedUncertainEveryPositionPreservesPrefixState(t *testing.T) {
+func TestCommittedUncertaintyPreservesPrefixStateAtEveryPosition(t *testing.T) {
 	for position := 1; position <= 3; position++ {
 		fs := &uncertainWriteFS{memoryEditFS: &memoryEditFS{files: map[string][]byte{"a": []byte("A"), "b": []byte("B"), "c": []byte("C")}}, uncertain: position}
 		snaps := hashline.NewMemSnapshotStore()
@@ -270,7 +270,7 @@ func TestCategoryG_CommittedUncertainEveryPositionPreservesPrefixState(t *testin
 	}
 }
 
-func TestCategoryH_PartialAggregatePersistsOrderedMixedOutcomes(t *testing.T) {
+func TestPartialAggregatePreservesOrderedMixedOutcomes(t *testing.T) {
 	// The Publisher persistence integration lives in internal/session/runner;
 	// this test pins the aggregate shape before that package's durable round trip.
 	files := []contract.FileResult{

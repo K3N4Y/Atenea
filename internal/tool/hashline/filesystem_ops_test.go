@@ -217,7 +217,7 @@ func TestAtomicReplaceEveryFilesystemStagePreservesOrReportsCommittedState(t *te
 	}
 }
 
-func TestRound4_ExclusiveCreateFaultsLeaveNoTemporaryFiles(t *testing.T) {
+func TestExclusiveCreateFaultsLeaveNoTemporaryFiles(t *testing.T) {
 	for _, stage := range []string{"createTemp", "write", "shortWrite", "chmod", "fileSync", "fileClose", "publish", "dirOpen", "dirSync", "dirClose"} {
 		t.Run(stage, func(t *testing.T) {
 			f := newFaultOps(nil)

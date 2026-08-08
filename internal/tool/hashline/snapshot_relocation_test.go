@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestRound4_MoveRelocatesSnapshotHistoryExactly(t *testing.T) {
+func TestMoveRelocatesSnapshotHistoryExactly(t *testing.T) {
 	store := NewMemSnapshotStore()
 	store.Record("destination", "destination-old\n")
 	versions := map[string]uint64{}
@@ -80,7 +80,7 @@ func (f *round4MoveFS) MoveWithContent(a, b string, data []byte, _ os.FileMode) 
 	return f.err
 }
 
-func TestRound4RelocateDestinationMergeOrderIsStable(t *testing.T) {
+func TestRelocateDestinationMergeOrderIsStable(t *testing.T) {
 	s := NewMemSnapshotStore()
 	s.Record("source", "shared")
 	s.RecordSeenContent("source", "shared", []int{1})

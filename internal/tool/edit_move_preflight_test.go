@@ -10,7 +10,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/tool/hashline"
 )
 
-func TestRound8HashlineMoveParentsAreCreatedOnlyAfterFullPreflight(t *testing.T) {
+func TestHashlineMoveCreatesParentsOnlyAfterFullPreflight(t *testing.T) {
 	t.Run("stale hash", func(t *testing.T) {
 		root := t.TempDir()
 		snaps := hashline.NewMemSnapshotStore()

@@ -56,7 +56,7 @@ func assertOneStructuredWinner(t *testing.T, results []Result, errs []error) int
 	return winner
 }
 
-func TestFinalA_PublicPatchVersusHashlineSameFileSerializable(t *testing.T) {
+func TestPatchAndHashlineEditsOnSameFileAreSerializable(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "x.txt")
 	matrixMustWrite(t, path, "A\n")
@@ -80,7 +80,7 @@ func TestFinalA_PublicPatchVersusHashlineSameFileSerializable(t *testing.T) {
 	assertSnapshotMatchesDisk(t, snaps, path)
 }
 
-func TestFinalA_PublicApplyPatchVersusReplaceSameFileSerializable(t *testing.T) {
+func TestApplyPatchAndReplaceOnSameFileAreSerializable(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "x.txt")
 	matrixMustWrite(t, path, "old\n")
@@ -104,7 +104,7 @@ func TestFinalA_PublicApplyPatchVersusReplaceSameFileSerializable(t *testing.T) 
 	assertSnapshotMatchesDisk(t, snaps, path)
 }
 
-func TestFinalA_PublicSuffixReplaceVersusDirectHashlineSerializable(t *testing.T) {
+func TestSuffixReplaceAndDirectHashlineAreSerializable(t *testing.T) {
 	root := t.TempDir()
 	_ = os.Mkdir(filepath.Join(root, "deep"), 0755)
 	path := filepath.Join(root, "deep", "x.txt")
@@ -129,7 +129,7 @@ func TestFinalA_PublicSuffixReplaceVersusDirectHashlineSerializable(t *testing.T
 	assertSnapshotMatchesDisk(t, snaps, path)
 }
 
-func TestFinalA_PublicOverlappingPatchApplyMoveSetsSerializable(t *testing.T) {
+func TestOverlappingPatchMoveSetsAreSerializable(t *testing.T) {
 	root := t.TempDir()
 	source, middle, destination := filepath.Join(root, "source.txt"), filepath.Join(root, "middle.txt"), filepath.Join(root, "destination.txt")
 	matrixMustWrite(t, source, "base\n")
@@ -188,7 +188,7 @@ func mustReadDir(t *testing.T, path string) []os.DirEntry {
 	return entries
 }
 
-func TestFinalD_PublicPreviewUsesCommittedRegisterWithoutMutatingSession(t *testing.T) {
+func TestPreviewUsesCommittedRegisterWithoutMutatingSession(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "x.txt")
 	matrixMustWrite(t, path, "one\ntwo\n")
@@ -217,7 +217,7 @@ func TestFinalD_PublicPreviewUsesCommittedRegisterWithoutMutatingSession(t *test
 	}
 }
 
-func TestFinalD_PreviewLookupDoesNotCreateSessionState(t *testing.T) {
+func TestPreviewLookupDoesNotCreateSessionState(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "x.txt")
 	matrixMustWrite(t, path, "x\n")
@@ -231,7 +231,7 @@ func TestFinalD_PreviewLookupDoesNotCreateSessionState(t *testing.T) {
 	}
 }
 
-func TestFinalD_PublicStructuralPreviewMatchesExecution(t *testing.T) {
+func TestStructuralPreviewMatchesExecution(t *testing.T) {
 	cases := []struct{ name, operation string }{
 		{"put block", "PUT 1*:\n+func replacement() {\n+\tprintln(9)\n+}"},
 		{"cut block", "CUT 1*"},
@@ -279,7 +279,7 @@ func TestFinalD_PublicStructuralPreviewMatchesExecution(t *testing.T) {
 	}
 }
 
-func TestFinalD_ConcurrentPreviewExecuteUsesForkedRegisterState(t *testing.T) {
+func TestConcurrentPreviewAndExecuteUseForkedRegisterState(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "x.txt")
 	matrixMustWrite(t, path, "named\nanonymous\nleft\nright\n")
@@ -328,7 +328,7 @@ func TestFinalD_ConcurrentPreviewExecuteUsesForkedRegisterState(t *testing.T) {
 	}
 }
 
-func TestFinalE_StrictJSONRejectsTrailingValuesWithoutMutation(t *testing.T) {
+func TestEditModesRejectTrailingJSONValuesWithoutMutation(t *testing.T) {
 	modes := []struct {
 		name  string
 		mode  editmode.Mode

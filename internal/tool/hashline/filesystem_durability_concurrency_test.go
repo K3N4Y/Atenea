@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func TestCategoryC_SameFSMoveSourceDirectoryFaultsAfterSourceRemoval(t *testing.T) {
+func TestSameFSMoveReportsSourceDirectoryFaultsAfterRemoval(t *testing.T) {
 	for _, tc := range []struct {
 		name, from, to, fault string
 		sameDir               bool
@@ -41,7 +41,7 @@ func TestCategoryC_SameFSMoveSourceDirectoryFaultsAfterSourceRemoval(t *testing.
 	}
 }
 
-func TestCategoryC_SameFSMoveUncertainResultSnapshotsDiskAndForbidsRetry(t *testing.T) {
+func TestUncertainSameFSMoveSnapshotsDiskAndForbidsRetry(t *testing.T) {
 	fs := &resultFaultFS{files: map[string][]byte{"a": []byte("A")}, reads: map[string]int{}, readbackAt: map[string]int{}, renameErr: &CommitUncertainError{Err: errors.New("source directory sync")}}
 	snaps := NewMemSnapshotStore()
 	h, _ := snaps.Record("a", "A")
@@ -58,7 +58,7 @@ func TestCategoryC_SameFSMoveUncertainResultSnapshotsDiskAndForbidsRetry(t *test
 	}
 }
 
-func TestCategoryF_ActualFilesystemOperationsConcurrentMovesAndReplaces(t *testing.T) {
+func TestActualFilesystemMovesAndReplacesAreConcurrentSafe(t *testing.T) {
 	root := t.TempDir()
 	for _, name := range []string{"a", "b", "c", "loop"} {
 		if err := os.WriteFile(filepath.Join(root, name), []byte(strings.ToUpper(name)), 0644); err != nil {

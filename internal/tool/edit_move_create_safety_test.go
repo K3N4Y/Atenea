@@ -16,7 +16,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/tool/hashline"
 )
 
-func TestRound4_HashlineEditThenMovePreservesContentResultAndProvenance(t *testing.T) {
+func TestHashlineEditThenMovePreservesContentResultAndProvenance(t *testing.T) {
 	root := t.TempDir()
 	source, destination := filepath.Join(root, "source.txt"), filepath.Join(root, "moved", "destination.txt")
 	if err := os.WriteFile(source, []byte("one\ntwo\nthree\n"), 0o640); err != nil {
@@ -79,7 +79,7 @@ func TestRound4_HashlineEditThenMovePreservesContentResultAndProvenance(t *testi
 	}
 }
 
-func TestRound4_PatchAndApplyMoveRelocateFourVersionCollisionHistory(t *testing.T) {
+func TestPatchMovesRelocateCollisionHistoryAcrossVersions(t *testing.T) {
 	for _, mode := range []editmode.Mode{editmode.Patch, editmode.ApplyPatch} {
 		for _, uncertain := range []bool{false, true} {
 			t.Run(string(mode)+map[bool]string{false: "/committed", true: "/source-remains"}[uncertain], func(t *testing.T) {
@@ -212,7 +212,7 @@ func round4CreateInput(mode editmode.Mode, path, text string) json.RawMessage {
 	return body
 }
 
-func TestRound4_CreateNoOverwriteOnReadErrorOrRace(t *testing.T) {
+func TestCreateDoesNotOverwriteOnReadErrorOrRace(t *testing.T) {
 	for _, mode := range []editmode.Mode{editmode.Patch, editmode.ApplyPatch} {
 		t.Run(string(mode)+"/read-error", func(t *testing.T) {
 			root := filepath.Clean("/workspace")
@@ -313,7 +313,7 @@ func TestRound4_CreateNoOverwriteOnReadErrorOrRace(t *testing.T) {
 	}
 }
 
-func TestRound4_PatchAndApplyCreateRejectSymlinkHardlinkAliases(t *testing.T) {
+func TestPatchCreateRejectsSymlinkAndHardlinkAliases(t *testing.T) {
 	for _, mode := range []editmode.Mode{editmode.Patch, editmode.ApplyPatch} {
 		for _, kind := range []string{"symlink-target", "hardlink-target", "symlinked-parent", "existing-symlink-alias"} {
 			t.Run(string(mode)+"/"+kind, func(t *testing.T) {
