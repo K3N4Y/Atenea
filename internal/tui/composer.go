@@ -420,7 +420,7 @@ func (c composer) recallHistory(dir int) (composer, bool) {
 func isImmediateBuiltin(label string) bool {
 	switch label {
 	case "/new", "/compact", "/checkpoint", "/rewind", "/resume", "/skills", "/variants", "/learned",
-		"/model", "/mcp", "/connect", "/mode", "/mode:auto-accept", "/mode:ask", "/mode:yolo":
+		"/model", "/mcp", "/connect", "/rah", "/mode", "/mode:auto-accept", "/mode:ask", "/mode:yolo":
 		return true
 	default:
 		return isDevelopmentBuiltinSelection(label)

@@ -105,16 +105,26 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string, final boo
 	} else if runnerContext.Anchor != nil {
 		msgs = append([]session.Message{*runnerContext.Anchor}, msgs...)
 	}
-	// Plan mode selects its own system prompt and permissions. A nil mode hook
-	// preserves normal-mode behavior.
+	// Alternate modes select their own system prompt and permissions. A nil mode
+	// hook preserves ordinary behavior.
 	sys := r.system
 	perms := r.perms
-	if r.mode != nil && r.mode(sessionID) == session.ModePlan {
-		if r.planSystem != nil {
-			sys = r.planSystem
-		}
-		if r.planPerms != nil {
-			perms = r.planPerms
+	if r.mode != nil {
+		switch r.mode(sessionID) {
+		case session.ModePlan:
+			if r.planSystem != nil {
+				sys = r.planSystem
+			}
+			if r.planPerms != nil {
+				perms = r.planPerms
+			}
+		case session.ModeRAH:
+			if r.rahSystem != nil {
+				sys = r.rahSystem
+			}
+			if r.rahPerms != nil {
+				perms = r.rahPerms
+			}
 		}
 	}
 	// Acquire first so model-dependent definitions and execution freeze together.

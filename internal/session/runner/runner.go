@@ -28,16 +28,15 @@ type Runner struct {
 	// base prompt by family.
 	system func(model string) string
 
-	// mode looks up the session's Mode per turn. nil (default) => always
-	// ModeNormal: behavior is identical to today. In ModePlan the runner builds the
-	// Request with planSystem/planPerms instead of system/perms.
+	// mode selects the turn surface by session. Normal preserves the existing
+	// agent; plan and RAH use their own prompt/permission pairs.
 	mode func(sessionID string) session.Mode
 
-	// planSystem and planPerms are the plan-mode counterparts of system/perms,
-	// used when mode reports ModePlan. planSystem nil => fall back to system;
-	// planPerms nil => fall back to perms.
-	planSystem    func(model string) string
-	planPerms     tool.Permissions
+	planSystem func(model string) string
+	planPerms  tool.Permissions
+	rahSystem  func(model string) string
+	rahPerms   tool.Permissions
+
 	lessonSection func(sessionID, latestPrompt string) string
 
 	// gate resolves user decisions after the runner has durably published the
@@ -91,6 +90,8 @@ type Config struct {
 	Mode          func(sessionID string) session.Mode
 	PlanSystem    func(model string) string
 	PlanPerms     tool.Permissions
+	RAHSystem     func(model string) string
+	RAHPerms      tool.Permissions
 	LessonSection func(sessionID, latestPrompt string) string
 }
 
@@ -113,6 +114,7 @@ func New(cfg Config) *Runner {
 		compactor: cfg.Compactor, system: cfg.System, reasoning: cfg.Reasoning,
 		preview: cfg.Preview, gate: cfg.Gate, mode: cfg.Mode,
 		planSystem: cfg.PlanSystem, planPerms: cfg.PlanPerms,
+		rahSystem: cfg.RAHSystem, rahPerms: cfg.RAHPerms,
 		lessonSection:        cfg.LessonSection,
 		logf:                 log.Printf,
 		transientRetryDelays: defaultTransientRetryDelays,

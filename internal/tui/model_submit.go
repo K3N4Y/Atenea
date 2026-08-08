@@ -15,6 +15,7 @@ type localCommandKind uint8
 
 const (
 	localCommandMode localCommandKind = iota
+	localCommandRAH
 	localCommandVariants
 	localCommandCacheStats
 	localCommandUndo
@@ -42,12 +43,18 @@ type checkpointAgent interface {
 	Rewind(sessionID string) (RewindResult, error)
 }
 
+type rahAgent interface {
+	SendRAHPrompt(sessionID string, prompt session.Prompt) (RunHandle, error)
+}
+
 func parseLocalCommand(text string) (localCommand, bool) {
 	trimmed := strings.TrimSpace(text)
 	fields := strings.Fields(trimmed)
 	switch {
 	case trimmed == "/mode", trimmed == "/mode:auto-accept", trimmed == "/mode:ask", trimmed == "/mode:yolo":
 		return localCommand{kind: localCommandMode, text: trimmed}, true
+	case trimmed == "/rah" || strings.HasPrefix(trimmed, "/rah "):
+		return localCommand{kind: localCommandRAH, text: trimmed}, true
 	case trimmed == "/variants" || strings.HasPrefix(trimmed, "/variants:"):
 		return localCommand{kind: localCommandVariants, text: trimmed}, true
 	case trimmed == "/reasoning" || strings.HasPrefix(trimmed, "/reasoning:"):
@@ -98,6 +105,8 @@ func (m Model) executeLocalCommand(command localCommand) (Model, tea.Cmd) {
 	switch command.kind {
 	case localCommandMode:
 		return m.submitModeCommand(command.text)
+	case localCommandRAH:
+		return m.submitRAHCommand(command.text)
 	case localCommandVariants:
 		if strings.HasPrefix(command.text, "/reasoning") {
 			next, _ := m.handleReasoningCommand(command.text)
@@ -179,6 +188,28 @@ func (m Model) submitModeCommand(command string) (Model, tea.Cmd) {
 	m.composer = m.composer.clear()
 	m.Transcript = m.Transcript.appendNotice("permission mode: " + mode)
 	return m.syncViewport(), nil
+}
+
+func (m Model) submitRAHCommand(command string) (Model, tea.Cmd) {
+	controller, ok := m.agent.(rahAgent)
+	if !ok {
+		return m.appendError("Recursive Agent Harness is unavailable"), nil
+	}
+	promptText := strings.TrimSpace(strings.TrimPrefix(command, "/rah"))
+	if promptText == "" {
+		return m.appendError("usage: /rah <prompt>"), nil
+	}
+	prompt := m.composer.prompt()
+	prompt.Text = promptText
+	run, err := controller.SendRAHPrompt(m.sessionID, prompt)
+	if err != nil {
+		return m.appendError(err.Error()).syncViewport(), nil
+	}
+	m.composer = m.composer.clear().pushHistory(command)
+	m.activeRun = run.RunID
+	m.working = run.RunID != 0
+	m.Transcript = m.Transcript.appendNotice("Recursive Agent Harness enabled for this turn")
+	return m.resizeViewport(), m.spinner.Tick
 }
 
 func (m Model) submitUndoCommand(command string) (Model, tea.Cmd) {

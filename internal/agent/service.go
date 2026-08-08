@@ -29,6 +29,7 @@ type Hooks struct {
 type RunResult struct {
 	ID      uint64
 	Err     error
+	Mode    session.Mode
 	Current bool
 }
 
@@ -119,6 +120,14 @@ func (s *Service) Mode(sessionID string) session.Mode {
 	return s.modes[sessionID]
 }
 
+// SetMode updates the session's next-turn surface without admitting a prompt.
+// Interactive local commands use it to gate capabilities before execution.
+func (s *Service) SetMode(sessionID string, mode session.Mode) {
+	s.mu.Lock()
+	s.modes[sessionID] = mode
+	s.mu.Unlock()
+}
+
 // Send admits and runs a normal-mode user turn.
 func (s *Service) Send(sessionID string, prompt session.Prompt, hooks Hooks) (RunHandle, error) {
 	return s.send(sessionID, prompt, session.ModeNormal, hooks)
@@ -127,6 +136,11 @@ func (s *Service) Send(sessionID string, prompt session.Prompt, hooks Hooks) (Ru
 // SendPlan admits and runs a plan-mode user turn.
 func (s *Service) SendPlan(sessionID string, prompt session.Prompt, hooks Hooks) (RunHandle, error) {
 	return s.send(sessionID, prompt, session.ModePlan, hooks)
+}
+
+// SendRAH admits and runs an explicitly activated recursive-harness turn.
+func (s *Service) SendRAH(sessionID string, prompt session.Prompt, hooks Hooks) (RunHandle, error) {
+	return s.send(sessionID, prompt, session.ModeRAH, hooks)
 }
 
 // AcceptPlan runs the fixed implementation prompt in normal mode.
@@ -223,6 +237,9 @@ func (s *Service) execute(operation *sync.Mutex, runner Runner, ctx context.Cont
 	if previous != nil {
 		<-previous.done
 	}
+	s.mu.Lock()
+	mode := s.modes[sessionID]
+	s.mu.Unlock()
 	err := runner.Run(ctx, sessionID, force, 0)
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		err = nil
@@ -233,7 +250,7 @@ func (s *Service) execute(operation *sync.Mutex, runner Runner, ctx context.Cont
 	current := s.runs[sessionID] == run
 	s.mu.Unlock()
 	if afterRun != nil {
-		afterRun(RunResult{ID: run.ID, Err: err, Current: current})
+		afterRun(RunResult{ID: run.ID, Err: err, Mode: mode, Current: current})
 	}
 	s.mu.Lock()
 	if s.runs[sessionID] == run {

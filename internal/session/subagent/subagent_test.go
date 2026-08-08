@@ -335,6 +335,7 @@ func TestTaskTool_KeepsTaskToolBelowMaxDepth(t *testing.T) {
 	defs := []agent.Def{{Name: "worker", Tools: []string{"task", "echo"}}}
 
 	tt := newTaskTool(defs, prov, children, idCounter())
+	tt.recursive = func(string) bool { return true }
 	tt.setMaxDepth(2) // childDepth del primer hijo = 1 < 2 -> "task" se conserva
 
 	_, err := tt.Execute(context.Background(), json.RawMessage(`{"subagent_type":"worker","prompt":"haz"}`))
@@ -348,6 +349,21 @@ func TestTaskTool_KeepsTaskToolBelowMaxDepth(t *testing.T) {
 	}
 	if !slices.Contains(prov.toolNames, "task") {
 		t.Errorf("toolNames = %v, quiero que contenga %q por debajo de max depth", prov.toolNames, "task")
+	}
+}
+
+func TestTaskTool_PropagatesRecursiveAuthorizationAcrossChildSessions(t *testing.T) {
+	provider := &spyProvider{}
+	children := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{}, taskStub{})
+	task := newTaskTool([]agent.Def{{Name: "worker", Tools: []string{"task", "echo"}}}, provider, children, idCounter())
+	task.setMaxDepth(3)
+
+	ctx := withRecursive(tool.WithSessionID(context.Background(), "generated-child-id"), true)
+	if _, err := task.Execute(ctx, json.RawMessage(`{"subagent_type":"worker","prompt":"nested"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(provider.toolNames, "task") {
+		t.Fatalf("recursive authorization was lost with child session id: tools=%v", provider.toolNames)
 	}
 }
 

@@ -94,13 +94,13 @@ type Config struct {
 	LessonSection func(sessionID, latestPrompt string) string
 	// NextID generates the runner's assistantMessageIDs (see NewIDGen).
 	NextID func() string
-	// Mode is the per-session mode hook (normal/plan) the runner consults every
-	// turn; nil = always normal mode. PlanMode below is what the plan half of that
-	// answer is allowed to do.
+	// Mode is the per-session mode hook consulted on every turn.
 	Mode func(sessionID string) session.Mode
+	// RAHEnabled gates recursive harness behavior independently from ordinary
+	// task delegation. Nil means disabled for every session.
+	RAHEnabled func(sessionID string) bool
 	// MCPTools are the tools discovered from already-connected MCP servers.
 	MCPTools []tool.Tool
-	// PersistentGrants are approvals loaded from durable configuration. They are
 	// composed before session grants, and can only turn Ask into Allow.
 	PersistentGrants []permission.Rule
 	// LSP enables native code intelligence for hosts that own the language-server,
@@ -343,9 +343,9 @@ func Build(cfg Config) Built {
 	if err != nil {
 		log.Printf("atenea: could not discover the subagents: %v", err)
 	}
-	// Recursive harness assembly is cyclic by nature: the child registry exposes
-	// the same task primitive that owns that registry. Construct the runtime
-	// first, then close the cycle before any runner can execute.
+	// Ordinary task delegation remains one level deep. The same TaskTool can
+	// recurse only while RAHEnabled says the parent session was explicitly
+	// activated by the host.
 	ownedSupervisor := cfg.TaskSupervisor == nil
 	decorateChildStore := func(parentSessionID, parentCallID string, inner session.Store) session.Store {
 		return event.NewChildActivityStore(parentSessionID, parentCallID, inner, cfg.Bus, cfg.ChildActivity)
@@ -353,7 +353,8 @@ func Build(cfg Config) Built {
 	var policy permission.Policy
 	taskTool := subagent.NewTaskTool(subagent.Config{
 		Definitions: agentDefs, Provider: cfg.Provider, NextID: NewIDGen(),
-		ProviderResolver: cfg.RoleProvider, Supervisor: cfg.TaskSupervisor, Gate: cfg.Gate,
+		ProviderResolver: cfg.RoleProvider, Recursive: cfg.RAHEnabled,
+		Supervisor: cfg.TaskSupervisor, Gate: cfg.Gate,
 		Policy: func() permission.Policy { return policy }, StoreDecorator: decorateChildStore,
 	})
 	batchServer, batchErr := subagent.NewBatchServer(taskTool)
@@ -361,7 +362,13 @@ func Build(cfg Config) Built {
 	if batchErr != nil {
 		log.Printf("atenea: could not start recursive batch server: %v", batchErr)
 	} else {
-		batchEnv = batchServer.Environment
+		batchEnv = func(ctx context.Context) []string {
+			sessionID := tool.SessionIDFrom(ctx)
+			if cfg.RAHEnabled == nil || !cfg.RAHEnabled(sessionID) {
+				return nil
+			}
+			return batchServer.Environment(ctx)
+		}
 	}
 	childTools := workspaceTools(root, cfg.Snaps, cfg.EditSettings, batchEnv)
 	childTools = append(childTools, taskTool)
@@ -436,13 +443,17 @@ func Build(cfg Config) Built {
 		delete(permissions, name)
 	}
 	normalPrompt, planPrompt := promptBuilders(root, skillsBlock, cfg.LocalPrompt)
+	rahPrompt := func(model string) string {
+		return normalPrompt(model) + "\n\n" + rahModeInstructions
+	}
 	var preview func(tool.PreviewEvent)
 	if cfg.Bus != nil {
 		preview = cfg.Bus.PublishPreview
 	}
-	// Plan mode: read-only investigation plus present_plan (no write/edit/bash). The
-	// mode hook decides per session; SetMode/SetPlanMode only take effect when
-	// cfg.Mode reports ModePlan (nil = always normal, the runner's default).
+	rahPermissions := make(tool.Permissions, len(permissions))
+	for name, allowed := range permissions {
+		rahPermissions[name] = allowed
+	}
 	r := runner.New(runner.Config{
 		Store: cfg.Store, Inbox: cfg.Inbox, Provider: cfg.Provider,
 		Registry: registry, Permissions: permissions, NextID: cfg.NextID,
@@ -450,6 +461,7 @@ func Build(cfg Config) Built {
 		System:    normalPrompt, Reasoning: cfg.Reasoning, Preview: preview,
 		Gate: cfg.Gate, Policy: policy, Mode: cfg.Mode,
 		PlanSystem: planPrompt, PlanPerms: cfg.PlanMode.permissions(),
+		RAHSystem: rahPrompt, RAHPerms: rahPermissions,
 		LessonSection: cfg.LessonSection,
 	})
 

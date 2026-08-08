@@ -654,9 +654,38 @@ func TestBuild_ConnectedMCPToolsReachOnlySubagentsThatDeclareThem(t *testing.T) 
 	}
 }
 
-// TestBuild_RecursiveChildReceivesTask proves production composition closes the
-// recursive harness cycle instead of exercising the depth logic only with a stub.
-func TestBuild_RecursiveChildReceivesTask(t *testing.T) {
+// TestBuild_DefaultChildDoesNotReceiveRecursiveTask protects the existing
+// subagent contract: ordinary task delegation remains one level deep unless the
+// user explicitly activates RAH for the turn.
+func TestBuild_DefaultChildDoesNotReceiveRecursiveTask(t *testing.T) {
+	root := t.TempDir()
+	agents := filepath.Join(root, ".atenea", "agents")
+	writeAgentWithTools(t, agents, "ordinary-worker", "read, task")
+	provider := &recordingProvider{FakeProvider: llm.NewFakeProvider(
+		llm.Event{Kind: llm.TextDelta, Text: "done"},
+		llm.Event{Kind: llm.StepEnded},
+	)}
+	built := buildWith(t, Config{Root: root, Provider: provider, RAHEnabled: func(string) bool { return false }})
+	t.Cleanup(built.Close)
+	task, _ := built.Tools.Lookup("task")
+
+	if _, err := task.Execute(tool.WithSessionID(context.Background(), "s1"), json.RawMessage(`{"subagent_type":"ordinary-worker","prompt":"work"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got := provider.announced(); slices.Contains(got, "task") {
+		t.Fatalf("ordinary child tools = %v; RAH replaced the existing one-level task behavior", got)
+	}
+}
+
+func TestBuild_DefaultBatchEnvironmentIsUnavailable(t *testing.T) {
+	built := buildWith(t, Config{})
+	t.Cleanup(built.Close)
+	if env := built.BatchEnv(tool.WithSessionID(context.Background(), "s1")); env != nil {
+		t.Fatalf("ordinary session received RAH capability without explicit activation: %v", env)
+	}
+}
+
+func TestBuild_ExplicitRAHTurnEnablesBatchAndRecursiveChildren(t *testing.T) {
 	root := t.TempDir()
 	agents := filepath.Join(root, ".atenea", "agents")
 	writeAgentWithTools(t, agents, "recursive-worker", "read, task")
@@ -664,15 +693,21 @@ func TestBuild_RecursiveChildReceivesTask(t *testing.T) {
 		llm.Event{Kind: llm.TextDelta, Text: "done"},
 		llm.Event{Kind: llm.StepEnded},
 	)}
-	built := buildWith(t, Config{Root: root, Provider: provider})
+	built := buildWith(t, Config{
+		Root: root, Provider: provider,
+		RAHEnabled: func(sessionID string) bool { return sessionID == "rah-session" },
+	})
 	t.Cleanup(built.Close)
+	ctx := tool.WithSessionID(context.Background(), "rah-session")
+	if env := built.BatchEnv(ctx); env == nil {
+		t.Fatal("explicit RAH session did not receive batch capability")
+	}
 	task, _ := built.Tools.Lookup("task")
-
-	if _, err := task.Execute(context.Background(), json.RawMessage(`{"subagent_type":"recursive-worker","prompt":"delegate if needed"}`)); err != nil {
+	if _, err := task.Execute(ctx, json.RawMessage(`{"subagent_type":"recursive-worker","prompt":"work"}`)); err != nil {
 		t.Fatal(err)
 	}
 	if got := provider.announced(); !slices.Contains(got, "task") {
-		t.Fatalf("recursive child tools = %v, want task", got)
+		t.Fatalf("RAH child tools = %v, want recursive task", got)
 	}
 }
 

@@ -1,12 +1,14 @@
 package session
 
-// Mode es el modo de operacion de una sesion: normal o plan. En plan-mode el
-// runner arma el turno con un system prompt y un set de permisos de solo lectura
-// (mas present_plan) en vez de los normales. El valor cero (ModeNormal) deja el
-// comportamiento normal sin cambios.
+// Mode selects the tool and prompt surface for one session turn.
+//
+// ModeNormal preserves the ordinary agent and its existing one-level task
+// delegation. ModePlan is read-only planning. ModeRAH is an explicit, one-turn
+// recursive-harness surface selected only by the local /rah command.
 type Mode string
 
 const (
-	ModeNormal Mode = ""     // valor cero = modo normal
-	ModePlan   Mode = "plan" // plan-mode: prompt y permisos de planificacion
+	ModeNormal Mode = ""
+	ModePlan   Mode = "plan"
+	ModeRAH    Mode = "rah"
 )

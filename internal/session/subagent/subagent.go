@@ -35,6 +35,7 @@ const defaultMaxConcurrency = 4
 
 type depthKey struct{}
 type leaseKey struct{}
+type recursiveKey struct{}
 
 type scheduler struct {
 	sem chan struct{}
@@ -53,6 +54,15 @@ func withDepth(ctx context.Context, d int) context.Context {
 }
 
 func depthFrom(ctx context.Context) int { d, _ := ctx.Value(depthKey{}).(int); return d }
+
+func withRecursive(ctx context.Context, enabled bool) context.Context {
+	return context.WithValue(ctx, recursiveKey{}, enabled)
+}
+
+func recursiveFrom(ctx context.Context) bool {
+	enabled, _ := ctx.Value(recursiveKey{}).(bool)
+	return enabled
+}
 
 func withLease(ctx context.Context, l *lease) context.Context {
 	return context.WithValue(ctx, leaseKey{}, l)
@@ -192,11 +202,14 @@ type Config struct {
 	ProviderResolver      ProviderResolver
 	EnvironmentResolver   EnvironmentResolver
 	ChildRegistryResolver ChildRegistryResolver
-	Supervisor            *Supervisor
-	Gate                  permission.Gate
-	Policy                PolicyResolver
-	StoreDecorator        StoreDecorator
-	Limits                *Limits
+	// Recursive reports whether the parent session explicitly activated RAH.
+	// Nil preserves the existing one-level task behavior.
+	Recursive      func(sessionID string) bool
+	Supervisor     *Supervisor
+	Gate           permission.Gate
+	Policy         PolicyResolver
+	StoreDecorator StoreDecorator
+	Limits         *Limits
 }
 
 type taskInput struct {
@@ -255,6 +268,7 @@ type TaskTool struct {
 	provider        llm.Provider
 	children        *tool.Registry
 	resolveChildren ChildRegistryResolver
+	recursive       func(sessionID string) bool
 	nextID          func() string
 	maxDepth        int
 	scheduler       *scheduler
@@ -298,7 +312,7 @@ func NewTaskTool(cfg Config) *TaskTool {
 		catalog: m, provider: cfg.Provider, children: cfg.Children, nextID: cfg.NextID,
 		maxDepth: maxDepth, providerResolver: cfg.ProviderResolver,
 		environmentResolver: cfg.EnvironmentResolver, resolveChildren: cfg.ChildRegistryResolver,
-		supervisor: supervisor, gate: cfg.Gate, policy: cfg.Policy,
+		recursive: cfg.Recursive, supervisor: supervisor, gate: cfg.Gate, policy: cfg.Policy,
 		storeDecorator: cfg.StoreDecorator, scheduler: &scheduler{},
 	}
 	if maxConcurrency > 0 {
@@ -533,8 +547,13 @@ func (t *TaskTool) run(ctx, metadataCtx context.Context, def agent.Def, in taskI
 		perms[name] = true
 	}
 	childDepth := depthFrom(metadataCtx) + 1
-	if childDepth >= t.maxDepth {
+	parentSessionID := tool.SessionIDFrom(metadataCtx)
+	recursive := recursiveFrom(metadataCtx) ||
+		(t.recursive != nil && t.recursive(parentSessionID))
+	if !recursive || childDepth >= t.maxDepth {
 		delete(perms, "task")
+	}
+	if recursive && childDepth >= t.maxDepth {
 		delete(perms, "bash")
 	}
 	childID := t.nextID()
@@ -568,6 +587,8 @@ func (t *TaskTool) run(ctx, metadataCtx context.Context, def agent.Def, in taskI
 		return "", err
 	}
 	childCtx := withLease(withDepth(runCtx, childDepth), childLease)
+	childCtx = withRecursive(childCtx, recursive)
+	childCtx = tool.WithSessionID(childCtx, parentSessionID)
 	if env.Context != nil {
 		childCtx = env.Context(childCtx)
 	}

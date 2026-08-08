@@ -149,10 +149,9 @@ func (s *BatchServer) Close() error {
 	return errors.Join(err, os.RemoveAll(s.dir))
 }
 func (s *BatchServer) Environment(ctx context.Context) []string {
-	// Script spawning is the code-execution surface of task, not an independent
-	// escape hatch. Root settlements carry no recursive lease and are allowed;
-	// delegated children receive bash only below the same depth boundary used by
-	// TaskTool, and a defensive check here rejects a forged max-depth context.
+	// Script spawning is the code-execution surface of an explicitly activated
+	// RAH turn, not an independent escape hatch. Wiring checks activation before
+	// calling this method; this defensive depth check also protects descendants.
 	if leaseFrom(ctx) != nil && depthFrom(ctx) >= s.task.maxDepth {
 		return nil
 	}

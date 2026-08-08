@@ -19,11 +19,13 @@ import (
 
 	"github.com/K3N4Y/atenea/internal/agent"
 	"github.com/K3N4Y/atenea/internal/checkpoint"
+	"github.com/K3N4Y/atenea/internal/host"
 	"github.com/K3N4Y/atenea/internal/learning"
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/permission"
 	"github.com/K3N4Y/atenea/internal/providerconfig"
 	"github.com/K3N4Y/atenea/internal/session"
+	"github.com/K3N4Y/atenea/internal/tool"
 	"github.com/K3N4Y/atenea/internal/tool/hashline"
 )
 
@@ -961,6 +963,16 @@ func TestModeFromEventsIgnoresUnknownModeAfterValidMode(t *testing.T) {
 	}
 }
 
+func TestModeFromEventsDoesNotRestoreRAH(t *testing.T) {
+	events := []session.SessionEvent{
+		{Kind: session.KindSessionMode, Text: string(session.ModePlan)},
+		{Kind: session.KindSessionMode, Text: string(session.ModeRAH)},
+	}
+	if got := modeFromEvents(events); got != session.ModeNormal {
+		t.Fatalf("modeFromEvents = %q after RAH, want normal", got)
+	}
+}
+
 func TestEngine_SendPromptDoesNotStartCheckpointWhenModePersistenceFails(t *testing.T) {
 	backend := session.NewMemoryStore()
 	modeErr := errors.New("mode persistence failed")
@@ -1496,7 +1508,7 @@ func TestEngine_ExposesCommandsFromSkills(t *testing.T) {
 	for _, c := range cmds {
 		if c.Name == "greets" {
 			if c.Description != "greets with style" {
-				t.Fatalf("Commands() returned greets with Description = %q, want %q", c.Description, "greets with style")
+				t.Fatalf("command greets description = %q", c.Description)
 			}
 			return
 		}
@@ -1507,7 +1519,7 @@ func TestEngine_ExposesCommandsFromSkills(t *testing.T) {
 func TestEngine_CommandsListsLocalAndSkillCommandsFromOneSet(t *testing.T) {
 	e := New(Config{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore()})
 	want := map[string]bool{
-		"new": true, "compact": true, "model": true, "mcp": true,
+		"new": true, "compact": true, "model": true, "mcp": true, "rah": true,
 		"connect": true, "resume": true, "undo": true,
 	}
 	for _, cmd := range e.Commands() {
@@ -2156,9 +2168,70 @@ func TestEngine_SendPlanPromptRunsInPlanMode(t *testing.T) {
 		t.Errorf("normal turn tools = %v, must include %q: SendPrompt returns to build mode", buildTools, "bash")
 	}
 }
+func TestEngine_RAHCapabilityRequiresExplicitMode(t *testing.T) {
+	e := New(Config{
+		Root: t.TempDir(), Provider: llm.NewFakeProvider(),
+		Store: session.NewMemoryStore(), Sitting: host.NewSitting(),
+	})
+	t.Cleanup(func() { _ = e.Shutdown(context.Background()) })
 
+	if env := e.BatchEnvironment(tool.WithSessionID(context.Background(), "s1")); env != nil {
+		t.Fatalf("ordinary session exposed RAH capability: %v", env)
+	}
+	e.agent.SetMode("s1", session.ModeRAH)
+	if env := e.BatchEnvironment(tool.WithSessionID(context.Background(), "s1")); env == nil {
+		t.Fatal("explicit RAH mode did not expose batch capability")
+	}
+	e.agent.SetMode("s1", session.ModeNormal)
+	if env := e.BatchEnvironment(tool.WithSessionID(context.Background(), "s1")); env != nil {
+		t.Fatalf("RAH leaked into ordinary mode: %v", env)
+	}
+}
+
+func TestEngine_RAHTurnUsesDedicatedSurfaceAndThenReturnsToNormal(t *testing.T) {
+	provider := newBlockingSummaryProvider()
+	e := New(Config{
+		Root: t.TempDir(), Provider: provider,
+		Store: session.NewMemoryStore(), Sitting: host.NewSitting(),
+	})
+	t.Cleanup(func() { _ = e.Shutdown(context.Background()) })
+
+	if _, err := e.SendRAHPrompt("s1", session.Prompt{Text: "recursive work"}); err != nil {
+		t.Fatal(err)
+	}
+	<-provider.started
+	if e.agent.Mode("s1") != session.ModeRAH {
+		t.Fatalf("mode = %q while RAH turn runs, want %q", e.agent.Mode("s1"), session.ModeRAH)
+	}
+	if env := e.BatchEnvironment(tool.WithSessionID(context.Background(), "s1")); env == nil {
+		t.Fatal("running RAH turn did not expose batch capability")
+	}
+	close(provider.release)
+	collectUntilRunDone(t, e.Events(), 10*time.Second, nil)
+	if e.agent.Mode("s1") != session.ModeNormal {
+		t.Fatalf("mode = %q after RAH completion, want normal", e.agent.Mode("s1"))
+	}
+	if env := e.BatchEnvironment(tool.WithSessionID(context.Background(), "s1")); env != nil {
+		t.Fatalf("RAH capability remained after completion: %v", env)
+	}
+
+	ordinary := newTurnProvider([]llm.Event{{Kind: llm.StepEnded}})
+	e.wiring.Provider = ordinary
+	e.rewire()
+	if _, err := e.SendPrompt("s1", session.Prompt{Text: "ordinary"}); err != nil {
+		t.Fatal(err)
+	}
+	collectUntilRunDone(t, e.Events(), 10*time.Second, nil)
+	if e.agent.Mode("s1") != session.ModeNormal {
+		t.Fatalf("mode = %q after ordinary turn, want normal", e.agent.Mode("s1"))
+	}
+	if env := e.BatchEnvironment(tool.WithSessionID(context.Background(), "s1")); env != nil {
+		t.Fatalf("RAH capability leaked after ordinary send: %v", env)
+	}
+}
 func TestEngine_ToolResultNeverPrecedesAssistantMessageInHistory(t *testing.T) {
-	// NETWORK (real bug seen with OpenRouter/Cohere): when the model responds ONLY with a tool call that fails instantly (read with absolute path: dies on sandboxJoin validation, no I/O), the Tool.Failed (which materializes the Message role=tool) can be persisted BEFORE the Step.Ended (which materializes the Message assistant with the tool_calls), because the runner seats the tool in a concurrent goroutine while the StepEnded still travels through the network. The projected history becomes `user, tool, assistant` and the next request to the provider returns 400: "tool call id not found in previous tool calls". The provider's delay reproduces that race deterministically: the last SSE chunk (StepEnded) arrives ~100ms late.
+	// A tool result must never precede the assistant message that declared it,
+	// even when the final provider event is delayed.
 	provider := newTurnProvider(
 		[]llm.Event{
 			{Kind: llm.StepStarted},

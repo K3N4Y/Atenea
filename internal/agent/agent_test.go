@@ -254,7 +254,7 @@ func TestBuiltins_GeneralHasFullTools(t *testing.T) {
 	if general.Name == "" {
 		t.Fatalf("Builtins does not include general; got %v", defs)
 	}
-	for _, want := range []string{"edit", "write", "bash"} {
+	for _, want := range []string{"edit", "write", "bash", "task"} {
 		if !slices.Contains(general.Tools, want) {
 			t.Errorf("general.Tools = %v, want %q", general.Tools, want)
 		}
@@ -303,7 +303,7 @@ func TestBuiltins_RepairAndVerifyAgentsHaveLeastPrivilege(t *testing.T) {
 	}
 
 	repair := byName["repair-n"]
-	for _, want := range []string{"read", "grep", "glob", "edit", "write", "bash"} {
+	for _, want := range []string{"read", "grep", "glob", "edit", "write", "bash", "task"} {
 		if !slices.Contains(repair.Tools, want) {
 			t.Errorf("repair-n.Tools = %v, want %q", repair.Tools, want)
 		}

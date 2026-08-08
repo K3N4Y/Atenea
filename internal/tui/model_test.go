@@ -67,9 +67,13 @@ type fakeAgent struct {
 	undoErr        error
 	sendErr        error
 	planErr        error
-	acceptErr      error
-	nextRunID      uint64
-	tools          tool.Catalog
+	rahSent        []struct {
+		sessionID, text string
+		images          []session.Image
+	}
+	acceptErr error
+	nextRunID uint64
+	tools     tool.Catalog
 	// capabilities is what the adapter serving the current model declares;
 	// declared == false is the agent that says nothing, which the UI must treat
 	// as "unknown" rather than as "no window".
@@ -147,6 +151,41 @@ func TestModel_ModeCommandsStayLocal(t *testing.T) {
 	}
 	if len(fake.sent) != 0 || fake.AutoAcceptEnabled("s1") {
 		t.Fatalf("commands reached provider or left mode enabled: sent=%v mode=%v", fake.sent, fake.AutoAcceptEnabled("s1"))
+	}
+}
+
+func TestModel_RAHRequiresExplicitLocalCommand(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+
+	m = typeRunes(t, m, "ordinary prompt")
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if len(fake.rahSent) != 0 || len(fake.sent) != 1 {
+		t.Fatalf("ordinary prompt activated RAH: rah=%v normal=%v", fake.rahSent, fake.sent)
+	}
+
+	m = typeRunes(t, m, "/rah inspect every independent entry")
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if len(fake.rahSent) != 1 || fake.rahSent[0].text != "inspect every independent entry" {
+		t.Fatalf("/rah did not route explicitly: %+v", fake.rahSent)
+	}
+	if len(fake.sent) != 1 {
+		t.Fatalf("/rah leaked to ordinary agent path: %+v", fake.sent)
+	}
+}
+
+func TestModel_RAHWithoutPromptStaysLocal(t *testing.T) {
+	fake := &fakeAgent{}
+	m := typeRunes(t, NewModel(fake, "s1", nil), "/rah")
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatal("/rah without prompt started async work")
+	}
+	m = updated.(Model)
+	if len(fake.sent) != 0 || len(fake.rahSent) != 0 || m.entries[len(m.entries)-1].kind != entryError {
+		t.Fatalf("empty /rah escaped locally: sent=%v rah=%v entries=%v", fake.sent, fake.rahSent, m.entries)
 	}
 }
 
@@ -316,6 +355,16 @@ func (f *fakeAgent) SendPlanPrompt(sessionID string, prompt session.Prompt) (Run
 	}{sessionID, prompt.Text, prompt.Images})
 	if f.planErr != nil {
 		return RunHandle{}, f.planErr
+	}
+	return f.nextRun(sessionID), nil
+}
+func (f *fakeAgent) SendRAHPrompt(sessionID string, prompt session.Prompt) (RunHandle, error) {
+	f.rahSent = append(f.rahSent, struct {
+		sessionID, text string
+		images          []session.Image
+	}{sessionID: sessionID, text: prompt.Text, images: prompt.Images})
+	if f.sendErr != nil {
+		return RunHandle{}, f.sendErr
 	}
 	return f.nextRun(sessionID), nil
 }

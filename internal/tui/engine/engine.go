@@ -258,23 +258,26 @@ func New(cfg Config) *Engine {
 		}
 	}
 	e.wiring = wiring.Config{
-		Root:           cfg.Root,
-		Provider:       cfg.Provider,
-		Store:          e.store,
-		Inbox:          e.inbox,
-		Gate:           e.gate,
-		Grants:         e.grants,
-		AutoAccept:     e.autoAccept,
-		Yolo:           e.yolo,
-		Reasoning:      func() *llm.ReasoningPreference { return e.reasoning.Get() },
-		Snaps:          sitting.Snapshots,
-		Bus:            bus,
-		ChildActivity:  true,
-		LocalPrompt:    e.localModels,
-		Checkpoint:     e.checkpointFromTool,
-		Rewind:         e.rewindFromTool,
-		NextID:         ids,
-		Mode:           e.agent.Mode,
+		Root:          cfg.Root,
+		Provider:      cfg.Provider,
+		Store:         e.store,
+		Inbox:         e.inbox,
+		Gate:          e.gate,
+		Grants:        e.grants,
+		AutoAccept:    e.autoAccept,
+		Yolo:          e.yolo,
+		Reasoning:     func() *llm.ReasoningPreference { return e.reasoning.Get() },
+		Snaps:         sitting.Snapshots,
+		Bus:           bus,
+		ChildActivity: true,
+		LocalPrompt:   e.localModels,
+		Checkpoint:    e.checkpointFromTool,
+		Rewind:        e.rewindFromTool,
+		NextID:        ids,
+		Mode:          e.agent.Mode,
+		RAHEnabled: func(sessionID string) bool {
+			return e.agent.Mode(sessionID) == session.ModeRAH
+		},
 		LSP:            true,
 		RoleProvider:   roleProvider,
 		TaskSupervisor: e.taskSupervisor,
@@ -534,6 +537,7 @@ func localCommands(yoloAuthorized bool) []command.Command {
 		{Name: "compact", Description: "Compact conversation context", BuiltIn: true},
 		{Name: "checkpoint", Description: "Save an explicit conversation and workspace checkpoint", BuiltIn: true},
 		{Name: "connect", Description: "Connect a provider by API key or ChatGPT login", BuiltIn: true},
+		{Name: "rah", Description: "Run one prompt with Recursive Agent Harness enabled", BuiltIn: true},
 		{Name: "learn", Description: "Learn from the current conversation", BuiltIn: true},
 		{Name: "learned", Description: "Review learned workspace guidance", BuiltIn: true},
 		{Name: "mcp", Description: "Toggle MCP servers on or off", BuiltIn: true},
@@ -769,6 +773,9 @@ func modeFromEvents(events []session.SessionEvent) session.Mode {
 			mode = session.ModeNormal
 		case session.ModePlan:
 			mode = session.ModePlan
+		// RAH is intentionally one-turn and is never restored on resume.
+		case session.ModeRAH:
+			mode = session.ModeNormal
 		}
 	}
 	return mode
@@ -806,6 +813,21 @@ func (e *Engine) SendPrompt(sessionID string, prompt session.Prompt) (RunHandle,
 	}
 	run, err := e.agent.Send(sessionID, prompt, e.turnHooks(sessionID, prompt, session.ModeNormal))
 	if err != nil {
+		return RunHandle{}, err
+	}
+	return RunHandle{SessionID: sessionID, RunID: run.ID}, nil
+}
+
+// SendRAHPrompt runs one explicitly activated recursive-harness turn. The local
+// /rah command is the only interactive path that calls it.
+func (e *Engine) SendRAHPrompt(sessionID string, prompt session.Prompt) (RunHandle, error) {
+	e.resumeMu.Lock()
+	defer e.resumeMu.Unlock()
+
+	e.agent.SetMode(sessionID, session.ModeRAH)
+	run, err := e.agent.SendRAH(sessionID, prompt, e.turnHooks(sessionID, prompt, session.ModeRAH))
+	if err != nil {
+		e.agent.SetMode(sessionID, session.ModeNormal)
 		return RunHandle{}, err
 	}
 	return RunHandle{SessionID: sessionID, RunID: run.ID}, nil
@@ -873,6 +895,9 @@ func (e *Engine) turnHooks(sessionID string, composerPrompt session.Prompt, mode
 			}
 		},
 		AfterRun: func(result agent.RunResult) {
+			if result.Mode == session.ModeRAH && result.Current {
+				e.agent.SetMode(sessionID, session.ModeNormal)
+			}
 			err := result.Err
 			if checkpointID != "" {
 				after, captureErr := e.checkpoints.Capture(context.Background(), e.root)

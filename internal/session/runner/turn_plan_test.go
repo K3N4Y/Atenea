@@ -88,6 +88,29 @@ func TestRunner_PlanModeUsesPlanSystemAndPerms(t *testing.T) {
 	}
 }
 
+func TestRunner_RAHModeUsesDedicatedSystemAndPerms(t *testing.T) {
+	ctx := context.Background()
+	r, prov, store := newPlanModeRunner(t)
+	r.mode = func(string) session.Mode { return session.ModeRAH }
+	r.rahSystem = func(model string) string { return "RAH[" + model + "]" }
+	r.rahPerms = tool.Permissions{"planner": true}
+
+	if _, err := r.runTurn(ctx, "s1"); err != nil {
+		t.Fatal(err)
+	}
+	epoch, err := store.Epoch(ctx, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := prov.captured()
+	if request.System != "RAH["+epoch.Model+"]" {
+		t.Fatalf("RAH system = %q", request.System)
+	}
+	if !hasToolDef(request.Tools, "planner") || hasToolDef(request.Tools, "echo") {
+		t.Fatalf("RAH tools = %+v", request.Tools)
+	}
+}
+
 // TestRunner_NormalModeUnaffectedByPlanConfig: con SetPlanMode configurado pero el
 // mode hook devolviendo ModeNormal, el Request usa el system normal ("NORM[model]")
 // y las tools normales (echo presente, planner ausente). Prueba que la config de

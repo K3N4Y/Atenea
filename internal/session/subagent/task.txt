@@ -1,4 +1,4 @@
-Delegate a well-scoped task to a fresh full agent harness. Use direct task calls for one to five independent subtasks; for larger or data-derived batches, generate a JSON request and run `"$ATENEA_RAH_CLIENT" __rah_batch` through bash so program code can spawn the whole batch in parallel. Work inline when delegation would merely add handoff latency.
+Delegate a well-scoped task to a fresh subagent without giving it the parent conversation. Ordinary task delegation is one level deep. When the user explicitly activates Recursive Agent Harness mode, capable children may delegate recursively and bash receives the separate batch-spawning capability. Work inline when delegation would merely add handoff latency.
 
 ## Input grammar
 - `subagent_type` and a self-contained `prompt` are required. The type must be from the live catalog below.
@@ -11,14 +11,13 @@ Delegate a well-scoped task to a fresh full agent harness. Use direct task calls
 - `{"subagent_type":"explorer","prompt":"Find every caller of Foo and report path:line evidence."}` delegates read-only investigation.
 - `{"subagent_type":"tester","prompt":"Run the focused behavior checks and report exact commands and failures.","timeout_ms":120000}` delegates verification with a deadline.
 - Start independent investigations as parallel task calls in one turn, not one agent after another.
-- Large script batch: `printf '%s\n' '{"version":1,"tasks":[{"index":0,"subagent_type":"explorer","prompt":"..."},{"index":1,"subagent_type":"explorer","prompt":"..."}]}' | "$ATENEA_RAH_CLIENT" __rah_batch`. Results are one deterministic JSON document ordered by `index`.
 
 ## Recoverable failures
 - Unknown `subagent_type`: choose one from the catalog below and retry with the same complete prompt.
 - Timeout or exhausted budget: narrow the assignment before retrying; do not blindly raise limits.
 - Invalid structured report: clarify the prompt or `output_schema` and retry only the failed slice.
 - Worktree unavailable: run without isolation only when shared-workspace execution is safe; otherwise report the prerequisite.
-- Script batching unavailable: use direct task calls; the local batch capability exists only inside a harness-owned bash call.
+- Recursive or script batching unavailable: continue with ordinary direct task calls; RAH must be activated explicitly by the user.
 
 ## Anti-patterns
 - WRONG: ask a subagent to interpret the user's entire request or create the top-level plan. RIGHT: pass one scoped slice with all requirements and expected evidence.
@@ -28,6 +27,6 @@ Delegate a well-scoped task to a fresh full agent harness. Use direct task calls
 <critical>
 - Delegate scoped, independent work; retain ownership of intent, decomposition, and integration.
 - Prompts must be self-contained because children do not see the parent conversation.
-- Direct and script spawning run the same child harness. Recursion is available to capable child types and stops after depth three.
+- Ordinary task delegation remains one level deep. Recursive and script spawning are available only in explicitly activated RAH mode and stop at the configured depth.
 - Parallelize only real independence, and verify subagent claims before integration.
 </critical>

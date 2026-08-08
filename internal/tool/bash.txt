@@ -5,7 +5,7 @@ Run real terminal programs through `bash -c`.
 - Set `slow_ok=true` for builds, tests, downloads, and installations that may exceed the short timeout.
 - Chain dependent steps in one `command`; use separate calls for independent commands.
 - Every command requires user approval before execution and may be denied.
-- When `$ATENEA_RAH_CLIENT` is present, generated programs may pipe a version-1 batch JSON document to `"$ATENEA_RAH_CLIENT" __rah_batch` to spawn many independent full subagent harnesses. Prefer direct `task` calls for five or fewer subtasks.
+- `$ATENEA_RAH_CLIENT` is present only during explicitly activated Recursive Agent Harness turns. When present, generated programs may pipe a version-1 batch JSON document to `"$ATENEA_RAH_CLIENT" __rah_batch`.
 </instructions>
 
 <avoid>

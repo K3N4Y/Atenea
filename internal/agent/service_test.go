@@ -88,6 +88,34 @@ func TestService_SendOwnsSharedTurnLifecycle(t *testing.T) {
 	}
 }
 
+func TestService_SendRAHIsAnExplicitMode(t *testing.T) {
+	inbox := &recordingInbox{MemoryInbox: session.NewMemoryInbox()}
+	service := NewService(inbox)
+	modeSeen := make(chan session.Mode, 2)
+	service.Configure(runnerFunc(func(context.Context, string, bool, int) error {
+		modeSeen <- service.Mode("s1")
+		return nil
+	}), command.New(nil))
+
+	handle, err := service.SendRAH("s1", session.Prompt{Text: "recursive"}, Hooks{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-handle.Done()
+	if mode := <-modeSeen; mode != session.ModeRAH {
+		t.Fatalf("mode during SendRAH = %q, want %q", mode, session.ModeRAH)
+	}
+
+	handle, err = service.Send("s1", session.Prompt{Text: "ordinary"}, Hooks{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-handle.Done()
+	if mode := <-modeSeen; mode != session.ModeNormal {
+		t.Fatalf("mode during Send = %q, want normal", mode)
+	}
+}
+
 func TestService_ReplacementWaitsForPreviousRun(t *testing.T) {
 	inbox := session.NewMemoryInbox()
 	firstStarted := make(chan struct{})
