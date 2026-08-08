@@ -12,6 +12,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/tool/tooltest"
 )
 
 type rejectCanceledStore struct {
@@ -130,7 +131,7 @@ func TestRunner_ProviderStreamErrorEmitsStepFailed(t *testing.T) {
 		llm.Event{Kind: llm.StepStarted},
 		llm.Event{Kind: llm.StepFailed, Text: "boom"},
 	)
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
 
 	cont, err := r.runTurn(ctx, "s1")
@@ -176,7 +177,7 @@ func TestRunner_ProviderExecutedToolNeverResolvesIsClosed(t *testing.T) {
 		llm.Event{Kind: llm.ToolCall, CallID: "c1", ToolName: "echo", ProviderExecuted: true},
 		llm.Event{Kind: llm.StepFailed, Text: "boom"},
 	)
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
 
 	cont, err := r.runTurn(ctx, "s1")
@@ -237,7 +238,7 @@ func TestRunner_RunFailsInterruptedToolsBeforeTurn(t *testing.T) {
 		llm.Event{Kind: llm.TextEnded},
 		llm.Event{Kind: llm.StepEnded},
 	)
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, inbox, fake, reg, tool.Permissions{"echo": true}, idCounter())
 
 	if err := r.Run(ctx, "s1", false, 0); err != nil {

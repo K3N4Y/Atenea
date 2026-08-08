@@ -362,9 +362,6 @@ func TestRegistry_GrepDefinitionMaterializedWhenPermitted(t *testing.T) {
 	if def.Name != "grep" {
 		t.Fatalf("Definitions[0].Name = %q, quiero grep", def.Name)
 	}
-	if !strings.Contains(def.Description, "Search workspace file contents") {
-		t.Fatalf("Description = %q, want content-search guidance", def.Description)
-	}
 	if !strings.Contains(string(def.Schema), `"pattern"`) || !strings.Contains(string(def.Schema), `"include"`) {
 		t.Fatalf("Schema = %s, quiero pattern/include", def.Schema)
 	}

@@ -9,6 +9,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/tool/tooltest"
 )
 
 // epochFlipStore es un decorador de test que embebe el MemoryStore real y
@@ -87,7 +88,7 @@ func TestRunner_RebuildsTurnWhenModelChangesBeforeStream(t *testing.T) {
 	// FakeProvider con guion de SOLO TEXTO: el turno coalesce "ok" y no continua.
 	prov := &recordingProvider{FakeProvider: llm.NewFakeProvider(textTurnScript()...)}
 
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, idCounter())
 
 	cont, err := r.runTurn(ctx, "s1")
@@ -145,7 +146,7 @@ func TestRunner_RebuildsTurnWhenEpochRevisionChanges(t *testing.T) {
 	// recordingProvider con guion de SOLO TEXTO: el turno coalesce "ok" y no continua.
 	prov := &recordingProvider{FakeProvider: llm.NewFakeProvider(textTurnScript()...)}
 
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, idCounter())
 
 	cont, err := r.runTurn(ctx, "s1")
@@ -196,7 +197,7 @@ func TestRunnerAttempt_ReturnsErrRebuildTurnWhenEpochChanges(t *testing.T) {
 		llm.Event{Kind: llm.StepStarted},
 		llm.Event{Kind: llm.StepEnded},
 	)}
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, idCounter())
 
 	cont, err := r.runTurnAttempt(ctx, "s1", false, 0)
@@ -258,7 +259,7 @@ func TestRunner_CompactsAndRetriesOnceWhenRequestOverflows(t *testing.T) {
 
 	prov := &recordingProvider{FakeProvider: llm.NewFakeProvider(textTurnScript()...)}
 
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, idCounter())
 	c := &fakeCompactor{store: store}
 	r.compactor = c // inyeccion white-box: NewRunner no cablea el compactor
@@ -321,7 +322,7 @@ func TestRunner_HappyPathDoesNotRebuildOrCompact(t *testing.T) {
 
 	prov := &recordingProvider{FakeProvider: llm.NewFakeProvider(textTurnScript()...)}
 
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, idCounter())
 
 	cont, err := r.runTurn(ctx, "s1")

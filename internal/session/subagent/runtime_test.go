@@ -14,6 +14,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/session/tasksettlement"
 	"github.com/K3N4Y/atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/tool/tooltest"
 )
 
 func runtimeIDs() func() string {
@@ -21,7 +22,7 @@ func runtimeIDs() func() string {
 	return func() string { return "runtime-" + string(rune('a'+n.Add(1))) }
 }
 func runtimeTool(provider llm.Provider) *TaskTool {
-	return newTaskTool([]agent.Def{{Name: "worker", Tools: []string{"echo"}}}, provider, tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}), runtimeIDs())
+	return newTaskTool([]agent.Def{{Name: "worker", Tools: []string{"echo"}}}, provider, tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{}), runtimeIDs())
 }
 
 func TestTaskOutputSchema(t *testing.T) {
@@ -157,7 +158,7 @@ func TestTaskInjectedProviderEnvironmentAndSummary(t *testing.T) {
 
 	var cleaned atomic.Bool
 	tt.setEnvironmentResolver(func(context.Context, agent.Def) (ChildEnvironment, error) {
-		return ChildEnvironment{Store: session.NewMemoryStore(), Inbox: session.NewMemoryInbox(), Registry: tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}), Cleanup: func() error { cleaned.Store(true); return nil }}, nil
+		return ChildEnvironment{Store: session.NewMemoryStore(), Inbox: session.NewMemoryInbox(), Registry: tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{}), Cleanup: func() error { cleaned.Store(true); return nil }}, nil
 	})
 
 	recorder := tasksettlement.NewRecorder()
@@ -203,7 +204,7 @@ func TestTaskDiscardsFailedIsolatedEnvironment(t *testing.T) {
 	tt := runtimeTool(llm.NewFakeProvider(llm.Event{Kind: llm.TextStarted}, llm.Event{Kind: llm.TextDelta, Text: `{"answer":3}`}, llm.Event{Kind: llm.TextEnded}, llm.Event{Kind: llm.StepEnded}))
 	var discarded atomic.Bool
 	tt.setEnvironmentResolver(func(context.Context, agent.Def) (ChildEnvironment, error) {
-		return ChildEnvironment{Store: session.NewMemoryStore(), Inbox: session.NewMemoryInbox(), Registry: tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}), Workspace: "/tmp/isolation", Discard: func() error { discarded.Store(true); return nil }}, nil
+		return ChildEnvironment{Store: session.NewMemoryStore(), Inbox: session.NewMemoryInbox(), Registry: tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{}), Workspace: "/tmp/isolation", Discard: func() error { discarded.Store(true); return nil }}, nil
 	})
 
 	_, err := tt.Execute(context.Background(), json.RawMessage(`{"subagent_type":"worker","prompt":"x","worktree":true,"output_schema":{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}}`))
@@ -215,7 +216,7 @@ func TestTaskDiscardsFailedIsolatedEnvironment(t *testing.T) {
 func TestTypedWorktreeResultCarriesArtifactEnvelope(t *testing.T) {
 	tt := runtimeTool(llm.NewFakeProvider(llm.Event{Kind: llm.TextStarted}, llm.Event{Kind: llm.TextDelta, Text: `{"answer":"ok"}`}, llm.Event{Kind: llm.TextEnded}, llm.Event{Kind: llm.StepEnded}))
 	tt.setEnvironmentResolver(func(context.Context, agent.Def) (ChildEnvironment, error) {
-		return ChildEnvironment{Store: session.NewMemoryStore(), Inbox: session.NewMemoryInbox(), Registry: tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}), Workspace: "/tmp/isolation"}, nil
+		return ChildEnvironment{Store: session.NewMemoryStore(), Inbox: session.NewMemoryInbox(), Registry: tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{}), Workspace: "/tmp/isolation"}, nil
 	})
 
 	result, err := tt.Execute(context.Background(), json.RawMessage(`{"subagent_type":"worker","prompt":"x","worktree":true,"output_schema":{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}}`))
@@ -227,7 +228,7 @@ func TestTypedWorktreeResultCarriesArtifactEnvelope(t *testing.T) {
 func TestTaskReportsDiscardFailure(t *testing.T) {
 	tt := runtimeTool(llm.NewFakeProvider(llm.Event{Kind: llm.TextStarted}, llm.Event{Kind: llm.TextDelta, Text: `not-json`}, llm.Event{Kind: llm.TextEnded}, llm.Event{Kind: llm.StepEnded}))
 	tt.setEnvironmentResolver(func(context.Context, agent.Def) (ChildEnvironment, error) {
-		return ChildEnvironment{Store: session.NewMemoryStore(), Inbox: session.NewMemoryInbox(), Registry: tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}), Discard: func() error { return errors.New("discard failed") }}, nil
+		return ChildEnvironment{Store: session.NewMemoryStore(), Inbox: session.NewMemoryInbox(), Registry: tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{}), Discard: func() error { return errors.New("discard failed") }}, nil
 	})
 
 	_, err := tt.Execute(context.Background(), json.RawMessage(`{"subagent_type":"worker","prompt":"x","worktree":true,"output_schema":{"type":"object"}}`))

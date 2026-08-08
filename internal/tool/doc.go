@@ -32,5 +32,5 @@
 //     tiered timeout (fast by default, slow with slow_ok), kills the process
 //     group on expiry, scrubs secrets from the environment and caps output
 //     head+tail.
-//   - web_fetch, skill, todo_write, present_plan and echo complete the set.
+//   - web_fetch, skill, todo_write and present_plan complete the set.
 package tool

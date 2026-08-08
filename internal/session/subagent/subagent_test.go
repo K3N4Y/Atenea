@@ -21,6 +21,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/agent"
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/tool/tooltest"
 )
 
 // scriptedProvider devuelve un guion DISTINTO por turno: el loop del runner llama
@@ -83,7 +84,7 @@ func TestTaskTool_RunsChildAndReturnsReport(t *testing.T) {
 		llm.Event{Kind: llm.StepEnded},
 	)
 
-	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	children := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	defs := []agent.Def{{Name: "reviewer", Description: "Revisa codigo", Prompt: "Eres un revisor."}}
 
 	tt := newTaskTool(defs, prov, children, idCounter())
@@ -119,7 +120,7 @@ func TestTaskTool_UnknownSubagentType(t *testing.T) {
 		llm.Event{Kind: llm.StepEnded},
 	)
 
-	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	children := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	defs := []agent.Def{{Name: "reviewer", Description: "Revisa codigo", Prompt: "Eres un revisor."}}
 
 	tt := newTaskTool(defs, prov, children, idCounter())
@@ -143,7 +144,7 @@ func TestTaskTool_InvalidJSON(t *testing.T) {
 		llm.Event{Kind: llm.StepStarted},
 		llm.Event{Kind: llm.StepEnded},
 	)
-	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	children := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	defs := []agent.Def{{Name: "reviewer", Description: "Revisa codigo", Prompt: "Eres un revisor."}}
 
 	tt := newTaskTool(defs, prov, children, idCounter())
@@ -163,7 +164,7 @@ func TestTaskTool_AppliesAgentStepPolicy(t *testing.T) {
 		llm.Event{Kind: llm.StepEnded},
 	)
 
-	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	children := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	defs := []agent.Def{{Name: "looper", Tools: []string{"echo"}, Steps: 1, Description: "loopea", Prompt: "loop"}}
 
 	tt := newTaskTool(defs, prov, children, idCounter())
@@ -184,7 +185,7 @@ func TestTaskTool_AppliesAgentStepPolicy(t *testing.T) {
 // descripcion fija que no recorra el catalogo o que no lo ordene.
 func TestTaskTool_DescriptionListsAvailable(t *testing.T) {
 	prov := llm.NewFakeProvider()
-	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	children := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	defs := []agent.Def{
 		{Name: "reviewer", Description: "Revisa codigo"},
 		{Name: "explorer", Description: "Explora"},
@@ -206,7 +207,7 @@ func TestTaskTool_DescriptionListsAvailable(t *testing.T) {
 
 func TestTaskTool_DescriptionTeachesToolDecisions(t *testing.T) {
 	provider := llm.NewFakeProvider()
-	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	children := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	taskTool := newTaskTool([]agent.Def{{Name: "explorer", Description: "Explores code."}}, provider, children, idCounter())
 
 	description := taskTool.Description()
@@ -245,7 +246,7 @@ func TestTaskTool_ChildUsesToolThenReportsFinalText(t *testing.T) {
 		},
 	}}
 
-	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	children := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	defs := []agent.Def{{Name: "worker", Tools: []string{"echo"}, Description: "trabaja", Prompt: "Eres un worker."}}
 
 	tt := newTaskTool(defs, prov, children, idCounter())
@@ -302,7 +303,7 @@ func (taskStub) Execute(context.Context, json.RawMessage) (tool.Result, error) {
 func TestTaskTool_StripsTaskToolAtMaxDepth(t *testing.T) {
 	prov := &spyProvider{}
 
-	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}, taskStub{})
+	children := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{}, taskStub{})
 	defs := []agent.Def{{Name: "worker", Tools: []string{"task", "echo"}}}
 
 	tt := newTaskTool(defs, prov, children, idCounter())
@@ -330,7 +331,7 @@ func TestTaskTool_StripsTaskToolAtMaxDepth(t *testing.T) {
 func TestTaskTool_KeepsTaskToolBelowMaxDepth(t *testing.T) {
 	prov := &spyProvider{}
 
-	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}, taskStub{})
+	children := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{}, taskStub{})
 	defs := []agent.Def{{Name: "worker", Tools: []string{"task", "echo"}}}
 
 	tt := newTaskTool(defs, prov, children, idCounter())
@@ -358,7 +359,7 @@ func TestTaskTool_KeepsTaskToolBelowMaxDepth(t *testing.T) {
 func TestTaskTool_DepthIncrementsFromContext(t *testing.T) {
 	prov := &spyProvider{}
 
-	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	children := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	defs := []agent.Def{{Name: "worker", Tools: []string{"echo"}}}
 
 	tt := newTaskTool(defs, prov, children, idCounter())
@@ -383,7 +384,7 @@ func TestTaskTool_DepthIncrementsFromContext(t *testing.T) {
 func TestTaskTool_DefaultIncomingDepthIsZero(t *testing.T) {
 	prov := &spyProvider{}
 
-	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	children := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	defs := []agent.Def{{Name: "worker", Tools: []string{"echo"}}}
 
 	tt := newTaskTool(defs, prov, children, idCounter())
@@ -454,7 +455,7 @@ func (p *concurrencyProbe) Stream(ctx context.Context, req llm.Request) (<-chan 
 func TestTaskTool_CapsConcurrentSubagents(t *testing.T) {
 	const n, m = 2, 4 // cap de 2, lanzamos 4
 	probe := &concurrencyProbe{entered: make(chan struct{}, m), release: make(chan struct{})}
-	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	children := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	defs := []agent.Def{{Name: "worker", Prompt: "x"}}
 	tt := newTaskTool(defs, probe, children, safeIDCounter())
 	tt.setMaxConcurrency(n)
@@ -495,7 +496,7 @@ func TestTaskTool_CapsConcurrentSubagents(t *testing.T) {
 func TestTaskTool_UnlimitedConcurrencyWhenZero(t *testing.T) {
 	const m = 4
 	probe := &concurrencyProbe{entered: make(chan struct{}, m), release: make(chan struct{})}
-	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	children := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	defs := []agent.Def{{Name: "worker", Prompt: "x"}}
 	tt := newTaskTool(defs, probe, children, safeIDCounter())
 	tt.setMaxConcurrency(0) // sin tope
@@ -530,7 +531,7 @@ func TestTaskTool_UnlimitedConcurrencyWhenZero(t *testing.T) {
 // ctx.Done() (bloquearia para siempre con el slot lleno, o correria el hijo igual).
 func TestTaskTool_AcquireRespectsContextCancel(t *testing.T) {
 	probe := &concurrencyProbe{entered: make(chan struct{}, 2), release: make(chan struct{})}
-	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	children := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	defs := []agent.Def{{Name: "worker", Prompt: "x"}}
 	tt := newTaskTool(defs, probe, children, safeIDCounter())
 	tt.setMaxConcurrency(1) // un solo slot
@@ -570,7 +571,7 @@ func TestTaskTool_AcquireRespectsContextCancel(t *testing.T) {
 func TestTaskTool_DefaultConcurrencyCap(t *testing.T) {
 	const m = 6
 	probe := &concurrencyProbe{entered: make(chan struct{}, m), release: make(chan struct{})}
-	children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	children := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	defs := []agent.Def{{Name: "worker", Prompt: "x"}}
 	tt := newTaskTool(defs, probe, children, safeIDCounter()) // SIN setter: usa el default
 

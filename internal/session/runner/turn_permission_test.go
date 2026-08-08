@@ -13,6 +13,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/permission"
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/tool/tooltest"
 )
 
 // fakeGate is a test permission.Gate: it records each request and returns a
@@ -151,7 +152,7 @@ func TestRunner_GatedToolApprovedSettlesAfterAsking(t *testing.T) {
 		llm.Event{Kind: llm.ToolCall, CallID: "c1", ToolName: "echo", Input: json.RawMessage(`{"text":"pong"}`)},
 		llm.Event{Kind: llm.StepEnded},
 	)
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
 
 	gate := &fakeGate{approved: true}
@@ -197,7 +198,7 @@ func TestRunner_GateSkippedWhenPolicyAllows(t *testing.T) {
 		llm.Event{Kind: llm.ToolCall, CallID: "c1", ToolName: "echo", Input: json.RawMessage(`{"text":"pong"}`)},
 		llm.Event{Kind: llm.StepEnded},
 	)
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
 
 	gate := &fakeGate{approved: false}                                                                                 // would deny if asked
@@ -328,7 +329,7 @@ func TestRunner_GatedAndUngatedToolsConcurrent(t *testing.T) {
 		llm.Event{Kind: llm.ToolCall, CallID: "c2", ToolName: "counter", Input: json.RawMessage(`{}`)},
 		llm.Event{Kind: llm.StepEnded},
 	)
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}, countingTool{calls: &calls})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{}, countingTool{calls: &calls})
 	r := newRunner(store, session.NewMemoryInbox(), fake, reg,
 		tool.Permissions{"echo": true, "counter": true}, func() string { return "a1" })
 

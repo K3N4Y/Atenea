@@ -12,6 +12,7 @@ import (
 
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/tool/repair"
+	"github.com/K3N4Y/atenea/internal/tool/tooltest"
 )
 
 // spyTool es una tool de prueba que cuenta sus ejecuciones por puntero (Tool se
@@ -285,7 +286,7 @@ func TestRegistry_SettleNilInputSkipsRepairAndValidation(t *testing.T) {
 // asienta una Call conocida. Afirma que Definitions lista solo echo (con su
 // llm.ToolDef) y que Settle ejecuta la tool y devuelve su Result sin error.
 func TestRegistry_SettleExecutesAllowedTool(t *testing.T) {
-	reg := NewRegistry(NewOutputStore(0), Echo{})
+	reg := NewRegistry(NewOutputStore(0), tooltest.Echo{})
 	mat := reg.Materialize(Permissions{"echo": true})
 
 	if len(mat.Definitions) != 1 {
@@ -308,7 +309,7 @@ func TestRegistry_SettleExecutesAllowedTool(t *testing.T) {
 
 func TestRegistry_PermissionsReflectCatalogAndAreIndependent(t *testing.T) {
 	var calls int
-	reg := NewRegistry(NewOutputStore(0), Echo{}, spyTool{name: "secret", calls: &calls})
+	reg := NewRegistry(NewOutputStore(0), tooltest.Echo{}, spyTool{name: "secret", calls: &calls})
 
 	permissions := reg.Permissions()
 	if !permissions["echo"] || !permissions["secret"] || len(permissions) != 2 {
@@ -326,7 +327,7 @@ func TestRegistry_PermissionsReflectCatalogAndAreIndependent(t *testing.T) {
 // anunciado es la compuerta; lo denegado no aparece para el modelo.
 func TestRegistry_DeniedToolAbsentFromDefinitions(t *testing.T) {
 	var calls int
-	reg := NewRegistry(NewOutputStore(0), Echo{}, spyTool{name: "secret", calls: &calls})
+	reg := NewRegistry(NewOutputStore(0), tooltest.Echo{}, spyTool{name: "secret", calls: &calls})
 	mat := reg.Materialize(Permissions{"echo": true})
 
 	if len(mat.Definitions) != 1 {
@@ -347,7 +348,7 @@ func TestRegistry_DeniedToolAbsentFromDefinitions(t *testing.T) {
 // *UnknownToolError sin ejecutar nada: el contador del spy queda en 0.
 func TestRegistry_SettleUnknownToolHasNoSideEffects(t *testing.T) {
 	var calls int
-	reg := NewRegistry(NewOutputStore(0), Echo{}, spyTool{name: "secret", calls: &calls})
+	reg := NewRegistry(NewOutputStore(0), tooltest.Echo{}, spyTool{name: "secret", calls: &calls})
 	// La tool secret esta registrada pero denegada por permisos.
 	mat := reg.Materialize(Permissions{"echo": true})
 

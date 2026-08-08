@@ -10,6 +10,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/tool/tooltest"
 )
 
 type compactionProvider struct {
@@ -46,7 +47,7 @@ func validCompactionSummaryEvents() []llm.Event {
 
 func newCompactionRunner(t *testing.T, store session.Store, provider llm.Provider) *Runner {
 	t.Helper()
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"echo": true}, idCounter())
 	r.setCompactor(NewContextCompactor(store, provider))
 	return r

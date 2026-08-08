@@ -8,6 +8,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/tool/tooltest"
 )
 
 // plannerTool es un stub minimo (sin efectos) para anunciar una def "planner" en
@@ -51,7 +52,7 @@ func newPlanModeRunner(t *testing.T) (*Runner, *recordingProvider, session.Store
 		llm.Event{Kind: llm.StepStarted},
 		llm.Event{Kind: llm.StepEnded},
 	)}
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}, plannerTool{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{}, plannerTool{})
 	r := newRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
 	return r, prov, store
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/agent"
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/tool"
+	fixturetool "github.com/K3N4Y/atenea/internal/tool/tooltest"
 )
 
 // TestTaskTool_Contract runs the published kit over the tool that is a whole
@@ -27,7 +28,7 @@ func TestTaskTool_Contract(t *testing.T) {
 			llm.Event{Kind: llm.TextEnded},
 			llm.Event{Kind: llm.StepEnded},
 		)
-		children := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+		children := tool.NewRegistry(tool.NewOutputStore(0), fixturetool.Echo{})
 		defs := []agent.Def{{Name: "reviewer", Description: "Reviews code.", Prompt: "You review code."}}
 
 		var messages atomic.Int64

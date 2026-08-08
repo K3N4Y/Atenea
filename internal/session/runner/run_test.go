@@ -11,6 +11,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/tool/tooltest"
 )
 
 // idCounter devuelve un generador de IDs incremental ("m1","m2",...): el runner lo
@@ -68,7 +69,7 @@ func TestRunner_ProvidesStableOpaqueSessionKey(t *testing.T) {
 		{{Kind: llm.StepEnded}},
 		{{Kind: llm.StepEnded}},
 	}}
-	runner := newRunner(store, inbox, provider, tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}), tool.Permissions{"echo": true}, idCounter())
+	runner := newRunner(store, inbox, provider, tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{}), tool.Permissions{"echo": true}, idCounter())
 
 	for _, sessionID := range []string{"session-alpha", "session-beta"} {
 		if err := inbox.Admit(ctx, sessionID, session.Prompt{Text: "continue"}, session.DeliveryQueue); err != nil {
@@ -152,7 +153,7 @@ func TestRunner_RunProcessesQueuedPromptThenIdle(t *testing.T) {
 		llm.Event{Kind: llm.StepEnded},
 	)
 
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, inbox, fake, reg, tool.Permissions{"echo": true}, idCounter())
 
 	// La sesion no esta idle (hay un queue pendiente): Run lo drena en una actividad.
@@ -216,7 +217,7 @@ func TestRunner_RunContinuesWhileToolCalls(t *testing.T) {
 		},
 	}}
 
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, inbox, prov, reg, tool.Permissions{"echo": true}, idCounter())
 
 	if err := r.Run(ctx, "s1", false, 0); err != nil {
@@ -269,7 +270,7 @@ func TestRunner_RunAssistantTextDoesNotContinueAlone(t *testing.T) {
 	}
 	prov := &scriptedProvider{turns: [][]llm.Event{textTurn, textTurn, textTurn}}
 
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, inbox, prov, reg, tool.Permissions{"echo": true}, idCounter())
 
 	if err := r.Run(ctx, "s1", false, 0); err != nil {
@@ -320,7 +321,7 @@ func TestRunner_RunSteerAdmittedDuringRunEntersNextContinuation(t *testing.T) {
 		steer:     session.Prompt{Text: "sigue"},
 	}
 
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, inbox, prov, reg, tool.Permissions{"echo": true}, idCounter())
 
 	if err := r.Run(ctx, "s1", false, 0); err != nil {
@@ -371,7 +372,7 @@ func TestRunner_RunSecondQueueOpensNewActivity(t *testing.T) {
 		llm.Event{Kind: llm.StepEnded},
 	)
 
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, inbox, fake, reg, tool.Permissions{"echo": true}, idCounter())
 
 	if err := r.Run(ctx, "s1", false, 0); err != nil {
@@ -416,7 +417,7 @@ func TestRunner_FinitePolicyUsesLastTurnForToolFreeSummary(t *testing.T) {
 		{{Kind: llm.StepStarted}, {Kind: llm.TextDelta, Text: "summary"}, {Kind: llm.StepEnded}},
 	}}
 
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, inbox, provider, reg, tool.Permissions{"echo": true}, idCounter())
 	r.setSystemPrompt(func(string) string { return "base" })
 
@@ -534,7 +535,7 @@ func TestRunner_UnlimitedPolicyCanExceedTwentyFiveTurns(t *testing.T) {
 	}
 	turns[26] = []llm.Event{{Kind: llm.TextDelta, Text: "done"}}
 	provider := &scriptedProvider{turns: turns}
-	r := newRunner(store, inbox, provider, tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{}), tool.Permissions{"echo": true}, idCounter())
+	r := newRunner(store, inbox, provider, tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{}), tool.Permissions{"echo": true}, idCounter())
 	if err := r.Run(ctx, "s1", false, 0); err != nil {
 		t.Fatalf("Run: %v", err)
 	}

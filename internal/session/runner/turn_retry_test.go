@@ -10,6 +10,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/tool/tooltest"
 )
 
 const transientStreamFailure = "PostHog (gpt-5.6-luna): stream error: stream ID 61; INTERNAL_ERROR; received from peer"
@@ -46,7 +47,7 @@ func TestRunner_TransientStreamErrorRetriesAndSucceeds(t *testing.T) {
 			{Kind: llm.StepEnded},
 		},
 	}}
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"echo": true}, idCounter())
 	r.transientRetryDelays = []time.Duration{time.Millisecond, time.Millisecond}
 
@@ -88,7 +89,7 @@ func TestRunner_TransientStreamErrorExhaustsRetriesAndFails(t *testing.T) {
 		transientFailureTurn(),
 		transientFailureTurn(),
 	}}
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"echo": true}, idCounter())
 	r.transientRetryDelays = []time.Duration{time.Millisecond, time.Millisecond}
 
@@ -124,7 +125,7 @@ func TestRunner_NonTransientStreamErrorDoesNotRetry(t *testing.T) {
 			{Kind: llm.StepFailed, Text: "Anthropic (claude-x): invalid_request_error"},
 		},
 	}}
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"echo": true}, idCounter())
 
 	_, err := r.runTurn(ctx, "s1")
@@ -147,7 +148,7 @@ func TestRunner_CancelDuringRetryBackoffClosesStep(t *testing.T) {
 	seedUser(t, store, "s1")
 
 	provider := &scriptedProvider{turns: [][]llm.Event{transientFailureTurn()}}
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"echo": true}, idCounter())
 	r.transientRetryDelays = []time.Duration{time.Hour}
 

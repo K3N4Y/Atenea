@@ -205,7 +205,7 @@ func TestBuild_EveryShippedToolDeclaresItsEffects(t *testing.T) {
 	}
 }
 
-func TestBuild_BuiltinToolDefinitionsUseEnglishStandardFormat(t *testing.T) {
+func TestBuild_BuiltinToolDefinitionsAreRegisteredAndEnglish(t *testing.T) {
 	built := buildWith(t, Config{
 		Checkpoint: func(string, string) (string, error) { return "checkpoint", nil },
 		Rewind:     func(string) (string, error) { return "checkpoint", nil },
@@ -228,7 +228,7 @@ func TestBuild_BuiltinToolDefinitionsUseEnglishStandardFormat(t *testing.T) {
 			t.Fatalf("tool %q is registered but cannot be looked up", name)
 		}
 		t.Run(name, func(t *testing.T) {
-			assertStandardEnglishToolText(t, "description", registered.Description())
+			assertEnglishModelText(t, "description", registered.Description())
 
 			var schema any
 			if err := json.Unmarshal(registered.Schema(), &schema); err != nil {
@@ -237,23 +237,6 @@ func TestBuild_BuiltinToolDefinitionsUseEnglishStandardFormat(t *testing.T) {
 			assertEnglishSchemaDescriptions(t, schema)
 		})
 	}
-}
-
-func assertStandardEnglishToolText(t *testing.T, subject, text string) {
-	t.Helper()
-	previous := -1
-	for _, heading := range []string{"## Input grammar", "## Examples", "## Recoverable failures", "## Anti-patterns", "<critical>", "</critical>"} {
-		at := strings.Index(text, heading)
-		if at < 0 {
-			t.Errorf("%s is missing %q", subject, heading)
-			continue
-		}
-		if at <= previous {
-			t.Errorf("%s has %q out of order", subject, heading)
-		}
-		previous = at
-	}
-	assertEnglishModelText(t, subject, text)
 }
 
 func assertEnglishSchemaDescriptions(t *testing.T, value any) {

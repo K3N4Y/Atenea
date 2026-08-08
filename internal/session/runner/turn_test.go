@@ -10,6 +10,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/tool/tooltest"
 )
 
 // TestRunner_TextOnlyTurnPersistsEventsAndStops es el RED de M5: un turno de solo
@@ -40,7 +41,7 @@ func TestRunner_TextOnlyTurnPersistsEventsAndStops(t *testing.T) {
 		llm.Event{Kind: llm.StepEnded},
 	)
 
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
 
 	cont, err := r.runTurn(ctx, "s1")
@@ -152,7 +153,7 @@ func TestRunner_LocalToolCallRegistersCalledThenSettlesSuccess(t *testing.T) {
 		llm.Event{Kind: llm.ToolCall, CallID: "c1", ToolName: "echo", Input: json.RawMessage(`{"text":"pong"}`)},
 		llm.Event{Kind: llm.StepEnded},
 	)
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
 
 	cont, err := r.runTurn(ctx, "s1")
@@ -322,7 +323,7 @@ func TestRunner_MultiToolResultsFollowAssistantMessage(t *testing.T) {
 		llm.Event{Kind: llm.ToolCall, CallID: "c2", ToolName: "echo", Input: json.RawMessage(`{"text":"dos"}`)},
 		llm.Event{Kind: llm.StepEnded},
 	)
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
 
 	cont, err := r.runTurn(ctx, "s1")
@@ -395,7 +396,7 @@ func TestRunner_LocalToolFailureRecordsToolFailed(t *testing.T) {
 		llm.Event{Kind: llm.ToolCall, CallID: "c1", ToolName: "echo", Input: json.RawMessage(`{`)},
 		llm.Event{Kind: llm.StepEnded},
 	)
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
 
 	cont, err := r.runTurn(ctx, "s1")
@@ -476,7 +477,7 @@ func TestRunner_BuildsRequestFromHistoryAndMaterializedTools(t *testing.T) {
 		llm.Event{Kind: llm.StepStarted},
 		llm.Event{Kind: llm.StepEnded},
 	)}
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
 
 	if _, err := r.runTurn(ctx, "s1"); err != nil {
@@ -528,7 +529,7 @@ func TestRunner_InjectsSystemPromptFromBuilder(t *testing.T) {
 		llm.Event{Kind: llm.StepStarted},
 		llm.Event{Kind: llm.StepEnded},
 	)}
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
 
 	var gotModel string
@@ -568,7 +569,7 @@ func TestRunner_NoSystemBuilderLeavesSystemEmpty(t *testing.T) {
 		llm.Event{Kind: llm.StepStarted},
 		llm.Event{Kind: llm.StepEnded},
 	)}
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
 
 	if _, err := r.runTurn(ctx, "s1"); err != nil {

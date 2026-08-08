@@ -12,6 +12,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/session/runner"
 	"github.com/K3N4Y/atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/tool/tooltest"
 )
 
 // eventsOn devuelve, en orden de emision, los payloads que son SessionEvent
@@ -265,7 +266,7 @@ func TestEmittingStore_TurnStreamsEventsInSeqOrder(t *testing.T) {
 		t.Fatalf("Admit: %v", err)
 	}
 
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	prov := &twoTurnProvider{}
 
 	n := 0

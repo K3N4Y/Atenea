@@ -69,9 +69,6 @@ func TestBuiltins_Contract(t *testing.T) {
 		name       string
 		newSubject func(t *testing.T) tooltest.Subject
 	}{
-		{"echo", func(t *testing.T) tooltest.Subject {
-			return tooltest.Subject{Tool: Echo{}, Input: input(t, map[string]any{"text": "hola"})}
-		}},
 
 		{"read", func(t *testing.T) tooltest.Subject {
 			root := workspaceWithFile(t, "foo.go", "package main\n\nfunc main() {}\n")

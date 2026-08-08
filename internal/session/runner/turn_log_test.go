@@ -11,6 +11,7 @@ import (
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/tool/tooltest"
 )
 
 // failingTool always fails Execute, exercising local-tool failure without
@@ -71,7 +72,7 @@ func TestRunner_LogsDeniedToolForDev(t *testing.T) {
 		llm.Event{Kind: llm.StepEnded},
 	)
 	// Echo is registered but excluded from the materialized permissions.
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{}, func() string { return "a1" })
 
 	var buf strings.Builder
@@ -102,7 +103,7 @@ func TestRunner_DoesNotLogSuccessfulTool(t *testing.T) {
 		llm.Event{Kind: llm.ToolCall, CallID: "c1", ToolName: "echo", Input: json.RawMessage(`{"text":"pong"}`)},
 		llm.Event{Kind: llm.StepEnded},
 	)
-	reg := tool.NewRegistry(tool.NewOutputStore(0), tool.Echo{})
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, session.NewMemoryInbox(), fake, reg, tool.Permissions{"echo": true}, func() string { return "a1" })
 
 	var buf strings.Builder
