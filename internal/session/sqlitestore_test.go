@@ -170,6 +170,35 @@ func TestSQLiteStore_SessionsOrderSurvivesReopen(t *testing.T) {
 	}
 }
 
+func TestSQLiteStore_SessionsDoesNotDecodeConversationPayloads(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewSQLiteStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	if _, err := store.db.ExecContext(ctx, `
+		INSERT INTO events
+			(session_id, seq, kind, has_message, msg_id, role, text, attrs)
+		VALUES
+			('s1', 1, 'Session.Cwd', 0, NULL, NULL, NULL, NULL),
+			('s1', 2, '', 1, 'u1', 'user', 'first prompt', NULL),
+			('s1', 3, 'Step.Ended', 1, 'a1', 'assistant', 'answer', '{')`,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := store.Sessions(ctx)
+	if err != nil {
+		t.Fatalf("Sessions decoded an unrelated conversation payload: %v", err)
+	}
+	want := []sessionSummaryProjection{{ID: "s1", Title: "first prompt"}}
+	if projected := projectSessionSummaries(got); !reflect.DeepEqual(projected, want) {
+		t.Fatalf("Sessions = %+v, want %+v", projected, want)
+	}
+}
+
 // TestSQLiteStore_DeleteSessionSurvivesReopen verifica que el borrado se
 // persiste en la base, no solo en estado en memoria: tras borrar una sesion,
 // cerrar y reabrir en la misma ruta, la sesion borrada sigue sin existir y la

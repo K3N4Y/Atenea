@@ -452,11 +452,9 @@ func (s *SQLiteStore) Messages(ctx context.Context, sessionID string, sinceSeq S
 	return foldMessages(EffectiveEvents(events), sinceSeq), nil
 }
 
-// Sessions devuelve un resumen por sesion con al menos un evento, ordenado por
-// actividad mas reciente primero. Usa MAX(rowid) DESC como desempate estable
-// cuando varias sesiones comparten el mismo milisegundo de actividad. Para cada
-// sesion toma como Title el texto del primer mensaje del usuario (menor seq,
-// role=user, has_message=1), truncado. Title "" si la sesion no tiene aun uno.
+// Sessions returns one lightweight projection per session. Conversation
+// payloads can be large, so this reads only events that can affect title/Cwd
+// projection or EffectiveEvents checkpoint visibility.
 func (s *SQLiteStore) Sessions(ctx context.Context) ([]SessionSummary, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT session_id, MAX(activity_at) AS last_activity
@@ -488,14 +486,67 @@ func (s *SQLiteStore) Sessions(ctx context.Context) ([]SessionSummary, error) {
 		return nil, err
 	}
 
-	out := make([]SessionSummary, 0, len(activities))
-	for _, activity := range activities {
-		events, err := s.rawEvents(ctx, activity.id)
-		if err != nil {
+	relevant, err := s.db.QueryContext(ctx,
+		`SELECT session_id, seq, kind, role, text, call_id, ev_text,
+		        checkpoint_id, checkpoint_origin_call_id
+		   FROM events
+		  WHERE kind IN (?, ?, ?, ?, ?, ?, ?)
+		     OR (has_message = 1 AND role = ?)
+		  ORDER BY session_id, seq`,
+		KindSessionTitle,
+		KindSessionCwd,
+		KindPromptCheckpointStarted,
+		KindPromptCheckpointFinished,
+		KindPromptCheckpointReverted,
+		KindToolSuccess,
+		KindToolFailed,
+		RoleUser,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer relevant.Close()
+
+	eventsBySession := make(map[string][]SessionEvent, len(activities))
+	for relevant.Next() {
+		var (
+			sessionID, kind                      string
+			seq                                  int64
+			role, text, callID, eventText        sql.NullString
+			checkpointID, checkpointOriginCallID sql.NullString
+		)
+		if err := relevant.Scan(
+			&sessionID, &seq, &kind, &role, &text, &callID, &eventText,
+			&checkpointID, &checkpointOriginCallID,
+		); err != nil {
 			return nil, err
 		}
+		event := SessionEvent{
+			SessionID: sessionID,
+			Seq:       Seq(seq),
+			Kind:      EventKind(kind),
+			Text:      eventText.String,
+			CallID:    callID.String,
+		}
+		if role.Valid {
+			event.Message = &Message{Role: Role(role.String), Text: text.String}
+		}
+		if checkpointID.Valid {
+			event.Checkpoint = &PromptCheckpoint{
+				ID:           checkpointID.String,
+				OriginCallID: checkpointOriginCallID.String,
+			}
+		}
+		eventsBySession[sessionID] = append(eventsBySession[sessionID], event)
+	}
+	if err := relevant.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make([]SessionSummary, 0, len(activities))
+	for _, activity := range activities {
 		firstUser, title, cwd := "", "", ""
-		for _, event := range EffectiveEvents(events) {
+		for _, event := range EffectiveEvents(eventsBySession[activity.id]) {
 			if event.Kind == KindSessionTitle {
 				title = event.Text
 			}
