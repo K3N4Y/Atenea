@@ -26,8 +26,16 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
       - name: Install runtime test dependencies
-        run: sudo apt-get update && sudo apt-get install --yes ripgrep
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ripgrep
+          npm install --global @ast-grep/cli@0.45.1
+          ast-grep --version
 
       - name: Prepare embedded frontend assets
         run: mkdir -p frontend/dist && touch frontend/dist/.gitkeep
@@ -75,7 +83,7 @@ jobs:
 
   release-quality:
     name: TUI release quality
-    runs-on: ubuntu-latest
+    runs-on: macos-15-intel
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -87,6 +95,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
 
       - name: Verify release artifacts
         uses: goreleaser/goreleaser-action@v6

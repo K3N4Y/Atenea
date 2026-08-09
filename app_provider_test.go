@@ -15,7 +15,6 @@ import (
 
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/providerconfig"
-	"github.com/K3N4Y/atenea/internal/session"
 )
 
 // testCatalog es el catalogo de fabrica de los tests del selector: dos providers
@@ -493,7 +492,7 @@ func newAppWithHeldLogin(t *testing.T) *App {
 	if err != nil {
 		t.Fatalf("open provider service: %v", err)
 	}
-	return newAppWithStore(session.NewMemoryStore(), service, func(string, ...interface{}) {})
+	return &App{providers: service}
 }
 
 // deviceIssuerStub answers OpenAI's device-code endpoints with a login that is

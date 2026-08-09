@@ -7,7 +7,14 @@ builds:
     main: ./cmd/atenea
     binary: atenea
     env:
-      - CGO_ENABLED=0
+      - CGO_ENABLED=1
+      - >-
+        {{- if eq .Os "linux" }}
+          {{- if eq .Arch "amd64" }}CC=zig cc -target x86_64-linux-gnu{{- end }}
+          {{- if eq .Arch "arm64" }}CC=zig cc -target aarch64-linux-gnu{{- end }}
+        {{- else }}
+          CC=clang
+        {{- end }}
     flags:
       - -trimpath
       - -tags=production

@@ -11,7 +11,7 @@ permissions:
 jobs:
   release:
     name: Publish TUI binaries
-    runs-on: ubuntu-latest
+    runs-on: macos-15-intel
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -23,6 +23,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
 
       - name: Build and publish release
         uses: goreleaser/goreleaser-action@v6
