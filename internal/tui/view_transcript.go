@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/K3N4Y/atenea/internal/tool"
+	"github.com/K3N4Y/atenea/internal/tui/theme"
 )
 
 const inputPrompt = "› "
@@ -36,6 +37,39 @@ const activityRailPrefix = activityInset + "│ "
 const toolOutputPreviewLines = 4
 
 var toolOutputStyle = metadataStyle.Faint(true)
+
+var todoBoxStyle = lipgloss.NewStyle().
+	Border(lipgloss.NormalBorder()).
+	BorderForeground(lipgloss.Color(theme.Border)).
+	Padding(0, 1)
+
+func renderTodoList(raw string, width int) string {
+	var input struct {
+		Todos []struct {
+			Content string `json:"content"`
+			Status  string `json:"status"`
+		} `json:"todos"`
+	}
+	if json.Unmarshal([]byte(raw), &input) != nil {
+		return ""
+	}
+	lines := make([]string, 0, len(input.Todos))
+	for _, todo := range input.Todos {
+		marker := "[]"
+		if todo.Status == "completed" {
+			marker = "[*]"
+		}
+		lines = append(lines, marker+" "+sanitizeTerminalText(todo.Content))
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	style := todoBoxStyle
+	if width > 0 {
+		style = style.Width(max(width-style.GetHorizontalFrameSize()-2*len(activityInset), 1))
+	}
+	return activityInset + strings.ReplaceAll(style.Render(strings.Join(lines, "\n")), "\n", "\n"+activityInset)
+}
 
 func renderCappedLines(text string, maxLines int, renderLine func(line string) string) string {
 	text = sanitizeTerminalText(text)
@@ -270,6 +304,9 @@ func searchToolSummary(e entry, pattern string) string {
 }
 
 func (e entry) renderTool(p tool.Presentation, width int) string {
+	if e.tool == "todo_write" {
+		return renderTodoList(e.input, width)
+	}
 	if (e.status == toolOK || e.status == toolFailed) && len(e.files) > 0 {
 		cards := make([]string, 0, len(e.files))
 		for _, file := range e.files {

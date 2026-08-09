@@ -593,3 +593,29 @@ func TestChildRowsShowToolAndParametersWithoutResult(t *testing.T) {
 		t.Fatalf("render = %q, child tool result must stay hidden", rendered)
 	}
 }
+
+func TestTodoWritePreservesPreviousChecklistsAndRendersLiteralMarkersInBox(t *testing.T) {
+	m := NewModel(nil, testSession, nil)
+	m = m.foldEvent(EventMsg{
+		Kind: session.KindToolCalled, CallID: "todo-1", ToolName: "todo_write",
+		Input: []byte(`{"todos":[{"content":"editar go.mod","status":"pending"}]}`),
+	})
+	first := m.renderTranscript()
+	for _, want := range []string{"┌", "│ [] editar go.mod", "└"} {
+		if !strings.Contains(first, want) {
+			t.Fatalf("renderTranscript() = %q, want %q", first, want)
+		}
+	}
+
+	m = m.foldEvent(EventMsg{
+		Kind: session.KindToolCalled, CallID: "todo-2", ToolName: "todo_write",
+		Input: []byte(`{"todos":[{"content":"editar go.mod","status":"completed"}]}`),
+	})
+	updated := m.renderTranscript()
+	if !strings.Contains(updated, "[] editar go.mod") || !strings.Contains(updated, "[*] editar go.mod") {
+		t.Fatalf("renderTranscript() = %q, checklist history must preserve both states", updated)
+	}
+	if strings.Count(updated, "editar go.mod") != 2 {
+		t.Fatalf("renderTranscript() = %q, want both checklist states", updated)
+	}
+}
