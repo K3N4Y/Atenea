@@ -66,7 +66,7 @@ func renderTodoList(raw string, width int) string {
 	}
 	style := todoBoxStyle
 	if width > 0 {
-		style = style.Width(max(width-style.GetHorizontalFrameSize()-2*len(activityInset), 1))
+		style = style.Width(max(width-style.GetHorizontalFrameSize()-len(activityInset), 1))
 	}
 	return activityInset + strings.ReplaceAll(style.Render(strings.Join(lines, "\n")), "\n", "\n"+activityInset)
 }

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/K3N4Y/atenea/internal/session"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // These tests exercise the Transcript module directly through its own
@@ -617,5 +618,19 @@ func TestTodoWritePreservesPreviousChecklistsAndRendersLiteralMarkersInBox(t *te
 	}
 	if strings.Count(updated, "editar go.mod") != 2 {
 		t.Fatalf("renderTranscript() = %q, want both checklist states", updated)
+	}
+}
+
+func TestRenderTodoListAlignsWithComposerWidth(t *testing.T) {
+	const width = 80
+	rendered := ansi.Strip(renderTodoList(
+		`{"todos":[{"content":"editar go.mod","status":"pending"}]}`,
+		width,
+	))
+
+	for _, line := range strings.Split(rendered, "\n") {
+		if got := ansi.StringWidth(line); got != width-composerOuterMargin {
+			t.Fatalf("todo line width = %d, want %d to align with composer right edge: %q", got, width-composerOuterMargin, line)
+		}
 	}
 }
