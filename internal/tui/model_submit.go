@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/K3N4Y/atenea/internal/llm"
+	"github.com/K3N4Y/atenea/internal/providerconfig"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/K3N4Y/atenea/internal/session"
@@ -27,6 +28,7 @@ const (
 	localCommandLearned
 	localCommandSkills
 	localCommandConnect
+	localCommandAgents
 	localCommandModel
 	localCommandNew
 	localCommandCompact
@@ -77,6 +79,8 @@ func parseLocalCommand(text string) (localCommand, bool) {
 		return localCommand{kind: localCommandLearn, text: trimmed}, true
 	case len(fields) > 0 && fields[0] == "/skills":
 		return localCommand{kind: localCommandSkills, text: trimmed}, true
+	case len(fields) > 0 && fields[0] == "/agents":
+		return localCommand{kind: localCommandAgents, text: trimmed}, true
 	case strings.HasPrefix(trimmed, "/connect"):
 		return localCommand{kind: localCommandConnect, text: trimmed}, true
 	case strings.HasPrefix(trimmed, "/model"):
@@ -141,6 +145,8 @@ func (m Model) executeLocalCommand(command localCommand) (Model, tea.Cmd) {
 		return m.submitLearnCommand(command.text)
 	case localCommandLearned:
 		return m.submitLearnedCommand(command.text)
+	case localCommandAgents:
+		return m.submitAgentsCommand(command.text)
 	case localCommandSkills:
 		return m.submitSkillsCommand(command.text)
 	case localCommandConnect:
@@ -354,6 +360,47 @@ func (m Model) submitModelCommand(command string) (Model, tea.Cmd) {
 	m.model = active.Model
 	m.composer = m.composer.clear()
 	return m.resizeViewport(), nil
+}
+
+func (m Model) submitAgentsCommand(command string) (Model, tea.Cmd) {
+	controller, ok := m.agent.(agentModelAgent)
+	if !ok {
+		return m.appendError("agent model selection is unavailable"), nil
+	}
+	fields := strings.Fields(command)
+	if len(fields) == 1 {
+		m.composer = m.composer.clear()
+		m.agentPicker = newAgentPicker(controller.AgentCatalog())
+		return m.resizeViewport(), nil
+	}
+	if len(fields) != 3 && len(fields) != 4 {
+		return m.appendError("usage: /agents <name> inherit | /agents <name> <provider> <model>"), nil
+	}
+	name := fields[1]
+	found := false
+	for _, def := range controller.AgentCatalog() {
+		if def.Name == name {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return m.appendError("unknown subagent: " + name), nil
+	}
+	if len(fields) == 3 && fields[2] == "inherit" {
+		if err := controller.ClearAgentModel(name); err != nil {
+			return m.appendError(err.Error()), nil
+		}
+		m.composer = m.composer.clear()
+		m.Transcript = m.Transcript.appendNotice("agent model updated: " + name)
+		return m.resizeViewport(), nil
+	}
+	if len(fields) != 4 {
+		return m.appendError("usage: /agents <name> inherit | /agents <name> <provider> <model>"), nil
+	}
+	m.composer = m.composer.clear()
+	selection := providerconfig.AgentModelSelection{Provider: fields[2], Model: fields[3]}
+	return m.resizeViewport(), setAgentModelCmd(controller, name, selection)
 }
 
 func (m Model) startNewSession() (Model, tea.Cmd) {

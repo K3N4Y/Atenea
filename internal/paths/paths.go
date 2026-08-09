@@ -59,6 +59,7 @@ const (
 	checkpointsDir  = "checkpoints"
 	credentialsFile = "credentials.json"
 	providersFile   = "providers.json"
+	agentModelsFile = "agent-models.json"
 	modelsCacheFile = "models-cache.json"
 	mcpConfigFile   = "mcp.json"
 	learningFile    = "learning.json"
@@ -149,6 +150,15 @@ func Providers() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, providersFile), nil
+}
+
+// AgentModels returns the global per-agent model override path.
+func AgentModels() (string, error) {
+	dir, err := ConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, agentModelsFile), nil
 }
 
 // ModelsCache returns the disposable model discovery cache path.

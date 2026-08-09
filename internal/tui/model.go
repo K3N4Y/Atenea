@@ -68,6 +68,7 @@ type Model struct {
 	resumePicker    resumePicker
 	resumeGen       uint64
 	modelPicker     modelPicker
+	agentPicker     agentPicker
 	mcpPicker       mcpPicker
 	learnedPicker   learnedPicker
 	skillsPicker    skillsPicker

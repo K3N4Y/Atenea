@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -26,14 +27,17 @@ type Active struct {
 type SaveConfig func(path string, cfg Config) error
 
 type Service struct {
-	mu       sync.RWMutex
-	path     string
-	config   Config
-	catalog  *Catalog
-	switcher *llm.SwitchableProvider
-	getenv   func(string) string
-	registry Registry
-	save     SaveConfig
+	mu              sync.RWMutex
+	path            string
+	agentModelsPath string
+	agentModelsErr  error
+	config          Config
+	agentModels     map[string]AgentModelSelection
+	catalog         *Catalog
+	switcher        *llm.SwitchableProvider
+	getenv          func(string) string
+	registry        Registry
+	save            SaveConfig
 	// cachePath and list are what every catalog this service publishes is built
 	// with. They are held here rather than read back off the current catalog
 	// because there may not be one yet: a host that passed no defaults and has no
@@ -87,7 +91,14 @@ func Open(ctx context.Context, path, cachePath string, fallback llm.ProviderSnap
 	if err != nil {
 		return nil, err
 	}
-	s := &Service{path: path, switcher: switcher, getenv: getenv, registry: registry, save: save, cachePath: cachePath, list: list, credentials: credentials, tokens: NewCredentialResolver(credentials)}
+	agentModelsPath := filepath.Join(filepath.Dir(path), "agent-models.json")
+	s := &Service{path: path, agentModelsPath: agentModelsPath, agentModels: map[string]AgentModelSelection{}, switcher: switcher, getenv: getenv, registry: registry, save: save, cachePath: cachePath, list: list, credentials: credentials, tokens: NewCredentialResolver(credentials)}
+	agentModels, agentModelsErr := loadAgentModels(agentModelsPath)
+	if agentModelsErr == nil {
+		s.agentModels = agentModels
+	} else {
+		s.agentModelsErr = agentModelsErr
+	}
 	var shipped Config
 	if len(defaults) > 0 {
 		shipped = defaults[0]
@@ -103,6 +114,9 @@ func Open(ctx context.Context, path, cachePath string, fallback llm.ProviderSnap
 				s.config = shipped
 				s.catalog = s.newCatalog(shipped)
 			}
+			if agentModelsErr != nil {
+				return s, fmt.Errorf("load agent model config: %w", agentModelsErr)
+			}
 			return s, nil
 		}
 		return s, fmt.Errorf("load provider config: %w", loadErr)
@@ -113,6 +127,9 @@ func Open(ctx context.Context, path, cachePath string, fallback llm.ProviderSnap
 	s.config = cfg
 	s.catalog = s.newCatalog(cfg)
 	if cfg.Selected.Provider == "" && cfg.Selected.Model == "" {
+		if agentModelsErr != nil {
+			return s, fmt.Errorf("load agent model config: %w", agentModelsErr)
+		}
 		return s, nil
 	}
 	provider, ok := findProvider(cfg, cfg.Selected.Provider)
@@ -128,6 +145,9 @@ func Open(ctx context.Context, path, cachePath string, fallback llm.ProviderSnap
 		return s, err
 	}
 	s.switcher.Swap(snapshot(provider, cfg.Selected.Model, delegate))
+	if agentModelsErr != nil {
+		return s, fmt.Errorf("load agent model config: %w", agentModelsErr)
+	}
 	return s, nil
 }
 func (s *Service) ReasoningEffort() llm.ReasoningEffort {
@@ -248,36 +268,188 @@ func (s *Service) markBuiltIn(providers []ProviderModels) []ProviderModels {
 	return providers
 }
 
-// ResolveModel builds an immutable provider snapshot for model on the active
-// endpoint without persisting or changing the process-wide selection.
-func (s *Service) ResolveModel(ctx context.Context, model string) (llm.Provider, error) {
-	if strings.TrimSpace(model) == "" {
-		return nil, errors.New("role model is empty")
+// AgentModels returns a detached copy of all configured overrides.
+func (s *Service) AgentModels() map[string]AgentModelSelection {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return cloneAgentModels(s.agentModels)
+}
+
+// AgentModel returns the configured override, without applying manifest or
+// global-provider defaults.
+func (s *Service) AgentModel(agentName string) (AgentModelSelection, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	selection, ok := s.agentModels[agentName]
+	return selection, ok
+}
+
+// EffectiveAgentModel returns the configured override, or the manifest model
+// on the active provider. false means that the subagent inherits its parent.
+func (s *Service) EffectiveAgentModel(agentName, manifestModel string) (AgentModelSelection, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	activeProvider := s.switcher.Acquire().ProviderID
+	if selection, ok := s.agentModels[agentName]; ok {
+		if selection.Provider == "" {
+			selection.Provider = activeProvider
+		}
+		return selection, true
+	}
+	if strings.TrimSpace(manifestModel) == "" {
+		return AgentModelSelection{}, false
+	}
+	return AgentModelSelection{Provider: activeProvider, Model: manifestModel}, true
+}
+
+// SetAgentModel strongly validates the provider, offered model, and credential
+// before atomically persisting an override. Credential commands run without the
+// service lock.
+func (s *Service) SetAgentModel(ctx context.Context, agentName string, selection AgentModelSelection) error {
+	if err := validateAgentSelection(agentName, selection); err != nil {
+		return err
 	}
 	s.mu.RLock()
-	providerID := s.config.Selected.Provider
+	if s.agentModelsErr != nil {
+		err := s.agentModelsErr
+		s.mu.RUnlock()
+		return fmt.Errorf("agent model config is invalid: %w", err)
+	}
+	providerID := selection.Provider
+	if providerID == "" {
+		providerID = s.switcher.Acquire().ProviderID
+	}
+	provider, ok := findProvider(s.config, providerID)
+	modelKnown := s.modelKnownLocked(providerID, selection.Model)
+	s.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("provider %q is not configured", providerID)
+	}
+	if !modelKnown {
+		return fmt.Errorf("model %q is not offered by provider %q", selection.Model, providerID)
+	}
+	if _, err := resolveAPIKey(ctx, provider, s.getenv, s.tokens); err != nil {
+		return fmt.Errorf("resolve credential for provider %q: %w", providerID, err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.agentModelsErr != nil {
+		return fmt.Errorf("agent model config is invalid: %w", s.agentModelsErr)
+	}
+	currentProviderID := selection.Provider
+	if currentProviderID == "" {
+		currentProviderID = s.switcher.Acquire().ProviderID
+	}
+	if currentProviderID != providerID {
+		return errors.New("active provider changed while validating agent model")
+	}
+	if _, ok := findProvider(s.config, providerID); !ok || !s.modelKnownLocked(providerID, selection.Model) {
+		return fmt.Errorf("provider %q or model %q changed while validating agent model", providerID, selection.Model)
+	}
+	next := cloneAgentModels(s.agentModels)
+	next[agentName] = selection
+	if err := saveAgentModels(s.agentModelsPath, next); err != nil {
+		return err
+	}
+	s.agentModels = next
+	return nil
+}
+
+func (s *Service) ClearAgentModel(agentName string) error {
+	if strings.TrimSpace(agentName) == "" {
+		return errors.New("agent name is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.agentModelsErr != nil {
+		return fmt.Errorf("agent model config is invalid: %w", s.agentModelsErr)
+	}
+	if _, ok := s.agentModels[agentName]; !ok {
+		return nil
+	}
+	next := cloneAgentModels(s.agentModels)
+	delete(next, agentName)
+	if err := saveAgentModels(s.agentModelsPath, next); err != nil {
+		return err
+	}
+	s.agentModels = next
+	return nil
+}
+
+func (s *Service) modelKnownLocked(providerID, model string) bool {
+	if s.catalog == nil {
+		return false
+	}
+	for _, provider := range s.catalog.Snapshot() {
+		if provider.ID != providerID {
+			continue
+		}
+		for _, offered := range provider.Models {
+			if offered == model {
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}
+
+// ResolveAgentModel applies override > manifest on active provider > parent
+// inheritance. Explicit provider failures never fall back to the active one.
+func (s *Service) ResolveAgentModel(ctx context.Context, agentName, manifestModel string) (llm.Provider, error) {
+	s.mu.RLock()
+	selection, overridden := s.agentModels[agentName]
+	if !overridden {
+		if strings.TrimSpace(manifestModel) == "" {
+			s.mu.RUnlock()
+			return nil, nil
+		}
+		selection = AgentModelSelection{Model: manifestModel}
+	}
+	providerID := selection.Provider
+	if providerID == "" {
+		providerID = s.switcher.Acquire().ProviderID
+	}
 	provider, ok := findProvider(s.config, providerID)
 	s.mu.RUnlock()
 	if !ok {
-		return nil, fmt.Errorf("active provider %q is not configured", providerID)
+		return nil, fmt.Errorf("provider %q is not configured", providerID)
 	}
 	apiKey, err := resolveAPIKey(ctx, provider, s.getenv, s.tokens)
 	if err != nil {
 		return nil, err
 	}
-	delegate, err := s.registry.Build(s.buildParams(provider, model, apiKey))
+	delegate, err := s.registry.Build(s.buildParams(provider, selection.Model, apiKey))
 	if err != nil {
 		return nil, err
 	}
-	return &fixedProvider{snapshot: snapshot(provider, model, delegate)}, nil
+	return &fixedProvider{snapshot: snapshot(provider, selection.Model, delegate), reasoningEffort: selection.ReasoningEffort}, nil
 }
 
-type fixedProvider struct{ snapshot llm.ProviderSnapshot }
+// ResolveModel retains the role-model API by resolving a manifest model with no
+// named override.
+func (s *Service) ResolveModel(ctx context.Context, model string) (llm.Provider, error) {
+	if strings.TrimSpace(model) == "" {
+		return nil, errors.New("role model is empty")
+	}
+	return s.ResolveAgentModel(ctx, "", model)
+}
+
+type fixedProvider struct {
+	snapshot        llm.ProviderSnapshot
+	reasoningEffort llm.ReasoningEffort
+}
 
 func (p *fixedProvider) Acquire() llm.ProviderSnapshot { return p.snapshot }
 
 func (p *fixedProvider) Stream(ctx context.Context, request llm.Request) (<-chan llm.Event, error) {
 	request.Model = p.snapshot.Model
+	// A configured effort is an explicit subagent policy and therefore wins over
+	// a caller preference. Empty preserves the request and provider default.
+	if p.reasoningEffort != "" {
+		request.Reasoning = &llm.ReasoningPreference{Effort: p.reasoningEffort}
+	}
 	return p.snapshot.Provider.Stream(ctx, request)
 }
 

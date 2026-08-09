@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/K3N4Y/atenea/internal/agent"
 	"github.com/K3N4Y/atenea/internal/event"
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/permission"
@@ -541,6 +542,32 @@ func TestBuild_ZeroAgentDirsDiscoversTheProjectSubagents(t *testing.T) {
 
 	if agents := subagentCatalog(t, buildWith(t, Config{Root: root})); !strings.Contains(agents, "reviewer") {
 		t.Errorf("the project subagent is not in the task tool's catalog:\n%s", agents)
+	}
+}
+
+func TestBuildPublishesEffectiveAgentCatalogAsSafeCopy(t *testing.T) {
+	root := t.TempDir()
+	writeAgentWithTools(t, filepath.Join(root, ".atenea", "agents"), "reviewer", "[read, grep]")
+	built := buildWith(t, Config{Root: root})
+
+	var published *agent.Def
+	for i := range built.Agents {
+		if built.Agents[i].Name == "reviewer" {
+			published = &built.Agents[i]
+			break
+		}
+	}
+	if published == nil {
+		t.Fatalf("Built.Agents does not contain the effective reviewer catalog: %#v", built.Agents)
+	}
+	if !strings.Contains(subagentCatalog(t, built), "reviewer") {
+		t.Fatal("published catalog disagrees with the task tool's effective catalog")
+	}
+	published.Name = "corrupted"
+	published.Tools[0] = "write"
+	catalog := subagentCatalog(t, built)
+	if !strings.Contains(catalog, "reviewer") || strings.Contains(catalog, "corrupted") {
+		t.Fatalf("mutating Built.Agents changed the task tool catalog:\n%s", catalog)
 	}
 }
 

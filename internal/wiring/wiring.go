@@ -287,6 +287,7 @@ type Built struct {
 	Runner   *runner.Runner
 	Glob     *tool.GlobTool
 	Commands *command.Set
+	Agents   []agent.Def
 	// Tools is the catalog the UI asks about a tool it only knows by name: what a
 	// finished call may have changed, what granting one would authorize, how one
 	// should be presented. It is the same registry the runner settles against, so
@@ -465,7 +466,7 @@ func Build(cfg Config) Built {
 		LessonSection: cfg.LessonSection,
 	})
 
-	return Built{Runner: r, Glob: glob, Commands: commands, Tools: registry, Policy: policy, BatchEnv: batchEnv, close: func() {
+	return Built{Runner: r, Glob: glob, Commands: commands, Agents: cloneAgentDefs(agentDefs), Tools: registry, Policy: policy, BatchEnv: batchEnv, close: func() {
 		if lsp != nil {
 			_ = lsp.Close()
 		}
@@ -479,6 +480,14 @@ func Build(cfg Config) Built {
 			taskTool.Close()
 		}
 	}}
+}
+
+func cloneAgentDefs(defs []agent.Def) []agent.Def {
+	cloned := append([]agent.Def(nil), defs...)
+	for i := range cloned {
+		cloned[i].Tools = append([]string(nil), cloned[i].Tools...)
+	}
+	return cloned
 }
 
 // promptSetup anchors at root the shared preparation of the system prompt: it

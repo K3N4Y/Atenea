@@ -19,6 +19,9 @@ var (
 )
 
 func (m Model) View() string {
+	if m.agentPicker.open {
+		return m.agentPickerView()
+	}
 	if m.modelPicker.open {
 		return m.modelPickerView()
 	}

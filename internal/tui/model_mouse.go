@@ -7,6 +7,8 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	// permission gate belongs to the body, so it is routed only after removing
 	// the top-bar offset. Plan approval intentionally has no pointer shortcut.
 	switch m.activeInputTarget() {
+	case targetAgentPicker:
+		return m.handleAgentPickerMouse(msg)
 	case targetResumePicker:
 		return m, nil
 	case targetModelPicker:

@@ -201,10 +201,7 @@ func execute(env Env, t turn) int {
 			return h.Providers.Active().LocalModels
 		},
 		RoleProvider: func(ctx context.Context, def agent.Def) (llm.Provider, error) {
-			if def.Model == "" {
-				return nil, nil
-			}
-			return h.Providers.ResolveModel(ctx, def.Model)
+			return h.Providers.ResolveAgentModel(ctx, def.Name, def.Model)
 		},
 		NextID:           wiring.NewIDGen(),
 		Mode:             h.Agent.Mode,

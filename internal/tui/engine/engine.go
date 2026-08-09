@@ -87,7 +87,14 @@ type ModelService interface {
 }
 
 type RoleModelService interface {
-	ResolveModel(context.Context, string) (llm.Provider, error)
+	ResolveAgentModel(context.Context, string, string) (llm.Provider, error)
+}
+
+type AgentModelService interface {
+	AgentModel(string) (providerconfig.AgentModelSelection, bool)
+	EffectiveAgentModel(string, string) (providerconfig.AgentModelSelection, bool)
+	SetAgentModel(context.Context, string, providerconfig.AgentModelSelection) error
+	ClearAgentModel(string) error
 }
 
 type SelectionPreferences interface {
@@ -119,6 +126,9 @@ type ConnectService interface {
 	CancelDeviceLoginAttempt(providerID string, attempt uint64)
 }
 
+var _ RoleModelService = (*providerconfig.Service)(nil)
+var _ AgentModelService = (*providerconfig.Service)(nil)
+
 // Engine is the headless agent: it assembles runner + tools + permissions
 // without Wails and publishes the durable session events on a Bubble Tea message
 // channel. The assembly itself lives in wiring.Build (the same source of truth
@@ -144,6 +154,7 @@ type Engine struct {
 	runner   *runner.Runner
 	glob     *tool.GlobTool
 	tools    tool.Catalog
+	agents   []agent.Def
 	assembly wiring.Built
 
 	// wiring is the base config of the assembly; rewire reuses it with the MCPTools in
@@ -251,10 +262,7 @@ func New(cfg Config) *Engine {
 	var roleProvider subagent.ProviderResolver
 	if models, ok := cfg.Models.(RoleModelService); ok {
 		roleProvider = func(ctx context.Context, def agent.Def) (llm.Provider, error) {
-			if def.Model == "" {
-				return nil, nil
-			}
-			return models.ResolveModel(ctx, def.Model)
+			return models.ResolveAgentModel(ctx, def.Name, def.Model)
 		}
 	}
 	e.wiring = wiring.Config{
@@ -314,6 +322,7 @@ func (e *Engine) rewire() {
 	e.runner = built.Runner
 	e.glob = built.Glob
 	e.tools = built.Tools
+	e.agents = cloneAgentCatalog(built.Agents)
 	e.mu.Unlock()
 	commands := append(built.Commands.List(), localCommands(e.yolo.Authorized())...)
 	commands = append(commands, e.mcp.Commands()...)
@@ -389,6 +398,52 @@ func (e *Engine) ModelCatalog() []providerconfig.ProviderModels {
 	}
 	providers := e.models.Catalog()
 	return providerconfig.CloneProviderModels(providers)
+}
+
+func (e *Engine) AgentCatalog() []agent.Def {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return cloneAgentCatalog(e.agents)
+}
+
+func cloneAgentCatalog(defs []agent.Def) []agent.Def {
+	cloned := append([]agent.Def(nil), defs...)
+	for i := range cloned {
+		cloned[i].Tools = append([]string(nil), cloned[i].Tools...)
+	}
+	return cloned
+}
+
+func (e *Engine) AgentModel(name string) (providerconfig.AgentModelSelection, bool) {
+	service, ok := e.models.(AgentModelService)
+	if !ok {
+		return providerconfig.AgentModelSelection{}, false
+	}
+	return service.AgentModel(name)
+}
+
+func (e *Engine) EffectiveAgentModel(name, manifestModel string) (providerconfig.AgentModelSelection, bool) {
+	service, ok := e.models.(AgentModelService)
+	if !ok {
+		return providerconfig.AgentModelSelection{}, false
+	}
+	return service.EffectiveAgentModel(name, manifestModel)
+}
+
+func (e *Engine) SetAgentModel(ctx context.Context, name string, selection providerconfig.AgentModelSelection) error {
+	service, ok := e.models.(AgentModelService)
+	if !ok {
+		return errors.New("agent model selection is unavailable")
+	}
+	return service.SetAgentModel(ctx, name, selection)
+}
+
+func (e *Engine) ClearAgentModel(name string) error {
+	service, ok := e.models.(AgentModelService)
+	if !ok {
+		return errors.New("agent model selection is unavailable")
+	}
+	return service.ClearAgentModel(name)
 }
 
 // ModelCapabilities is what the adapter currently serving turns declares about
@@ -537,6 +592,7 @@ func localCommands(yoloAuthorized bool) []command.Command {
 		{Name: "compact", Description: "Compact conversation context", BuiltIn: true},
 		{Name: "checkpoint", Description: "Save an explicit conversation and workspace checkpoint", BuiltIn: true},
 		{Name: "connect", Description: "Connect a provider by API key or ChatGPT login", BuiltIn: true},
+		{Name: "agents", Description: "Configure provider and model per subagent", BuiltIn: true},
 		{Name: "rah", Description: "Run one prompt with Recursive Agent Harness enabled", BuiltIn: true},
 		{Name: "learn", Description: "Learn from the current conversation", BuiltIn: true},
 		{Name: "learned", Description: "Review learned workspace guidance", BuiltIn: true},

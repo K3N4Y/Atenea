@@ -403,6 +403,16 @@ func TestComposer_BuiltinMenuSelectionSurfacesSubmit(t *testing.T) {
 	}
 }
 
+func TestComposer_AgentsBuiltinMenuSelectionSurfacesSubmit(t *testing.T) {
+	models := modelSource{catalog: func() ([]providerconfig.ProviderModels, bool) { return nil, false }}
+	commands := []command.Command{{Name: "agents", Description: "Configure subagents", BuiltIn: true}}
+	c := typeInto(newTestComposer(), "/age", commands, nil, models)
+	c, intent, _ := c.handleKey(keyMsg(tea.KeyEnter), commands, nil, models)
+	if !intent.submit || !intent.handled || c.value() != "/agents" || c.menuOpen() {
+		t.Fatalf("/agents menu selection = value:%q intent:%+v menu:%+v", c.value(), intent, c.menuItems)
+	}
+}
+
 func TestComposer_CommandMenuPrioritizesLocalCommandsBeforeTheLimit(t *testing.T) {
 	commands := []command.Command{
 		{Name: "compact", BuiltIn: true},

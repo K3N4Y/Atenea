@@ -50,6 +50,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	confirmCancel := m.cancelPending && time.Now().Before(m.cancelDeadline)
 	m.cancelPending = false
 	switch m.activeInputTarget() {
+	case targetAgentPicker:
+		return m.handleAgentPickerKey(msg)
 	case targetResumePicker:
 		return m.handleResumePickerKey(msg)
 	case targetVariantsPicker:

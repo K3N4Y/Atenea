@@ -162,6 +162,7 @@ func TestArtifactPathsUseTheirXDGRoots(t *testing.T) {
 		{name: "checkpoints", path: Checkpoints, want: filepath.Join(data, productDirectory, checkpointsDir)},
 		{name: "credentials", path: Credentials, want: filepath.Join(config, productDirectory, credentialsFile)},
 		{name: "providers", path: Providers, want: filepath.Join(config, productDirectory, providersFile)},
+		{name: "agent models", path: AgentModels, want: filepath.Join(config, productDirectory, agentModelsFile)},
 		{name: "models cache", path: ModelsCache, want: filepath.Join(cache, productDirectory, modelsCacheFile)},
 		{name: "MCP config", path: MCPConfig, want: filepath.Join(config, productDirectory, mcpConfigFile)},
 	}

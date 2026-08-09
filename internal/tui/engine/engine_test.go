@@ -2807,6 +2807,39 @@ func TestEngine_MCPServersReadsWorkspaceConfig(t *testing.T) {
 
 // connectModelService is a minimal ModelService that also implements
 // ConnectService, to verify the engine delegates /connect to it.
+type roleResolvingModelService struct {
+	calls []struct{ name, manifest string }
+}
+
+func (s *roleResolvingModelService) Active() providerconfig.Active            { return providerconfig.Active{} }
+func (s *roleResolvingModelService) Catalog() []providerconfig.ProviderModels { return nil }
+func (s *roleResolvingModelService) Refresh(context.Context) ([]providerconfig.ProviderModels, error) {
+	return nil, nil
+}
+func (s *roleResolvingModelService) Select(context.Context, string, string) (providerconfig.Active, error) {
+	return providerconfig.Active{}, nil
+}
+func (s *roleResolvingModelService) ResolveAgentModel(_ context.Context, name, manifest string) (llm.Provider, error) {
+	s.calls = append(s.calls, struct{ name, manifest string }{name, manifest})
+	return llm.NewFakeProvider(), nil
+}
+
+func TestEngineRoleProviderResolvesByAgentNameWithoutManifestModel(t *testing.T) {
+	service := &roleResolvingModelService{}
+	e := New(Config{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore(), Models: service})
+	defer e.Shutdown(context.Background())
+
+	if e.wiring.RoleProvider == nil {
+		t.Fatal("engine did not wire the role provider")
+	}
+	if _, err := e.wiring.RoleProvider(context.Background(), agent.Def{Name: "review", Model: ""}); err != nil {
+		t.Fatal(err)
+	}
+	if len(service.calls) != 1 || service.calls[0].name != "review" || service.calls[0].manifest != "" {
+		t.Fatalf("ResolveAgentModel calls = %#v", service.calls)
+	}
+}
+
 type connectModelService struct {
 	connectable []providerconfig.ConnectableProvider
 	connects    []struct{ providerID, key string }

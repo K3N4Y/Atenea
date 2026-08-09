@@ -40,6 +40,14 @@ type modelPicker struct {
 	modelsFocused bool
 	active        providerconfig.Active
 	err           string
+	agentName     string
+}
+
+func newAgentModelPicker(providers []providerconfig.ProviderModels, active providerconfig.Active, agentName string) modelPicker {
+	providers = append([]providerconfig.ProviderModels{{Name: "Inherit (default)", Models: []string{"Inherit (default)"}}}, providers...)
+	picker := newModelPicker(providers, active)
+	picker.agentName = agentName
+	return picker
 }
 
 func newModelPicker(providers []providerconfig.ProviderModels, active providerconfig.Active) modelPicker {
@@ -329,6 +337,31 @@ func (m Model) confirmModelSelection() (Model, tea.Cmd) {
 	provider, providerOK := m.modelPicker.selectedProvider()
 	model, modelOK := m.modelPicker.selectedModel()
 	if !providerOK || !modelOK {
+		return m, nil
+	}
+	if m.modelPicker.agentName != "" {
+		controller, ok := m.agent.(agentModelAgent)
+		if !ok {
+			m.modelPicker.err = "agent model selection is unavailable"
+			return m, nil
+		}
+		if provider.ID == "" {
+			if err := controller.ClearAgentModel(m.modelPicker.agentName); err != nil {
+				m.modelPicker.err = err.Error()
+				return m, nil
+			}
+			m.modelPicker.open = false
+			return m, nil
+		}
+		effort := llm.ReasoningEffort("")
+		if configured, ok := controller.AgentModel(m.modelPicker.agentName); ok {
+			if effective, resolved := controller.EffectiveAgentModel(m.modelPicker.agentName, ""); resolved &&
+				effective.Provider == provider.ID && effective.Model == model {
+				effort = configured.ReasoningEffort
+			}
+		}
+		m.variantsPicker.openAgent(m.modelPicker.agentName, provider.ID, model, effort)
+		m.modelPicker.open = false
 		return m, nil
 	}
 	controller, ok := m.agent.(modelAgent)

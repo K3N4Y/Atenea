@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"context"
 	"time"
 
+	"github.com/K3N4Y/atenea/internal/agent"
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/providerconfig"
 	"github.com/K3N4Y/atenea/internal/session"
@@ -32,6 +34,16 @@ type modelAgent interface {
 	SelectModel(providerID, model string) (providerconfig.Active, error)
 	RefreshModels()
 }
+
+type agentModelAgent interface {
+	AgentCatalog() []agent.Def
+	AgentModel(string) (providerconfig.AgentModelSelection, bool)
+	EffectiveAgentModel(string, string) (providerconfig.AgentModelSelection, bool)
+	SetAgentModel(context.Context, string, providerconfig.AgentModelSelection) error
+	ClearAgentModel(string) error
+}
+
+var _ agentModelAgent = (*engine.Engine)(nil)
 
 type retryAgent interface {
 	RetryPrompt(sessionID string) (RunHandle, error)

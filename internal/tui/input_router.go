@@ -12,6 +12,7 @@ type inputTarget int
 
 const (
 	targetResumePicker inputTarget = iota
+	targetAgentPicker
 	targetModelPicker
 	targetMCPPicker
 	targetLearnedPicker
@@ -27,6 +28,8 @@ func (m Model) activeInputTarget() inputTarget {
 	switch {
 	case m.resumePicker.open:
 		return targetResumePicker
+	case m.agentPicker.open:
+		return targetAgentPicker
 	case m.modelPicker.open:
 		return targetModelPicker
 	case m.mcpPicker.open:
@@ -51,7 +54,7 @@ func (m Model) activeInputTarget() inputTarget {
 
 func (t inputTarget) modalActive() bool {
 	switch t {
-	case targetResumePicker, targetModelPicker, targetMCPPicker, targetLearnedPicker,
+	case targetAgentPicker, targetResumePicker, targetModelPicker, targetMCPPicker, targetLearnedPicker,
 		targetSkillsPicker, targetVariantsPicker, targetConnectPanel, targetPermissionGate, targetPlanGate:
 		return true
 	default:

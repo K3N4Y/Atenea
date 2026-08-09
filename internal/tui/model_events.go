@@ -6,6 +6,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/K3N4Y/atenea/internal/providerconfig"
 	"github.com/K3N4Y/atenea/internal/session"
 	"github.com/K3N4Y/atenea/internal/tool"
 )
@@ -85,6 +86,12 @@ func waitForEvent(ch <-chan tea.Msg) tea.Cmd {
 
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch ev := msg.(type) {
+	case agentModelSetMsg:
+		if ev.err != nil {
+			return m.appendError(ev.err.Error()).syncViewport(), nil
+		}
+		m.Transcript = m.Transcript.appendNotice("agent model updated: " + ev.name)
+		return m.resizeViewport(), nil
 	case learnDoneMsg:
 		if ev.err != "" {
 			return m.appendError(ev.err).syncViewport(), nil
@@ -239,7 +246,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case ModelsRefreshedMsg:
 		if m.modelPicker.open {
-			m.modelPicker.setProviders(ev.Providers)
+			providers := ev.Providers
+			if m.modelPicker.agentName != "" {
+				providers = append([]providerconfig.ProviderModels{{Name: "Inherit (default)", Models: []string{"Inherit (default)"}}}, providers...)
+			}
+			m.modelPicker.setProviders(providers)
 			return m, waitForEvent(m.events)
 		}
 		next, cmd := m.refreshMenu()
