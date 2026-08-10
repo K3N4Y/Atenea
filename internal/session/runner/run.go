@@ -87,10 +87,9 @@ func (r *Runner) Run(ctx context.Context, sessionID string, force bool, maxSteps
 	return nil
 }
 
-// failInterruptedTools cierra al inicio de Run las tools que quedaron llamadas
-// sin resultado en una corrida anterior. Usa PendingToolCalls y agrega
-// Tool.Failed + Message{Role: tool} para que la reanudacion no deje calls
-// colgadas.
+// failInterruptedTools closes tools that remained open after an interrupted run.
+// If the crash happened before StepEnded materialized the assistant message, it
+// first reconstructs that declaration so every tool result has a matching call.
 func (r *Runner) failInterruptedTools(ctx context.Context, sessionID string) error {
 	pending, err := r.store.PendingToolCalls(ctx, sessionID)
 	if errors.Is(err, session.ErrSessionNotFound) {
@@ -99,13 +98,44 @@ func (r *Runner) failInterruptedTools(ctx context.Context, sessionID string) err
 	if err != nil {
 		return err
 	}
+	if len(pending) == 0 {
+		return nil
+	}
+	messages, err := r.store.Messages(ctx, sessionID, 0)
+	if err != nil {
+		return err
+	}
+	declared := make(map[string]struct{})
+	for _, message := range messages {
+		for _, call := range message.ToolCalls {
+			declared[call.ID] = struct{}{}
+		}
+	}
+	var missing []session.ToolCall
+	for _, p := range pending {
+		if _, ok := declared[p.CallID]; ok {
+			continue
+		}
+		arguments := p.Arguments
+		if arguments == "" {
+			arguments = "{}"
+		}
+		missing = append(missing, session.ToolCall{ID: p.CallID, Name: p.ToolName, Arguments: arguments})
+	}
+	if len(missing) > 0 {
+		if _, err := r.store.AppendEvent(ctx, sessionID, session.SessionEvent{
+			Message: &session.Message{ID: r.nextID(), Role: session.RoleAssistant, ToolCalls: missing},
+		}); err != nil {
+			return err
+		}
+	}
 	for _, p := range pending {
 		event := session.SessionEvent{
 			Kind:     session.KindToolFailed,
 			CallID:   p.CallID,
 			ToolName: p.ToolName,
 			Error:    interruptedToolMessage,
-			Message:  &session.Message{ID: p.CallID, Role: session.RoleTool, Text: interruptedToolMessage},
+			Message:  &session.Message{ID: p.CallID, Role: session.RoleTool, Text: interruptedToolMessage, ToolCallID: p.CallID, IsError: true},
 		}
 		if p.ToolName == "task" {
 			event = session.WithSubagentToolCalls(event, 0)

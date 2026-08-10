@@ -251,6 +251,11 @@ func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Ev
 			calls = append(calls, ev)
 		}
 	}
+	// A conforming stream has already materialized this on StepEnded. Preserve
+	// complete calls from interrupted streams before any result can be appended.
+	if err := pub.materializeAssistantForTools(cleanupCtx); err != nil {
+		return false, err
+	}
 	// The assistant message is durable; local tools may now settle concurrently.
 	for _, ev := range calls {
 		ev := ev // capture for the goroutine

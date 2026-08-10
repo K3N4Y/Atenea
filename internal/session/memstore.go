@@ -301,7 +301,7 @@ func (s *MemoryStore) PendingToolCalls(ctx context.Context, sessionID string) ([
 			if _, ok := pending[ev.CallID]; !ok {
 				order = append(order, ev.CallID)
 			}
-			pending[ev.CallID] = PendingTool{CallID: ev.CallID, ToolName: ev.ToolName}
+			pending[ev.CallID] = PendingTool{CallID: ev.CallID, ToolName: ev.ToolName, Arguments: string(ev.Input)}
 		case KindToolSuccess, KindToolFailed:
 			delete(pending, ev.CallID)
 		}

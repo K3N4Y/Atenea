@@ -951,7 +951,7 @@ func (s *SQLiteStore) PendingToolCalls(ctx context.Context, sessionID string) ([
 			if _, ok := pending[event.CallID]; !ok {
 				order = append(order, event.CallID)
 			}
-			pending[event.CallID] = PendingTool{CallID: event.CallID, ToolName: event.ToolName}
+			pending[event.CallID] = PendingTool{CallID: event.CallID, ToolName: event.ToolName, Arguments: string(event.Input)}
 		case KindToolSuccess, KindToolFailed:
 			delete(pending, event.CallID)
 		}

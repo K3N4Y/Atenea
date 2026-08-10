@@ -33,16 +33,17 @@ type Publisher struct {
 	sessionID string
 	asstMsgID string // assistantMessageID del turno
 
-	mu                   sync.Mutex
-	text                 strings.Builder                     // buffer del bloque de texto en curso
-	assistantText        strings.Builder                     // texto del assistant acumulado del turno (se materializa en Step.Ended)
-	reason               strings.Builder                     // buffer del bloque de razonamiento en curso
-	input                map[string][]byte                   // input JSON acumulado por callID
-	tools                map[string]string                   // callID -> toolName (mapa de tool calls del turno)
-	order                []string                            // orden de Tool.Called del turno
-	settled              map[string]bool                     // callID -> ya tiene Tool.Success/Tool.Failed
-	recorders            map[string]*tasksettlement.Recorder // callID -> private task settlement data
-	estimatedInputTokens int
+	mu                    sync.Mutex
+	text                  strings.Builder                     // buffer del bloque de texto en curso
+	assistantText         strings.Builder                     // texto del assistant acumulado del turno (se materializa en Step.Ended)
+	reason                strings.Builder                     // buffer del bloque de razonamiento en curso
+	input                 map[string][]byte                   // input JSON acumulado por callID
+	tools                 map[string]string                   // callID -> toolName (mapa de tool calls del turno)
+	order                 []string                            // orden de Tool.Called del turno
+	settled               map[string]bool                     // callID -> ya tiene Tool.Success/Tool.Failed
+	recorders             map[string]*tasksettlement.Recorder // callID -> private task settlement data
+	assistantMaterialized bool
+	estimatedInputTokens  int
 }
 
 // NewPublisher crea el publisher de un turno. assistantMessageID es el ID con el
@@ -78,28 +79,12 @@ func (p *Publisher) Publish(ctx context.Context, ev llm.Event) error {
 	case llm.StepRetrying:
 		return p.emit(ctx, session.SessionEvent{Kind: session.KindStepRetrying, Text: ev.Text})
 	case llm.StepEnded:
-		// Materializa aqui el unico Message del assistant del turno, coalesciendo el
-		// texto acumulado con los tool_calls (en orden de Tool.Called). Si no hubo
-		// texto ni tool calls es un turno vacio y no se materializa Message.
-		var toolCalls []session.ToolCall
-		for _, callID := range p.order {
-			toolCalls = append(toolCalls, session.ToolCall{
-				ID:        callID,
-				Name:      p.tools[callID],
-				Arguments: string(p.input[callID]),
-			})
+		out := session.SessionEvent{Kind: session.KindStepEnded, Usage: toUsage(ev.Usage), Message: p.assistantMessage()}
+		if err := p.emit(ctx, out); err != nil {
+			return err
 		}
-		out := session.SessionEvent{Kind: session.KindStepEnded, Usage: toUsage(ev.Usage)}
-		text := p.assistantText.String()
-		if text != "" || len(toolCalls) > 0 {
-			out.Message = &session.Message{
-				ID:        p.asstMsgID,
-				Role:      session.RoleAssistant,
-				Text:      text,
-				ToolCalls: toolCalls,
-			}
-		}
-		return p.emit(ctx, out)
+		p.assistantMaterialized = true
+		return nil
 
 	case llm.TextStarted:
 		p.text.Reset()
@@ -153,6 +138,45 @@ func (p *Publisher) Publish(ctx context.Context, ev llm.Event) error {
 		})
 	}
 	return nil // StepFailed (M8) y kinds sin semantica de sesion en M3 se ignoran
+}
+
+// materializeAssistantForTools preserves complete tool calls when a stream
+// closes without StepEnded. Tool results must never enter provider history
+// without the preceding assistant declaration that owns their call IDs.
+func (p *Publisher) materializeAssistantForTools(ctx context.Context) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.assistantMaterialized || len(p.order) == 0 {
+		return nil
+	}
+	if err := p.emit(ctx, session.SessionEvent{Message: p.assistantMessage()}); err != nil {
+		return err
+	}
+	p.assistantMaterialized = true
+	return nil
+}
+
+// assistantMessage builds the one assistant projection for this turn. The
+// caller holds p.mu.
+func (p *Publisher) assistantMessage() *session.Message {
+	var toolCalls []session.ToolCall
+	for _, callID := range p.order {
+		toolCalls = append(toolCalls, session.ToolCall{
+			ID:        callID,
+			Name:      p.tools[callID],
+			Arguments: string(p.input[callID]),
+		})
+	}
+	text := p.assistantText.String()
+	if text == "" && len(toolCalls) == 0 {
+		return nil
+	}
+	return &session.Message{
+		ID:        p.asstMsgID,
+		Role:      session.RoleAssistant,
+		Text:      text,
+		ToolCalls: toolCalls,
+	}
 }
 
 // ToolPermissionRequested publishes the approval request of a gated tool call

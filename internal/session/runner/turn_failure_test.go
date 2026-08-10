@@ -218,12 +218,12 @@ func TestRunner_RunFailsInterruptedToolsBeforeTurn(t *testing.T) {
 		t.Fatalf("AppendEvent (semilla usuario) error inesperado: %v", err)
 	}
 	if _, err := store.AppendEvent(ctx, "s1", session.SessionEvent{
-		Kind: session.KindToolCalled, CallID: "c1", ToolName: "echo",
+		Kind: session.KindToolCalled, CallID: "c1", ToolName: "echo", Input: json.RawMessage(`{"text":"first"}`),
 	}); err != nil {
 		t.Fatalf("AppendEvent (tool colgada) error inesperado: %v", err)
 	}
 	if _, err := store.AppendEvent(ctx, "s1", session.SessionEvent{
-		Kind: session.KindToolCalled, CallID: "c2", ToolName: "task",
+		Kind: session.KindToolCalled, CallID: "c2", ToolName: "task", Input: json.RawMessage(`{"prompt":"work"}`),
 	}); err != nil {
 		t.Fatalf("AppendEvent (interrupted task) unexpected error: %v", err)
 	}
@@ -259,6 +259,23 @@ func TestRunner_RunFailsInterruptedToolsBeforeTurn(t *testing.T) {
 	}
 	if !hasToolMessage(msgs, "c1", interruptedToolMessage) {
 		t.Errorf("la proyeccion no contiene Message{ID:c1, Role:tool, Text:%q}; mensajes = %+v", interruptedToolMessage, msgs)
+	}
+	declared := map[string]string{}
+	for _, message := range msgs {
+		if message.Role != session.RoleAssistant {
+			continue
+		}
+		for _, call := range message.ToolCalls {
+			declared[call.ID] = call.Arguments
+		}
+	}
+	if declared["c1"] != `{"text":"first"}` || declared["c2"] != `{"prompt":"work"}` {
+		t.Fatalf("recovery did not reconstruct matching assistant tool calls: declared=%v messages=%+v", declared, msgs)
+	}
+	for _, message := range msgs {
+		if message.Role == session.RoleTool && message.ToolCallID == "" {
+			t.Fatalf("recovery produced an unmatchable tool result: %+v", message)
+		}
 	}
 	events, err := store.Events(ctx, "s1", 0)
 	if err != nil {

@@ -79,6 +79,47 @@ func TestRunner_TransientStreamErrorRetriesAndSucceeds(t *testing.T) {
 	}
 }
 
+func TestRunner_TransientStreamFailureAfterToolCallPreservesMatchingDeclaration(t *testing.T) {
+	ctx := context.Background()
+	store := newRecordingStore()
+	seedUser(t, store, "s1")
+
+	provider := &scriptedProvider{turns: [][]llm.Event{
+		{
+			{Kind: llm.StepStarted},
+			{Kind: llm.ToolCall, CallID: "toolu_1", ToolName: "echo", Input: []byte(`{"text":"once"}`)},
+			{Kind: llm.StepFailed, Text: transientStreamFailure},
+		},
+		{{Kind: llm.StepStarted}, {Kind: llm.StepEnded}},
+	}}
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
+	r := newRunner(store, session.NewMemoryInbox(), provider, reg, tool.Permissions{"echo": true}, idCounter())
+	r.transientRetryDelays = []time.Duration{time.Millisecond}
+
+	if _, err := r.runTurn(ctx, "s1"); err != nil {
+		t.Fatalf("runTurn: %v", err)
+	}
+
+	requests := provider.capturedRequests()
+	if len(requests) != 2 {
+		t.Fatalf("provider Stream calls = %d, want 2", len(requests))
+	}
+	declared := false
+	for _, message := range requests[1].Messages {
+		if message.Role == "assistant" {
+			for _, call := range message.ToolCalls {
+				declared = declared || call.ID == "toolu_1"
+			}
+		}
+		if message.Role == "tool" && message.ToolCallID == "toolu_1" && !declared {
+			t.Fatalf("retry history contains tool_result %q without an earlier matching assistant tool_use: %+v", message.ToolCallID, requests[1].Messages)
+		}
+	}
+	if !declared {
+		t.Fatalf("retry history lost assistant tool_use %q: %+v", "toolu_1", requests[1].Messages)
+	}
+}
+
 func TestRunner_TransientStreamErrorExhaustsRetriesAndFails(t *testing.T) {
 	ctx := context.Background()
 	store := newRecordingStore()

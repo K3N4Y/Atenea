@@ -239,10 +239,10 @@ func StoreContract(t *testing.T, newStore func(t *testing.T) session.Store) {
 		ctx := context.Background()
 		store := newStore(t)
 
-		if _, err := store.AppendEvent(ctx, "s1", session.SessionEvent{Kind: session.KindToolCalled, CallID: "c1", ToolName: "echo"}); err != nil {
+		if _, err := store.AppendEvent(ctx, "s1", session.SessionEvent{Kind: session.KindToolCalled, CallID: "c1", ToolName: "echo", Input: json.RawMessage(`{"text":"one"}`)}); err != nil {
 			t.Fatalf("AppendEvent (c1 called): unexpected error: %v", err)
 		}
-		if _, err := store.AppendEvent(ctx, "s1", session.SessionEvent{Kind: session.KindToolCalled, CallID: "c2", ToolName: "read"}); err != nil {
+		if _, err := store.AppendEvent(ctx, "s1", session.SessionEvent{Kind: session.KindToolCalled, CallID: "c2", ToolName: "read", Input: json.RawMessage(`{"path":"two"}`)}); err != nil {
 			t.Fatalf("AppendEvent (c2 called): unexpected error: %v", err)
 		}
 		if _, err := store.AppendEvent(ctx, "s1", session.SessionEvent{Kind: session.KindToolSuccess, CallID: "c2", ToolName: "read"}); err != nil {
@@ -256,8 +256,8 @@ func StoreContract(t *testing.T, newStore func(t *testing.T) session.Store) {
 		if len(pending) != 1 {
 			t.Fatalf("PendingToolCalls(s1) = %+v, want only c1", pending)
 		}
-		if pending[0] != (session.PendingTool{CallID: "c1", ToolName: "echo"}) {
-			t.Fatalf("PendingToolCalls(s1)[0] = %+v, want c1 echo", pending[0])
+		if pending[0] != (session.PendingTool{CallID: "c1", ToolName: "echo", Arguments: `{"text":"one"}`}) {
+			t.Fatalf("PendingToolCalls(s1)[0] = %+v, want c1 echo with its arguments", pending[0])
 		}
 
 		// A session with only a Message (no tool calls): empty projection.

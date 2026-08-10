@@ -9,11 +9,13 @@ import (
 // ErrSessionNotFound se devuelve al leer una sesion que nunca recibio un evento.
 var ErrSessionNotFound = errors.New("session not found")
 
-// PendingTool representa una tool call durable que sigue abierta en la
-// proyeccion PendingToolCalls.
+// PendingTool represents a durable tool call that remains open in the
+// PendingToolCalls projection. Arguments is the complete raw JSON captured by
+// Tool.Called, retained so recovery can reconstruct a matching assistant call.
 type PendingTool struct {
-	CallID   string
-	ToolName string
+	CallID    string
+	ToolName  string
+	Arguments string
 }
 
 // SessionSummary es la fila del historial de chats para la sidebar: el ID de la
