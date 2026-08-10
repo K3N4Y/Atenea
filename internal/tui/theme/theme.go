@@ -16,9 +16,8 @@ const (
 	// UserMessage is the background of the user's message bubble.
 	UserMessage = "#242424"
 
-	// Accent is the interactive cyan for focus, cursors, and active selection.
-	// ANSI 6.
-	Accent = "6"
+	// Accent is the burnt orange for focus, cursors, and active selection.
+	Accent = "#C65D00"
 	// Success is the green for completed successful operations and added diff
 	// lines. ANSI 2.
 	Success = "2"
