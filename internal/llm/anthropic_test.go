@@ -532,6 +532,70 @@ func TestAnthropicProvider_StreamRejectsInvalidParallelToolInput(t *testing.T) {
 	}
 }
 
+func TestAnthropicProvider_StreamGroupsParallelToolResultsIntoOneUserMessage(t *testing.T) {
+	requestBodies := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		requestBodies <- body
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "event: message\ndata: {\"type\":\"message_stop\"}\n\n")
+	}))
+	defer server.Close()
+
+	out, err := NewAnthropicProvider("key", server.URL, "claude-test").Stream(context.Background(), Request{
+		Messages: []Message{
+			TextMessage("user", "read both"),
+			{Role: "assistant", ToolCalls: []ToolCallPart{
+				{ID: "toolu_1", Name: "read", Arguments: json.RawMessage(`{"path":"a.go"}`)},
+				{ID: "toolu_2", Name: "read", Arguments: json.RawMessage(`{"path":"b.go"}`)},
+			}},
+			{Role: "tool", ToolCallID: "toolu_1", Parts: []Part{{Kind: TextPart, Text: "contents of a.go"}}},
+			{Role: "tool", ToolCallID: "toolu_2", Parts: []Part{{Kind: TextPart, Text: ""}}, IsError: true},
+			TextMessage("user", "thanks"),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drain(out)
+
+	var body struct {
+		Messages []struct {
+			Role    string           `json:"role"`
+			Content []map[string]any `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(<-requestBodies, &body); err != nil {
+		t.Fatal(err)
+	}
+	// The results of one assistant turn must travel together in the single next
+	// user message: the API refuses a tool use whose result is not there with
+	// "tool_use ids were found without tool_result blocks immediately after".
+	if len(body.Messages) != 4 {
+		t.Fatalf("messages = %#v, want user, assistant, one user with both results, user", body.Messages)
+	}
+	results := body.Messages[2]
+	if results.Role != "user" || len(results.Content) != 2 {
+		t.Fatalf("results message = %#v, want one user message with both tool results", results)
+	}
+	for i, id := range []string{"toolu_1", "toolu_2"} {
+		if results.Content[i]["type"] != "tool_result" || results.Content[i]["tool_use_id"] != id {
+			t.Errorf("result %d = %#v, want tool_result for %s", i, results.Content[i], id)
+		}
+	}
+	if results.Content[0]["is_error"] != false || results.Content[1]["is_error"] != true {
+		t.Errorf("results lost their error state: %#v", results.Content)
+	}
+	// A tool with no output omits the content entirely: an empty text block is
+	// refused, a tool_result without content is accepted.
+	if content, ok := results.Content[1]["content"].([]any); ok && len(content) != 0 {
+		t.Errorf("empty tool result serializes content = %#v, want none", content)
+	}
+}
+
 func TestAnthropicProvider_StreamCancellationClosesChannel(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})

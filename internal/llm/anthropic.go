@@ -385,8 +385,15 @@ func isAnthropicContextOverflow(err error) bool {
 // text and image parts retain their order; images are encoded into native
 // base64 sources. Images on every other role and unknown parts are refused
 // before authorization or endpoint contact.
+//
+// Anthropic requires the tool results answering one assistant turn to travel
+// together in the single next user message, so a run of consecutive tool-role
+// messages (the settled calls of one turn) folds into one message instead of
+// one message per result — the shape the API rejects with "tool_use ids were
+// found without tool_result blocks immediately after" when calls fan out.
 func toAnthropicMessages(messages []Message) ([]anthropic.MessageParam, error) {
 	out := make([]anthropic.MessageParam, 0, len(messages))
+	lastToolResults := -1 // index in out of a user message eligible to merge tool results
 	for _, message := range messages {
 		if message.Role == "user" {
 			blocks, err := toAnthropicUserBlocks(message.Parts)
@@ -394,6 +401,7 @@ func toAnthropicMessages(messages []Message) ([]anthropic.MessageParam, error) {
 				return nil, fmt.Errorf("anthropic: %w", err)
 			}
 			out = append(out, anthropic.NewUserMessage(blocks...))
+			lastToolResults = -1
 			continue
 		}
 
@@ -415,13 +423,34 @@ func toAnthropicMessages(messages []Message) ([]anthropic.MessageParam, error) {
 				blocks = append(blocks, anthropic.NewToolUseBlock(call.ID, input, call.Name))
 			}
 			out = append(out, anthropic.NewAssistantMessage(blocks...))
+			lastToolResults = -1
 		case "tool":
-			out = append(out, anthropic.NewUserMessage(anthropic.NewToolResultBlock(message.ToolCallID, text, message.IsError)))
+			// Tool results open the user message, so the previous message is
+			// mergeable exactly when this run of tool-role messages started it.
+			if lastToolResults >= 0 {
+				out[lastToolResults].Content = append(out[lastToolResults].Content, toAnthropicToolResultBlock(message.ToolCallID, text, message.IsError))
+				continue
+			}
+			out = append(out, anthropic.NewUserMessage(toAnthropicToolResultBlock(message.ToolCallID, text, message.IsError)))
+			lastToolResults = len(out) - 1
 		default:
 			return nil, fmt.Errorf("anthropic: unsupported message role %q", message.Role)
 		}
 	}
 	return out, nil
+}
+
+// toAnthropicToolResultBlock adapts NewToolResultBlock, omitting the content
+// entirely when a tool returned no output: the API refuses empty text blocks
+// but accepts a tool_result without content.
+func toAnthropicToolResultBlock(toolCallID, text string, isError bool) anthropic.ContentBlockParamUnion {
+	if text != "" {
+		return anthropic.NewToolResultBlock(toolCallID, text, isError)
+	}
+	return anthropic.ContentBlockParamUnion{OfToolResult: &anthropic.ToolResultBlockParam{
+		ToolUseID: toolCallID,
+		IsError:   param.NewOpt(isError),
+	}}
 }
 
 func toAnthropicUserBlocks(parts []Part) ([]anthropic.ContentBlockParamUnion, error) {
