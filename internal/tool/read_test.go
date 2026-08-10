@@ -1,12 +1,15 @@
 package tool
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/K3N4Y/atenea/internal/tool/hashline"
 )
@@ -26,6 +29,22 @@ func (f fakeFS) ReadFile(name string) ([]byte, error) {
 type fakeFSNotFound struct{ name string }
 
 func (e *fakeFSNotFound) Error() string { return "fakeFS: no existe " + e.name }
+
+type streamingFS struct {
+	data          []byte
+	openCalls     int
+	readFileCalls int
+}
+
+func (f *streamingFS) ReadFile(name string) ([]byte, error) {
+	f.readFileCalls++
+	return nil, &fakeFSNotFound{name: name}
+}
+
+func (f *streamingFS) Open(string) (io.ReadCloser, error) {
+	f.openCalls++
+	return io.NopCloser(bytes.NewReader(f.data)), nil
+}
 
 // TestReadTool_WholeFileHasHashHeaderAndNumberedLines afirma el happy path de
 // leer un archivo completo: el output es el header "[path#HASH]" seguido de las
@@ -213,6 +232,9 @@ func TestReadTool_TruncatesAtLineLimitWithContinuationNotice(t *testing.T) {
 	if notice := "[3 more lines in file. Use :3 to continue]"; !strings.Contains(res.Output, notice) {
 		t.Fatalf("Execute: output\n  se esperaba que contuviera %q\n  se obtuvo  %q", notice, res.Output)
 	}
+	if !res.Truncated {
+		t.Fatal("line-limited read did not report truncation")
+	}
 
 	snap := snaps.Head("/work/foo.go")
 	if snap == nil {
@@ -250,6 +272,9 @@ func TestReadTool_ByteLimitMarksOnlyEmittedLines(t *testing.T) {
 	}
 	if strings.Contains(res.Output, "2:22222222222222222222") {
 		t.Fatalf("Execute: output no deberia contener la linea 2 por limite de bytes: %q", res.Output)
+	}
+	if !res.Truncated {
+		t.Fatal("byte-limited read did not report truncation")
 	}
 
 	snap := snaps.Head("/work/foo.go")
@@ -455,5 +480,163 @@ func TestReadTool_InvalidInputErrors(t *testing.T) {
 
 	if _, err := rt.Execute(context.Background(), json.RawMessage("{")); err == nil {
 		t.Fatalf("Execute: se esperaba error por input invalido, se obtuvo nil")
+	}
+}
+
+func TestReadTool_UsesStreamingFileAccessWhenAvailable(t *testing.T) {
+	fs := &streamingFS{data: []byte("one\ntwo\n")}
+	rt := &ReadTool{
+		Root:      "/work",
+		FS:        fs,
+		Snapshots: hashline.NewMemSnapshotStore(),
+	}
+
+	result, err := rt.Execute(context.Background(), json.RawMessage(`{"path":"file.txt"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fs.openCalls != 1 || fs.readFileCalls != 0 {
+		t.Fatalf("Open calls = %d, ReadFile calls = %d; want 1, 0", fs.openCalls, fs.readFileCalls)
+	}
+	if !strings.HasSuffix(result.Output, "\n1:one\n2:two") {
+		t.Fatalf("unexpected streamed output: %q", result.Output)
+	}
+}
+
+func TestReadTool_NormalizesBOMAndLineEndingsDuringStreaming(t *testing.T) {
+	const normalized = "one\ntwo\nthree\n"
+	fs := &streamingFS{data: []byte("\xEF\xBB\xBFone\r\ntwo\rthree\r")}
+	snapshots := hashline.NewMemSnapshotStore()
+	rt := &ReadTool{Root: "/work", FS: fs, Snapshots: snapshots}
+
+	result, err := rt.Execute(context.Background(), json.RawMessage(`{"path":"file.txt"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "[file.txt#" + hashline.ComputeFileHash(normalized) + "]\n1:one\n2:two\n3:three"
+	if result.Output != want {
+		t.Fatalf("output = %q, want %q", result.Output, want)
+	}
+	if snapshot := snapshots.Head("/work/file.txt"); snapshot == nil || snapshot.Text != normalized {
+		t.Fatalf("normalized snapshot = %#v, want text %q", snapshot, normalized)
+	}
+}
+
+func TestReadTool_EnforcesDefaultLineAndByteBounds(t *testing.T) {
+	t.Run("lines", func(t *testing.T) {
+		var content strings.Builder
+		for i := 0; i < defaultReadMaxLines+1; i++ {
+			content.WriteString("x\n")
+		}
+		rt := &ReadTool{
+			Root:      "/work",
+			FS:        fakeFS{"/work/file.txt": []byte(content.String())},
+			Snapshots: hashline.NewMemSnapshotStore(),
+		}
+
+		result, err := rt.Execute(context.Background(), json.RawMessage(`{"path":"file.txt"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(result.Output, "\n2000:x") || strings.Contains(result.Output, "\n2001:x") {
+			t.Fatalf("line bound not enforced at 2,000 lines: tail = %q", result.Output[len(result.Output)-100:])
+		}
+	})
+
+	t.Run("bytes", func(t *testing.T) {
+		line := strings.Repeat("x", defaultReadMaxLineChars) + "\n"
+		content := strings.Repeat(line, 100)
+		rt := &ReadTool{
+			Root:      "/work",
+			FS:        fakeFS{"/work/file.txt": []byte(content)},
+			Snapshots: hashline.NewMemSnapshotStore(),
+		}
+
+		result, err := rt.Execute(context.Background(), json.RawMessage(`{"path":"file.txt"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result.Output) > defaultReadMaxBytes {
+			t.Fatalf("output size = %d, want at most %d", len(result.Output), defaultReadMaxBytes)
+		}
+		// Lines are never split, so the budget can fall short by at most one
+		// full-width line plus its prefix and separator.
+		if slack := defaultReadMaxBytes - len(result.Output); slack > defaultReadMaxLineChars+16 {
+			t.Fatalf("output size = %d, byte budget stopped unexpectedly early (%d bytes unused)", len(result.Output), slack)
+		}
+		if !utf8.ValidString(result.Output) {
+			t.Fatal("byte-bounded output is not valid UTF-8")
+		}
+	})
+}
+
+func TestReadTool_BoundsLongUnicodeLinesWithoutGrantingEditAccess(t *testing.T) {
+	longLine := strings.Repeat("界", defaultReadMaxLineChars+500)
+	snapshots := hashline.NewMemSnapshotStore()
+	rt := &ReadTool{
+		Root:      "/work",
+		FS:        fakeFS{"/work/file.txt": []byte(longLine + "\ncomplete\n")},
+		Snapshots: snapshots,
+	}
+
+	result, err := rt.Execute(context.Background(), json.RawMessage(`{"path":"file.txt"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(result.Output, "\n")
+	if len(lines) < 3 || !strings.HasPrefix(lines[1], "1:") {
+		t.Fatalf("missing first numbered line: %q", result.Output)
+	}
+	displayed := strings.TrimPrefix(lines[1], "1:")
+	if got := utf8.RuneCountInString(displayed); got != defaultReadMaxLineChars {
+		t.Fatalf("displayed long-line characters = %d, want %d", got, defaultReadMaxLineChars)
+	}
+	if !utf8.ValidString(result.Output) {
+		t.Fatal("long-line output is not valid UTF-8")
+	}
+	if !strings.Contains(result.Output, "\n2:complete") {
+		t.Fatalf("line after long line was not emitted: %q", result.Output)
+	}
+	if result.Truncated {
+		t.Fatal("per-line shortening incorrectly reported that later lines were omitted")
+	}
+	snapshot := snapshots.Head("/work/file.txt")
+	if snapshot == nil {
+		t.Fatal("snapshot was not recorded")
+	}
+	if _, seen := snapshot.Seen[1]; seen {
+		t.Fatal("partially displayed long line was marked fully seen")
+	}
+	if _, seen := snapshot.Seen[2]; !seen {
+		t.Fatal("complete displayed line was not marked seen")
+	}
+}
+
+func TestReadTool_ByteBoundNeverSplitsUTF8(t *testing.T) {
+	const content = "界界界\n界界界\n"
+	header := hashline.FormatHeader("file.txt", hashline.ComputeFileHash(content))
+	firstLineBytes := len(header) + 1 + len("1:界界界")
+	rt := &ReadTool{
+		Root:      "/work",
+		FS:        fakeFS{"/work/file.txt": []byte(content)},
+		Snapshots: hashline.NewMemSnapshotStore(),
+		MaxBytes:  firstLineBytes + len("\n2:界"),
+	}
+
+	result, err := rt.Execute(context.Background(), json.RawMessage(`{"path":"file.txt"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !utf8.ValidString(result.Output) {
+		t.Fatalf("output is not valid UTF-8: %q", result.Output)
+	}
+	if !strings.Contains(result.Output, "\n1:界界界") {
+		t.Fatalf("first complete line missing: %q", result.Output)
+	}
+	if !strings.Contains(result.Output, "Use :2 to continue") {
+		t.Fatalf("byte-bounded read did not tell the model how to continue: %q", result.Output)
+	}
+	if strings.Contains(result.Output, "\n2:") {
+		t.Fatalf("byte bound emitted a partial second line: %q", result.Output)
 	}
 }

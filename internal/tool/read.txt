@@ -2,7 +2,7 @@ Read files
 
 <instructions>
 - path: one workspace-relative text file; append `:N` for one line or `:N-M` for an inclusive line range, such as `src/foo.go:50-200`.
-- A read without a line selector returns at most 2,000 lines and about 30 KiB; continue from the range named in the truncation notice.
+- A read returns at most 2,000 lines, 30 KiB, and 2,000 characters per displayed line; continue from the range named in the truncation notice.
 - Use `glob` to find files by name and `grep` to locate content before reading the relevant section.
 </instructions>
 
