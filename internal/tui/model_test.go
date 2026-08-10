@@ -5699,6 +5699,30 @@ func TestModel_ImageSendFailureRetainsAttachmentAndTextPasteRemainsText(t *testi
 	}
 }
 
+func TestModel_LongTextPasteDoesNotBlockTheTUI(t *testing.T) {
+	const pasted = 10_000
+	m := NewModel(&fakeAgent{}, "s1", nil)
+	done := make(chan Model, 1)
+
+	go func() {
+		updated, _ := m.Update(tea.KeyMsg{
+			Type:  tea.KeyRunes,
+			Runes: []rune(strings.Repeat("x", pasted)),
+			Paste: true,
+		})
+		done <- updated.(Model)
+	}()
+
+	select {
+	case m = <-done:
+		if got := len(m.composer.value()); got != pasted {
+			t.Fatalf("pasted text length = %d, want %d", got, pasted)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("pasting 10,000 characters blocked the TUI for over one second")
+	}
+}
+
 func TestModel_SendFailuresKeepPendingUserAction(t *testing.T) {
 	t.Run("build prompt", func(t *testing.T) {
 		fake := &fakeAgent{sendErr: errors.New("send failed")}

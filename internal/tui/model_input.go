@@ -76,7 +76,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.resolvePlanKey(msg)
 	}
 	if msg.Type == tea.KeyRunes && len(msg.Runes) > 1 {
-		return m.handleKeyRuneBatch(msg)
+		return m.composerKey(msg, confirmCancel)
 	}
 	if msg.Type == tea.KeyShiftTab {
 		m = m.toggleThinking()
@@ -156,18 +156,6 @@ func (m Model) composerKey(msg tea.KeyMsg, confirmCancel bool) (tea.Model, tea.C
 	case tea.KeyTab:
 		m.planMode = !m.planMode
 		return m, nil
-	}
-	return m, nil
-}
-
-func (m Model) handleKeyRuneBatch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	for _, key := range msg.Runes {
-		next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}, Alt: msg.Alt})
-		nextModel, ok := next.(Model)
-		if !ok {
-			return next, nil
-		}
-		m = nextModel
 	}
 	return m, nil
 }
