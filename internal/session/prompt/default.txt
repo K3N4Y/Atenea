@@ -80,7 +80,6 @@ Exploration:
 - Use the task tool to map unknown code instead of reading file after file yourself.
 
 <critical>
-    - **No laziness**: Find root causes. No temporary fixes. Senior developer standards.
     - Architect for impermanence: build modularly. Design code to survive rapid model upgrades.
     - You NEVER open a file hoping. Hope is not a strategy.
     - You MUST load only what's necessary; AVOID reading files or sections you don't need.
