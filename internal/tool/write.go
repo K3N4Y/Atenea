@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,29 +15,24 @@ import (
 )
 
 // FileWriter defines the filesystem operations write needs: creating parent
-// directories and writing the file. The default wraps os; tests inject an
-// in-memory fake to verify writes without touching disk.
+// directories and publishing a new file without replacing an existing path.
+// There is deliberately no plain write: this tool only ever creates, and an
+// operation that could truncate an existing file would be a way to lose one.
+// The default wraps os; tests inject fakes to verify writes without touching disk.
 type FileWriter interface {
 	MkdirAll(path string, perm os.FileMode) error
-	WriteFile(name string, data []byte, perm os.FileMode) error
-	Exists(name string) (bool, error)
+	// CreateExclusive publishes data at name atomically and durably, and fails
+	// with os.ErrExist if name already exists.
+	CreateExclusive(name string, data []byte, perm os.FileMode) error
 }
 
-// osWriteFS is the default FileWriter: it creates directories and writes to disk.
+// osWriteFS is the default FileWriter: it creates directories and publishes
+// files to disk, reusing the durable publish the hashline patcher already owns.
 type osWriteFS struct{}
 
 func (osWriteFS) MkdirAll(path string, perm os.FileMode) error { return os.MkdirAll(path, perm) }
-func (osWriteFS) WriteFile(name string, data []byte, perm os.FileMode) error {
-	return os.WriteFile(name, data, perm)
-}
-func (osWriteFS) Exists(name string) (bool, error) {
-	if _, err := os.Stat(name); err == nil {
-		return true, nil
-	} else if os.IsNotExist(err) {
-		return false, nil
-	} else {
-		return false, err
-	}
+func (osWriteFS) CreateExclusive(name string, data []byte, perm os.FileMode) error {
+	return hashline.OSFilesystem{}.CreateExclusive(name, data, perm)
 }
 
 // WriteTool creates a new file under Root with the complete given content.
@@ -122,6 +118,9 @@ func (wt *WriteTool) Execute(ctx context.Context, input json.RawMessage) (Result
 	if err := json.Unmarshal(input, &in); err != nil {
 		return Result{}, fmt.Errorf("write: invalid input: %w", err)
 	}
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
 
 	abs, err := sandboxJoin(wt.Root, in.Path, "write")
 	if err != nil {
@@ -131,13 +130,6 @@ func (wt *WriteTool) Execute(ctx context.Context, input json.RawMessage) (Result
 		if err := rejectRealParentOutside(wt.Root, abs, in.Path, "write"); err != nil {
 			return Result{}, err
 		}
-	}
-	exists, err := wt.FS.Exists(abs)
-	if err != nil {
-		return Result{}, err
-	}
-	if exists {
-		return Result{}, fmt.Errorf("write: file already exists; use read+edit: %s", in.Path)
 	}
 
 	// Normalize like read/edit: remove an initial BOM and unify line endings as LF,
@@ -149,7 +141,13 @@ func (wt *WriteTool) Execute(ctx context.Context, input json.RawMessage) (Result
 	if err := wt.FS.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return Result{}, err
 	}
-	if err := wt.FS.WriteFile(abs, []byte(norm), 0o644); err != nil {
+	// Creating the file is what makes this call refuse to replace one: the OS
+	// decides exclusivity atomically, so a file appearing between here and the
+	// previous statement loses the race instead of being silently overwritten.
+	if err := wt.FS.CreateExclusive(abs, []byte(norm), 0o644); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return Result{}, fmt.Errorf("write: file already exists; use read+edit: %s", in.Path)
+		}
 		return Result{}, err
 	}
 
