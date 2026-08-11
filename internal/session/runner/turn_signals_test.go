@@ -200,7 +200,7 @@ func TestRunnerAttempt_ReturnsErrRebuildTurnWhenEpochChanges(t *testing.T) {
 	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
 	r := newRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, idCounter())
 
-	cont, err := r.runTurnAttempt(ctx, "s1", false, 0)
+	cont, err := r.runTurnAttempt(ctx, "s1", false, turnBudget{})
 	if !errors.Is(err, errRebuildTurn) {
 		t.Fatalf("runTurnAttempt error = %v, quiero errRebuildTurn (errors.Is)", err)
 	}
@@ -234,7 +234,7 @@ func (c *fakeCompactor) NeedsCompaction(req llm.Request) bool {
 
 // Compact marca el progreso (compacted = true), cuenta la llamada y deja un marcador
 // durable en el store para verificar que la compaction corrio antes del turno.
-func (c *fakeCompactor) Compact(ctx context.Context, sessionID string) error {
+func (c *fakeCompactor) Compact(ctx context.Context, sessionID string, reason session.CompactionReason) error {
 	c.mu.Lock()
 	c.compacted = true
 	c.compactCalls++
@@ -351,5 +351,132 @@ func TestRunner_HappyPathDoesNotRebuildOrCompact(t *testing.T) {
 	}
 	if msgs[1].Role != session.RoleAssistant || msgs[1].Text != "ok" {
 		t.Errorf("msgs[1] = {Role:%q Text:%q}, quiero {Role:%q Text:%q}", msgs[1].Role, msgs[1].Text, session.RoleAssistant, "ok")
+	}
+}
+
+// overflowCompactor cuenta las compactaciones y registra con que razon se pidio
+// cada una. Siempre reporta progreso (Compact nil) y NUNCA pide compaction
+// preventiva, de modo que lo unico que puede dispararlo es el rechazo del
+// provider: eso es exactamente lo que fija la ruta reactiva.
+type overflowCompactor struct {
+	mu      sync.Mutex
+	calls   int
+	reasons []session.CompactionReason
+	err     error // devuelto por Compact cuando no es nil
+}
+
+func (c *overflowCompactor) NeedsCompaction(llm.Request) bool { return false }
+
+func (c *overflowCompactor) Compact(_ context.Context, _ string, reason session.CompactionReason) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls++
+	c.reasons = append(c.reasons, reason)
+	return c.err
+}
+
+func (c *overflowCompactor) snapshot() (int, []session.CompactionReason) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls, append([]session.CompactionReason(nil), c.reasons...)
+}
+
+// overflowScript es el turno que el provider rechaza por exceder su ventana: el
+// error tipado viaja en StepFailed.Err, que es como lo publican los adapters
+// reales (openai.go, anthropic.go, codex.go).
+func overflowScript() []llm.Event {
+	return []llm.Event{
+		{Kind: llm.StepStarted},
+		{Kind: llm.StepFailed, Err: &llm.ContextOverflowError{Message: "context window exceeded"}, Text: "context window exceeded"},
+	}
+}
+
+// TestRunner_CompactsAndRetriesWhenProviderRejectsForOverflow fija la ruta REACTIVA:
+// el provider rechaza el turno por overflow, el runner compacta con razon
+// CompactionOverflow y reintenta el mismo turno, que ya entra. Antes de esto el
+// turno moria: IsTransientStreamError excluye el overflow a proposito, asi que
+// nada lo reintentaba y el trabajo del usuario se perdia.
+func TestRunner_CompactsAndRetriesWhenProviderRejectsForOverflow(t *testing.T) {
+	ctx := context.Background()
+	store := session.NewMemoryStore()
+	seedUser(t, store, "s1")
+
+	prov := &scriptedProvider{turns: [][]llm.Event{overflowScript(), textTurnScript()}}
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
+	r := newRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, idCounter())
+	c := &overflowCompactor{}
+	r.compactor = c
+
+	if _, err := r.runTurn(ctx, "s1"); err != nil {
+		t.Fatalf("runTurn error = %v, quiero nil (el overflow se compacta y reintenta)", err)
+	}
+
+	calls, reasons := c.snapshot()
+	if calls != 1 {
+		t.Errorf("compactaciones = %d, quiero 1 (una por el rechazo del provider)", calls)
+	}
+	if len(reasons) != 1 || reasons[0] != session.CompactionOverflow {
+		t.Errorf("razones = %v, quiero [overflow] (el provider ya rechazo, no es preventiva)", reasons)
+	}
+	if got := prov.callCount(); got != 2 {
+		t.Errorf("llamadas al provider = %d, quiero 2 (el rechazo y el reintento)", got)
+	}
+
+	msgs, err := store.Messages(ctx, "s1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var assistant []session.Message
+	for _, m := range msgs {
+		if m.Role == session.RoleAssistant {
+			assistant = append(assistant, m)
+		}
+	}
+	if len(assistant) != 1 || assistant[0].Text != "ok" {
+		t.Fatalf("mensajes de asistente = %+v, quiero uno con Text=ok (el reintento respondio)", assistant)
+	}
+}
+
+// TestRunner_OverflowWithoutCompactableHistoryFailsAsActivityTooLarge fija el
+// limite: si no queda prefijo que resumir, el turno no puede entrar por mucho que
+// se reintente. El runner falla UNA vez con ErrActivityTooLarge —el error que
+// nombra la causa real— en lugar de reintentar contra un muro.
+func TestRunner_OverflowWithoutCompactableHistoryFailsAsActivityTooLarge(t *testing.T) {
+	ctx := context.Background()
+	store := session.NewMemoryStore()
+	seedUser(t, store, "s1")
+
+	prov := &scriptedProvider{turns: [][]llm.Event{overflowScript(), textTurnScript()}}
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
+	r := newRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, idCounter())
+	r.compactor = &overflowCompactor{err: session.ErrNoCompactableHistory}
+
+	_, err := r.runTurn(ctx, "s1")
+	if !errors.Is(err, session.ErrActivityTooLarge) {
+		t.Fatalf("runTurn error = %v, quiero ErrActivityTooLarge", err)
+	}
+	if got := prov.callCount(); got != 1 {
+		t.Errorf("llamadas al provider = %d, quiero 1 (no reintenta lo que no puede entrar)", got)
+	}
+}
+
+// TestRunner_OverflowWithoutCompactorSurfacesTheProviderFailure: sin compactor
+// cableado no hay nada que reintentar, asi que el rechazo llega al usuario tal
+// cual en vez de desaparecer o colgar el turno.
+func TestRunner_OverflowWithoutCompactorSurfacesTheProviderFailure(t *testing.T) {
+	ctx := context.Background()
+	store := session.NewMemoryStore()
+	seedUser(t, store, "s1")
+
+	prov := &scriptedProvider{turns: [][]llm.Event{overflowScript()}}
+	reg := tool.NewRegistry(tool.NewOutputStore(0), tooltest.Echo{})
+	r := newRunner(store, session.NewMemoryInbox(), prov, reg, tool.Permissions{"echo": true}, idCounter())
+
+	_, err := r.runTurn(ctx, "s1")
+	if !llm.IsContextOverflow(err) {
+		t.Fatalf("runTurn error = %v, quiero un ContextOverflowError sin compactor", err)
+	}
+	if got := prov.callCount(); got != 1 {
+		t.Errorf("llamadas al provider = %d, quiero 1", got)
 	}
 }

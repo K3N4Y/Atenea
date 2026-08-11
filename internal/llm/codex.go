@@ -565,7 +565,7 @@ func codexError(err error) error {
 		return fmt.Errorf("ChatGPT subscription limit reached: %s", codexReason(message, "the plan's usage window is exhausted; it resets on its own schedule"))
 	case apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden:
 		return fmt.Errorf("ChatGPT subscription rejected the request: %s", codexReason(message, "the credential is no longer accepted; log in again"))
-	case isCodexContextOverflow(apiErr.StatusCode, message):
+	case classifyContextOverflow(apiErr.StatusCode, message) != nil:
 		return &ContextOverflowError{Message: message}
 	case message != "":
 		return errors.New(message)
@@ -583,7 +583,7 @@ func codexErrorForProfile(err error, profile responsesProfile) error {
 		return err
 	}
 	message := codexReason(apiErr.Message, apiErr.Code)
-	if isCodexContextOverflow(apiErr.StatusCode, message) {
+	if classifyContextOverflow(apiErr.StatusCode, message) != nil {
 		return &ContextOverflowError{Message: message}
 	}
 	if message != "" {
@@ -599,7 +599,7 @@ func responsesError(message, code string, profile responsesProfile) error {
 	if message == "" {
 		message = code
 	}
-	if isCodexContextOverflow(0, message) {
+	if classifyContextOverflow(0, message) != nil {
 		return &ContextOverflowError{Message: message}
 	}
 	if message != "" {
@@ -617,7 +617,7 @@ func codexResponseError(message string, code string) error {
 	switch {
 	case code == "rate_limit_exceeded":
 		return fmt.Errorf("ChatGPT subscription limit reached: %s", codexReason(message, "the plan's usage window is exhausted"))
-	case isCodexContextOverflow(0, message):
+	case classifyContextOverflow(0, message) != nil:
 		return &ContextOverflowError{Message: message}
 	case message != "":
 		return errors.New(message)
@@ -631,17 +631,6 @@ func codexReason(message, fallback string) string {
 		return message
 	}
 	return fallback
-}
-
-func isCodexContextOverflow(status int, message string) bool {
-	if status != 0 && status != http.StatusBadRequest {
-		return false
-	}
-	lower := strings.ToLower(message)
-	return strings.Contains(lower, "context_length_exceeded") ||
-		strings.Contains(lower, "context length") ||
-		strings.Contains(lower, "context window") ||
-		strings.Contains(lower, "too long")
 }
 
 // toCodexInput projects history into Responses items. User messages may carry

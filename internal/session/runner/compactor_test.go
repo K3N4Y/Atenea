@@ -197,11 +197,15 @@ func TestRunner_CompactNowPreservesAssistantToolGroupAfterCurrentUser(t *testing
 	}
 }
 
-type alwaysNeedsCompaction struct{ calls int }
+type alwaysNeedsCompaction struct {
+	calls   int
+	reasons []session.CompactionReason
+}
 
 func (c *alwaysNeedsCompaction) NeedsCompaction(llm.Request) bool { return true }
-func (c *alwaysNeedsCompaction) Compact(context.Context, string) error {
+func (c *alwaysNeedsCompaction) Compact(_ context.Context, _ string, reason session.CompactionReason) error {
 	c.calls++
+	c.reasons = append(c.reasons, reason)
 	return session.ErrNoCompactableHistory
 }
 
@@ -221,6 +225,10 @@ func TestRunner_AutomaticCompactionWithoutCompactablePrefixStillStreams(t *testi
 	}
 	if compactor.calls != 1 || provider.callCount() != 1 {
 		t.Fatalf("compactor calls = %d, provider calls = %d", compactor.calls, provider.callCount())
+	}
+	// Crossing the threshold before the provider ever answered is preventive.
+	if len(compactor.reasons) != 1 || compactor.reasons[0] != session.CompactionPreventive {
+		t.Fatalf("compaction reasons = %v, want [preventive]", compactor.reasons)
 	}
 }
 

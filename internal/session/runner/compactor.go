@@ -47,7 +47,7 @@ func (c *contextCompactor) NeedsCompaction(req llm.Request) bool {
 	return llm.NeedsPreventiveCompaction(llm.EstimateRequestTokens(req), window)
 }
 
-func (c *contextCompactor) Compact(ctx context.Context, sessionID string) error {
+func (c *contextCompactor) Compact(ctx context.Context, sessionID string, reason session.CompactionReason) error {
 	if c.store == nil {
 		return errors.New("store does not support context compaction")
 	}
@@ -87,7 +87,7 @@ func (c *contextCompactor) Compact(ctx context.Context, sessionID string) error 
 		AnchorUserSeq:        anchor.Seq,
 		PreservedFromSeq:     anchor.Seq,
 		Model:                model,
-		Reason:               session.CompactionPreventive,
+		Reason:               reason,
 		InputTokensBefore:    before,
 		EstimatedTokensAfter: after,
 	}

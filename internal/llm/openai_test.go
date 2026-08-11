@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1689,5 +1690,61 @@ func TestOpenAIProvider_StreamRefusesContentItCannotExpress(t *testing.T) {
 	}
 	if called {
 		t.Errorf("the request reached the endpoint: the refusal must cost nothing")
+	}
+}
+
+// An OpenAI-compatible endpoint reports a context-window rejection as an
+// ordinary 400, so the adapter has to type it. Left untyped, the runner cannot
+// tell it apart from a malformed request and the turn dies instead of being
+// compacted and retried — on the adapter that serves OpenAI, OpenRouter and
+// every local runtime speaking this dialect.
+func TestOpenAIProvider_TypesContextOverflowSoTheHostCanCompactAndRetry(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, `{"error":{"message":"This model's maximum context length is 8192 tokens, however you requested 999999 tokens.","type":"invalid_request_error","code":"context_length_exceeded"}}`)
+	}))
+	defer server.Close()
+
+	p := NewOpenAIProvider("test-key", server.URL, "test-model")
+	out, err := p.Stream(context.Background(), Request{Messages: []Message{TextMessage("user", "hola")}})
+	if err != nil {
+		t.Fatalf("Stream startup error: %v", err)
+	}
+
+	var failed *Event
+	for _, ev := range drain(out) {
+		if ev.Kind == StepFailed {
+			ev := ev
+			failed = &ev
+		}
+	}
+	if failed == nil {
+		t.Fatal("no StepFailed: a rejected request must fail the step")
+	}
+	if !IsContextOverflow(failed.Err) {
+		t.Fatalf("StepFailed.Err = %#v, want a ContextOverflowError the host can act on", failed.Err)
+	}
+}
+
+// A 400 that is not about the context window must stay untyped: compacting and
+// retrying a malformed request only reproduces the same failure.
+func TestOpenAIProvider_LeavesUnrelatedBadRequestsUntyped(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, `{"error":{"message":"Unsupported parameter: 'top_k'","type":"invalid_request_error","code":"unknown_parameter"}}`)
+	}))
+	defer server.Close()
+
+	p := NewOpenAIProvider("test-key", server.URL, "test-model")
+	out, err := p.Stream(context.Background(), Request{Messages: []Message{TextMessage("user", "hola")}})
+	if err != nil {
+		t.Fatalf("Stream startup error: %v", err)
+	}
+	for _, ev := range drain(out) {
+		if ev.Kind == StepFailed && IsContextOverflow(ev.Err) {
+			t.Fatalf("an unrelated 400 was typed as a context overflow: %v", ev.Err)
+		}
 	}
 }

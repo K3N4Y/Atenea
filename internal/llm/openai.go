@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -395,6 +396,11 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request) (<-chan Event,
 			// Err carries the cause and Text only shows it: a host classifies the
 			// failure through errors.As (a context overflow is compacted and
 			// retried, anything else surfaces), and it cannot classify a string.
+			// An endpoint reports the overflow as a plain 400, so it only becomes
+			// retryable once it is typed here.
+			if overflow := classifyOpenAIContextOverflow(err); overflow != nil {
+				err = overflow
+			}
 			emit(ctx, out, Event{Kind: StepFailed, Err: err, Text: fmt.Sprintf("%s (%s): %v", p.label, model, err)})
 			return
 		}
@@ -431,6 +437,22 @@ func retryableResponse(resp *http.Response, err error) bool {
 	}
 	return resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusBadGateway ||
 		resp.StatusCode == http.StatusServiceUnavailable || resp.StatusCode == http.StatusGatewayTimeout
+}
+
+// classifyOpenAIContextOverflow types a context-window rejection coming from an
+// OpenAI-compatible endpoint. This adapter serves OpenAI, OpenRouter and every
+// local runtime that speaks the same dialect, so an overflow it leaves untyped
+// is an overflow the runner cannot compact and retry on most providers.
+func classifyOpenAIContextOverflow(err error) *ContextOverflowError {
+	var apiErr *openai.Error
+	if !errors.As(err, &apiErr) {
+		return nil
+	}
+	message := apiErr.Message
+	if message == "" {
+		message = apiErr.Code
+	}
+	return classifyContextOverflow(apiErr.StatusCode, message)
 }
 
 // emit envia ev por out respetando la cancelacion del ctx. Devuelve false si el

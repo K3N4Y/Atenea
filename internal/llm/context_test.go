@@ -168,3 +168,42 @@ func TestFormatContextUsage_ReportsEstimateAndWindow(t *testing.T) {
 		t.Fatalf("FormatContextUsage = %q, want %q", got, "80/100 estimated tokens")
 	}
 }
+
+// An image part carries its bytes in Data, not Text. An estimate that only
+// walked Text counted a screenshot as nothing, so a session of pasted images
+// never reached the preventive threshold and overflowed on the provider instead.
+func TestEstimateRequestTokens_CountsImagePartsThatCarryNoText(t *testing.T) {
+	empty := Request{Messages: []Message{{Role: "user", Parts: []Part{{Kind: TextPart, Text: "look"}}}}}
+	withImage := Request{Messages: []Message{{Role: "user", Parts: []Part{
+		{Kind: TextPart, Text: "look"},
+		{Kind: ImagePart, MediaType: "image/png", Data: make([]byte, 256*1024)},
+	}}}}
+
+	if EstimateRequestTokens(withImage) <= EstimateRequestTokens(empty) {
+		t.Fatalf("estimate with an image = %d, must exceed the same request without it = %d",
+			EstimateRequestTokens(withImage), EstimateRequestTokens(empty))
+	}
+}
+
+// What an image costs is bounded: providers price it by the tiles it covers and
+// cap it. Charging its transfer size instead would bill a 4 MiB screenshot as
+// hundreds of thousands of tokens and compact a session nowhere near its window.
+func TestEstimateRequestTokens_ImageCostIsBounded(t *testing.T) {
+	image := func(size int) Request {
+		return Request{Messages: []Message{{Role: "user", Parts: []Part{
+			{Kind: ImagePart, MediaType: "image/png", Data: make([]byte, size)},
+		}}}}
+	}
+
+	if got := EstimateRequestTokens(image(4 * 1024 * 1024)); got > maxImageTokens+64 {
+		t.Fatalf("estimate of a 4 MiB image = %d, want it capped near %d", got, maxImageTokens)
+	}
+	// A thumbnail still costs its base tile rather than rounding down to nothing.
+	if got := EstimateRequestTokens(image(512)); got < minImageTokens {
+		t.Fatalf("estimate of a small image = %d, want at least %d", got, minImageTokens)
+	}
+	// Bigger images never cost less than smaller ones.
+	if EstimateRequestTokens(image(1024*1024)) < EstimateRequestTokens(image(64*1024)) {
+		t.Fatal("a larger image must not estimate below a smaller one")
+	}
+}

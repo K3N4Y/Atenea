@@ -66,8 +66,10 @@ type Compactor interface {
 	// NeedsCompaction reports whether req must be compacted before calling the provider.
 	NeedsCompaction(req llm.Request) bool
 	// Compact reduces durable session history so the next request fits. It must
-	// make progress: NeedsCompaction must eventually become false.
-	Compact(ctx context.Context, sessionID string) error
+	// make progress: NeedsCompaction must eventually become false. The reason is
+	// recorded on the checkpoint: preventive when the estimate crossed the
+	// threshold, overflow when the provider already rejected the turn.
+	Compact(ctx context.Context, sessionID string, reason session.CompactionReason) error
 }
 
 // Config is the complete startup configuration of a Runner. New applies it
@@ -99,11 +101,13 @@ func (r *Runner) setCompactor(compactor Compactor) {
 	r.compactor = compactor
 }
 
+// CompactNow compacts on demand, which is always ahead of a provider rejection:
+// the user asked before the window ran out.
 func (r *Runner) CompactNow(ctx context.Context, sessionID string) error {
 	if r.compactor == nil {
 		return errors.New("context compaction is unavailable")
 	}
-	return r.compactor.Compact(ctx, sessionID)
+	return r.compactor.Compact(ctx, sessionID, session.CompactionPreventive)
 }
 
 // New constructs a fully configured Runner.

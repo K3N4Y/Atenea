@@ -19,8 +19,9 @@ import (
 	"github.com/K3N4Y/atenea/internal/tool"
 )
 
-// errRebuildTurn, errContinueAfterCompaction and errRetryTransientStream are
-// internal turn-control signals consumed by runTurn's retry loop.
+// errRebuildTurn, errContinueAfterCompaction, errRetryTransientStream and
+// errRetryAfterOverflow are internal turn-control signals consumed by runTurn's
+// retry loop.
 //
 //   - errRebuildTurn: context changed while preparing the turn. The stale request
 //     is discarded and rebuilt without calling the provider.
@@ -30,10 +31,14 @@ import (
 //     interruption. The failure was published as Step.Retrying, the backoff wait
 //     already happened, and the attempt repeats against the durable store — the
 //     same rebuild a manual retry performs.
+//   - errRetryAfterOverflow: the provider rejected the request for exceeding its
+//     context window. History was compacted durably and the attempt repeats
+//     against the shortened store.
 var (
 	errRebuildTurn             = errors.New("rebuild prepared turn")
 	errContinueAfterCompaction = errors.New("continue after overflow compaction")
 	errRetryTransientStream    = errors.New("retry after transient stream failure")
+	errRetryAfterOverflow      = errors.New("retry after provider context overflow")
 )
 
 const finalTurnToolError = "tool calls are unavailable during the final summary turn"
@@ -60,18 +65,30 @@ func (r *Runner) runTurn(ctx context.Context, sessionID string) (bool, error) {
 	return r.runTurnWithFinal(ctx, sessionID, false)
 }
 
+// turnBudget tracks what one logical turn has already spent across its retries.
+// The two counters are independent budgets: a transport interruption and a
+// context overflow are different failures with different remedies, and spending
+// one must not consume the other.
+type turnBudget struct {
+	transientRetries int
+	overflows        int
+}
+
 func (r *Runner) runTurnWithFinal(ctx context.Context, sessionID string, final bool) (bool, error) {
-	retriesUsed := 0
+	var budget turnBudget
 	for {
-		cont, err := r.runTurnAttempt(ctx, sessionID, final, retriesUsed)
+		cont, err := r.runTurnAttempt(ctx, sessionID, final, budget)
 		switch {
 		case errors.Is(err, errRebuildTurn):
 			continue // preparation changed; rebuild from the store
 		case errors.Is(err, errContinueAfterCompaction):
 			continue // overflow was compacted; retry the post-compaction path
 		case errors.Is(err, errRetryTransientStream):
-			retriesUsed++
+			budget.transientRetries++
 			continue // the backoff already happened; rebuild and call again
+		case errors.Is(err, errRetryAfterOverflow):
+			budget.overflows++
+			continue // history was compacted durably; rebuild and call again
 		default:
 			return cont, err
 		}
@@ -81,7 +98,7 @@ func (r *Runner) runTurnWithFinal(ctx context.Context, sessionID string, final b
 // runTurnAttempt performs one turn attempt. It snapshots the epoch, builds the
 // request from projected history and materialized tools, compacts on overflow,
 // and rechecks the epoch before calling Stream exactly once.
-func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string, final bool, retriesUsed int) (bool, error) {
+func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string, final bool, budget turnBudget) (bool, error) {
 	before, err := r.store.Epoch(ctx, sessionID)
 	if err != nil {
 		return false, err
@@ -165,12 +182,19 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string, final boo
 		req.System = renderCompactedSystem(req.System, runnerContext.Checkpoint.Summary)
 	}
 
-	// Compact overflow before the assistant message, then retry preparation.
+	// Compact preventively before the assistant message, then retry preparation.
+	// A request that already crosses the threshold with nothing compactable left
+	// is sent anyway: the estimate is an approximation, and refusing a turn the
+	// provider might still accept would be worse than letting it answer. The
+	// provider's own rejection is handled reactively after the stream.
 	if r.compactor != nil && r.compactor.NeedsCompaction(req) {
-		if err := r.compactor.Compact(ctx, sessionID); err != nil && !errors.Is(err, session.ErrNoCompactableHistory) {
-			return false, err
-		} else if err == nil {
+		switch err := r.compactor.Compact(ctx, sessionID, session.CompactionPreventive); {
+		case err == nil:
 			return false, errContinueAfterCompaction
+		case errors.Is(err, session.ErrNoCompactableHistory):
+			// Nothing to summarize away; let the provider judge the request.
+		default:
+			return false, err
 		}
 	}
 
@@ -191,7 +215,7 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string, final boo
 	usageRequest := req
 	usageRequest.MaxOutputTokens = 0
 	pub := NewPublisher(r.store, sessionID, r.nextID(), llm.EstimateRequestTokens(usageRequest))
-	return r.consume(ctx, sessionID, in, pub, mat.Settle, mat.Preview, final, retriesUsed)
+	return r.consume(ctx, sessionID, in, pub, mat.Settle, mat.Preview, final, budget)
 }
 
 func sessionKey(sessionID string) string {
@@ -204,7 +228,7 @@ func sessionKey(sessionID string) string {
 // the assistant message that declared it. Tool failures become Tool.Failed and
 // do not abort the turn; durable-store failures do.
 func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Event,
-	pub *Publisher, settle tool.SettleFunc, preview tool.PreviewFunc, rejectLocalTools bool, retriesUsed int) (bool, error) {
+	pub *Publisher, settle tool.SettleFunc, preview tool.PreviewFunc, rejectLocalTools bool, budget turnBudget) (bool, error) {
 
 	g, gctx := errgroup.WithContext(ctx)
 	cleanupCtx := context.WithoutCancel(ctx)
@@ -305,13 +329,24 @@ func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Ev
 	if err := pub.FailUnresolvedTools(cleanupCtx, cause); err != nil {
 		return false, err
 	}
+	// The provider rejected the turn for overflowing its context. Compacting
+	// durable history and retrying is the only thing that can make the same
+	// request fit; failing here would lose the turn over a recoverable limit.
+	if streamErr != nil && ctx.Err() == nil && llm.IsContextOverflow(streamErr) {
+		retry, err := r.compactOverflow(ctx, cleanupCtx, sessionID, pub, streamErr, budget.overflows)
+		if err != nil {
+			cause = err
+		} else if retry {
+			return false, errRetryAfterOverflow
+		}
+	}
 	// A transient transport interruption retries the turn instead of failing
 	// it: the request rebuilds from the durable store, exactly like a manual
 	// retry. Anything else — or an exhausted budget — closes the step.
-	if streamErr != nil && ctx.Err() == nil && retriesUsed < len(r.transientRetryDelays) && llm.IsTransientStreamError(streamErr) {
-		delay := r.transientRetryDelays[retriesUsed]
+	if streamErr != nil && ctx.Err() == nil && budget.transientRetries < len(r.transientRetryDelays) && llm.IsTransientStreamError(streamErr) {
+		delay := r.transientRetryDelays[budget.transientRetries]
 		notice := fmt.Sprintf("%s — retrying in %s (attempt %d of %d)",
-			streamErr.Message, delay, retriesUsed+1, len(r.transientRetryDelays))
+			streamErr.Message, delay, budget.transientRetries+1, len(r.transientRetryDelays))
 		if err := pub.Publish(cleanupCtx, llm.Event{Kind: llm.StepRetrying, Text: notice}); err != nil {
 			return false, err
 		}
@@ -324,6 +359,42 @@ func (r *Runner) consume(ctx context.Context, sessionID string, in <-chan llm.Ev
 		return false, err
 	}
 	return false, cause
+}
+
+// maxOverflowCompactions bounds how many times one turn may be compacted after
+// a provider overflow. Compaction shrinks history monotonically, so a couple of
+// rounds either make the request fit or prove the current activity alone is too
+// large — retrying past that is a loop against a wall.
+const maxOverflowCompactions = 2
+
+// compactOverflow compacts durable history after the provider rejected the turn
+// for overflowing its context, and reports whether the turn should retry. It
+// returns an error only when the overflow is unrecoverable, so the caller fails
+// the step with the reason the user needs rather than the raw provider message.
+func (r *Runner) compactOverflow(ctx, cleanupCtx context.Context, sessionID string,
+	pub *Publisher, streamErr *ProviderError, overflowsUsed int) (bool, error) {
+
+	if r.compactor == nil {
+		return false, nil // no compactor wired: the overflow surfaces as-is
+	}
+	if overflowsUsed >= maxOverflowCompactions {
+		return false, session.ErrActivityTooLarge
+	}
+	notice := fmt.Sprintf("%s — compacting session history and retrying (attempt %d of %d)",
+		streamErr.Message, overflowsUsed+1, maxOverflowCompactions)
+	if err := pub.Publish(cleanupCtx, llm.Event{Kind: llm.StepRetrying, Text: notice}); err != nil {
+		return false, err
+	}
+	switch err := r.compactor.Compact(ctx, sessionID, session.CompactionOverflow); {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, session.ErrNoCompactableHistory):
+		// Nothing before the current activity can be summarized away, so the
+		// activity itself does not fit. Say that instead of "context exceeded".
+		return false, session.ErrActivityTooLarge
+	default:
+		return false, err
+	}
 }
 
 // sleepFor waits d or until ctx cancels, whichever comes first.
