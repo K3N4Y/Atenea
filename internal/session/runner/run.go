@@ -147,22 +147,39 @@ func (r *Runner) failInterruptedTools(ctx context.Context, sessionID string) err
 	return nil
 }
 
-// promote saca del inbox los prompts de la entrega d y los materializa como
-// mensajes Role:user en el Store, en orden de admision, para que el proximo
-// runTurn los vea en el historial. DeliveryNone (o sin pendientes) no agrega
-// nada: el turno corre con el historial existente (p.ej. una continuacion tras
-// asentar tools). Usa el generador de IDs del runner para el ID del mensaje.
+// promote drains from the inbox the prompts of delivery d and materializes them
+// as Role:user messages in the Store, in admission order, so the next runTurn
+// sees them in the history. DeliveryNone (or nothing pending) adds nothing: the
+// turn runs with the existing history (e.g. a continuation after settling
+// tools). Uses the runner's ID generator for the message ID.
+// If the append fails, the already drained prompts go back to the inbox: user
+// input is not lost to a broken store or a cancelled context.
 func (r *Runner) promote(ctx context.Context, sessionID string, d session.Delivery) error {
 	prompts, err := r.inbox.Promote(ctx, sessionID, d)
 	if err != nil {
 		return err
 	}
-	for _, p := range prompts {
+	for i, p := range prompts {
 		if _, err := r.store.AppendEvent(ctx, sessionID, session.SessionEvent{
 			Message: &session.Message{ID: r.nextID(), Role: session.RoleUser, Text: p.Text, Images: p.Images},
 		}); err != nil {
-			return err
+			return errors.Join(err, r.readmit(ctx, sessionID, prompts[i:], d))
 		}
 	}
 	return nil
+}
+
+// readmit returns to the inbox prompts that left it but never reached the store.
+// It uses a context without cancellation because the typical failure case is
+// precisely the run's cancelled ctx.
+// ponytail: they re-enter at the back of the queue; if another prompt arrived
+// meanwhile, FIFO order is altered. If that matters, the Inbox needs
+// promote/ack instead of a direct drain.
+func (r *Runner) readmit(ctx context.Context, sessionID string, prompts []session.Prompt, d session.Delivery) error {
+	ctx = context.WithoutCancel(ctx)
+	var errs error
+	for _, p := range prompts {
+		errs = errors.Join(errs, r.inbox.Admit(ctx, sessionID, p, d))
+	}
+	return errs
 }

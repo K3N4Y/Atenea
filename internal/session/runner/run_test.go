@@ -543,3 +543,84 @@ func TestRunner_UnlimitedPolicyCanExceedTwentyFiveTurns(t *testing.T) {
 		t.Fatalf("requests = %d, want 27", got)
 	}
 }
+
+// failingOnceStore fails the first AppendEvent and then delegates to the real
+// MemoryStore: it models a broken store right when the runner materializes the
+// prompt.
+type failingOnceStore struct {
+	*session.MemoryStore
+	failed bool
+}
+
+var _ session.Store = (*failingOnceStore)(nil)
+
+func (s *failingOnceStore) AppendEvent(ctx context.Context, sessionID string, ev session.SessionEvent) (session.Seq, error) {
+	if !s.failed {
+		s.failed = true
+		return 0, errors.New("store down")
+	}
+	return s.MemoryStore.AppendEvent(ctx, sessionID, ev)
+}
+
+// TestRunner_PromoteFailureReturnsPromptsToInbox asserts that a failed append
+// does not evaporate user input: the drained prompts go back to the inbox and
+// the next run materializes them.
+func TestRunner_PromoteFailureReturnsPromptsToInbox(t *testing.T) {
+	ctx := context.Background()
+	store := &failingOnceStore{MemoryStore: session.NewMemoryStore()}
+	inbox := session.NewMemoryInbox()
+	if err := inbox.Admit(ctx, "s1", session.Prompt{Text: "do not lose me"}, session.DeliveryQueue); err != nil {
+		t.Fatal(err)
+	}
+	fake := llm.NewFakeProvider(llm.Event{Kind: llm.TextDelta, Text: "ok"})
+	r := newRunner(store, inbox, fake, tool.NewRegistry(tool.NewOutputStore(0)), nil, idCounter())
+
+	if err := r.Run(ctx, "s1", false, 0); err == nil {
+		t.Fatal("Run = nil, want the store error")
+	}
+	has, err := inbox.HasPending(ctx, "s1", session.DeliveryQueue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !has {
+		t.Fatal("prompt evaporated: HasPending(queue) = false after the failed append")
+	}
+
+	if err := r.Run(ctx, "s1", false, 0); err != nil {
+		t.Fatalf("Run (retry): %v", err)
+	}
+	msgs, err := store.Messages(ctx, "s1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) == 0 || msgs[0].Role != session.RoleUser || msgs[0].Text != "do not lose me" {
+		t.Fatalf("messages = %+v, want the readmitted prompt as user", msgs)
+	}
+}
+
+// TestRunner_PromoteFailureReturnsEverySteer asserts that draining every steer is
+// reversible too: if the first append fails, BOTH steers go back to the inbox,
+// not just the one that failed.
+func TestRunner_PromoteFailureReturnsEverySteer(t *testing.T) {
+	ctx := context.Background()
+	store := &failingOnceStore{MemoryStore: session.NewMemoryStore()}
+	inbox := session.NewMemoryInbox()
+	for _, text := range []string{"steer one", "steer two"} {
+		if err := inbox.Admit(ctx, "s1", session.Prompt{Text: text}, session.DeliverySteer); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fake := llm.NewFakeProvider(llm.Event{Kind: llm.TextDelta, Text: "ok"})
+	r := newRunner(store, inbox, fake, tool.NewRegistry(tool.NewOutputStore(0)), nil, idCounter())
+
+	if err := r.Run(ctx, "s1", false, 0); err == nil {
+		t.Fatal("Run = nil, want the store error")
+	}
+	back, err := inbox.Promote(ctx, "s1", session.DeliverySteer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(back) != 2 || back[0].Text != "steer one" || back[1].Text != "steer two" {
+		t.Fatalf("readmitted steers = %+v, want both in order", back)
+	}
+}

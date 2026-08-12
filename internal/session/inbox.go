@@ -24,9 +24,11 @@ type Prompt struct {
 	Images []Image
 }
 
-// Inbox es el input durable de la sesion. Admit no bloquea y es durable; el loop
-// (Run) drena el inbox cuando corre. M6 implementa MemoryInbox; M10 puede agregar
-// una version persistente detras de esta misma interface, igual que Store.
+// Inbox is the session's pending input: Admit does not block and the loop (Run)
+// drains it while running. It lives as long as the process does: the only
+// implementation is MemoryInbox and the SQLite schema has no inbox table, so a
+// queued prompt does not survive a restart. Persisting it behind this same
+// interface (like Store) is pending work, not a current guarantee.
 type Inbox interface {
 	// Admit agrega p al input pendiente de sessionID con la entrega d.
 	Admit(ctx context.Context, sessionID string, p Prompt, d Delivery) error
