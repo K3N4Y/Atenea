@@ -191,7 +191,7 @@ func (m Model) tokenUsageLabel() string {
 	if m.usage == nil {
 		return ""
 	}
-	input := formatTokenCount(m.usage.InputTokens)
+	input := formatTokenCount(m.usage.TotalInputTokens())
 	output := formatTokenCount(m.usage.OutputTokens)
 	if m.liveUsage {
 		input = "~" + input

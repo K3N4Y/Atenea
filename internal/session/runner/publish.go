@@ -72,9 +72,16 @@ func (p *Publisher) Publish(ctx context.Context, ev llm.Event) error {
 	defer p.mu.Unlock()
 	switch ev.Kind {
 	case llm.StepStarted:
+		// The estimate covers the whole request, cached prefix included, so it fills
+		// both the billed field and the normalized total. Leaving
+		// CacheableInputTokens zero here would make the live context reading collapse
+		// to the estimate's uncached share, which the estimator never computed.
 		return p.emit(ctx, session.SessionEvent{
-			Kind:  session.KindStepStarted,
-			Usage: &session.Usage{InputTokens: p.estimatedInputTokens},
+			Kind: session.KindStepStarted,
+			Usage: &session.Usage{
+				InputTokens:          p.estimatedInputTokens,
+				CacheableInputTokens: p.estimatedInputTokens,
+			},
 		})
 	case llm.StepRetrying:
 		return p.emit(ctx, session.SessionEvent{Kind: session.KindStepRetrying, Text: ev.Text})

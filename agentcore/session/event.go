@@ -137,10 +137,23 @@ type SessionEvent struct {
 // purpose: the durable contract does not depend on the provider contract, so the
 // producer copies the fields when crossing the boundary.
 type Usage struct {
+	// InputTokens is uncached input as the provider billed it. Under prompt
+	// caching it is only the suffix after the last cache breakpoint, not the size
+	// of the prompt — read TotalInputTokens for that.
 	InputTokens          int
 	OutputTokens         int
 	ReasoningTokens      int
 	CacheReadTokens      int
 	CacheWriteTokens     int
 	CacheableInputTokens int
+}
+
+// TotalInputTokens is the whole prompt the turn sent, cached parts included: the
+// number to show as context used and to compare against a context window. It
+// mirrors llm.Usage.TotalInputTokens; see it for why InputTokens alone undercounts.
+func (u Usage) TotalInputTokens() int {
+	if u.CacheableInputTokens > 0 {
+		return u.CacheableInputTokens
+	}
+	return u.InputTokens
 }

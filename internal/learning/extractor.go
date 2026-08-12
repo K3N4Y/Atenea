@@ -42,7 +42,7 @@ func (Extractor) Extract(ctx context.Context, p corellm.Provider, model, runID s
 			return Extraction{}, errors.New(ev.Text)
 		case corellm.StepEnded:
 			if ev.Usage != nil {
-				usage = Usage{ev.Usage.InputTokens, ev.Usage.OutputTokens, ev.Usage.ReasoningTokens}
+				usage = Usage{ev.Usage.TotalInputTokens(), ev.Usage.OutputTokens, ev.Usage.ReasoningTokens}
 			}
 		case corellm.ToolCall:
 			return Extraction{}, errors.New("learning provider attempted to call a tool")

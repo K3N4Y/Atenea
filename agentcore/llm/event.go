@@ -55,6 +55,10 @@ type Event struct {
 
 // Usage are the tokens reported when the turn closes (StepEnded).
 type Usage struct {
+	// InputTokens is what the provider bills as uncached input. Under Anthropic
+	// prompt caching this is ONLY the suffix after the last cache breakpoint, so
+	// it is not the size of the prompt that was sent — read TotalInputTokens for
+	// that.
 	InputTokens      int
 	OutputTokens     int
 	ReasoningTokens  int
@@ -63,4 +67,20 @@ type Usage struct {
 	// CacheableInputTokens is the provider-normalized logical input used as the
 	// cache hit-rate denominator. It includes cached input exactly once.
 	CacheableInputTokens int
+}
+
+// TotalInputTokens is the whole prompt the turn sent, cached parts included: the
+// number to show as context used and to compare against a context window.
+//
+// It reads CacheableInputTokens, which every adapter normalizes to the logical
+// input counting cached tokens exactly once. InputTokens alone is wrong here for
+// any adapter that sets cache breakpoints: Anthropic reports it as the suffix
+// after the last breakpoint, which collapses to a handful of tokens on a cache
+// hit. A usage that reports no cache accounting at all falls back to
+// InputTokens, which is then the whole input by definition.
+func (u Usage) TotalInputTokens() int {
+	if u.CacheableInputTokens > 0 {
+		return u.CacheableInputTokens
+	}
+	return u.InputTokens
 }

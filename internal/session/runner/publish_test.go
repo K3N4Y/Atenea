@@ -128,6 +128,12 @@ func TestPublisher_StepStartedCarriesEstimatedInputTokens(t *testing.T) {
 	if got.Kind != session.KindStepStarted || got.Usage == nil || got.Usage.InputTokens != 1_234 {
 		t.Fatalf("Step.Started = %+v, want estimated input tokens 1234", got)
 	}
+	// The estimate covers the whole request, so it is also the normalized total a
+	// consumer reads as context used. Leaving it zero makes the live reading
+	// collapse to nothing while the turn streams.
+	if got.Usage.TotalInputTokens() != 1_234 {
+		t.Fatalf("Step.Started TotalInputTokens() = %d, want the estimate 1234", got.Usage.TotalInputTokens())
+	}
 }
 
 // TestPublisher_ReasoningBuffersLikeText alimenta un bloque de razonamiento

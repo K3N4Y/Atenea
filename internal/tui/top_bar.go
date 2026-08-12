@@ -81,7 +81,7 @@ func (m Model) topBarContext() string {
 	if m.usage == nil {
 		return ""
 	}
-	used := formatTokenCount(m.usage.InputTokens)
+	used := formatTokenCount(m.usage.TotalInputTokens())
 	if window := m.contextWindowLabel(); window != "" {
 		return metadataStyle.Render(used + " / " + window)
 	}

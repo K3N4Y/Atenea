@@ -244,7 +244,7 @@ func (p *budgetProvider) Stream(ctx context.Context, req llm.Request) (<-chan ll
 		defer close(out)
 		for ev := range in {
 			if ev.Kind == llm.StepEnded && ev.Usage != nil {
-				total := ev.Usage.InputTokens + ev.Usage.OutputTokens + ev.Usage.ReasoningTokens
+				total := ev.Usage.TotalInputTokens() + ev.Usage.OutputTokens + ev.Usage.ReasoningTokens
 				p.usage.tokens.Add(int64(total))
 				if p.onProgress != nil {
 					p.onProgress()

@@ -179,6 +179,57 @@ func TestModel_TopBarContextUsesTheWindowTheAdapterDeclares(t *testing.T) {
 	}
 }
 
+// TestModel_TopBarContextCountsTheCachedPrefix pins the bug that made the
+// reading jump between absurd values ("2 / 200k", "4 / 200k") between turns:
+// under Anthropic prompt caching, which the adapter enables on every request,
+// InputTokens is only the suffix after the last cache breakpoint. The context
+// used is the whole prompt — cache reads and writes included — so the label must
+// stay stable across a cache write followed by a cache hit instead of collapsing
+// to the handful of uncached tokens.
+func TestModel_TopBarContextCountsTheCachedPrefix(t *testing.T) {
+	const model = "claude-opus-4-8"
+	m := NewModel(declaringAgent(model, 200_000), "s1", nil).
+		WithWorkspace("main", "~/x").
+		WithStatus("build", model)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 20})
+
+	// The turn that writes the prefix to cache: 54k of it, 4 uncached tokens.
+	m = apply(t, m, EventMsg{Kind: session.KindStepEnded, Usage: &session.Usage{
+		InputTokens: 4, CacheWriteTokens: 54_000, CacheableInputTokens: 54_004,
+	}})
+	if first := lineWith(t, ansi.Strip(m.View()), "200k"); !strings.Contains(first, "54k / 200k") {
+		t.Fatalf("a cache write must count as context used: want %q; first line = %q", "54k / 200k", first)
+	}
+
+	// The next turn reads that prefix back and grows past the next k boundary.
+	// The reading must grow with the conversation; a collapse to the 2 uncached
+	// tokens is the bug.
+	m = apply(t, m, EventMsg{Kind: session.KindStepEnded, Usage: &session.Usage{
+		InputTokens: 2, CacheReadTokens: 54_004, CacheWriteTokens: 1_800, CacheableInputTokens: 55_806,
+	}})
+	if first := lineWith(t, ansi.Strip(m.View()), "200k"); !strings.Contains(first, "55k / 200k") {
+		t.Fatalf("a cache hit must not shrink the context used: want %q; first line = %q", "55k / 200k", first)
+	}
+}
+
+// TestModel_TopBarContextFallsBackToBilledInputWithoutCacheAccounting: an
+// adapter that reports no cache accounting at all (CacheableInputTokens zero)
+// still has its whole input in InputTokens. The bar must show it rather than a
+// zero read off the normalized field.
+func TestModel_TopBarContextFallsBackToBilledInputWithoutCacheAccounting(t *testing.T) {
+	const model = "local/llama"
+	m := NewModel(declaringAgent(model, 200_000), "s1", nil).
+		WithWorkspace("main", "~/x").
+		WithStatus("build", model)
+
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 20})
+	m = apply(t, m, EventMsg{Kind: session.KindStepEnded, Usage: &session.Usage{InputTokens: 12_000}})
+
+	if first := lineWith(t, ansi.Strip(m.View()), "200k"); !strings.Contains(first, "12k / 200k") {
+		t.Fatalf("without cache accounting the bar must show billed input: want %q; first line = %q", "12k / 200k", first)
+	}
+}
+
 func TestModel_TopBarContextFormatsMillionTokenWindowAsM(t *testing.T) {
 	const model = "openai/gpt-4.1"
 	m := NewModel(declaringAgent(model, 1_000_000), "s1", nil).
