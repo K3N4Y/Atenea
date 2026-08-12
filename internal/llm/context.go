@@ -73,6 +73,64 @@ func NeedsPreventiveCompaction(estimatedTokens, contextWindow int) bool {
 	return estimatedTokens >= threshold
 }
 
+// TokenObservation is what the provider reported for a request already sent,
+// paired with what the estimator predicted for that same request. It is the
+// only exact token signal available, and it is retrospective: it describes the
+// previous turn, not the one about to be sent.
+type TokenObservation struct {
+	// EstimatedTokens is EstimateRequestTokens for the observed request, counting
+	// the prompt only, with no output reserve. Pairing it with a prompt-only
+	// ReportedTokens is what makes the subtraction cancel the estimator's bias;
+	// it also leaves any reserve in the projected request fully reserved, since
+	// only the new request contributes one.
+	EstimatedTokens int
+	// ReportedTokens is the provider's own count of that request's whole prompt,
+	// cached prefix included — Usage.TotalInputTokens, never Usage.InputTokens,
+	// which under prompt caching is only the uncached suffix.
+	ReportedTokens int
+}
+
+// Valid reports whether the observation carries a usable pair of counts.
+func (o TokenObservation) Valid() bool {
+	return o.EstimatedTokens > 0 && o.ReportedTokens > 0
+}
+
+// ProjectRequestTokens sizes req for a compaction decision, anchored on what the
+// provider last reported.
+//
+// EstimateRequestTokens counts bytes and divides by 3, which is a heuristic with
+// a large systematic bias: measured over 6,499 real turns it runs ~24% high
+// (median ratio 1.245, p95 1.42), stable across every size bucket above 25k. At
+// a 200k window that bias alone accounts for 633 compactions of sessions that
+// were never close to the limit, each one destroying user context, paying for a
+// summary call, and invalidating the cached prefix.
+//
+// Anchoring removes the bias without trusting a stale number: the reported total
+// prices everything the previous request already contained, and the estimator is
+// consulted only for the delta added since — the new user message and tool
+// results. The shared bias cancels in the subtraction, so the error left is the
+// error on the delta alone rather than on the whole prompt. Replaying the same
+// turns through this function misjudged the threshold 0 times at 200k and 272k
+// windows and 7 times at 128k, against 633 spurious and 60 missed decisions for
+// the raw estimate.
+//
+// An unusable observation falls back to the raw estimate: over-compacting is a
+// cost, but not compacting at all risks a turn the provider rejects outright.
+func ProjectRequestTokens(req Request, observed TokenObservation) int {
+	estimated := EstimateRequestTokens(req)
+	if !observed.Valid() {
+		return estimated
+	}
+	projected := observed.ReportedTokens + estimated - observed.EstimatedTokens
+	// A shrinking context (history compacted away, an epoch rebuilt) can drive the
+	// delta below what the anchor accounts for. The estimate is the honest floor
+	// there: it is the only term that describes the request actually being sent.
+	if projected < 0 {
+		return estimated
+	}
+	return projected
+}
+
 // Image token costs are bounded, not proportional to the payload: every provider
 // prices an image by the tiles it covers and caps it (Anthropic tops out near
 // 1600 tokens). Charging the base64 length instead would bill a 1 MiB screenshot

@@ -55,6 +55,71 @@ func runCompactionStoreContract(t *testing.T, factory compactionStoreFactory) {
 		}
 	})
 
+	// The estimate lives on Step.Started and the provider's count on the Step.Ended
+	// that closes the same turn, so a store's runner projection can hand the
+	// compaction decision an exact anchor instead of the estimator's biased guess.
+	t.Run("runner context reports the last completed turn's token pair", func(t *testing.T) {
+		store := factory(t)
+		ctx := context.Background()
+		appendCompactionMessage(t, store, ctx, "s1", Message{ID: "u1", Role: RoleUser, Text: "first"})
+		appendTokenTurn(t, store, ctx, "s1", 9_000, 7_000)
+		appendTokenTurn(t, store, ctx, "s1", 12_000, 9_600)
+
+		got, err := store.ContextForRunner(ctx, "s1")
+		if err != nil {
+			t.Fatalf("ContextForRunner: %v", err)
+		}
+		if want := (TokenObservation{EstimatedTokens: 12_000, ReportedTokens: 9_600}); got.LastTokens != want {
+			t.Fatalf("LastTokens = %+v, want the newest completed pair %+v", got.LastTokens, want)
+		}
+	})
+
+	// A Step.Ended must be paired only with the Step.Started of its own turn.
+	// Carrying an estimate across an interrupted turn, or accepting a reported count
+	// with no estimate to pair it with, anchors the decision on two different
+	// requests — and the counts of a large abandoned turn are exactly the ones that
+	// would misjudge the window.
+	t.Run("runner context pairs counts only within one turn", func(t *testing.T) {
+		store := factory(t)
+		ctx := context.Background()
+		appendCompactionMessage(t, store, ctx, "s1", Message{ID: "u1", Role: RoleUser, Text: "first"})
+		appendTokenTurn(t, store, ctx, "s1", 9_000, 7_000)
+		// A turn that started and was interrupted before any Step.Ended, followed by
+		// an orphan Step.Ended: neither may contribute, alone or combined.
+		mustAppend(t, store, ctx, "s1", SessionEvent{
+			Kind:  KindStepStarted,
+			Usage: &Usage{InputTokens: 400_000, CacheableInputTokens: 400_000},
+		})
+		mustAppend(t, store, ctx, "s1", SessionEvent{Kind: KindStepFailed, Text: "interrupted"})
+		mustAppend(t, store, ctx, "s1", SessionEvent{
+			Kind:  KindStepEnded,
+			Usage: &Usage{InputTokens: 12, CacheableInputTokens: 380_000},
+		})
+
+		got, err := store.ContextForRunner(ctx, "s1")
+		if err != nil {
+			t.Fatalf("ContextForRunner: %v", err)
+		}
+		if want := (TokenObservation{EstimatedTokens: 9_000, ReportedTokens: 7_000}); got.LastTokens != want {
+			t.Fatalf("LastTokens = %+v, want the last complete pair %+v", got.LastTokens, want)
+		}
+	})
+
+	// A session with no completed turn has no anchor, and the zero value is what
+	// tells the decision to fall back to the estimate alone.
+	t.Run("runner context reports no token pair before the first turn", func(t *testing.T) {
+		store := factory(t)
+		ctx := context.Background()
+		appendCompactionMessage(t, store, ctx, "s1", Message{ID: "u1", Role: RoleUser, Text: "first"})
+
+		got, err := store.ContextForRunner(ctx, "s1")
+		if err != nil {
+			t.Fatalf("ContextForRunner: %v", err)
+		}
+		if (got.LastTokens != TokenObservation{}) {
+			t.Fatalf("LastTokens = %+v, want the zero value", got.LastTokens)
+		}
+	})
 	t.Run("generic append rejects compaction events", func(t *testing.T) {
 		store := factory(t)
 		ctx := context.Background()
@@ -745,6 +810,29 @@ func appendCompactionMessage(t *testing.T, store Store, ctx context.Context, ses
 		t.Fatalf("AppendEvent: %v", err)
 	}
 	return seq
+}
+
+func mustAppend(t *testing.T, store Store, ctx context.Context, sessionID string, ev SessionEvent) {
+	t.Helper()
+	if _, err := store.AppendEvent(ctx, sessionID, ev); err != nil {
+		t.Fatalf("AppendEvent(%s): %v", ev.Kind, err)
+	}
+}
+
+// appendTokenTurn writes one complete turn's token accounting: the estimate the
+// runner published on Step.Started and the count the provider reported on the
+// Step.Ended that closed it. CacheableInputTokens carries both, since that is the
+// field TotalInputTokens normalizes across adapters.
+func appendTokenTurn(t *testing.T, store Store, ctx context.Context, sessionID string, estimated, reported int) {
+	t.Helper()
+	mustAppend(t, store, ctx, sessionID, SessionEvent{
+		Kind:  KindStepStarted,
+		Usage: &Usage{InputTokens: estimated, CacheableInputTokens: estimated},
+	})
+	mustAppend(t, store, ctx, sessionID, SessionEvent{
+		Kind:  KindStepEnded,
+		Usage: &Usage{InputTokens: 12, CacheReadTokens: reported - 12, CacheableInputTokens: reported},
+	})
 }
 
 func compactionEpoch(t *testing.T, store Store, ctx context.Context, sessionID string) ContextEpoch {

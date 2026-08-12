@@ -114,6 +114,50 @@ type RunnerContext struct {
 	Checkpoint *CompactionCheckpoint
 	Anchor     *Message
 	Messages   []Message
+
+	// LastTokens pairs what the estimator predicted for the most recent request
+	// this session sent with what the provider then reported for it. It is the
+	// calibration anchor for the next compaction decision; the zero value means
+	// no turn has completed yet and the estimate stands alone.
+	LastTokens TokenObservation
+}
+
+// TokenObservation is the estimated/reported token pair of one completed turn.
+// Step.Started carries the estimate and the Step.Ended that closes the same turn
+// carries the provider's count, so a session's durable log already holds it.
+type TokenObservation struct {
+	EstimatedTokens int
+	ReportedTokens  int
+}
+
+// lastTokenObservation reads the newest complete estimate/reported pair from an
+// event log in Seq order. Only a Step.Ended settles a turn, and it is matched
+// with the Step.Started that opened it, so an interrupted turn — a Step.Started
+// with no Step.Ended, or a Step.Failed — contributes nothing rather than pairing
+// counts from two different requests.
+func lastTokenObservation(events []SessionEvent) TokenObservation {
+	var observed, pending TokenObservation
+	for _, event := range events {
+		switch event.Kind {
+		case KindStepStarted:
+			pending = TokenObservation{}
+			if event.Usage != nil {
+				pending.EstimatedTokens = event.Usage.TotalInputTokens()
+			}
+		case KindStepFailed:
+			// The turn died without a reported count. Dropping its estimate here is
+			// what stops a later Step.Ended from pairing with the wrong request.
+			pending = TokenObservation{}
+		case KindStepEnded:
+			if event.Usage != nil && pending.EstimatedTokens > 0 {
+				if reported := event.Usage.TotalInputTokens(); reported > 0 {
+					observed = TokenObservation{EstimatedTokens: pending.EstimatedTokens, ReportedTokens: reported}
+				}
+			}
+			pending = TokenObservation{}
+		}
+	}
+	return observed
 }
 
 func ValidateCompactionCheckpoint(checkpoint CompactionCheckpoint) error {

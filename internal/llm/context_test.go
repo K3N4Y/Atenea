@@ -3,6 +3,7 @@ package llm
 import (
 	"errors"
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -205,5 +206,82 @@ func TestEstimateRequestTokens_ImageCostIsBounded(t *testing.T) {
 	// Bigger images never cost less than smaller ones.
 	if EstimateRequestTokens(image(1024*1024)) < EstimateRequestTokens(image(64*1024)) {
 		t.Fatal("a larger image must not estimate below a smaller one")
+	}
+}
+
+// TestProjectRequestTokens_AnchorsOnTheReportedCountAndPricesOnlyTheDelta is the
+// point of the projection: the estimator's bias applies to the whole prompt, so
+// pricing an unchanged history with it is what produced spurious compactions.
+// Anchoring on the reported count leaves only the newly added bytes estimated.
+func TestProjectRequestTokens_AnchorsOnTheReportedCountAndPricesOnlyTheDelta(t *testing.T) {
+	previous := Request{Messages: []Message{TextMessage("user", strings.Repeat("x", 30_000))}}
+	// The provider priced that same prompt well below the estimate, as real
+	// adapters do: the estimator divides bytes by 3 and runs ~24% high.
+	observed := TokenObservation{EstimatedTokens: EstimateRequestTokens(previous), ReportedTokens: 8_000}
+
+	grown := previous
+	grown.Messages = append(append([]Message{}, previous.Messages...), TextMessage("user", strings.Repeat("y", 3_000)))
+	delta := EstimateRequestTokens(grown) - observed.EstimatedTokens
+
+	if got, want := ProjectRequestTokens(grown, observed), 8_000+delta; got != want {
+		t.Errorf("ProjectRequestTokens = %d, want the reported anchor plus the estimated delta %d", got, want)
+	}
+	// The whole point: the projection must stay near the provider's scale rather
+	// than the estimator's inflated one.
+	if projected := ProjectRequestTokens(grown, observed); projected >= EstimateRequestTokens(grown) {
+		t.Errorf("projection %d must sit below the raw estimate %d it corrects", projected, EstimateRequestTokens(grown))
+	}
+}
+
+// TestProjectRequestTokens_ReservedOutputSurvivesTheAnchor: the observation is
+// prompt-only, so a request that reserves output must carry that reserve into the
+// projection. Cancelling it would under-count every turn by its own output.
+func TestProjectRequestTokens_ReservedOutputSurvivesTheAnchor(t *testing.T) {
+	req := Request{Messages: []Message{TextMessage("user", strings.Repeat("x", 9_000))}}
+	observed := TokenObservation{EstimatedTokens: EstimateRequestTokens(req), ReportedTokens: 2_400}
+
+	reserved := req
+	reserved.MaxOutputTokens = 4_096
+	got := ProjectRequestTokens(reserved, observed)
+	if want := 2_400 + 4_096; got != want {
+		t.Errorf("ProjectRequestTokens with a reserve = %d, want %d (anchor plus the full reserve)", got, want)
+	}
+}
+
+// TestProjectRequestTokens_FallsBackToTheEstimateWithoutAUsableObservation: no
+// completed turn, or a provider that reported nothing, must leave the previous
+// behavior intact rather than projecting from a zero anchor — which would read as
+// a nearly empty context and never compact.
+func TestProjectRequestTokens_FallsBackToTheEstimateWithoutAUsableObservation(t *testing.T) {
+	req := Request{Messages: []Message{TextMessage("user", strings.Repeat("x", 60_000))}}
+	estimate := EstimateRequestTokens(req)
+
+	for name, observed := range map[string]TokenObservation{
+		"no turn completed yet":  {},
+		"provider reported none": {EstimatedTokens: 12_000, ReportedTokens: 0},
+		"estimate missing":       {EstimatedTokens: 0, ReportedTokens: 12_000},
+		"negative counts":        {EstimatedTokens: -5, ReportedTokens: -5},
+	} {
+		if got := ProjectRequestTokens(req, observed); got != estimate {
+			t.Errorf("%s: ProjectRequestTokens = %d, want the raw estimate %d", name, got, estimate)
+		}
+	}
+}
+
+// TestProjectRequestTokens_ShrunkContextFallsBackToTheEstimate: compaction and
+// epoch rebuilds shrink the request below what the anchor priced, which drives
+// the delta negative. The estimate is the only term that still describes the
+// request being sent, so a nonsensical projection must never be returned.
+func TestProjectRequestTokens_ShrunkContextFallsBackToTheEstimate(t *testing.T) {
+	before := Request{Messages: []Message{TextMessage("user", strings.Repeat("x", 300_000))}}
+	observed := TokenObservation{EstimatedTokens: EstimateRequestTokens(before), ReportedTokens: 80_000}
+
+	compacted := Request{Messages: []Message{TextMessage("user", "a short summary")}}
+	got := ProjectRequestTokens(compacted, observed)
+	if want := EstimateRequestTokens(compacted); got != want {
+		t.Errorf("ProjectRequestTokens after a shrink = %d, want the estimate %d", got, want)
+	}
+	if got <= 0 {
+		t.Errorf("ProjectRequestTokens = %d, want a positive size for a real request", got)
 	}
 }

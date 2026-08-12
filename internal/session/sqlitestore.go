@@ -783,7 +783,9 @@ func (s *SQLiteStore) ContextForRunner(ctx context.Context, sessionID string) (r
 		if err != nil {
 			return RunnerContext{}, err
 		}
-		result.Messages = foldMessages(EffectiveEvents(events), result.Epoch.BaselineSeq)
+		effective := EffectiveEvents(events)
+		result.LastTokens = lastTokenObservation(effective)
+		result.Messages = foldMessages(effective, result.Epoch.BaselineSeq)
 		return result, tx.Commit()
 	}
 
@@ -803,6 +805,7 @@ func (s *SQLiteStore) ContextForRunner(ctx context.Context, sessionID string) (r
 		return RunnerContext{}, err
 	}
 	effective := EffectiveEvents(events)
+	result.LastTokens = lastTokenObservation(effective)
 	result.Messages = foldMessages(effective, checkpoint.PreservedFromSeq-1)
 	if checkpoint.AnchorUserSeq <= result.Epoch.BaselineSeq {
 		for _, message := range foldMessages(effective, 0) {

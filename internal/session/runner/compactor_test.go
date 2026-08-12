@@ -202,7 +202,7 @@ type alwaysNeedsCompaction struct {
 	reasons []session.CompactionReason
 }
 
-func (c *alwaysNeedsCompaction) NeedsCompaction(llm.Request) bool { return true }
+func (c *alwaysNeedsCompaction) NeedsCompaction(llm.Request, llm.TokenObservation) bool { return true }
 func (c *alwaysNeedsCompaction) Compact(_ context.Context, _ string, reason session.CompactionReason) error {
 	c.calls++
 	c.reasons = append(c.reasons, reason)
@@ -255,14 +255,14 @@ func TestContextCompactor_NeedsCompactionAsksTheAdapterServingTheModel(t *testin
 	served := NewContextCompactor(store, newDeclaringProvider(llm.Capabilities{
 		ContextWindows: map[string]int{"served": 100_000},
 	}))
-	if !served.NeedsCompaction(big) {
+	if !served.NeedsCompaction(big, llm.TokenObservation{}) {
 		t.Fatal("a request past 80% of the declared window must compact")
 	}
 
 	unserved := NewContextCompactor(store, newDeclaringProvider(llm.Capabilities{
 		ContextWindows: map[string]int{"other": 100_000},
 	}))
-	if unserved.NeedsCompaction(big) {
+	if unserved.NeedsCompaction(big, llm.TokenObservation{}) {
 		t.Fatal("a model the adapter does not serve has no window; preventive compaction must stay off")
 	}
 }
@@ -272,7 +272,7 @@ func TestContextCompactor_NeedsCompactionAsksTheAdapterServingTheModel(t *testin
 // must not be read as one that declared an empty catalog.
 func TestContextCompactor_NeedsCompactionIsOffWhenTheAdapterDeclaresNothing(t *testing.T) {
 	compactor := NewContextCompactor(session.NewMemoryStore(), llm.NewFakeProvider())
-	if compactor.NeedsCompaction(llm.Request{Model: "served", System: strings.Repeat("x", 300_000)}) {
+	if compactor.NeedsCompaction(llm.Request{Model: "served", System: strings.Repeat("x", 300_000)}, llm.TokenObservation{}) {
 		t.Fatal("an adapter that declares nothing gives no window to compact against")
 	}
 }
@@ -288,14 +288,89 @@ func TestContextCompactor_NeedsCompactionReservesTheAdapterDefaultOutput(t *test
 	windows := map[string]int{"served": 100_000}
 
 	withoutCeiling := NewContextCompactor(store, newDeclaringProvider(llm.Capabilities{ContextWindows: windows}))
-	if withoutCeiling.NeedsCompaction(request) {
+	if withoutCeiling.NeedsCompaction(request, llm.TokenObservation{}) {
 		t.Fatal("precondition: the request alone must sit under the preventive threshold")
 	}
 
 	withCeiling := NewContextCompactor(store, newDeclaringProvider(llm.Capabilities{
 		ContextWindows: windows, DefaultMaxOutputTokens: 8192,
 	}))
-	if !withCeiling.NeedsCompaction(request) {
+	if !withCeiling.NeedsCompaction(request, llm.TokenObservation{}) {
 		t.Fatal("the ceiling the adapter applies on its own must be reserved in the estimate")
+	}
+}
+
+// observingCompactor records the token observation the runner hands to each
+// preventive decision, which is the wiring under test.
+type observingCompactor struct {
+	mu       sync.Mutex
+	observed []llm.TokenObservation
+}
+
+func (c *observingCompactor) NeedsCompaction(_ llm.Request, observed llm.TokenObservation) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.observed = append(c.observed, observed)
+	return false
+}
+
+func (c *observingCompactor) Compact(context.Context, string, session.CompactionReason) error {
+	return session.ErrNoCompactableHistory
+}
+
+func (c *observingCompactor) seen() []llm.TokenObservation {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]llm.TokenObservation{}, c.observed...)
+}
+
+// TestRunner_PreventiveDecisionReceivesTheProvidersReportedCount: the estimator
+// runs ~24% high on real traffic, so the decision has to see what the provider
+// actually charged for the previous turn. The first turn has no anchor and must
+// pass the zero value; the next one must carry the reported count, read as the
+// normalized total rather than the uncached suffix InputTokens reports.
+func TestRunner_PreventiveDecisionReceivesTheProvidersReportedCount(t *testing.T) {
+	store := session.NewMemoryStore()
+	ctx := context.Background()
+	seedManualCompactionHistory(t, store)
+
+	// A turn whose usage looks like a cached Anthropic response: InputTokens alone
+	// is a tiny suffix, and the real prompt size lives in the cache fields.
+	provider := &compactionProvider{events: []llm.Event{
+		{Kind: llm.StepStarted},
+		{
+			Kind:  llm.StepEnded,
+			Usage: &llm.Usage{InputTokens: 4, CacheReadTokens: 54_000, CacheableInputTokens: 54_004},
+		},
+	}}
+	r := newCompactionRunner(t, store, provider)
+	compactor := &observingCompactor{}
+	r.setCompactor(compactor)
+
+	if _, err := r.runTurn(ctx, "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.runTurn(ctx, "s1"); err != nil {
+		t.Fatal(err)
+	}
+
+	seen := compactor.seen()
+	if len(seen) != 2 {
+		t.Fatalf("preventive decisions = %d, want 2", len(seen))
+	}
+	if (seen[0] != llm.TokenObservation{}) {
+		t.Errorf("first decision observed %+v, want the zero value before any turn completed", seen[0])
+	}
+	if seen[1].ReportedTokens != 54_004 {
+		t.Errorf("second decision ReportedTokens = %d, want the provider's normalized total 54004", seen[1].ReportedTokens)
+	}
+	if seen[1].EstimatedTokens <= 0 {
+		t.Errorf("second decision EstimatedTokens = %d, want the estimate published for that turn", seen[1].EstimatedTokens)
+	}
+	// The pair only cancels the estimator's bias if both terms describe the same
+	// request, so the estimate must be the one published for the observed turn.
+	if seen[1].EstimatedTokens != llm.EstimateRequestTokens(provider.capturedRequest(0)) {
+		t.Errorf("second decision EstimatedTokens = %d, want the estimate of the request that was actually sent %d",
+			seen[1].EstimatedTokens, llm.EstimateRequestTokens(provider.capturedRequest(0)))
 	}
 }

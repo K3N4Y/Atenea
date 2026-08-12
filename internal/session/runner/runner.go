@@ -63,8 +63,12 @@ var defaultTransientRetryDelays = []time.Duration{time.Second, 2 * time.Second, 
 // Compactor decides whether a Request exceeds the model context and compacts
 // durable session history so the next attempt fits. A nil Compactor disables it.
 type Compactor interface {
-	// NeedsCompaction reports whether req must be compacted before calling the provider.
-	NeedsCompaction(req llm.Request) bool
+	// NeedsCompaction reports whether req must be compacted before calling the
+	// provider. observed carries the estimated/reported token pair of the last
+	// completed turn, which anchors the decision on the provider's own count
+	// instead of the estimator's bias; its zero value means no turn has completed
+	// yet and the estimate is all there is to go on.
+	NeedsCompaction(req llm.Request, observed llm.TokenObservation) bool
 	// Compact reduces durable session history so the next request fits. It must
 	// make progress: NeedsCompaction must eventually become false. The reason is
 	// recorded on the checkpoint: preventive when the estimate crossed the

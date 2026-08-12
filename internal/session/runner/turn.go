@@ -187,7 +187,15 @@ func (r *Runner) runTurnAttempt(ctx context.Context, sessionID string, final boo
 	// is sent anyway: the estimate is an approximation, and refusing a turn the
 	// provider might still accept would be worse than letting it answer. The
 	// provider's own rejection is handled reactively after the stream.
-	if r.compactor != nil && r.compactor.NeedsCompaction(req) {
+	// The observation is the last completed turn's estimate/reported pair, which
+	// calibrates away the estimator's systematic bias. It is empty until a turn
+	// completes, and for a store without the compaction projection, which leaves
+	// the raw estimate deciding — the behavior before calibration existed.
+	observed := llm.TokenObservation{
+		EstimatedTokens: runnerContext.LastTokens.EstimatedTokens,
+		ReportedTokens:  runnerContext.LastTokens.ReportedTokens,
+	}
+	if r.compactor != nil && r.compactor.NeedsCompaction(req, observed) {
 		switch err := r.compactor.Compact(ctx, sessionID, session.CompactionPreventive); {
 		case err == nil:
 			return false, errContinueAfterCompaction

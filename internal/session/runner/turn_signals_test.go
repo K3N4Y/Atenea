@@ -226,7 +226,7 @@ type fakeCompactor struct {
 
 // NeedsCompaction pide compactar mientras no se haya compactado todavia; tras el
 // primer Compact deja de pedirlo, asi el retry post-compaction converge.
-func (c *fakeCompactor) NeedsCompaction(req llm.Request) bool {
+func (c *fakeCompactor) NeedsCompaction(req llm.Request, observed llm.TokenObservation) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return !c.compacted
@@ -365,7 +365,7 @@ type overflowCompactor struct {
 	err     error // devuelto por Compact cuando no es nil
 }
 
-func (c *overflowCompactor) NeedsCompaction(llm.Request) bool { return false }
+func (c *overflowCompactor) NeedsCompaction(llm.Request, llm.TokenObservation) bool { return false }
 
 func (c *overflowCompactor) Compact(_ context.Context, _ string, reason session.CompactionReason) error {
 	c.mu.Lock()

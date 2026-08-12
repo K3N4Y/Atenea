@@ -212,7 +212,8 @@ func (s *MemoryStore) ContextForRunner(ctx context.Context, sessionID string) (R
 	events = EffectiveEvents(events)
 	epoch := s.epochs[sessionID]
 	result := RunnerContext{
-		Epoch: epoch,
+		Epoch:      epoch,
+		LastTokens: lastTokenObservation(events),
 	}
 	checkpoint, ok := s.checkpoints[sessionID]
 	if !ok {
