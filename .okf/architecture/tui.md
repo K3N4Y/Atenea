@@ -458,12 +458,13 @@ each consuming a width or flag from `Layout`.
  resolves via the gate with the `SessionID` of the EVENT (a surface
  request from a subagent is resolved with the child id).
 - Enter sends via the active mode path (`Agent.SendPrompt` in build,
- `Agent.SendPlanPrompt` in plan); Ctrl+C cuts and exits. During an active run,
- the first Esc shows `Esc again to cancel` for two seconds and a second Esc
-	 inside that window stops the run without exiting. Any other key or expiration
-	 disarms the confirmation and is processed normally; without an active run Esc
-	 does not arm it. Contextual Esc handling for menus, panels, permissions,
-	 and plan approval retains precedence.
+ `Agent.SendPlanPrompt` in plan). Esc (cancel the run) and Ctrl+C (cut and
+	 exit) share one confirmation: the first press shows `Esc again to cancel`
+	 or `Ctrl+C again to quit` for two seconds and only a second press of the
+	 same key performs the action. Any other key or the expiration disarms it
+	 and is processed normally, the two keys never confirm each other, and Esc
+	 does not arm without an active run. Contextual Esc handling for menus,
+	 panels, permissions, and plan approval retains precedence.
  Only a `RunDoneMsg` matching the active `sessionID + runID` turns off the work
  flag, so a late close from a canceled run is ignored. `Ctrl+J` inserts a
  newline without

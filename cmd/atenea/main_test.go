@@ -122,9 +122,7 @@ func TestTUI_PromptHistorySurvivesRestartUnderPTY(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForPTYTextAfter(t, firstOutput, beforeSubmit, "Hello from atenea.")
-	if _, err := firstTerminal.Write([]byte("\x03")); err != nil {
-		t.Fatal(err)
-	}
+	quitPTY(t, firstTerminal, firstOutput)
 	waitForPTYExit(t, firstDone)
 	_ = firstTerminal.Close()
 	_ = firstCmd.Wait()
@@ -137,9 +135,7 @@ func TestTUI_PromptHistorySurvivesRestartUnderPTY(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForPTYTextAfter(t, secondOutput, before, "mensaje persistente")
-	if _, err := secondTerminal.Write([]byte("\x03")); err != nil {
-		t.Fatal(err)
-	}
+	quitPTY(t, secondTerminal, secondOutput)
 	waitForPTYExit(t, secondDone)
 }
 
@@ -175,9 +171,7 @@ func TestTUI_DragAssistantTextCopiesSelectionUnderPTY(t *testing.T) {
 	}
 	waitForPTYRawAfter(t, output, before, "\x1b]52;c;SGVsbG8=\a")
 	waitForPTYTextAfter(t, output, before, "Copied to clipboard")
-	if _, err := terminal.Write([]byte("\x03")); err != nil {
-		t.Fatal(err)
-	}
+	quitPTY(t, terminal, output)
 	waitForPTYExit(t, done)
 }
 
@@ -301,9 +295,7 @@ func TestTUI_StartsFreshSessionOnLaunchUnderPTY(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForPTYTextAfter(t, firstOutput, beforeSubmit, "Hello from atenea.")
-	if _, err := firstTerminal.Write([]byte("\x03")); err != nil {
-		t.Fatal(err)
-	}
+	quitPTY(t, firstTerminal, firstOutput)
 	waitForPTYExit(t, firstDone)
 	_ = firstTerminal.Close()
 	_ = firstCmd.Wait()
@@ -316,9 +308,7 @@ func TestTUI_StartsFreshSessionOnLaunchUnderPTY(t *testing.T) {
 	if rendered := ansi.Strip(secondOutput.String()); strings.Contains(rendered, "continuidad tui") {
 		t.Fatalf("a fresh launch must not show transcripts from previous runs:\n%s", rendered)
 	}
-	if _, err := secondTerminal.Write([]byte("\x03")); err != nil {
-		t.Fatal(err)
-	}
+	quitPTY(t, secondTerminal, secondOutput)
 	waitForPTYExit(t, secondDone)
 }
 
@@ -346,9 +336,7 @@ func TestTUI_ResumeCommandOpensPreviousWorkspaceSessionUnderPTY(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForPTYTextAfter(t, firstOutput, beforeFirstSubmit, "Hello from atenea.")
-	if _, err := firstTerminal.Write([]byte("\x03")); err != nil {
-		t.Fatal(err)
-	}
+	quitPTY(t, firstTerminal, firstOutput)
 	waitForPTYExit(t, firstDone)
 	_ = firstTerminal.Close()
 	_ = firstCmd.Wait()
@@ -362,9 +350,7 @@ func TestTUI_ResumeCommandOpensPreviousWorkspaceSessionUnderPTY(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForPTYTextAfter(t, secondOutput, beforeSecondSubmit, "Hello from atenea.")
-	if _, err := secondTerminal.Write([]byte("\x03")); err != nil {
-		t.Fatal(err)
-	}
+	quitPTY(t, secondTerminal, secondOutput)
 	waitForPTYExit(t, secondDone)
 	_ = secondTerminal.Close()
 	_ = secondCmd.Wait()
@@ -381,9 +367,7 @@ func TestTUI_ResumeCommandOpensPreviousWorkspaceSessionUnderPTY(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForPTYTextAfter(t, thirdOutput, before, " demo · plan ─┘")
-	if _, err := thirdTerminal.Write([]byte("\x03")); err != nil {
-		t.Fatal(err)
-	}
+	quitPTY(t, thirdTerminal, thirdOutput)
 	waitForPTYExit(t, thirdDone)
 }
 
@@ -432,9 +416,7 @@ func TestTUI_ModelSelectorPersistsSelectionUnderPTY(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForPTYText(t, firstOutput, " old(high) ─┘")
-	if _, err := firstTerminal.Write([]byte("\x03")); err != nil {
-		t.Fatal(err)
-	}
+	quitPTY(t, firstTerminal, firstOutput)
 	if err := firstCmd.Wait(); err != nil {
 		t.Fatal(err)
 	}
@@ -1262,6 +1244,19 @@ func waitForPTYRawAfter(t *testing.T, output *lockedBuffer, previous, want strin
 	t.Fatalf("PTY raw output after interaction did not contain %q:\n%q", want, output.String())
 }
 
+// quitPTY sends the double Ctrl+C the TUI requires to exit: the first press
+// only arms the confirmation notice so a stray Ctrl+C cannot discard a draft.
+func quitPTY(t *testing.T, terminal *os.File, output *lockedBuffer) {
+	t.Helper()
+	before := output.String()
+	if _, err := terminal.Write([]byte("\x03")); err != nil {
+		t.Fatal(err)
+	}
+	waitForPTYTextAfter(t, output, before, "Ctrl+C again to quit")
+	if _, err := terminal.Write([]byte("\x03")); err != nil {
+		t.Fatal(err)
+	}
+}
 func stopPTYProcess(cmd *exec.Cmd, terminal *os.File) {
 	if cmd.Process != nil {
 		_ = cmd.Process.Kill()

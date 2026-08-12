@@ -287,8 +287,8 @@ func (m Model) Working() bool {
 func (m Model) resetRunState() Model {
 	m.activeRun = 0
 	m.working = false
-	m.cancelPending = false
-	m.cancelDeadline = time.Time{}
+	m.confirm = confirmNone
+	m.confirmDeadline = time.Time{}
 	return m
 }
 

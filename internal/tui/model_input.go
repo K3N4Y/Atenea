@@ -8,9 +8,24 @@ import (
 	"github.com/K3N4Y/atenea/internal/providerconfig"
 )
 
-const cancelConfirmationWindow = 2 * time.Second
+// confirmWindow is how long a first destructive keypress stays armed waiting
+// for the second one that confirms it.
+const confirmWindow = 2 * time.Second
 
-type cancelConfirmationExpiredMsg struct{ generation uint64 }
+// confirmKind is the destructive action armed by a first keypress. Esc
+// (cancel the run) and Ctrl+C (quit) share this one-shot confirmation instead
+// of acting on a single press: an in-flight turn and the composer draft are
+// too expensive to lose to a mistyped key, and Ctrl+C is the reflex of a user
+// who just selected text with the mouse.
+type confirmKind uint8
+
+const (
+	confirmNone confirmKind = iota
+	confirmCancelRun
+	confirmQuit
+)
+
+type confirmExpiredMsg struct{ generation uint64 }
 
 type imageClipboardMsg struct {
 	data       []byte
@@ -42,13 +57,16 @@ func (m Model) refreshMenu() (Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	armed := m.armedConfirm()
+	m.confirm = confirmNone
 	if msg.Type == tea.KeyCtrlC {
-		m.cancelPending = false
+		if armed != confirmQuit {
+			return m.armConfirm(confirmQuit)
+		}
 		m.stopRun()
 		return m, tea.Quit
 	}
-	confirmCancel := m.cancelPending && time.Now().Before(m.cancelDeadline)
-	m.cancelPending = false
+	confirmCancel := armed == confirmCancelRun
 	switch m.activeInputTarget() {
 	case targetAgentPicker:
 		return m.handleAgentPickerKey(msg)
@@ -116,6 +134,27 @@ func isPageScroll(msg tea.KeyMsg) bool {
 	return msg.Type == tea.KeyPgUp || msg.Type == tea.KeyPgDown
 }
 
+// armedConfirm reports the confirmation still inside its window; an expired one
+// counts as disarmed even if its expiry tick has not arrived yet.
+func (m Model) armedConfirm() confirmKind {
+	if m.confirm == confirmNone || !time.Now().Before(m.confirmDeadline) {
+		return confirmNone
+	}
+	return m.confirm
+}
+
+// armConfirm stages a destructive action so that repeating its key inside
+// confirmWindow performs it, and schedules the expiry that disarms it.
+func (m Model) armConfirm(kind confirmKind) (tea.Model, tea.Cmd) {
+	m.confirm = kind
+	m.confirmDeadline = time.Now().Add(confirmWindow)
+	m.confirmGeneration++
+	generation := m.confirmGeneration
+	return m, tea.Tick(confirmWindow, func(time.Time) tea.Msg {
+		return confirmExpiredMsg{generation: generation}
+	})
+}
+
 func (m Model) pasteImage() (tea.Model, tea.Cmd) {
 	if m.imageClipboard == nil {
 		return m, nil
@@ -156,13 +195,7 @@ func (m Model) composerKey(msg tea.KeyMsg, confirmCancel bool) (tea.Model, tea.C
 			m.stopRun()
 			return m, nil
 		}
-		m.cancelPending = true
-		m.cancelDeadline = time.Now().Add(cancelConfirmationWindow)
-		m.cancelGeneration++
-		generation := m.cancelGeneration
-		return m, tea.Tick(cancelConfirmationWindow, func(time.Time) tea.Msg {
-			return cancelConfirmationExpiredMsg{generation: generation}
-		})
+		return m.armConfirm(confirmCancelRun)
 	case tea.KeyTab:
 		m.planMode = !m.planMode
 		return m, nil

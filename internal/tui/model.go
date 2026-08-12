@@ -36,9 +36,9 @@ type Model struct {
 
 	working bool
 
-	cancelPending    bool
-	cancelDeadline   time.Time
-	cancelGeneration uint64
+	confirm           confirmKind
+	confirmDeadline   time.Time
+	confirmGeneration uint64
 
 	followAgent    bool
 	hasNewActivity bool

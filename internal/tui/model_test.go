@@ -3941,43 +3941,109 @@ func TestModel_PermissionResolvesWithEventSessionID(t *testing.T) {
 	}
 }
 
-func TestModel_CtrlCStopsAndQuits(t *testing.T) {
+// quits reports whether cmd is the quit command. Arming commands are
+// two-second ticks, so only quit-producing commands may ever be executed.
+func quits(t *testing.T, m Model, cmd tea.Cmd) bool {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("cmd = nil, expected either an arming tick or tea.Quit")
+	}
+	if m.confirm != confirmNone {
+		return false
+	}
+	_, ok := cmd().(tea.QuitMsg)
+	return ok
+}
+
+func TestModel_CtrlCRequiresConfirmationBeforeQuitting(t *testing.T) {
 	fake := &fakeAgent{}
 	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("draft")})
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	if _, ok := updated.(Model); !ok {
-		t.Fatalf("Update returned %T, expected tui.Model", updated)
+	m = updated.(Model)
+	if quits(t, m, cmd) {
+		t.Fatal("the first Ctrl+C must not quit the TUI")
+	}
+	if len(fake.stopped) != 0 {
+		t.Fatalf("Stop = %v, the first Ctrl+C must not stop the run", fake.stopped)
+	}
+	if got := m.composer.input.Value(); got != "draft" {
+		t.Fatalf("input = %q, the first Ctrl+C must preserve the draft", got)
+	}
+	if plain := ansi.Strip(m.View()); !strings.Contains(plain, "Ctrl+C again to quit") {
+		t.Fatalf("View() = %q, confirmation is missing below the composer", plain)
+	}
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = updated.(Model)
+	if !quits(t, m, cmd) {
+		t.Fatal("the second Ctrl+C must quit the TUI")
 	}
 	if len(fake.stopped) != 1 || fake.stopped[0] != "s1" {
-		t.Fatalf("Stop = %v, Ctrl+C must call Stop(%q) exactly once", fake.stopped, "s1")
+		t.Fatalf("Stop = %v, the second Ctrl+C must call Stop(%q) exactly once", fake.stopped, "s1")
 	}
-	if cmd == nil {
-		t.Fatalf("cmd = nil, Ctrl+C must return a tea.Cmd producing tea.QuitMsg")
+}
+
+func TestModel_CtrlCConfirmationDisarms(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// A key other than Ctrl+C disarms, so the next Ctrl+C only re-arms.
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	if m.confirm != confirmNone {
+		t.Fatal("a key other than Ctrl+C must disarm the quit confirmation")
 	}
-	if msg := cmd(); msg == nil {
-		t.Fatalf("cmd() = nil, expected tea.QuitMsg")
-	} else if _, ok := msg.(tea.QuitMsg); !ok {
-		t.Fatalf("cmd() = %T, expected tea.QuitMsg", msg)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = updated.(Model)
+	if quits(t, m, cmd) || len(fake.stopped) != 0 {
+		t.Fatalf("Stop = %v, after disarming Ctrl+C must ask for confirmation again", fake.stopped)
 	}
 
-	// With permission pending Ctrl+C still works the same.
-	fake2 := &fakeAgent{}
-	m2 := NewModel(fake2, "s1", nil)
-	m2 = apply(t, m2, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"ls"}`)})
-	m2 = apply(t, m2, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"ls"}`)})
+	// An expired confirmation does not quit either.
+	m = apply(t, m, confirmExpiredMsg{generation: m.confirmGeneration})
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = updated.(Model)
+	if quits(t, m, cmd) {
+		t.Fatal("Ctrl+C after the window expires must start a new confirmation")
+	}
 
-	_, cmd2 := m2.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	if len(fake2.stopped) != 1 || fake2.stopped[0] != "s1" {
-		t.Fatalf("Stop = %v, Ctrl+C with pending permission must call Stop(%q)", fake2.stopped, "s1")
+	// Esc and Ctrl+C do not confirm each other.
+	m.working = true
+	m.activeRun = 1
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = updated.(Model)
+	if quits(t, m, cmd) {
+		t.Fatal("Ctrl+C must not be confirmed by a preceding Esc")
 	}
-	if cmd2 == nil {
-		t.Fatalf("cmd = nil, Ctrl+C with pending permission must return a tea.Cmd producing tea.QuitMsg")
+	if m.confirm != confirmQuit {
+		t.Fatalf("confirm = %v, Ctrl+C after Esc must arm the quit confirmation", m.confirm)
 	}
-	if msg := cmd2(); msg == nil {
-		t.Fatalf("cmd() = nil, expected tea.QuitMsg with pending permission")
-	} else if _, ok := msg.(tea.QuitMsg); !ok {
-		t.Fatalf("cmd() = %T, expected tea.QuitMsg with pending permission", msg)
+}
+
+func TestModel_CtrlCWithPendingPermissionStillConfirms(t *testing.T) {
+	fake := &fakeAgent{}
+	m := NewModel(fake, "s1", nil)
+	m = apply(t, m, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"ls"}`)})
+	m = apply(t, m, EventMsg{Kind: session.KindToolPermissionRequested, CallID: "c1", ToolName: "bash", Input: json.RawMessage(`{"cmd":"ls"}`)})
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = updated.(Model)
+	if quits(t, m, cmd) {
+		t.Fatal("Ctrl+C with pending permission must not quit on the first press")
+	}
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = updated.(Model)
+	if !quits(t, m, cmd) {
+		t.Fatal("the second Ctrl+C with pending permission must quit")
+	}
+	if len(fake.stopped) != 1 || fake.stopped[0] != "s1" {
+		t.Fatalf("Stop = %v, the second Ctrl+C with pending permission must call Stop(%q)", fake.stopped, "s1")
 	}
 }
 
@@ -4029,7 +4095,7 @@ func TestModel_EscConfirmationDisarms(t *testing.T) {
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
-	if m.cancelPending || strings.Contains(ansi.Strip(m.View()), "Esc again to cancel") {
+	if m.confirm != confirmNone || strings.Contains(ansi.Strip(m.View()), "Esc again to cancel") {
 		t.Fatal("a key other than Esc must disarm the confirmation")
 	}
 	if got := m.composer.input.Value(); got != "x" {
@@ -4037,16 +4103,16 @@ func TestModel_EscConfirmationDisarms(t *testing.T) {
 	}
 
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
-	generation := m.cancelGeneration
-	m = apply(t, m, cancelConfirmationExpiredMsg{generation: generation})
+	generation := m.confirmGeneration
+	m = apply(t, m, confirmExpiredMsg{generation: generation})
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
-	if len(fake.stopped) != 0 || !m.cancelPending {
-		t.Fatalf("Stop = %v pending = %v, after Esc expires it should start a new confirmation", fake.stopped, m.cancelPending)
+	if len(fake.stopped) != 0 || m.confirm != confirmCancelRun {
+		t.Fatalf("Stop = %v confirm = %v, after Esc expires it should start a new confirmation", fake.stopped, m.confirm)
 	}
 
 	idle := NewModel(fake, "s1", nil)
 	idle = apply(t, idle, tea.KeyMsg{Type: tea.KeyEsc})
-	if idle.cancelPending {
+	if idle.confirm != confirmNone {
 		t.Fatal("Esc without an active run must not show confirmation")
 	}
 }
@@ -7587,13 +7653,13 @@ func TestModelSessionTransitionsResetDerivedState(t *testing.T) {
 		m.liveUsage = true
 		m.outputBytes, m.reasoningBytes, m.toolInputBytes = 1, 2, 3
 		m.revealing = true
-		m.working, m.activeRun, m.cancelPending = true, 42, true
+		m.working, m.activeRun, m.confirm = true, 42, confirmCancelRun
 		m.composer = m.composer.seedHistory([]string{"stale history"})
 		return m
 	}
 	assertClean := func(t *testing.T, m Model) {
 		t.Helper()
-		if m.usage != nil || m.liveUsage || m.outputBytes != 0 || m.reasoningBytes != 0 || m.toolInputBytes != 0 || m.revealing || m.working || m.activeRun != 0 || m.cancelPending {
+		if m.usage != nil || m.liveUsage || m.outputBytes != 0 || m.reasoningBytes != 0 || m.toolInputBytes != 0 || m.revealing || m.working || m.activeRun != 0 || m.confirm != confirmNone {
 			t.Fatalf("derived state was not reset")
 		}
 	}

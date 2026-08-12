@@ -193,7 +193,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.working = false
 		m.activeRun = 0
-		m.cancelPending = false
+		m.confirm = confirmNone
 		if ev.Err != "" {
 			m = m.appendError(ev.Err)
 		}
@@ -310,9 +310,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mcpPicker.refreshFromAgent(m.agent)
 		}
 		return m, nil
-	case cancelConfirmationExpiredMsg:
-		if ev.generation == m.cancelGeneration {
-			m.cancelPending = false
+	case confirmExpiredMsg:
+		if ev.generation == m.confirmGeneration {
+			m.confirm = confirmNone
 		}
 		return m, nil
 	case spinner.TickMsg:

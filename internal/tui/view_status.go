@@ -84,8 +84,11 @@ func toolReviewsChanges(e entry, p tool.Presentation) bool {
 func (m Model) gitSummaryLine(width, margin int) string {
 	innerWidth := max(width-2*margin, 0)
 	left := ""
-	if m.cancelPending {
+	switch m.armedConfirm() {
+	case confirmCancelRun:
 		left = ansi.Truncate(metadataStyle.Render("Esc again to cancel"), innerWidth, "…")
+	case confirmQuit:
+		left = ansi.Truncate(metadataStyle.Render("Ctrl+C again to quit"), innerWidth, "…")
 	}
 	leftWidth := ansi.StringWidth(left)
 	separatorWidth := 0
