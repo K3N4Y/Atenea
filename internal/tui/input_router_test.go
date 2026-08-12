@@ -313,3 +313,33 @@ func TestHandleKey_PermissionGatePgUpStillScrolls(t *testing.T) {
 		t.Fatal("PgUp during the permission gate must scroll the transcript off the tail, not be swallowed")
 	}
 }
+
+// TestHandleKey_PlanGatePgUpStillScrolls pins the same leaf exception for the
+// plan gate: a plan longer than the screen must stay readable while it waits
+// for approval.
+func TestHandleKey_PlanGatePgUpStillScrolls(t *testing.T) {
+	m := NewModel(nil, "s1", nil)
+	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 12})
+	for i := 0; i < 30; i++ {
+		m = apply(t, m, EventMsg{Message: &session.Message{
+			ID:   fmt.Sprintf("u%02d", i),
+			Role: session.RoleUser,
+			Text: fmt.Sprintf("message-%02d", i),
+		}})
+	}
+	m = openPlanGate(t, m)
+	if m.activeInputTarget() != targetPlanGate {
+		t.Fatalf("precondition: active target = %v, want targetPlanGate", m.activeInputTarget())
+	}
+	if !m.viewport.AtBottom() {
+		t.Fatal("precondition: viewport must start at the tail")
+	}
+	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyPgUp})
+	got := next.(Model)
+	if got.viewport.AtBottom() {
+		t.Fatal("PgUp during the plan gate must scroll the transcript off the tail, not be swallowed")
+	}
+	if !got.hasPendingPlan() {
+		t.Fatal("PgUp must not resolve the pending plan")
+	}
+}

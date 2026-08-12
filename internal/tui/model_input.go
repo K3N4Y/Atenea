@@ -67,12 +67,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case targetConnectPanel:
 		return m.handleConnectPanelKey(msg)
 	case targetPermissionGate:
-		if msg.Type == tea.KeyPgUp || msg.Type == tea.KeyPgDown {
+		if isPageScroll(msg) {
 			return m.scrollViewport(msg)
 		}
 		perm, _ := m.pendingPermission()
 		return m.handlePermissionKey(msg, perm), nil
 	case targetPlanGate:
+		if isPageScroll(msg) {
+			return m.scrollViewport(msg)
+		}
 		return m.resolvePlanKey(msg)
 	}
 	if msg.Type == tea.KeyRunes && len(msg.Runes) > 1 {
@@ -100,10 +103,17 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.activeRun = handle.RunID
 		return m.resizeViewport(), m.spinner.Tick
 	}
-	if msg.Type == tea.KeyPgUp || msg.Type == tea.KeyPgDown {
+	if isPageScroll(msg) {
 		return m.scrollViewport(msg)
 	}
 	return m.composerKey(msg, confirmCancel)
+}
+
+// isPageScroll reports the keys that must always reach the transcript viewport,
+// even while a modal gate owns the keyboard: an approval prompt is useless if
+// the content being approved cannot be scrolled into view.
+func isPageScroll(msg tea.KeyMsg) bool {
+	return msg.Type == tea.KeyPgUp || msg.Type == tea.KeyPgDown
 }
 
 func (m Model) pasteImage() (tea.Model, tea.Cmd) {
