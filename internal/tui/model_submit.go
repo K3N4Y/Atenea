@@ -15,7 +15,8 @@ import (
 type localCommandKind uint8
 
 const (
-	localCommandMode localCommandKind = iota
+	localCommandHelp localCommandKind = iota
+	localCommandMode
 	localCommandRAH
 	localCommandVariants
 	localCommandCacheStats
@@ -53,6 +54,8 @@ func parseLocalCommand(text string) (localCommand, bool) {
 	trimmed := strings.TrimSpace(text)
 	fields := strings.Fields(trimmed)
 	switch {
+	case trimmed == "/help":
+		return localCommand{kind: localCommandHelp, text: trimmed}, true
 	case trimmed == "/mode", trimmed == "/mode:auto-accept", trimmed == "/mode:ask", trimmed == "/mode:yolo":
 		return localCommand{kind: localCommandMode, text: trimmed}, true
 	case trimmed == "/rah" || strings.HasPrefix(trimmed, "/rah "):
@@ -107,6 +110,10 @@ func (m Model) submitPrompt() (Model, tea.Cmd) {
 
 func (m Model) executeLocalCommand(command localCommand) (Model, tea.Cmd) {
 	switch command.kind {
+	case localCommandHelp:
+		m.composer = m.composer.clear()
+		m.Transcript = m.Transcript.appendNotice(helpNotice)
+		return m.resizeViewport(), nil
 	case localCommandMode:
 		return m.submitModeCommand(command.text)
 	case localCommandRAH:

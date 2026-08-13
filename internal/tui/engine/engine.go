@@ -589,6 +589,7 @@ func (e *Engine) SetYolo(enabled bool) bool                    { return e.yolo.S
 
 func localCommands(yoloAuthorized bool) []command.Command {
 	commands := []command.Command{
+		{Name: "help", Description: "Show keys, menus and approvals", BuiltIn: true},
 		{Name: "compact", Description: "Compact conversation context", BuiltIn: true},
 		{Name: "checkpoint", Description: "Save an explicit conversation and workspace checkpoint", BuiltIn: true},
 		{Name: "connect", Description: "Connect a provider by API key or ChatGPT login", BuiltIn: true},

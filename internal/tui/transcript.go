@@ -741,6 +741,18 @@ func (t Transcript) assistantOpen() bool { return t.lastLiveIs(entryAssistant) }
 // block (mirror of assistantOpen for entryReasoning).
 func (t Transcript) reasoningOpen() bool { return t.lastLiveIs(entryReasoning) }
 
+// startedConversation reports whether anything beyond the launch notices is on
+// screen — a sent prompt, a resumed transcript. It gates the arrival hint: the
+// keys stop being news the moment the conversation exists.
+func (t Transcript) startedConversation() bool {
+	for _, e := range t.entries {
+		if e.kind != entryNotice {
+			return true
+		}
+	}
+	return false
+}
+
 // hasBacklog reports whether any entry has text still to reveal.
 func (t Transcript) hasBacklog() bool {
 	for _, e := range t.entries {

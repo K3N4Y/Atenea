@@ -5010,7 +5010,10 @@ func TestModel_ComposerBottomBorderKeepsModeAtExactTruncationBoundary(t *testing
 func TestModel_ComposerHasTwoCellOuterMargin(t *testing.T) {
 	m := NewModel(nil, "s1", nil).WithStatus("build", "model")
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 8})
-
+	// A started conversation empties the shared status row under the composer
+	// (no git summary, no confirmation, no arrival hint), so what remains below
+	// the box is the outer margin this test is about.
+	m = apply(t, m, EventMsg{Message: &session.Message{Role: session.RoleUser, Text: "hi"}})
 	lines := strings.Split(ansi.Strip(m.View()), "\n")
 	bottom := -1
 	for index, line := range lines {

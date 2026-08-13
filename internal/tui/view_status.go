@@ -81,24 +81,44 @@ func toolReviewsChanges(e entry, p tool.Presentation) bool {
 	return e.tool == "edit" || e.tool == "write"
 }
 
+// gitSummaryLine renders the row under the composer, shared by three tenants in
+// descending priority: an armed confirmation, the git working-tree summary, and
+// the arrival hint. The hint only takes the space the other two leave, and only
+// in a variant that fits whole: a truncated hint teaches nothing.
 func (m Model) gitSummaryLine(width, margin int) string {
 	innerWidth := max(width-2*margin, 0)
 	left := ""
+	right := ""
 	switch m.armedConfirm() {
 	case confirmCancelRun:
 		left = ansi.Truncate(metadataStyle.Render("Esc again to cancel"), innerWidth, "…")
 	case confirmQuit:
 		left = ansi.Truncate(metadataStyle.Render("Ctrl+C again to quit"), innerWidth, "…")
 	}
-	leftWidth := ansi.StringWidth(left)
-	separatorWidth := 0
 	if left != "" {
-		separatorWidth = 1
+		right = m.gitSummaryLabel(max(innerWidth-ansi.StringWidth(left)-1, 0))
+	} else {
+		right = m.gitSummaryLabel(innerWidth)
+		left = m.composerHintLabel(max(innerWidth-ansi.StringWidth(right)-1, 0))
 	}
-	rightWidth := max(innerWidth-leftWidth-separatorWidth, 0)
-	right := m.gitSummaryLabel(rightWidth)
-	gap := max(innerWidth-leftWidth-ansi.StringWidth(right), 0)
+	gap := max(innerWidth-ansi.StringWidth(left)-ansi.StringWidth(right), 0)
 	return strings.Repeat(" ", margin) + left + strings.Repeat(" ", gap) + right + strings.Repeat(" ", margin)
+}
+
+// composerHintLabel is the arrival hint, shown until the conversation starts:
+// the gestures that open every other surface, in the longest variant that fits
+// the given width. It shares the row the confirmations and the git summary
+// already occupy, so pointing at the rest of the UI costs no permanent line.
+func (m Model) composerHintLabel(width int) string {
+	if width <= 0 || m.startedConversation() {
+		return ""
+	}
+	for _, variant := range composerHints {
+		if ansi.StringWidth(variant) <= width {
+			return metadataStyle.Render(variant)
+		}
+	}
+	return ""
 }
 
 func (m Model) gitSummaryLabel(width int) string {
