@@ -60,6 +60,14 @@ type Transcript struct {
 	childDetached   map[string]bool
 	childCandidates map[string]childCandidate
 	pendingPreviews map[previewKey]tool.Preview
+
+	// Gate state is indexed because the input and view paths ask these questions
+	// several times per frame. Scanning the whole conversation there made scroll
+	// latency grow linearly with transcript length.
+	gatesIndexed           bool
+	pendingPermissionTotal int
+	firstPendingPermission entry
+	pendingPlanApproval    bool
 }
 type previewKey struct {
 	callID    string
@@ -76,6 +84,7 @@ type childCandidate struct {
 // the Model's current session, used to scope the compaction upsert (a durable
 // event carries no session context of its own here).
 func (t Transcript) foldEvent(ev EventMsg, sessionID string) Transcript {
+	t = t.ensureGateIndex()
 	if parentCallID := session.ParentTaskCallID(session.SessionEvent(ev)); parentCallID != "" {
 		return t.foldChildActivity(ev, parentCallID)
 	}
@@ -186,10 +195,12 @@ func (t Transcript) foldEvent(ev EventMsg, sessionID string) Transcript {
 		if input == "" {
 			input = t.toolCallInput(ev.CallID, ev.SessionID)
 		}
-		t.entries = append(t.entries, entry{
+		permission := entry{
 			kind: entryPermission, callID: ev.CallID, tool: ev.ToolName,
 			input: input, sessionID: ev.SessionID,
-		})
+		}
+		t.entries = append(t.entries, permission)
+		t.indexGateEntry(permission)
 	case session.KindStepFailed:
 		t.liveUsage = false
 		t = t.removeRetryStatus()
@@ -299,7 +310,9 @@ func (t Transcript) foldChildActivity(ev EventMsg, parentCallID string) Transcri
 				input = child.input
 			}
 		}
-		t.entries = append(t.entries, entry{kind: entryPermission, callID: ev.CallID, tool: ev.ToolName, input: input, sessionID: ev.SessionID})
+		permission := entry{kind: entryPermission, callID: ev.CallID, tool: ev.ToolName, input: input, sessionID: ev.SessionID}
+		t.entries = append(t.entries, permission)
+		t.indexGateEntry(permission)
 	case session.KindStepEnded, session.KindStepFailed:
 		if candidate.parentCallID == parentCallID {
 			candidate.open = false
@@ -310,12 +323,15 @@ func (t Transcript) foldChildActivity(ev EventMsg, parentCallID string) Transcri
 }
 
 func (t Transcript) removePermission(callID, sessionID string) Transcript {
+	t = t.ensureGateIndex()
 	kept := t.entries[:0]
+	t.resetGateIndex()
 	for _, e := range t.entries {
 		if e.kind == entryPermission && e.callID == callID && e.sessionID == sessionID {
 			continue
 		}
 		kept = append(kept, e)
+		t.indexGateEntry(e)
 	}
 	t.entries = kept
 	return t
@@ -384,6 +400,7 @@ func (t Transcript) replaceEvents(events []session.SessionEvent, sessionID strin
 	t.outputBytes = 0
 	t.reasoningBytes = 0
 	t.toolInputBytes = 0
+	t.resetGateIndex()
 	for _, event := range events {
 		t = t.foldEvent(EventMsg(event), sessionID)
 	}
@@ -510,9 +527,11 @@ func (t Transcript) dropPendingPreview(callID, sessionID string) Transcript {
 // settled with success appends, at the end, the plan approval offer (y execute
 // / n stay in plan).
 func (t Transcript) settleTool(callID, sessionID string, status toolStatus, errMsg, output, diff string, files []tool.FileResult) Transcript {
+	t = t.ensureGateIndex()
 	t = t.dropPendingPreview(callID, sessionID)
 	planPresented := false
 	kept := make([]entry, 0, len(t.entries))
+	t.resetGateIndex()
 	for _, e := range t.entries {
 		if e.kind == entryPermission && e.callID == callID && (sessionID == "" || e.sessionID == sessionID) {
 			continue
@@ -531,16 +550,21 @@ func (t Transcript) settleTool(callID, sessionID string, status toolStatus, errM
 			}
 		}
 		kept = append(kept, e)
+		t.indexGateEntry(e)
 	}
 	t.entries = kept
 	if planPresented {
-		t.entries = append(t.entries, entry{kind: entryPlanApproval})
+		approval := entry{kind: entryPlanApproval}
+		t.entries = append(t.entries, approval)
+		t.indexGateEntry(approval)
 	}
 	return t
 }
 
 func (t Transcript) applyPermissionDecision(permission entry, approved bool) Transcript {
+	t = t.ensureGateIndex()
 	kept := make([]entry, 0, len(t.entries))
+	t.resetGateIndex()
 	for _, e := range t.entries {
 		if e.kind == entryPermission && e.callID == permission.callID && e.sessionID == permission.sessionID {
 			continue
@@ -550,12 +574,46 @@ func (t Transcript) applyPermissionDecision(permission entry, approved bool) Tra
 			e.err = "Denied by user"
 		}
 		kept = append(kept, e)
+		t.indexGateEntry(e)
 	}
 	t.entries = kept
 	return t
 }
 
+func (t *Transcript) resetGateIndex() {
+	t.gatesIndexed = true
+	t.pendingPermissionTotal = 0
+	t.firstPendingPermission = entry{}
+	t.pendingPlanApproval = false
+}
+
+func (t *Transcript) indexGateEntry(e entry) {
+	switch e.kind {
+	case entryPermission:
+		if t.pendingPermissionTotal == 0 {
+			t.firstPendingPermission = e
+		}
+		t.pendingPermissionTotal++
+	case entryPlanApproval:
+		t.pendingPlanApproval = true
+	}
+}
+
+func (t Transcript) ensureGateIndex() Transcript {
+	if t.gatesIndexed {
+		return t
+	}
+	t.resetGateIndex()
+	for _, e := range t.entries {
+		t.indexGateEntry(e)
+	}
+	return t
+}
+
 func (t Transcript) pendingPermissionCount() int {
+	if t.gatesIndexed {
+		return t.pendingPermissionTotal
+	}
 	count := 0
 	for _, e := range t.entries {
 		if e.kind == entryPermission {
@@ -568,6 +626,9 @@ func (t Transcript) pendingPermissionCount() int {
 // pendingPermission returns the full entry of the pending request (with its
 // CallID and the SessionID the event carried) and true if there is one.
 func (t Transcript) pendingPermission() (entry, bool) {
+	if t.gatesIndexed {
+		return t.firstPendingPermission, t.pendingPermissionTotal != 0
+	}
 	for _, e := range t.entries {
 		if e.kind == entryPermission {
 			return e, true
@@ -580,6 +641,9 @@ func (t Transcript) pendingPermission() (entry, bool) {
 // pendingPermission it does not return the entry: the offer carries no data
 // (neither CallID nor SessionID), it only exists or not.
 func (t Transcript) hasPendingPlan() bool {
+	if t.gatesIndexed {
+		return t.pendingPlanApproval
+	}
 	for _, e := range t.entries {
 		if e.kind == entryPlanApproval {
 			return true
@@ -590,12 +654,15 @@ func (t Transcript) hasPendingPlan() bool {
 
 // removePendingPlan drops the plan approval offer from the conversation.
 func (t Transcript) removePendingPlan() Transcript {
+	t = t.ensureGateIndex()
 	kept := make([]entry, 0, len(t.entries))
+	t.resetGateIndex()
 	for _, e := range t.entries {
 		if e.kind == entryPlanApproval {
 			continue
 		}
 		kept = append(kept, e)
+		t.indexGateEntry(e)
 	}
 	t.entries = kept
 	return t

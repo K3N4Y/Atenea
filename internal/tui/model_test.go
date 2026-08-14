@@ -4329,6 +4329,36 @@ var (
 	wheelDown = tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown}
 )
 
+var benchmarkScrollView string
+
+func BenchmarkModel_MouseWheelScrollWithGrowingTranscript(b *testing.B) {
+	for _, entryCount := range []int{100, 10_000} {
+		b.Run(strconv.Itoa(entryCount), func(b *testing.B) {
+			b.StopTimer()
+			m := NewModel(nil, "s1", nil)
+			m.ready = true
+			m.width = 80
+			m.height = 24
+			m.entries = make([]entry, entryCount)
+			for i := range m.entries {
+				m.entries[i] = entry{kind: entryUser, text: "message"}
+			}
+			m.Transcript = m.Transcript.ensureGateIndex()
+			m = m.resizeViewport()
+			b.ReportAllocs()
+			b.StartTimer()
+			for i := 0; i < b.N; i++ {
+				msg := wheelUp
+				if i%2 != 0 {
+					msg = wheelDown
+				}
+				updated, _ := m.Update(msg)
+				m = updated.(Model)
+				benchmarkScrollView = m.View()
+			}
+		})
+	}
+}
 func TestModel_MouseWheelScrollsHistory(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil)
 	m = apply(t, m, tea.WindowSizeMsg{Width: 40, Height: 12})

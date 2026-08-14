@@ -186,6 +186,27 @@ func TestTranscript_PendingPermissionAndGate(t *testing.T) {
 	}
 }
 
+func TestTranscript_PendingPermissionIndexPreservesQueueOrder(t *testing.T) {
+	var tr Transcript
+	for _, callID := range []string{"first", "second"} {
+		tr = fold(tr, EventMsg{
+			Kind: session.KindToolPermissionRequested, CallID: callID,
+			ToolName: "bash", SessionID: "child",
+		})
+	}
+
+	first, ok := tr.pendingPermission()
+	if !ok || first.callID != "first" || tr.pendingPermissionCount() != 2 {
+		t.Fatalf("pending queue = first:%+v ok:%v count:%d, want first call and count 2", first, ok, tr.pendingPermissionCount())
+	}
+
+	tr = tr.applyPermissionDecision(first, true)
+	second, ok := tr.pendingPermission()
+	if !ok || second.callID != "second" || tr.pendingPermissionCount() != 1 {
+		t.Fatalf("pending queue after resolution = first:%+v ok:%v count:%d, want second call and count 1", second, ok, tr.pendingPermissionCount())
+	}
+}
+
 func TestTranscript_PermissionInputBackfillsFromToolCall(t *testing.T) {
 	var tr Transcript
 	tr = fold(tr, EventMsg{Kind: session.KindToolCalled, CallID: "c1", ToolName: "bash", Input: []byte(`{"cmd":"ls"}`), SessionID: "child"})
