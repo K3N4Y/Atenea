@@ -153,6 +153,29 @@ func TestGlobTool_LimitBoundsOutputAndShowsNotice(t *testing.T) {
 	}
 }
 
+func TestGlobTool_PresentationSummarizesSettledResult(t *testing.T) {
+	gt := &GlobTool{}
+	call := Call{Input: json.RawMessage(`{"pattern":"*.go"}`)}
+
+	tests := []struct {
+		name   string
+		output string
+		want   string
+	}{
+		{name: "files", output: "a.go\nb.go", want: "*.go (2)"},
+		{name: "no results", output: "No files found", want: "*.go (no results)"},
+		{name: "limit notice", output: "a.go\nb.go\n\n[Limit reached: showing first 2 files.]", want: "*.go (2)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := gt.Present(call, Result{Output: tt.output})
+			if got.Subject != tt.want || got.Detail != DetailHidden {
+				t.Fatalf("Present() = %+v, want subject %q and hidden detail", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestGlobTool_DefaultLimit(t *testing.T) {
 	searcher := &fakeGlobSearcher{}
 	gt := &GlobTool{Root: "/work", Searcher: searcher, DefaultLimit: defaultGlobLimit, MaxLimit: maxGlobLimit}

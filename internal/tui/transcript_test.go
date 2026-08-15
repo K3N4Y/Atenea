@@ -395,40 +395,41 @@ func TestTranscript_ToggleThinkingAtMapsLineToEntry(t *testing.T) {
 		{idx: 1, line: "done"},
 	}
 	// Clicking the thought line toggles it.
-	next, ok := tr.toggleExpandableAt(lines, 2)
+	next, ok := tr.toggleExpandableAt(lines, 2, nil)
 	if !ok || !next.entries[1].expanded {
 		t.Fatalf("toggleThinkingAt(thought line) = ok:%v expanded:%v, want it toggled", ok, next.entries[1].expanded)
 	}
 	// Clicking the user line or the separator toggles nothing.
-	if _, ok := tr.toggleExpandableAt(lines, 0); ok {
+	if _, ok := tr.toggleExpandableAt(lines, 0, nil); ok {
 		t.Fatal("toggleThinkingAt(user line) = true, want false")
 	}
-	if _, ok := tr.toggleExpandableAt(lines, 1); ok {
+	if _, ok := tr.toggleExpandableAt(lines, 1, nil); ok {
 		t.Fatal("toggleThinkingAt(separator) = true, want false")
 	}
 	// Out of range is inert.
-	if _, ok := tr.toggleExpandableAt(lines, 99); ok {
+	if _, ok := tr.toggleExpandableAt(lines, 99, nil); ok {
 		t.Fatal("toggleThinkingAt(out of range) = true, want false")
 	}
 }
 
-func TestTranscript_ToggleExpandableAtSettledBashOnly(t *testing.T) {
+func TestTranscript_ToggleExpandableAtSettledOnDemandToolOnly(t *testing.T) {
 	tr := Transcript{entries: []entry{
-		{kind: entryTool, tool: "bash", status: toolOK},
-		{kind: entryTool, tool: "bash", status: toolRunning},
+		{kind: entryTool, tool: "shell", status: toolOK},
+		{kind: entryTool, tool: "shell", status: toolRunning},
 		{kind: entryTool, tool: "edit", status: toolOK},
 	}}
 	lines := []entryLine{{idx: 0}, {idx: 1}, {idx: 2}}
+	onDemand := func(e entry) bool { return e.tool == "shell" }
 
-	next, ok := tr.toggleExpandableAt(lines, 0)
+	next, ok := tr.toggleExpandableAt(lines, 0, onDemand)
 	if !ok || !next.entries[0].expanded {
-		t.Fatalf("settled Bash toggle = ok:%v expanded:%v, want true/true", ok, next.entries[0].expanded)
+		t.Fatalf("settled on-demand tool toggle = ok:%v expanded:%v, want true/true", ok, next.entries[0].expanded)
 	}
-	if _, ok := tr.toggleExpandableAt(lines, 1); ok {
-		t.Fatal("running Bash toggle = true, want false")
+	if _, ok := tr.toggleExpandableAt(lines, 1, onDemand); ok {
+		t.Fatal("running on-demand tool toggle = true, want false")
 	}
-	if _, ok := tr.toggleExpandableAt(lines, 2); ok {
-		t.Fatal("non-Bash toggle = true, want false")
+	if _, ok := tr.toggleExpandableAt(lines, 2, onDemand); ok {
+		t.Fatal("preview tool toggle = true, want false")
 	}
 }
 

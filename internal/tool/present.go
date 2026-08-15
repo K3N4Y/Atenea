@@ -2,6 +2,7 @@ package tool
 
 import (
 	"encoding/json"
+	"fmt"
 	"path"
 	"strconv"
 	"strings"
@@ -13,10 +14,10 @@ import (
 // each other, and reading them apart is how a transcript ends up saying "Read" for
 // one tool and "bash" for the next.
 //
-// Each one is a pure projection of the call's input, so a malformed input yields a
-// bare label rather than an error. That is deliberate: a presentation is drawn
-// while the model is still streaming, and half a JSON object is the normal case,
-// not a failure.
+// Each one is a pure projection of the call and its result, so a malformed input
+// yields a bare label rather than an error. That is deliberate: a presentation
+// is drawn while the model is still streaming, and half a JSON object is the
+// normal case, not a failure.
 
 // Present: a read is about one file, and its output is the file itself — the
 // model's business, not something to repeat in the transcript. The subject is the
@@ -28,10 +29,10 @@ func (*ReadTool) Present(call Call, _ Result) Presentation {
 	}
 	json.Unmarshal(call.Input, &in)
 	return Presentation{
-		Label:       "Read",
-		Running:     "Reading",
-		Subject:     fileName(stripSelector(in.Path)),
-		HidesOutput: true,
+		Label:   "Read",
+		Running: "Reading",
+		Subject: fileName(stripSelector(in.Path)),
+		Detail:  DetailHidden,
 	}
 }
 
@@ -44,7 +45,7 @@ func (*WriteTool) Present(call Call, result Result) Presentation {
 		Content string `json:"content"`
 	}
 	json.Unmarshal(call.Input, &in)
-	p := Presentation{Label: "Write", Subject: in.Path, HidesOutput: true}
+	p := Presentation{Label: "Write", Subject: in.Path, Detail: DetailHidden}
 	if in.Path != "" {
 		p.Body = strings.TrimRight(in.Path+"\n"+in.Content, "\n")
 	}
@@ -70,7 +71,7 @@ func (et *EditTool) Present(call Call, result Result) Presentation {
 	if body == "" {
 		body = string(call.Input)
 	}
-	p := Presentation{Label: "Edit", Subject: subject, Body: body, HidesOutput: true}
+	p := Presentation{Label: "Edit", Subject: subject, Body: body, Detail: DetailHidden}
 	if result.Diff != "" {
 		p.Kind = FileChange
 	}
@@ -81,32 +82,40 @@ func (et *EditTool) Present(call Call, result Result) Presentation {
 // authorizes, and its output is the reason the call was made, so it stays visible.
 func (*BashTool) Present(call Call, _ Result) Presentation {
 	command := bashCommand(call.Input)
-	return Presentation{Label: "Bash", Subject: command, Body: command}
+	return Presentation{Label: "Bash", Subject: command, Body: command, Detail: DetailOnDemand}
 }
 
-// Present: the pattern is what distinguishes one search from the next; the paths
-// it found are the output and worth reading.
-func (*GlobTool) Present(call Call, _ Result) Presentation {
-	return Presentation{Label: "Glob", Subject: field(call.Input, "pattern")}
+// Present: the pattern distinguishes one search from the next. Once the search
+// settles, its result count says enough for the transcript; the paths and matches
+// remain in the result for the model.
+func (*GlobTool) Present(call Call, result Result) Presentation {
+	return Presentation{
+		Label:   "Glob",
+		Subject: searchSubject(field(call.Input, "pattern"), globResultCount(result.Output), false),
+		Detail:  DetailHidden,
+	}
 }
 
-// Present: same shape as glob — the pattern names the search, the matches are the
-// output.
-func (*GrepTool) Present(call Call, _ Result) Presentation {
-	return Presentation{Label: "Grep", Subject: field(call.Input, "pattern")}
+func (*GrepTool) Present(call Call, result Result) Presentation {
+	count, moreAvailable := grepResultSummary(result.Output)
+	return Presentation{
+		Label:   "Grep",
+		Subject: searchSubject(field(call.Input, "pattern"), count, moreAvailable),
+		Detail:  DetailHidden,
+	}
 }
 
 // Present: the skill's name is the subject, and its body — the whole SKILL.md that
 // comes back as output — is for the model. Repeating it in the transcript would
 // bury the conversation under instructions the reader did not ask for.
 func (*SkillTool) Present(call Call, _ Result) Presentation {
-	return Presentation{Label: "Skill", Subject: field(call.Input, "name"), HidesOutput: true}
+	return Presentation{Label: "Skill", Subject: field(call.Input, "name"), Detail: DetailHidden}
 }
 
 // Present: the plan's title names it. The plan itself is shown to the user by the
 // plan-mode approval flow, not by the call's line in the transcript.
 func (*PresentPlanTool) Present(call Call, _ Result) Presentation {
-	return Presentation{Label: "Plan", Subject: field(call.Input, "title"), HidesOutput: true}
+	return Presentation{Label: "Plan", Subject: field(call.Input, "title"), Detail: DetailHidden}
 }
 
 // Present: the checklist is drawn from the call's input by whatever surface owns
@@ -129,7 +138,7 @@ func (TodoWriteTool) Present(call Call, _ Result) Presentation {
 		}
 		subject = strconv.Itoa(done) + "/" + strconv.Itoa(len(in.Todos))
 	}
-	return Presentation{Label: "Todo", Subject: subject, HidesOutput: true}
+	return Presentation{Label: "Todo", Subject: subject, Detail: DetailHidden}
 }
 
 // Present: the URL is what identifies the fetch and what the user is asked to
@@ -138,6 +147,51 @@ func (TodoWriteTool) Present(call Call, _ Result) Presentation {
 func (*WebFetchTool) Present(call Call, _ Result) Presentation {
 	url := field(call.Input, "url")
 	return Presentation{Label: "WebFetch", Subject: url, Body: url}
+}
+
+func searchSubject(pattern string, count int, truncated bool) string {
+	if pattern == "" || count < 0 {
+		return pattern
+	}
+	if count == 0 {
+		return pattern + " (no results)"
+	}
+	if truncated || count > 100 {
+		return pattern + " (100+)"
+	}
+	return pattern + " (" + strconv.Itoa(count) + ")"
+}
+
+func grepResultSummary(output string) (count int, moreAvailable bool) {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return -1, false
+	}
+	if output == "No files found" {
+		return 0, false
+	}
+	if _, err := fmt.Sscanf(output, "Found %d matches", &count); err != nil {
+		return -1, false
+	}
+	return count, strings.Contains(output, "(more matches available)")
+}
+
+func globResultCount(output string) int {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return -1
+	}
+	if output == "No files found" {
+		return 0
+	}
+	count := 0
+	for line := range strings.Lines(output) {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "[") {
+			count++
+		}
+	}
+	return count
 }
 
 // field pulls one string field out of a tool input, tolerating a malformed or

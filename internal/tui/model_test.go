@@ -2237,7 +2237,7 @@ func TestModel_RendersToolCallLifecycle(t *testing.T) {
 
 // Contract for the "task" tool render: the header reads `SubAgent <type>`
 // (the subagent_type field of the Input, never the raw JSON), the running
-// marker animates, and a completed report shows at most its first three lines.
+// marker animates, and a completed report uses the generic four-line preview.
 func TestModel_RendersTaskToolAsSubAgentWithSpinner(t *testing.T) {
 	m := NewModel(&fakeAgent{}, "s1", nil)
 
@@ -2266,13 +2266,10 @@ func TestModel_RendersTaskToolAsSubAgentWithSpinner(t *testing.T) {
 		Message: &session.Message{ID: "c1", Role: session.RoleTool, Text: "scope: project\nagent: explorer\nsummary: found loader\nfull subagent report", ToolCallID: "c1"},
 	})
 	got := ansi.Strip(m.View())
-	for _, want := range []string{"✓ SubAgent explorer", "scope: project", "agent: explorer", "summary: found loader"} {
+	for _, want := range []string{"✓ SubAgent explorer", "scope: project", "agent: explorer", "summary: found loader", "full subagent report"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("View() = %q, a finished task must show %q", got, want)
 		}
-	}
-	if strings.Contains(got, "full subagent report") {
-		t.Fatalf("View() = %q, task output must stop after its first three lines", got)
 	}
 }
 

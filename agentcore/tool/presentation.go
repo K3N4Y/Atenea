@@ -42,11 +42,12 @@ type Presentation struct {
 	// content that will be written. Empty means the tool cannot state its call as
 	// text, and a host falls back to showing the raw input.
 	Body string
-	// HidesOutput says the settled output is for the model rather than for the
-	// reader — a file's contents, a skill's body — so a host should not repeat it
-	// on screen. It is negative so the zero value shows the output, which is the
-	// right default for a tool that has not thought about it.
-	HidesOutput bool
+	// Detail says whether the settled output belongs in the transcript. The zero
+	// value previews it, which is the useful default for a tool that has not
+	// thought about presentation. Hidden keeps model-only output off screen;
+	// OnDemand lets the reader expand it without paying its vertical cost by
+	// default.
+	Detail DetailMode
 }
 
 // PresentationKind is what a call turned out to be, from the reader's point of
@@ -67,6 +68,20 @@ const (
 	// FileCreation is a call that produced a file that was not there. Result.Diff
 	// is the whole of the new content, with nothing to compare it against.
 	FileCreation
+)
+
+// DetailMode controls how a host exposes a settled call's output.
+type DetailMode int
+
+const (
+	// DetailPreview shows a bounded preview of settled output. It is the zero
+	// value and the right default for tools unknown to the host.
+	DetailPreview DetailMode = iota
+	// DetailHidden suppresses output that exists for the model rather than the
+	// person watching, such as a file body or loaded skill instructions.
+	DetailHidden
+	// DetailOnDemand keeps output collapsed until the person asks to see it.
+	DetailOnDemand
 )
 
 // Presenter is the optional interface a tool implements to describe how its calls

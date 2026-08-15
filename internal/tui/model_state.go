@@ -106,7 +106,8 @@ func (m Model) presentationOf(e entry) tool.Presentation {
 		return tool.Presentation{}
 	}
 	call := tool.Call{ID: e.callID, Name: e.tool, Input: []byte(e.input)}
-	if p, ok := tool.PresentationFor(m.tools(), call, tool.Result{Diff: e.diff}); ok {
+	result := tool.Result{Output: e.output, Diff: e.diff, Files: e.files}
+	if p, ok := tool.PresentationFor(m.tools(), call, result); ok {
 		return p
 	}
 	return tool.Presentation{Label: e.tool, Subject: summarizeToolInput(e.input)}
@@ -270,9 +271,10 @@ func (m Model) toggleThinking() Model {
 	m.Transcript = m.Transcript.toggleThinking()
 	return m
 }
-
 func (m Model) toggleExpandableAt(viewportLine int) (Model, bool) {
-	next, ok := m.Transcript.toggleExpandableAt(m.entryLines(), viewportLine)
+	next, ok := m.Transcript.toggleExpandableAt(m.entryLines(), viewportLine, func(e entry) bool {
+		return m.presentationOf(e).Detail == tool.DetailOnDemand
+	})
 	m.Transcript = next
 	return m, ok
 }

@@ -29,6 +29,7 @@ type (
 	CallDeclaring    = contract.CallDeclaring
 	Presentation     = contract.Presentation
 	PresentationKind = contract.PresentationKind
+	DetailMode       = contract.DetailMode
 	Presenter        = contract.Presenter
 )
 
@@ -48,6 +49,10 @@ const (
 	Activity     = contract.Activity
 	FileChange   = contract.FileChange
 	FileCreation = contract.FileCreation
+
+	DetailPreview  = contract.DetailPreview
+	DetailHidden   = contract.DetailHidden
+	DetailOnDemand = contract.DetailOnDemand
 )
 
 // EffectsOf, EffectsForCall and PresentationOf resolve optional capability

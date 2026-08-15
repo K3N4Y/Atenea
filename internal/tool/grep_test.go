@@ -176,6 +176,29 @@ func TestGrepTool_TruncationNotice(t *testing.T) {
 	}
 }
 
+func TestGrepTool_PresentationSummarizesSettledResult(t *testing.T) {
+	gt := &GrepTool{}
+	call := Call{Input: json.RawMessage(`{"pattern":"TODO"}`)}
+
+	tests := []struct {
+		name   string
+		output string
+		want   string
+	}{
+		{name: "matches", output: "Found 3 matches\n[a.go#1234]\n1:TODO", want: "TODO (3)"},
+		{name: "no results", output: "No files found", want: "TODO (no results)"},
+		{name: "more available", output: "Found 100 matches (more matches available)\n[a.go#1234]", want: "TODO (100+)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := gt.Present(call, Result{Output: tt.output})
+			if got.Subject != tt.want || got.Detail != DetailHidden {
+				t.Fatalf("Present() = %+v, want subject %q and hidden detail", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestGrepTool_DedupesSameLine(t *testing.T) {
 	text := "package tool\nfunc one() {}\n"
 	snaps := hashline.NewMemSnapshotStore()

@@ -124,12 +124,12 @@ outbound network cannot be summarized by anything a panel could honestly show.
 
 ```go
 type Presentation struct {
-    Kind        PresentationKind // Activity | FileChange | FileCreation
-    Label       string           // "Read", "Bash", "SubAgent"
-    Running     string           // "Reading" — Label while the call is in flight
-    Subject     string           // the one thing this call is about
-    Body        string           // the full text the call amounts to
-    HidesOutput bool             // the output is for the model, not the reader
+    Kind    PresentationKind // Activity | FileChange | FileCreation
+    Label   string           // "Read", "Bash", "SubAgent"
+    Running string           // "Reading" — Label while the call is in flight
+    Subject string           // the one thing this call is about
+    Body    string           // the full text the call amounts to
+    Detail  DetailMode       // Preview | Hidden | OnDemand
 }
 ```
 
@@ -138,13 +138,17 @@ widths — it cannot know whether it is drawn in a terminal, in a browser or rea
 aloud. A host must not decide that "the second field of a write call is the
 content" — that is the tool's schema and it changes when the tool does.
 
-Three consequences worth stating:
+Four consequences worth stating:
 
 - **Every string is raw text the model wrote.** The host sanitizes, flattens and
   truncates it (`displaySubject` in the TUI, one place for every tool).
 - **The zero value is a usable presentation of nothing**, so a tool that says
   nothing and a tool that returns the zero value are handled identically. That is
   what makes `Presenter` optional rather than load-bearing.
+- **`Detail` belongs to the tool rather than the host.** Its zero value previews
+  bounded output; `Hidden` suppresses model-only output; `OnDemand` keeps useful
+  but noisy output collapsed until the reader expands it. A host does not switch
+  on tool names to make that decision.
 - **`Body != ""` is what selects the compact permission panel.** A tool that can
   state its call as text gets the panel whose body *is* that text; one that cannot
   falls through to the detailed panel showing raw input. An MCP tool degrades to

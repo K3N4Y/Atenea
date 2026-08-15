@@ -762,11 +762,11 @@ func (t Transcript) toggleThinking() Transcript {
 	return t
 }
 
-// toggleExpandableAt flips the expanded state of the settled thought or Bash
-// block that occupies viewportLine (see entryLines). Live thoughts and running
-// Bash calls do not take part. It returns true when it toggles an entry so the
-// caller can re-sync the viewport.
-func (t Transcript) toggleExpandableAt(lines []entryLine, viewportLine int) (Transcript, bool) {
+// toggleExpandableAt flips the expanded state of the settled thought or
+// on-demand tool block that occupies viewportLine (see entryLines). Live blocks
+// do not take part. Tool presentation stays outside Transcript, so the caller
+// supplies the policy that identifies an on-demand entry.
+func (t Transcript) toggleExpandableAt(lines []entryLine, viewportLine int, toolOnDemand func(entry) bool) (Transcript, bool) {
 	if viewportLine < 0 || viewportLine >= len(lines) {
 		return t, false
 	}
@@ -776,8 +776,9 @@ func (t Transcript) toggleExpandableAt(lines []entryLine, viewportLine int) (Tra
 	}
 	e := &t.entries[idx]
 	isSettledThought := e.kind == entryReasoning && e.settled()
-	isSettledBash := e.kind == entryTool && e.tool == "bash" && e.status != toolRunning
-	if !isSettledThought && !isSettledBash {
+	isSettledOnDemandTool := e.kind == entryTool && e.status != toolRunning &&
+		toolOnDemand != nil && toolOnDemand(*e)
+	if !isSettledThought && !isSettledOnDemandTool {
 		return t, false
 	}
 	e.expanded = !e.expanded
