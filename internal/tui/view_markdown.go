@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
+	"github.com/rivo/uniseg"
 
 	"github.com/K3N4Y/atenea/internal/tui/theme"
 )
@@ -75,7 +76,15 @@ var markdownStyle = func() glamouransi.StyleConfig {
 		},
 		Item:        glamouransi.StylePrimitive{BlockPrefix: "• "},
 		Enumeration: glamouransi.StylePrimitive{BlockPrefix: ". "},
-		Task:        glamouransi.StyleTask{Ticked: "[✓] ", Unticked: "[ ] "},
+		Table: glamouransi.StyleTable{
+			// Glamour's table renderer disables its outer border after applying
+			// these glyphs; keeping the inner set explicit makes the framing pass
+			// independent of the library's default theme.
+			CenterSeparator: str("┼"),
+			ColumnSeparator: str("│"),
+			RowSeparator:    str("─"),
+		},
+		Task: glamouransi.StyleTask{Ticked: "[✓] ", Unticked: "[ ] "},
 		// Links stay discoverable through underline without borrowing the focus
 		// accent; editorial content remains neutral until it is selected.
 		Link:      glamouransi.StylePrimitive{Underline: yes()},
@@ -162,6 +171,239 @@ func paintCodeBlockBackgrounds(rendered string) string {
 		i = end // skip the closing marker; the loop increment moves past it
 	}
 	return strings.Join(out, "\n")
+}
+
+type markdownTableRange struct {
+	start int
+	rule  int
+	end   int
+	cols  []int
+	width int
+}
+
+var markdownTableBorderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Border))
+
+// frameTables restores the outer frame glamour intentionally omits. Glamour's
+// table layout is already authoritative: separators and padding were sized in
+// display cells, so this pass only adds the missing frame. At bounded widths,
+// the unframed rows occupy viewport width minus both document margins; adding
+// two sides (rather than replacing cell padding) extends them into exactly the
+// two otherwise-extra cells on the right. Marker lines bracket code blocks and
+// are checked while scanning because code can contain literal box-drawing
+// glyphs that are not structure.
+func frameTables(rendered string) string {
+	if !strings.Contains(rendered, "─") {
+		return rendered
+	}
+
+	lines := strings.Split(rendered, "\n")
+	var tables []markdownTableRange
+	inCode := false
+	for i := 0; i < len(lines); i++ {
+		if strings.Contains(lines[i], markdownCodeBlockMarker) {
+			inCode = !inCode
+			continue
+		}
+		if inCode {
+			continue
+		}
+
+		columns, ok := markdownTableRule(lines[i])
+		if !ok || i == 0 || !markdownTableData(lines[i-1], columns) {
+			continue
+		}
+
+		start := i - 1
+		for start > 0 &&
+			!strings.Contains(lines[start-1], markdownCodeBlockMarker) &&
+			markdownTableData(lines[start-1], columns) {
+			start--
+		}
+		// A GFM table may contain only its header, so the rule itself is a
+		// valid end. Consume body rows when present.
+		end := i
+		for end+1 < len(lines) &&
+			!strings.Contains(lines[end+1], markdownCodeBlockMarker) &&
+			markdownTableData(lines[end+1], columns) {
+			end++
+		}
+
+		width := 0
+		for row := start; row <= end; row++ {
+			width = max(width, ansi.StringWidth(lines[row]))
+		}
+		if width <= markdownDocMargin ||
+			(len(columns) > 0 && width <= columns[len(columns)-1]) {
+			continue
+		}
+		tables = append(tables, markdownTableRange{
+			start: start,
+			rule:  i,
+			end:   end,
+			cols:  columns,
+			width: width,
+		})
+		i = end
+	}
+	if len(tables) == 0 {
+		return rendered
+	}
+
+	out := make([]string, 0, len(lines)+2*len(tables))
+	tableIndex := 0
+	for i := 0; i < len(lines); {
+		if tableIndex >= len(tables) || i < tables[tableIndex].start {
+			out = append(out, lines[i])
+			i++
+			continue
+		}
+
+		table := tables[tableIndex]
+		out = append(out, markdownTableBorderLine(table.width, table.cols, '┌', '┬', '┐'))
+		for row := table.start; row <= table.end; row++ {
+			if row == table.rule {
+				out = append(out, markdownTableBorderLine(table.width, table.cols, '├', '┼', '┤'))
+				continue
+			}
+			out = append(out, markdownTableDataLine(lines[row], table.width, table.cols))
+		}
+		out = append(out, markdownTableBorderLine(table.width, table.cols, '└', '┴', '┘'))
+		i = table.end + 1
+		tableIndex++
+	}
+	return strings.Join(out, "\n")
+}
+
+// markdownTableRule recognizes glamour's inner rule. Multi-column tables have
+// center separators; a valid one-column table has only the horizontal glyph.
+// Neighbor validation in frameTables distinguishes that case from a standalone
+// horizontal rule. Scanning graphemes keeps UTF-8 out of byte offsets.
+func markdownTableRule(line string) ([]int, bool) {
+	plain := ansi.Strip(line)
+	if ansi.StringWidth(plain) < markdownDocMargin ||
+		ansi.Cut(plain, 0, markdownDocMargin) != strings.Repeat(" ", markdownDocMargin) {
+		return nil, false
+	}
+	body := strings.TrimRight(ansi.Cut(plain, markdownDocMargin, ansi.StringWidth(plain)), " ")
+	if body == "" {
+		return nil, false
+	}
+
+	columns := displayGlyphColumns(plain, "┼")
+	iter := uniseg.NewGraphemes(body)
+	for iter.Next() {
+		if glyph := iter.Str(); glyph != "─" && glyph != "┼" {
+			return nil, false
+		}
+	}
+	return columns, true
+}
+
+// markdownTableData recognizes a row belonging to the rule. Multi-column rows
+// must carry every canonical separator; one-column rows use glamour's leading
+// cell padding as their structural signature.
+func markdownTableData(line string, columns []int) bool {
+	plain := ansi.Strip(line)
+	if len(columns) == 0 {
+		// A one-column row has no separator. Glamour still gives it the
+		// one-cell table padding after the document margin; prose and the
+		// blank lines around a horizontal rule do not have this signature.
+		return strings.TrimSpace(plain) != "" &&
+			ansi.StringWidth(plain) > markdownDocMargin &&
+			ansi.Cut(plain, 0, markdownDocMargin+1) == strings.Repeat(" ", markdownDocMargin+1)
+	}
+	actual := displayGlyphColumns(plain, "│")
+	if len(actual) < len(columns) {
+		return false
+	}
+	for _, column := range columns {
+		found := false
+		for _, candidate := range actual {
+			if candidate == column {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func displayGlyphColumns(text, glyph string) []int {
+	var columns []int
+	width := 0
+	iter := uniseg.NewGraphemes(text)
+	for iter.Next() {
+		cluster := iter.Str()
+		if cluster == glyph {
+			columns = append(columns, width)
+		}
+		width += ansi.StringWidth(cluster)
+	}
+	return columns
+}
+
+// markdownTableBorderLine builds all four border variants from the same
+// canonical columns. Glamour reserves the cell padding but omits both outer
+// borders, so adding the two edges (rather than replacing padding) keeps the
+// cell contents and separators aligned. At a bounded width, glamour's output
+// is four cells narrower than the viewport; the two inserted edges make the
+// framed line exactly viewport width minus the two-cell right margin.
+func markdownTableBorderLine(width int, columns []int, left, middle, right rune) string {
+	leftColumn := markdownDocMargin
+	body := make([]rune, width+2-leftColumn)
+	for i := range body {
+		body[i] = '─'
+	}
+	body[0] = left
+	body[len(body)-1] = right
+	for _, column := range columns {
+		// Data to the right of the new left edge shifts one display cell.
+		shifted := column + 1
+		if shifted > leftColumn && shifted < width+1 {
+			body[shifted-leftColumn] = middle
+		}
+	}
+	return strings.Repeat(" ", leftColumn) + markdownTableBorderStyle.Render(string(body))
+}
+
+func markdownTableDataLine(line string, width int, columns []int) string {
+	line = fitMarkdownDisplayWidth(line, width)
+	border := markdownTableBorderStyle.Render("│")
+
+	// Only separators at the canonical columns belong to the table geometry.
+	// Repaint those in the same muted border color as the outer frame while
+	// leaving a literal │ inside cell content untouched. ansi.Cut keeps both
+	// display-cell offsets and any active SGR state intact between segments.
+	var b strings.Builder
+	b.Grow(len(line) + len(border)*(len(columns)+2))
+	b.WriteString(ansi.Cut(line, 0, markdownDocMargin))
+	b.WriteString(border)
+	start := markdownDocMargin
+	for _, column := range columns {
+		if column <= start || column >= width {
+			continue
+		}
+		b.WriteString(ansi.Cut(line, start, column))
+		b.WriteString(border)
+		start = column + 1 // consume glamour's unstyled separator
+	}
+	b.WriteString(ansi.Cut(line, start, width))
+	b.WriteString(border)
+	return b.String()
+}
+
+func fitMarkdownDisplayWidth(line string, width int) string {
+	current := ansi.StringWidth(line)
+	if current > width {
+		return ansi.Cut(line, 0, width)
+	}
+	if current < width {
+		line += strings.Repeat(" ", width-current)
+	}
+	return line
 }
 
 var markdownRenderCache = struct {
@@ -298,7 +540,10 @@ func renderMarkdown(text string, width int) string {
 	if err != nil {
 		return sanitizedText
 	}
-	rendered := strings.Trim(paintCodeBlockBackgrounds(hardWrapOverflow(out, width)), "\n")
+	// Frame after hard wrapping so canonical separator columns describe the
+	// final rows. Painting code blocks remains the last width-preserving pass;
+	// frameTables skips its markers and must never reinterpret literal glyphs.
+	rendered := strings.Trim(paintCodeBlockBackgrounds(frameTables(hardWrapOverflow(out, width))), "\n")
 
 	markdownRenderCache.Lock()
 	if markdownRenderCache.entries == nil {
