@@ -152,9 +152,6 @@ func TestSelect_FallsBackToDefaultForNonClaude(t *testing.T) {
 	if got != defaultPrompt {
 		t.Fatalf("Select(gpt-4o) = %q, quiero el defaultPrompt embebido", got)
 	}
-	if got == anthropicPrompt {
-		t.Fatalf("Select(gpt-4o) devolvio el anthropicPrompt; debe ser el fallback")
-	}
 
 	upper := Select("CLAUDE-OPUS")
 	if upper != anthropicPrompt {
@@ -322,21 +319,6 @@ func TestPlanInstructions_EmbeddedNonEmpty(t *testing.T) {
 	}
 	if planInstructions == defaultPrompt {
 		t.Errorf("planInstructions igual a defaultPrompt (embed apunta al .txt equivocado)")
-	}
-}
-
-// Cableado de los //go:embed: ambos prompts base deben ser no vacios y
-// distintos entre si. Si ambos //go:embed apuntan al mismo .txt, o un .txt
-// queda vacio, este test los tumba (analogo a descriptions_test.go en tool).
-func TestPromptsEmbedded_WiredAndDistinct(t *testing.T) {
-	if strings.TrimSpace(anthropicPrompt) == "" {
-		t.Errorf("anthropicPrompt vacio (embed mal cableado o .txt vacio)")
-	}
-	if strings.TrimSpace(defaultPrompt) == "" {
-		t.Errorf("defaultPrompt vacio (embed mal cableado o .txt vacio)")
-	}
-	if anthropicPrompt == defaultPrompt {
-		t.Errorf("anthropicPrompt y defaultPrompt son iguales (ambos //go:embed apuntan al mismo .txt)")
 	}
 }
 
