@@ -52,9 +52,10 @@ func TestToolRender_RemovesUntrustedTerminalControlsBeforeStyling(t *testing.T) 
 			expectVisible: true,
 		},
 		{
-			name:      "success diff",
-			malicious: entry{kind: entryTool, tool: "edit", status: toolOK, diff: "+" + terminalAttack},
-			clean:     entry{kind: entryTool, tool: "edit", status: toolOK, diff: "+" + terminalAttackVisibleText},
+			name:          "syntax-highlighted success diff",
+			malicious:     entry{kind: entryTool, tool: "edit", status: toolOK, diff: "--- a/main.go\n+++ b/main.go\n@@ -1 +1 @@\n-old\n+" + terminalAttack},
+			clean:         entry{kind: entryTool, tool: "edit", status: toolOK, diff: "--- a/main.go\n+++ b/main.go\n@@ -1 +1 @@\n-old\n+" + terminalAttackVisibleText},
+			expectVisible: true,
 		},
 		{
 			name:          "failure",

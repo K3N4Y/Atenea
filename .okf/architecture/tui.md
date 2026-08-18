@@ -1,5 +1,5 @@
 ---
-updated_at: 2026-08-07
+updated_at: 2026-08-18
 summary: Architecture and behavior of the Atenea terminal user interface — what a bare `atenea` does, one of the binary's two surfaces alongside the headless CLI.
 ---
 
@@ -269,9 +269,16 @@ running, `✓` success, `✗` failure, `?` pending permission) followed by the
 tool name padded to an 8-column name field and the summarized input
 (`✓ bash     ls`). Detail lines under a header carry the `│ ` rail: output
 preview, diff lines, the failure reason, and the truncation mark. Successful
-edits/writes append a `+N -M` stat computed from the unified diff (file
-headers excluded). Adjacent activity entries join without a blank line into
-one contiguous block, while narrative keeps its own paragraph; both
+edits with a unified diff replace the generic activity row with a capped
+before/after card: file and hunk bars, real old/new line numbers, a red/green
+direction rail and row band, and a per-hunk `+N -M` stat (file headers excluded).
+Source inside each side is syntax-highlighted with the same Chroma palette as
+assistant code blocks when the diff path has a known extension. A whole hunk
+side is lexed together so multiline token state survives; unknown extensions
+retain the direction-colored fallback and colorless terminals retain plain
+text. Successful writes keep their neutral, addition-only card without
+diff markers. Adjacent activity entries join without a blank line into one
+contiguous block, while narrative keeps its own paragraph; both
 `renderTranscript` and `entryLines` (click targeting) iterate the single
 ordered `Transcript.visibleEntries` projection, which applies the permission
 gate and the `compactActivityJoin` decision once, so the render and

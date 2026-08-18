@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 )
 
 // parseUnifiedDiff reads the path and hunk starts, and does not mistake an
@@ -30,6 +31,74 @@ func TestParseUnifiedDiff_HunkStartsAndAddedTripledPlus(t *testing.T) {
 		if hunks[0].lines[i] != w {
 			t.Fatalf("hunk line %d = %+v, want %+v: an added '++ foo' must not read as the +++ file header", i, hunks[0].lines[i], w)
 		}
+	}
+}
+
+func TestParseUnifiedDiff_DeleteUsesOldPath(t *testing.T) {
+	diff := "--- a/pkg/deleted.go\n+++ /dev/null\n@@ -1 +0,0 @@\n-package deleted"
+	path, _, ok := parseUnifiedDiff(diff)
+	if !ok || path != "pkg/deleted.go" {
+		t.Fatalf("parseUnifiedDiff() path=%q ok=%v, want deleted source path %q for lexer selection", path, ok, "pkg/deleted.go")
+	}
+}
+
+func TestRenderEditDiff_SyntaxHighlightsCompleteHunkSide(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(previousProfile) })
+
+	diff := "--- a/main.go\n+++ b/main.go\n@@ -1 +1,4 @@\n-old\n+/* first\n+still comment\n+*/\n+func greet() string { return \"hello\" }"
+	rendered := renderEditDiff(diff, 80)
+	commentLine := lineWith(t, rendered, "still comment")
+	if !strings.Contains(commentLine, "38;2;103;103;103") {
+		t.Fatalf("comment row = %q, a hunk side must be lexed as one source fragment so a continued block comment stays highlighted", commentLine)
+	}
+	if !strings.Contains(commentLine, "48;2;18;36;26") {
+		t.Fatalf("comment row = %q, syntax foregrounds must retain the green added-row background", commentLine)
+	}
+
+	codeLine := lineWith(t, rendered, "greet")
+	for _, color := range []string{
+		"38;2;0;170;255",   // Go keyword
+		"38;2;198;150;105", // string literal
+	} {
+		if !strings.Contains(codeLine, color) {
+			t.Fatalf("code row = %q, want syntax color %q from the shared code-block palette", codeLine, color)
+		}
+	}
+	if plain := ansi.Strip(rendered); !strings.Contains(plain, "4 + func greet() string { return \"hello\" }") {
+		t.Fatalf("renderEditDiff() without ANSI = %q, syntax highlighting must not change diff text or line-number geometry", plain)
+	}
+	if got := ansi.StringWidth(codeLine); got != 80 {
+		t.Fatalf("highlighted diff row width = %d, want 80: token resets must not break the full-width change band", got)
+	}
+}
+
+func TestRenderEditDiff_UnknownExtensionKeepsDirectionColorFallback(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(previousProfile) })
+
+	rendered := renderEditDiff("--- a/data.unknownext\n+++ b/data.unknownext\n@@ -1 +1 @@\n-old\n+func value", 80)
+	line := lineWith(t, rendered, "func value")
+	if strings.Contains(line, "38;2;0;170;255") {
+		t.Fatalf("unknown-language row = %q, an unknown extension must not guess a lexer", line)
+	}
+	if !strings.Contains(line, "\x1b[32m") {
+		t.Fatalf("unknown-language row = %q, fallback must preserve the existing green added-text direction color", line)
+	}
+}
+
+func TestRenderEditDiff_SyntaxHighlightSanitizesBeforeLexing(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(previousProfile) })
+
+	prefix := "--- a/main.go\n+++ b/main.go\n@@ -1 +1 @@\n-old\n+"
+	got := renderEditDiff(prefix+terminalAttack, 80)
+	want := renderEditDiff(prefix+terminalAttackVisibleText, 80)
+	if got != want {
+		t.Fatalf("highlighted diff with terminal controls = %q, want sanitized render %q", got, want)
 	}
 }
 
