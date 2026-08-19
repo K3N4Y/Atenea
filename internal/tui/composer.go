@@ -419,7 +419,7 @@ func (c composer) recallHistory(dir int) (composer, bool) {
 // key triggered.
 func isImmediateBuiltin(label string) bool {
 	switch label {
-	case "/help", "/new", "/compact", "/checkpoint", "/rewind", "/resume", "/skills", "/variants", "/learned",
+	case "/help", "/new", "/compact", "/checkpoint", "/rewind", "/resume", "/skills", "/variants", "/learn", "/learned",
 		"/model", "/agents", "/mcp", "/connect", "/rah", "/mode", "/mode:auto-accept", "/mode:ask", "/mode:yolo":
 		return true
 	default:

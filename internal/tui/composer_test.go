@@ -165,12 +165,14 @@ func TestComposer_EnterSurfacesSubmitIntent(t *testing.T) {
 	}
 }
 
-func TestComposer_EnterSubmitsLearnedCommandImmediately(t *testing.T) {
+func TestComposer_EnterSubmitsLearningCommandsImmediately(t *testing.T) {
 	commands, listFiles, models := noCompletions()
-	c := typeInto(newTestComposer(), "/learned", commands, listFiles, models)
-	_, intent, _ := c.handleKey(keyMsg(tea.KeyEnter), commands, listFiles, models)
-	if !intent.submit || !intent.handled {
-		t.Fatalf("Enter intent = %+v, want submit+handled for /learned", intent)
+	for _, value := range []string{"/learn", "/learned"} {
+		c := typeInto(newTestComposer(), value, commands, listFiles, models)
+		_, intent, _ := c.handleKey(keyMsg(tea.KeyEnter), commands, listFiles, models)
+		if !intent.submit || !intent.handled {
+			t.Fatalf("Enter intent = %+v, want submit+handled for %s", intent, value)
+		}
 	}
 }
 

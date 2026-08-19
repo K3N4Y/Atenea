@@ -7,6 +7,11 @@ import (
 	"time"
 )
 
+// AgentName is the configurable model role shown by the TUI's /agents picker.
+// It is not a tool-capable subagent: the learning service still owns its bounded,
+// tool-free extraction request.
+const AgentName = "learn"
+
 type Status string
 
 const (

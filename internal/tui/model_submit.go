@@ -392,7 +392,7 @@ func (m Model) submitAgentsCommand(command string) (Model, tea.Cmd) {
 		}
 	}
 	if !found {
-		return m.appendError("unknown subagent: " + name), nil
+		return m.appendError("unknown agent role: " + name), nil
 	}
 	if len(fields) == 3 && fields[2] == "inherit" {
 		if err := controller.ClearAgentModel(name); err != nil {

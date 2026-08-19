@@ -14,7 +14,7 @@ import (
 )
 
 // AgentModelSelection is an optional provider and required model override for
-// one named subagent. An empty Provider means the globally active provider.
+// one named agent role. An empty Provider means the globally active provider.
 type AgentModelSelection struct {
 	Provider        string              `json:"provider,omitempty"`
 	Model           string              `json:"model"`

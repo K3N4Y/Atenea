@@ -103,13 +103,16 @@ func openLearnedPicker(t *testing.T, agent Agent) Model {
 	return apply(t, m, cmd())
 }
 
-func TestModel_LearnQueuesCurrentSessionAsynchronously(t *testing.T) {
+func TestModel_LearnQueuesCurrentSessionAsynchronouslyWithoutOpeningModelPicker(t *testing.T) {
 	agent := &fakeLearningAgent{fakeAgent: &fakeAgent{}}
 	m := NewModel(agent, "s1", nil)
 	m = typeRunes(t, m, "/learn")
 	m, cmd := applyCmd(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("/learn must enqueue through a tea.Cmd")
+	}
+	if m.modelPicker.open {
+		t.Fatal("/learn must use the /agents configuration instead of opening a model picker")
 	}
 	if m.composer.value() != "" {
 		t.Fatalf("composer = %q, want cleared", m.composer.value())

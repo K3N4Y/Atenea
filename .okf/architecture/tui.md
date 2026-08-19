@@ -35,10 +35,11 @@ them to explicit handlers while ordinary text goes to `submitAgentPrompt`.
 session would keep collecting events and win the resume-on-startup ordering),
 `/resume` opens a searchable picker of TUI sessions from the same workspace,
 `/compact` requests durable context compaction for the active session, `/learn`
-queues extraction from the latest completed session cut, `/learned` opens the
-workspace learning audit, and `/model` opens a full-screen two-column picker
-with providers on the left and the selected provider's models on the wider
-right.
+queues extraction from the latest completed session cut using the `learn` model
+role configured in `/agents`, `/learned` opens the workspace learning audit, and
+`/model` opens a full-screen two-column picker for the conversation model. With
+no `learn` override, extraction inherits the active conversation provider; an
+override is resolved as an isolated snapshot and never changes that provider.
 
 The engine registers `/new`, `/compact`, `/learn`, `/learned`, `/model`, `/mcp`,
 `/connect`, `/resume`, and `/undo` in the same `command.Set` as skill-derived

@@ -104,6 +104,14 @@ func (s *Service) Recover(ctx context.Context) error {
 }
 
 func (s *Service) Enqueue(ctx context.Context, workspace, sessionID string) (Run, error) {
+	return s.EnqueueWithProvider(ctx, workspace, sessionID, s.provider)
+}
+
+// EnqueueWithProvider captures the same immutable session cut as Enqueue but
+// snapshots an explicitly resolved provider/model for this run. The caller owns
+// selection; the queue owns the resulting snapshot, so later chat model changes
+// cannot affect an extraction already accepted.
+func (s *Service) EnqueueWithProvider(ctx context.Context, workspace, sessionID string, provider corellm.Provider) (Run, error) {
 	if workspace == "" || sessionID == "" {
 		return Run{}, errors.New("learning requires an active workspace and session")
 	}
@@ -111,7 +119,7 @@ func (s *Service) Enqueue(ctx context.Context, workspace, sessionID string) (Run
 	if err != nil {
 		return Run{}, err
 	}
-	snap := llm.Acquire(s.provider)
+	snap := llm.Acquire(provider)
 	if snap.Provider == nil {
 		return Run{}, errors.New("learning requires an active provider")
 	}
@@ -291,6 +299,12 @@ func (s *Service) Cancel(ctx context.Context, id string) error {
 	return nil
 }
 func (s *Service) Retry(ctx context.Context, id string) (Run, error) {
+	return s.RetryWithProvider(ctx, id, s.provider)
+}
+
+// RetryWithProvider repeats a failed extraction with an explicitly resolved
+// provider/model. The caller snapshots its current learning configuration.
+func (s *Service) RetryWithProvider(ctx context.Context, id string, provider corellm.Provider) (Run, error) {
 	old, err := s.store.Run(ctx, id)
 	if err != nil {
 		return Run{}, err
@@ -298,7 +312,7 @@ func (s *Service) Retry(ctx context.Context, id string) (Run, error) {
 	if old.Status != Failed && old.Status != Cancelled && old.Status != Interrupted {
 		return Run{}, ErrInvalidTransition
 	}
-	snap := llm.Acquire(s.provider)
+	snap := llm.Acquire(provider)
 	if snap.Provider == nil {
 		return Run{}, errors.New("learning requires an active provider")
 	}

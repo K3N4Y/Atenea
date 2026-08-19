@@ -392,5 +392,8 @@ func (m Model) learnedPickerRow(index, typeWidth, statusWidth, detailWidth int) 
 }
 
 func learningQueuedNotice(run learning.Run) string {
+	if run.ProviderID != "" && run.Model != "" {
+		return fmt.Sprintf("learning queued: %s (%s/%s)", run.ID, run.ProviderID, run.Model)
+	}
 	return fmt.Sprintf("learning queued: %s", run.ID)
 }

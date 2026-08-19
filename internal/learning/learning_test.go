@@ -94,6 +94,60 @@ func TestEnqueueDoesNotBlockPastOldQueueCapacityAndGloballyCapsWorkers(t *testin
 	t.Fatal("queued work did not drain")
 }
 
+func TestEnqueueWithProviderSnapshotsSelectedModelInsteadOfDefault(t *testing.T) {
+	defaultProvider := &scripted{response: `{"type":"no_candidate","reason":"default should not run"}`}
+	selectedProvider := &scripted{response: `{"type":"no_candidate","reason":"nothing durable"}`}
+	defaultSwitcher, _ := internalllm.NewSwitchableProvider(internalllm.ProviderSnapshot{ProviderID: "default", ProviderName: "Default", BaseURL: "local", Model: "large", Provider: defaultProvider})
+	selectedSwitcher, _ := internalllm.NewSwitchableProvider(internalllm.ProviderSnapshot{ProviderID: "selected", ProviderName: "Selected", BaseURL: "local", Model: "small", Provider: selectedProvider})
+	svc := NewService(context.Background(), NewMemoryStore(), durableSession(t), defaultSwitcher, nil)
+	defer svc.Close()
+
+	run, err := svc.EnqueueWithProvider(context.Background(), "w", "s", selectedSwitcher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.ProviderID != "selected" || run.Model != "small" {
+		t.Fatalf("run selection = %s/%s", run.ProviderID, run.Model)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		selectedProvider.mu.Lock()
+		selectedCalls := selectedProvider.calls
+		selectedProvider.mu.Unlock()
+		if selectedCalls == 1 {
+			defaultProvider.mu.Lock()
+			defaultCalls := defaultProvider.calls
+			defaultProvider.mu.Unlock()
+			if defaultCalls != 0 {
+				t.Fatalf("default provider calls = %d, want 0", defaultCalls)
+			}
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("selected provider did not receive the extraction")
+}
+
+func TestRetryWithProviderSnapshotsCurrentLearningModel(t *testing.T) {
+	store := NewMemoryStore()
+	old := Run{ID: "failed", Workspace: "w", SessionID: "s", CutSeq: 2, Status: Failed, Input: Input{Messages: []InputMessage{{Seq: 2, Role: "assistant", Text: "evidence"}}}, CreatedAt: time.Now().UTC()}
+	if _, _, err := store.CreateRun(context.Background(), old); err != nil {
+		t.Fatal(err)
+	}
+	selected := &scripted{response: `{"type":"no_candidate","reason":"nothing durable"}`}
+	switcher, _ := internalllm.NewSwitchableProvider(internalllm.ProviderSnapshot{ProviderID: "selected", ProviderName: "Selected", BaseURL: "local", Model: "small", Provider: selected})
+	svc := NewService(context.Background(), store, durableSession(t), &scripted{}, nil)
+	defer svc.Close()
+
+	retry, err := svc.RetryWithProvider(context.Background(), old.ID, switcher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retry.ProviderID != "selected" || retry.Model != "small" || retry.ID == old.ID {
+		t.Fatalf("retry = %#v", retry)
+	}
+}
+
 func TestTransitionMatrix(t *testing.T) {
 	valid := map[[2]Status]bool{{Queued, Running}: true, {Queued, Cancelled}: true, {Running, Cancelling}: true, {Running, Ready}: true, {Cancelling, Cancelled}: true, {Ready, Approved}: true, {Ready, Rejected}: true}
 	statuses := []Status{Queued, Running, Ready, NoCandidate, Failed, Cancelling, Cancelled, Approved, Rejected, Interrupted}

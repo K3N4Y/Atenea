@@ -403,7 +403,16 @@ func (e *Engine) ModelCatalog() []providerconfig.ProviderModels {
 func (e *Engine) AgentCatalog() []agent.Def {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return cloneAgentCatalog(e.agents)
+	catalog := cloneAgentCatalog(e.agents)
+	for _, def := range catalog {
+		if def.Name == learning.AgentName {
+			return catalog
+		}
+	}
+	return append(catalog, agent.Def{
+		Name:        learning.AgentName,
+		Description: "Extracts approved workspace guidance when /learn runs",
+	})
 }
 
 func cloneAgentCatalog(defs []agent.Def) []agent.Def {
@@ -593,9 +602,9 @@ func localCommands(yoloAuthorized bool) []command.Command {
 		{Name: "compact", Description: "Compact conversation context", BuiltIn: true},
 		{Name: "checkpoint", Description: "Save an explicit conversation and workspace checkpoint", BuiltIn: true},
 		{Name: "connect", Description: "Connect a provider by API key or ChatGPT login", BuiltIn: true},
-		{Name: "agents", Description: "Configure provider and model per subagent", BuiltIn: true},
+		{Name: "agents", Description: "Configure provider and model per agent role", BuiltIn: true},
 		{Name: "rah", Description: "Run one prompt with Recursive Agent Harness enabled", BuiltIn: true},
-		{Name: "learn", Description: "Learn from the current conversation", BuiltIn: true},
+		{Name: "learn", Description: "Learn from the conversation using the model configured in /agents", BuiltIn: true},
 		{Name: "learned", Description: "Review learned workspace guidance", BuiltIn: true},
 		{Name: "mcp", Description: "Toggle MCP servers on or off", BuiltIn: true},
 		{Name: "variants", Description: llm.ReasoningCommandDescription, BuiltIn: true},
@@ -1173,9 +1182,26 @@ func (e *Engine) ResolvePermission(sessionID, callID string, verdict permission.
 }
 
 // Learn captures the durable session through its current cut and queues an
-// independent learning extraction for this workspace.
+// independent extraction with the model configured for the learn role in
+// /agents. With no override it inherits the active conversation provider.
 func (e *Engine) Learn(sessionID string) (learning.Run, error) {
+	provider, configured, err := e.learningProvider()
+	if err != nil {
+		return learning.Run{}, err
+	}
+	if configured {
+		return e.learning.EnqueueWithProvider(e.ctx, e.root, sessionID, provider)
+	}
 	return e.learning.Enqueue(e.ctx, e.root, sessionID)
+}
+
+func (e *Engine) learningProvider() (llm.Provider, bool, error) {
+	models, ok := e.models.(RoleModelService)
+	if !ok {
+		return nil, false, nil
+	}
+	provider, err := models.ResolveAgentModel(e.ctx, learning.AgentName, "")
+	return provider, provider != nil, err
 }
 
 // LearningAudit returns both the extraction audit and approved lesson catalog
@@ -1202,6 +1228,13 @@ func (e *Engine) CancelLearning(runID string) error {
 }
 
 func (e *Engine) RetryLearning(runID string) (learning.Run, error) {
+	provider, configured, err := e.learningProvider()
+	if err != nil {
+		return learning.Run{}, err
+	}
+	if configured {
+		return e.learning.RetryWithProvider(e.ctx, runID, provider)
+	}
 	return e.learning.Retry(e.ctx, runID)
 }
 

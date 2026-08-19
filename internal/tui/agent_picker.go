@@ -61,7 +61,7 @@ func (m Model) handleAgentPickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) agentPickerView() string {
 	layout := overlayLayoutFor(m.width, m.height)
-	lines := []string{" Subagent                         Resolution", strings.Repeat("─", layout.innerWidth)}
+	lines := []string{" Agent / role                     Resolution", strings.Repeat("─", layout.innerWidth)}
 	controller, _ := m.agent.(agentModelAgent)
 	start, end := m.agentPicker.window(layout.itemRows)
 	for i := start; i < end; i++ {
@@ -98,7 +98,7 @@ func (m Model) agentPickerView() string {
 		lines = append(lines, overlayCell(row, layout.innerWidth))
 	}
 	if len(m.agentPicker.agents) == 0 && layout.itemRows > 0 {
-		lines = append(lines, overlayCell("  No subagents available", layout.innerWidth))
+		lines = append(lines, overlayCell("  No agent roles available", layout.innerWidth))
 	}
 	for len(lines) < layout.itemRows+2 {
 		lines = append(lines, strings.Repeat(" ", layout.innerWidth))

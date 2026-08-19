@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/K3N4Y/atenea/internal/agent"
+	"github.com/K3N4Y/atenea/internal/learning"
 	"github.com/K3N4Y/atenea/internal/llm"
 	"github.com/K3N4Y/atenea/internal/providerconfig"
 )
@@ -79,7 +80,7 @@ func TestAgentsCommandRoutingAndDirectMutation(t *testing.T) {
 		t.Fatalf("clear calls = %#v (entries=%#v)", fake.cleared, clearModel.entries)
 	}
 	unknown := submitText(t, NewModel(fake, "s1", nil), "/agents missing inherit")
-	if !strings.Contains(unknown.entries[len(unknown.entries)-1].text, "unknown subagent") {
+	if !strings.Contains(unknown.entries[len(unknown.entries)-1].text, "unknown agent role") {
 		t.Fatalf("unknown agent error = %#v", unknown.entries[len(unknown.entries)-1])
 	}
 	invalid := submitText(t, NewModel(fake, "s1", nil), "/agents review bogus")
@@ -88,6 +89,35 @@ func TestAgentsCommandRoutingAndDirectMutation(t *testing.T) {
 	}
 	if _, intercepted := parseLocalCommand("/agentset"); intercepted {
 		t.Fatal("/agentset was incorrectly intercepted as /agents")
+	}
+}
+
+func TestAgentsCommandConfiguresLearnRoleUsedBySlashLearn(t *testing.T) {
+	fake := &fakeAgentModels{
+		fakeAgent: &fakeAgent{},
+		agents: []agent.Def{{
+			Name:        learning.AgentName,
+			Description: "Extracts approved workspace guidance when /learn runs",
+		}},
+	}
+	m := submitText(t, NewModel(fake, "s1", nil), "/agents")
+	if view := ansi.Strip(m.View()); !strings.Contains(view, learning.AgentName) || !strings.Contains(view, "/learn") {
+		t.Fatalf("/agents does not expose the learning role:\n%s", view)
+	}
+	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.modelPicker.open || m.modelPicker.agentName != learning.AgentName {
+		t.Fatalf("learning role did not open the /agents model picker: %#v", m.modelPicker)
+	}
+
+	m = NewModel(fake, "s1", nil)
+	m = typeRunes(t, m, "/agents "+learning.AgentName+" openai gpt-5")
+	updated, cmd := m.update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("learning model selection must persist asynchronously")
+	}
+	_ = apply(t, updated.(Model), cmd())
+	if len(fake.set) != 1 || fake.set[0].name != learning.AgentName || fake.set[0].selection.Provider != "openai" || fake.set[0].selection.Model != "gpt-5" {
+		t.Fatalf("learning model selection = %#v", fake.set)
 	}
 }
 
@@ -132,7 +162,7 @@ func TestAgentPickerEmptySanitizedAndWindowedInSmallTerminal(t *testing.T) {
 	empty.width, empty.height = 24, 10
 	empty.agentPicker = newAgentPicker(nil)
 	view := empty.agentPickerView()
-	if !strings.Contains(view, "No subagents") || ansi.StringWidth(view) == 0 {
+	if !strings.Contains(view, "No agent roles") || ansi.StringWidth(view) == 0 {
 		t.Fatalf("empty picker view = %q", view)
 	}
 

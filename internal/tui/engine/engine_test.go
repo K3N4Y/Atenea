@@ -1550,6 +1550,45 @@ func TestLocalCommands_IncludesLearningCommands(t *testing.T) {
 	}
 }
 
+func TestEngine_AgentCatalogIncludesLearnModelRole(t *testing.T) {
+	e := New(Config{Root: t.TempDir(), Provider: llm.NewFakeProvider(), Store: session.NewMemoryStore()})
+	defer e.Shutdown(context.Background())
+
+	matches := 0
+	for _, def := range e.AgentCatalog() {
+		if def.Name == learning.AgentName {
+			matches++
+			if !strings.Contains(def.Description, "/learn") {
+				t.Fatalf("learn role description = %q", def.Description)
+			}
+		}
+	}
+	if matches != 1 {
+		t.Fatalf("learning roles = %d, want 1", matches)
+	}
+}
+
+type learningResolverModelService struct {
+	active   providerconfig.Active
+	provider llm.Provider
+	resolved []struct{ name, manifest string }
+}
+
+func (s *learningResolverModelService) Active() providerconfig.Active { return s.active }
+func (s *learningResolverModelService) Catalog() []providerconfig.ProviderModels {
+	return nil
+}
+func (s *learningResolverModelService) Refresh(context.Context) ([]providerconfig.ProviderModels, error) {
+	return nil, nil
+}
+func (s *learningResolverModelService) Select(context.Context, string, string) (providerconfig.Active, error) {
+	return s.active, nil
+}
+func (s *learningResolverModelService) ResolveAgentModel(_ context.Context, name, manifest string) (llm.Provider, error) {
+	s.resolved = append(s.resolved, struct{ name, manifest string }{name, manifest})
+	return s.provider, nil
+}
+
 func TestEngine_LearnQueuesAndAuditsWorkspaceRun(t *testing.T) {
 	root := t.TempDir()
 	sessions := session.NewMemoryStore()
@@ -1591,6 +1630,69 @@ func TestEngine_LearnQueuesAndAuditsWorkspaceRun(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for LearningChangedMsg")
 	}
+}
+
+func TestEngine_LearnUsesAgentsModelOverrideWithoutChangingConversation(t *testing.T) {
+	root := t.TempDir()
+	sessions := durableLearningSession(t)
+	selected, err := llm.NewSwitchableProvider(llm.ProviderSnapshot{
+		ProviderID: "economy", ProviderName: "Economy", BaseURL: "local", Model: "small", Provider: llm.NewFakeProvider(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	models := &learningResolverModelService{
+		active:   providerconfig.Active{ProviderID: "chat", Model: "large"},
+		provider: selected,
+	}
+	e := New(Config{Root: root, Provider: llm.NewFakeProvider(), Store: sessions, Models: models})
+	defer e.Shutdown(context.Background())
+
+	run, err := e.Learn("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.ProviderID != "economy" || run.Model != "small" {
+		t.Fatalf("learning run = %#v", run)
+	}
+	if len(models.resolved) != 1 || models.resolved[0].name != learning.AgentName || models.resolved[0].manifest != "" {
+		t.Fatalf("resolved learning roles = %#v", models.resolved)
+	}
+	if active := models.Active(); active.ProviderID != "chat" || active.Model != "large" {
+		t.Fatalf("active conversation selection changed: %#v", active)
+	}
+}
+
+func TestEngine_LearnInheritsCurrentProviderWithoutAgentsModelService(t *testing.T) {
+	provider, err := llm.NewSwitchableProvider(llm.ProviderSnapshot{
+		ProviderID: "demo", ProviderName: "Demo", BaseURL: "local", Model: "demo", Provider: llm.NewFakeProvider(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := New(Config{Root: t.TempDir(), Provider: provider, Store: durableLearningSession(t)})
+	defer e.Shutdown(context.Background())
+
+	run, err := e.Learn("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.ProviderID != "demo" || run.Model != "demo" {
+		t.Fatalf("fallback learning run = %#v", run)
+	}
+}
+
+func durableLearningSession(t *testing.T) *session.MemoryStore {
+	t.Helper()
+	store := session.NewMemoryStore()
+	ctx := context.Background()
+	if _, err := store.AppendEvent(ctx, "s1", session.SessionEvent{Message: &session.Message{Role: session.RoleUser, Text: "remember this"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AppendEvent(ctx, "s1", session.SessionEvent{Kind: session.KindStepEnded, Message: &session.Message{Role: session.RoleAssistant, Text: "done"}}); err != nil {
+		t.Fatal(err)
+	}
+	return store
 }
 
 func TestEngine_InsertsSelectedLessonsIntoPrompt(t *testing.T) {
