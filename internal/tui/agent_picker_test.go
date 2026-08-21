@@ -135,7 +135,7 @@ func TestAgentPickerModelEffortAndInheritFlows(t *testing.T) {
 	m.modelPicker.selectProvider(1)
 	m.modelPicker.modelsFocused = true
 	m = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if !m.variantsPicker.open || m.variantsPicker.agentName != "review" {
+	if !m.variantsPicker.open || m.variantsPicker.agent == nil || m.variantsPicker.agent.name != "review" {
 		t.Fatalf("effort picker not opened: %#v", m.variantsPicker)
 	}
 	m.variantsPicker.selected = 4 // high

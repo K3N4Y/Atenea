@@ -1,6 +1,7 @@
 Edits existing files with line-anchored patches.
 
 <instructions>
+- read before edit a file
 - Start each file section with `[PATH#TAG]`, using the 4-hex snapshot tag from the latest `read` or search result.
 - Use `PUT N.=M:` to replace lines, `PUT <N:` or `PUT >N:` to insert, and `CUT N.=M` to delete.
 - Every replacement or insertion line starts with `+`; the body contains final content, not a diff.
