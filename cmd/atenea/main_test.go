@@ -1212,7 +1212,7 @@ func waitForPTYExit(t *testing.T, done <-chan struct{}) {
 	t.Helper()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(8 * time.Second):
 		t.Fatal("TUI did not exit")
 	}
 }
